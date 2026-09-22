@@ -189,7 +189,8 @@ yield * prompt.shell({ command: "sleep 30" }).pipe(Effect.forkChild)
 yield *
   pollWithTimeout(
     Effect.gen(function* () {
-      const s = yield* (yield* SessionStatus.Service).get(chat.id)
+      const status = yield* SessionStatus.Service
+      const s = yield* status.get(chat.id)
       return s.type === "busy" ? (true as const) : undefined
     }),
     "session never became busy",
