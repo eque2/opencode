@@ -72,7 +72,7 @@ export const UpdatePayload = Schema.Struct({
 }).annotate({ identifier: "ProjectUpdateInput" })
 export type UpdatePayload = Types.DeepMutable<Schema.Schema.Type<typeof UpdatePayload>>
 
-export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("Project.NotFoundError", {
+export class NotFoundError extends Schema.TaggedError<NotFoundError>()("Project.NotFoundError", {
   projectID: ProjectV2.ID,
 }) {}
 

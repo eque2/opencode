@@ -66,7 +66,7 @@ export const Failed = NamedError.create("MCPFailed", {
   name: Schema.String,
 })
 
-export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()("MCP.NotFoundError", {
+export class NotFoundError extends Schema.TaggedError<NotFoundError>()("MCP.NotFoundError", {
   name: Schema.String,
 }) {}
 

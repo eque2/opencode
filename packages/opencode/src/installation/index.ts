@@ -52,7 +52,7 @@ export function isLocal() {
   return InstallationChannel === "local"
 }
 
-export class UpgradeFailedError extends Schema.TaggedErrorClass<UpgradeFailedError>()("UpgradeFailedError", {
+export class UpgradeFailedError extends Schema.TaggedError<UpgradeFailedError>()("UpgradeFailedError", {
   stderr: Schema.String,
 }) {
   override get message() {

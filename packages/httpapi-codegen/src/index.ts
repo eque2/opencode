@@ -30,7 +30,7 @@ export type Contract = {
   readonly groups: ReadonlyArray<Group>
 }
 
-export class GenerationError extends Schema.TaggedErrorClass<GenerationError>()("GenerationError", {
+export class GenerationError extends Schema.TaggedError<GenerationError>()("GenerationError", {
   reason: Schema.String,
 }) {
   override get message() {
@@ -311,7 +311,7 @@ function renderEffectFiles(groups: ReadonlyArray<Group>): Output["files"] {
     {
       path: "client-error.ts",
       content:
-        'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedErrorClass<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
+        'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedError<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
     },
     { path: "client.ts", content: renderClient(groups) },
     {
@@ -380,7 +380,7 @@ function renderImportedEffectFiles(
     {
       path: "client-error.ts",
       content:
-        'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedErrorClass<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
+        'import { Schema } from "effect"\n\nexport class ClientError extends Schema.TaggedError<ClientError>()("ClientError", {\n  cause: Schema.Defect(),\n}) {}\n',
     },
     { path: "client.ts", content: client },
     {
@@ -1164,7 +1164,7 @@ function renderSchemas(slots: ReadonlyArray<Slot>) {
       annotations.length === 0
         ? ""
         : `.annotate({ ${annotations.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(", ")} })`
-    return `class ${slot.name}Class extends Schema.TaggedErrorClass<${slot.name}Class>(${JSON.stringify(tagged.identifier)})(${JSON.stringify(tagged.tag)}, { ${fields} }) {}\nconst ${slot.name} = ${slot.name}Class${annotate}`
+    return `class ${slot.name}Class extends Schema.TaggedError<${slot.name}Class>(${JSON.stringify(tagged.identifier)})(${JSON.stringify(tagged.tag)}, { ${fields} }) {}\nconst ${slot.name} = ${slot.name}Class${annotate}`
   })
   return [...artifacts, ...references, ...declarations].join("\n\n")
 }
