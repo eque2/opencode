@@ -24,7 +24,7 @@ export const AuthCallbackPayload = Schema.Struct({
 export const AuthRemoveResponse = Schema.Struct({
   success: Schema.Literal(true),
 })
-export class UnsupportedOAuthError extends Schema.ErrorClass<UnsupportedOAuthError>("McpUnsupportedOAuthError")(
+export class UnsupportedOAuthError extends Schema.Error<UnsupportedOAuthError>("McpUnsupportedOAuthError")(
   { error: Schema.String },
   { httpApiStatus: 400 },
 ) {}
