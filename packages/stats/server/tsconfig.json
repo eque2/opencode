@@ -6,7 +6,14 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
-    "types": ["bun", "node"]
+    "types": ["bun", "node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "transform": "@effect/language-service/transform",
+        "namespaceImportPackages": ["effect", "@effect/*"]
+      }
+    ]
   },
   "include": ["src", "../core/src/resource.d.ts"]
 }

@@ -16,7 +16,14 @@
     "isolatedModules": true,
     "paths": {
       "~/*": ["./src/*"]
-    }
+    },
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "transform": "@effect/language-service/transform",
+        "namespaceImportPackages": ["effect", "@effect/*"]
+      }
+    ]
   },
   "include": ["*.ts", "src", "../core/src/resource.d.ts"]
 }
