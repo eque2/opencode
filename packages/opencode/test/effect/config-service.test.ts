@@ -4,8 +4,8 @@ import { ConfigService } from "../../src/effect/config-service"
 import { it } from "../lib/effect"
 
 class TestConfig extends ConfigService.Service<TestConfig>()("@test/ConfigService", {
-  name: Config.string("NAME"),
-  token: Config.string("TOKEN").pipe(Config.option),
+  name: Config.String("NAME"),
+  token: Config.String("TOKEN").pipe(Config.option),
   port: Config.number("PORT").pipe(Config.withDefault(3000)),
 }) {}
 
