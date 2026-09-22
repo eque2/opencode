@@ -10,7 +10,7 @@ import { InstanceState } from "@/effect/instance-state"
 import { MessageID, PartID } from "../session/schema"
 import EXIT_DESCRIPTION from "./plan-exit.txt"
 
-export const Parameters = Schema.Struct({})
+export const Parameters = Schema.Record(Schema.String, Schema.Never)
 
 export const PlanExitTool = Tool.define(
   "plan_exit",

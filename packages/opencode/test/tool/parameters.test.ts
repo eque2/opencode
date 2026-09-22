@@ -74,7 +74,7 @@ describe("tool parameters", () => {
         toJsonSchema(
           Schema.Struct({ value: Schema.String.check(Schema.isPattern(/^a/)).check(Schema.isPattern(/z$/)) }),
         ),
-      ).toMatchObject({ properties: { value: { allOf: [{ pattern: "^a" }, { pattern: "z$" }] } } })
+      ).toMatchObject({ properties: { value: { pattern: "^a", allOf: [{ pattern: "z$" }] } } })
     })
 
     test("bounds bare integer fields to safe integer range", () => {
@@ -192,6 +192,12 @@ describe("tool parameters", () => {
   describe("plan", () => {
     test("accepts empty object", () => {
       expect(parse(Plan, {})).toEqual({})
+    })
+    test("rejects non-object input", () => {
+      expect(accepts(Plan, "plan")).toBe(false)
+    })
+    test("rejects object properties", () => {
+      expect(accepts(Plan, { unexpected: true })).toBe(false)
     })
   })
 

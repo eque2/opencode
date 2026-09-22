@@ -189,7 +189,7 @@ exports[`tool parameters JSON Schema (wire shape) lsp 1`] = `
 exports[`tool parameters JSON Schema (wire shape) plan 1`] = `
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "properties": {},
+  "additionalProperties": false,
   "type": "object",
 }
 `;
