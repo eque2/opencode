@@ -205,15 +205,17 @@ export const ptyConnectHandlers = HttpApiBuilder.group(PtyConnectApi, "pty-conne
             ? parsedCursor
             : undefined
         const socket = yield* Effect.orDie(ctx.request.upgrade)
-        const write = yield* socket.writer
+        const { write } = yield* socket.writer
         const closeAccepted = (event: Socket.CloseEvent) =>
-          socket
-            .runRaw(() => Effect.void, { onOpen: write(event).pipe(Effect.catch(() => Effect.void)) })
-            .pipe(
-              Effect.timeout("1 second"),
-              Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
-              Effect.catch(() => Effect.void),
-            )
+          Effect.gen(function* () {
+            const reader = yield* socket.reader
+            yield* write(event).pipe(Effect.catch(() => Effect.void))
+            while (true) yield* reader.pull
+          }).pipe(
+            Effect.timeout("1 second"),
+            Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
+            Effect.catch(() => Effect.void),
+          )
         const registered = yield* WebSocketTracker.register(write(WebSocketTracker.SERVER_CLOSING_EVENT()))
         if (!registered) {
           yield* closeAccepted(WebSocketTracker.SERVER_CLOSING_EVENT())
@@ -255,13 +257,18 @@ export const ptyConnectHandlers = HttpApiBuilder.group(PtyConnectApi, "pty-conne
 
         // The reader runs concurrently with the writer; whichever finishes first ends the
         // connection and the attachment is always released.
-        yield* Effect.race(
-          drain,
-          socket.runRaw((message) => {
-            const decoded = PtyProtocol.decodeInput(message)
-            if (decoded !== undefined) attachment.write(decoded)
-          }),
-        ).pipe(
+        const receive = Effect.gen(function* () {
+          const reader = yield* socket.reader
+          while (true) {
+            const messages = yield* reader.pull
+            for (const message of messages) {
+              const decoded = PtyProtocol.decodeInput(message)
+              if (decoded !== undefined) attachment.write(decoded)
+            }
+          }
+        })
+
+        yield* Effect.race(drain, receive).pipe(
           Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
           Effect.ensuring(Effect.sync(() => attachment.detach())),
           Effect.orDie,

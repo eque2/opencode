@@ -21,18 +21,29 @@ export function websocket(
       const outbound = yield* Socket.makeWebSocket(ProxyUtil.websocketTargetURL(target), {
         protocols: ProxyUtil.websocketProtocols(request.headers),
       })
-      const writeInbound = yield* inbound.writer
-      const writeOutbound = yield* outbound.writer
-      const closeSocket = (socket: Socket.Socket, write: (event: Socket.CloseEvent) => Effect.Effect<void, unknown>) =>
-        socket
-          .runRaw(() => Effect.void, {
-            onOpen: write(WebSocketTracker.SERVER_CLOSING_EVENT()).pipe(Effect.catch(() => Effect.void)),
-          })
-          .pipe(
-            Effect.timeout("1 second"),
-            Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
-            Effect.catch(() => Effect.void),
-          )
+      const { write: writeInbound } = yield* inbound.writer
+      const { write: writeOutbound } = yield* outbound.writer
+      const closeSocket = (socket: Socket.Socket, write: Socket.Writer["write"]) =>
+        Effect.gen(function* () {
+          const reader = yield* socket.reader
+          yield* write(WebSocketTracker.SERVER_CLOSING_EVENT()).pipe(Effect.catch(() => Effect.void))
+          while (true) yield* reader.pull
+        }).pipe(
+          Effect.timeout("1 second"),
+          Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
+          Effect.catch(() => Effect.void),
+        )
+      const forward = (
+        socket: Socket.Socket,
+        write: (message: string | Uint8Array) => Effect.Effect<void, Socket.SocketError>,
+      ) =>
+        Effect.gen(function* () {
+          const reader = yield* socket.reader
+          while (true) {
+            const messages = yield* reader.pull
+            for (const message of messages) yield* write(message)
+          }
+        })
       const closeAccepted = Effect.all([closeSocket(inbound, writeInbound), closeSocket(outbound, writeOutbound)], {
         concurrency: "unbounded",
         discard: true,
@@ -51,26 +62,22 @@ export function websocket(
         return HttpServerResponse.empty()
       }
 
-      yield* outbound
-        .runRaw((message) => writeInbound(message))
-        .pipe(
-          Effect.catchReason("SocketError", "SocketCloseError", (reason) =>
-            writeInbound(new Socket.CloseEvent(reason.code, reason.closeReason)).pipe(Effect.catch(() => Effect.void)),
-          ),
-          Effect.catch(() =>
-            writeInbound(new Socket.CloseEvent(1011, "proxy error")).pipe(Effect.catch(() => Effect.void)),
-          ),
-          Effect.forkScoped,
-        )
+      yield* forward(outbound, writeInbound).pipe(
+        Effect.catchReason("SocketError", "SocketCloseError", (reason) =>
+          writeInbound(new Socket.CloseEvent(reason.code, reason.closeReason)).pipe(Effect.catch(() => Effect.void)),
+        ),
+        Effect.catch(() =>
+          writeInbound(new Socket.CloseEvent(1011, "proxy error")).pipe(Effect.catch(() => Effect.void)),
+        ),
+        Effect.forkScoped,
+      )
 
-      yield* inbound
-        .runRaw((message) => {
-          return writeOutbound(typeof message === "string" ? message : message.slice())
-        })
-        .pipe(
-          Effect.catch(() => Effect.void),
-          Effect.ensuring(writeOutbound(new Socket.CloseEvent()).pipe(Effect.catch(() => Effect.void))),
-        )
+      yield* forward(inbound, (message) =>
+        writeOutbound(typeof message === "string" ? message : message.slice()),
+      ).pipe(
+        Effect.catch(() => Effect.void),
+        Effect.ensuring(writeOutbound(new Socket.CloseEvent()).pipe(Effect.catch(() => Effect.void))),
+      )
       return HttpServerResponse.empty()
     }).pipe(Effect.orDie),
   )

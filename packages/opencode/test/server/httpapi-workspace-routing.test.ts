@@ -206,14 +206,12 @@ const listenRemoteWebSocket = () =>
 const echoWebSocket = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.gen(function* () {
     const socket = yield* Effect.orDie(request.upgrade)
-    const write = yield* socket.writer
-    yield* socket
-      .runRaw((message) => write(`echo:${String(message)}`), {
-        onOpen: write(`protocol:${request.headers["sec-websocket-protocol"] ?? "none"}`).pipe(
-          Effect.catch(() => Effect.void),
-        ),
-      })
-      .pipe(Effect.catch(() => Effect.void))
+    const { write } = yield* socket.writer
+    yield* Effect.gen(function* () {
+      const reader = yield* socket.reader
+      yield* write(`protocol:${request.headers["sec-websocket-protocol"] ?? "none"}`)
+      while (true) for (const message of yield* reader.pull) yield* write(`echo:${String(message)}`)
+    }).pipe(Effect.catch(() => Effect.void))
     return HttpServerResponse.empty()
   })
 
@@ -425,16 +423,15 @@ describe("HttpApi workspace routing middleware", () => {
       // detect the WebSocket upgrade and proxy it to the remote /base/probe.
       yield* serveProbe
 
-      const socket = yield* Socket.makeWebSocket(
-        `${(yield* serverUrl).replace(/^http/, "ws")}/probe?workspace=${workspace.id}`,
-        {
-          closeCodeIsError: () => false,
-          protocols: "chat",
-        },
-      )
+      const socket = yield* Socket.makeWebSocket(`${(yield* serverUrl).replace(/^http/, "ws")}/probe?workspace=${workspace.id}`, {
+        protocols: "chat",
+      })
       const messages = yield* Queue.unbounded<string>()
-      yield* socket.runRaw((message) => Queue.offer(messages, String(message))).pipe(Effect.forkScoped)
-      const write = yield* socket.writer
+      const reader = yield* socket.reader
+      yield* Effect.gen(function* () {
+        while (true) for (const message of yield* reader.pull) yield* Queue.offer(messages, String(message))
+      }).pipe(Effect.forkScoped)
+      const { write } = yield* socket.writer
 
       expect(yield* Queue.take(messages)).toBe("protocol:chat")
       yield* write("hello")

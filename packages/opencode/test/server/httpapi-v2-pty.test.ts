@@ -145,16 +145,23 @@ describe("v2 pty HttpApi", () => {
 
         const socket = yield* Socket.makeWebSocket(
           `${(yield* serverUrl()).replace(/^http/, "ws")}/api/pty/${info.id}/connect?cursor=-1&location[directory]=${encodeURIComponent(dir)}`,
-          { closeCodeIsError: () => false },
         )
         const messages = yield* Queue.unbounded<string>()
-        yield* socket
-          .runRaw((message) =>
-            Queue.offer(messages, typeof message === "string" ? message : new TextDecoder().decode(message)),
-          )
-          .pipe(Effect.catch(() => Effect.void))
-          .pipe(Effect.forkScoped)
-        const write = yield* socket.writer
+        const reader = yield* socket.reader
+        yield* Effect.gen(function* () {
+          while (true) {
+            for (const message of yield* reader.pull) {
+              yield* Queue.offer(
+                messages,
+                typeof message === "string" ? message : new TextDecoder().decode(message),
+              )
+            }
+          }
+        }).pipe(
+          Effect.catch(() => Effect.void),
+          Effect.forkScoped,
+        )
+        const { write } = yield* socket.writer
 
         const takeUntil = (expected: string, seen = ""): Effect.Effect<string, unknown> =>
           Effect.gen(function* () {
@@ -220,18 +227,23 @@ describe("v2 pty HttpApi", () => {
 
         const socket = yield* Socket.makeWebSocket(
           `${(yield* serverUrl()).replace(/^http/, "ws")}/api/pty/${info.id}/connect?cursor=0&location[directory]=${encodeURIComponent(dir)}`,
-          { closeCodeIsError: () => false },
         )
         const messages = yield* Queue.unbounded<string>()
-        yield* socket
-          .runRaw((message) =>
-            Queue.offer(messages, typeof message === "string" ? message : new TextDecoder().decode(message)),
-          )
-          .pipe(
-            Effect.catch(() => Effect.void),
-            Effect.forkScoped,
-          )
-        const write = yield* socket.writer
+        const reader = yield* socket.reader
+        yield* Effect.gen(function* () {
+          while (true) {
+            for (const message of yield* reader.pull) {
+              yield* Queue.offer(
+                messages,
+                typeof message === "string" ? message : new TextDecoder().decode(message),
+              )
+            }
+          }
+        }).pipe(
+          Effect.catch(() => Effect.void),
+          Effect.forkScoped,
+        )
+        const { write } = yield* socket.writer
 
         const takeUntil = (expected: string, seen = ""): Effect.Effect<string, unknown> =>
           Effect.gen(function* () {

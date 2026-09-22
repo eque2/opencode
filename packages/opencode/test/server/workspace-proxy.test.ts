@@ -44,16 +44,14 @@ function listenTestServer<E, R>(handler: TestHandler<E, R>) {
 function echoWebSocket(request: HttpServerRequest.HttpServerRequest) {
   return Effect.gen(function* () {
     const socket = yield* Effect.orDie(request.upgrade)
-    const write = yield* socket.writer
+    const { write } = yield* socket.writer
     // The upstream announces the negotiated protocol, then echoes every
     // received frame. The assertions use those messages to prove proxy flow.
-    yield* socket
-      .runRaw((message) => write(`echo:${String(message)}`), {
-        onOpen: write(`protocol:${request.headers["sec-websocket-protocol"] ?? "none"}`).pipe(
-          Effect.catch(() => Effect.void),
-        ),
-      })
-      .pipe(Effect.catch(() => Effect.void))
+    yield* Effect.gen(function* () {
+      const reader = yield* socket.reader
+      yield* write(`protocol:${request.headers["sec-websocket-protocol"] ?? "none"}`)
+      while (true) for (const message of yield* reader.pull) yield* write(`echo:${String(message)}`)
+    }).pipe(Effect.catch(() => Effect.void))
     return HttpServerResponse.empty()
   })
 }
@@ -166,12 +164,14 @@ describe("HttpApi workspace proxy", () => {
       const proxyUrl = yield* listenServer((request) => HttpApiProxy.websocket(request, `${upstreamUrl}/echo`))
 
       const socket = yield* Socket.makeWebSocket(`${proxyUrl.replace(/^http/, "ws")}/proxy`, {
-        closeCodeIsError: () => false,
         protocols: "chat",
       })
       const messages = yield* Queue.unbounded<string>()
-      yield* socket.runRaw((message) => Queue.offer(messages, String(message))).pipe(Effect.forkScoped)
-      const write = yield* socket.writer
+      const reader = yield* socket.reader
+      yield* Effect.gen(function* () {
+        while (true) for (const message of yield* reader.pull) yield* Queue.offer(messages, String(message))
+      }).pipe(Effect.forkScoped)
+      const { write } = yield* socket.writer
 
       expect(yield* Queue.take(messages)).toBe("protocol:chat")
       yield* write("hello")
