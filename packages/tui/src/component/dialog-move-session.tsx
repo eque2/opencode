@@ -225,8 +225,10 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
       .remove({
         projectID: props.projectID,
         location: { directory: sdk.directory },
-        directory: selected.directory,
-        force: false,
+        projectCopyRemovePayload: {
+          directory: selected.directory,
+          force: false,
+        },
       })
       .catch((error) => ({ error }))
     if (result.error) {
@@ -247,8 +249,10 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
           .remove({
             projectID: props.projectID,
             location: { directory: sdk.directory },
-            directory: selected.directory,
-            force: true,
+            projectCopyRemovePayload: {
+              directory: selected.directory,
+              force: true,
+            },
           })
           .catch((error) => ({ error }))
         if (forced.error) {

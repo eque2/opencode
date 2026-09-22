@@ -41,9 +41,11 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
         {
           projectID,
           location: { directory: sdk.directory },
-          strategy: "git_worktree",
-          directory: path.join(paths.worktree, projectID.slice(0, 6)),
-          name: generated.data.name,
+          projectCopyCreatePayload: {
+            strategy: "git_worktree",
+            directory: path.join(paths.worktree, projectID.slice(0, 6)),
+            name: generated.data.name,
+          },
         },
         { throwOnError: true },
       )
