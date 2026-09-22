@@ -17,7 +17,7 @@ import type {
   AuthSetResponses,
   CommandListErrors,
   CommandListResponses,
-  Config as Config3,
+  Config1,
   ConfigGetErrors,
   ConfigGetResponses,
   ConfigProvidersErrors,
@@ -131,6 +131,8 @@ import type {
   PermissionV2Reply,
   PermissionV2Source,
   ProjectCommands,
+  ProjectCopyCreatePayload,
+  ProjectCopyRemovePayload,
   ProjectCurrentErrors,
   ProjectCurrentResponses,
   ProjectDirectoriesErrors,
@@ -1297,11 +1299,11 @@ export class Config extends HeyApiClient {
    */
   public update<ThrowOnError extends boolean = false>(
     parameters?: {
-      config?: Config3
+      config1?: Config1
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ key: "config", map: "body" }] }])
+    const params = buildClientParams([parameters], [{ args: [{ key: "config1", map: "body" }] }])
     return (options?.client ?? this.client).patch<GlobalConfigUpdateResponses, GlobalConfigUpdateErrors, ThrowOnError>({
       url: "/global/config",
       ...options,
@@ -1454,7 +1456,7 @@ export class Config2 extends HeyApiClient {
     parameters?: {
       directory?: string
       workspace?: string
-      config?: Config3
+      config1?: Config1
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1465,7 +1467,7 @@ export class Config2 extends HeyApiClient {
           args: [
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
-            { key: "config", map: "body" },
+            { key: "config1", map: "body" },
           ],
         },
       ],
@@ -6879,8 +6881,7 @@ export class ProjectCopy2 extends HeyApiClient {
         directory?: string
         workspace?: string
       }
-      directory?: string
-      force?: boolean
+      projectCopyRemovePayload?: ProjectCopyRemovePayload
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6891,8 +6892,7 @@ export class ProjectCopy2 extends HeyApiClient {
           args: [
             { in: "path", key: "projectID" },
             { in: "query", key: "location" },
-            { in: "body", key: "directory" },
-            { in: "body", key: "force" },
+            { key: "projectCopyRemovePayload", map: "body" },
           ],
         },
       ],
@@ -6920,9 +6920,7 @@ export class ProjectCopy2 extends HeyApiClient {
         directory?: string
         workspace?: string
       }
-      strategy?: string
-      directory?: string
-      name?: string
+      projectCopyCreatePayload?: ProjectCopyCreatePayload
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -6933,9 +6931,7 @@ export class ProjectCopy2 extends HeyApiClient {
           args: [
             { in: "path", key: "projectID" },
             { in: "query", key: "location" },
-            { in: "body", key: "strategy" },
-            { in: "body", key: "directory" },
-            { in: "body", key: "name" },
+            { key: "projectCopyCreatePayload", map: "body" },
           ],
         },
       ],
