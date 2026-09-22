@@ -18,7 +18,7 @@ export interface Result {
   readonly diagnostics: readonly Diagnostic[]
 }
 
-const decodeOptions = { errors: "all", onExcessProperty: "ignore", propertyOrder: "original" } as const
+const decodeOptions = { errors: "all", onExcessProperty: "ignore" } as const
 const Record = Schema.Record(Schema.String, Schema.Unknown)
 const Timeout = Schema.Struct({
   startup: Schema.optional(PositiveInt),
