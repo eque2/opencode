@@ -21,7 +21,7 @@ import {
   WorkspaceRoutingQueryFields,
 } from "../middleware/workspace-routing"
 import { ApiNotFoundError, PermissionNotFoundError, SessionBusyError } from "../errors"
-import { described } from "./metadata"
+import { described, NoContentPayload } from "./metadata"
 import { QueryBoolean } from "./query"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -201,8 +201,9 @@ export const SessionApi = HttpApi.make("session")
           }),
         ),
         HttpApiEndpoint.post("create", SessionPaths.create, {
-          query: WorkspaceRoutingQuery,
-          payload: [HttpApiSchema.NoContent, Session.CreateInput],
+          disableCodecs: true,
+          query: WorkspaceRoutingQueryFields,
+          payload: [NoContentPayload, Session.CreateInput],
           success: described(Session.Info, "Successfully created session"),
           error: HttpApiError.BadRequest,
         }).annotateMerge(
@@ -238,9 +239,10 @@ export const SessionApi = HttpApi.make("session")
           }),
         ),
         HttpApiEndpoint.post("fork", SessionPaths.fork, {
+          disableCodecs: true,
           params: { sessionID: SessionID },
-          query: WorkspaceRoutingQuery,
-          payload: [HttpApiSchema.NoContent, ForkPayload],
+          query: WorkspaceRoutingQueryFields,
+          payload: [NoContentPayload, ForkPayload],
           success: described(Session.Info, "200"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(

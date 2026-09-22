@@ -1,5 +1,7 @@
 import { Schema } from "effect"
-import { OpenApi } from "effect/unstable/httpapi"
+import { HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+
+export const NoContentPayload = Schema.Undefined.pipe(Schema.decodeTo(HttpApiSchema.NoContent))
 
 export function described<S extends Schema.Top>(schema: S, description: string): S {
   return schema.annotate({ description }) as S

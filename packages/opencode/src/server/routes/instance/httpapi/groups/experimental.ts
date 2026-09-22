@@ -6,7 +6,7 @@ import { SessionID } from "@/session/schema"
 import { Worktree } from "@/worktree"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { Schema } from "effect"
-import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { HttpApi, HttpApiEndpoint, HttpApiError, HttpApiGroup, OpenApi } from "effect/unstable/httpapi"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import {
@@ -14,7 +14,7 @@ import {
   WorkspaceRoutingQuery,
   WorkspaceRoutingQueryFields,
 } from "../middleware/workspace-routing"
-import { described } from "./metadata"
+import { described, NoContentPayload } from "./metadata"
 import { QueryBoolean } from "./query"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -185,8 +185,9 @@ export const ExperimentalApi = HttpApi.make("experimental")
           }),
         ),
         HttpApiEndpoint.post("worktreeCreate", ExperimentalPaths.worktree, {
-          query: WorkspaceRoutingQuery,
-          payload: [HttpApiSchema.NoContent, Worktree.CreateInput],
+          disableCodecs: true,
+          query: WorkspaceRoutingQueryFields,
+          payload: [NoContentPayload, Worktree.CreateInput],
           success: described(Worktree.Info, "Worktree created"),
           error: WorktreeApiError,
         }).annotateMerge(
