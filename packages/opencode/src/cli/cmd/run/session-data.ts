@@ -160,15 +160,10 @@ function formatUsage(
   return text
 }
 
-export function formatError(error: {
-  name?: string
-  message?: string
-  data?: {
-    message?: string
-  }
-}): string {
-  if (error.data?.message) {
-    return error.data.message
+export function formatError(error: { name?: string; message?: string; data?: unknown }): string {
+  const data = error.data
+  if (data && typeof data === "object" && "message" in data && typeof data.message === "string" && data.message) {
+    return data.message
   }
 
   if (error.message) {
