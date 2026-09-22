@@ -1,7 +1,8 @@
 diff --git a/dist/unstable/httpapi/HttpApiSchema.js b/dist/unstable/httpapi/HttpApiSchema.js
 --- a/dist/unstable/httpapi/HttpApiSchema.js
 +++ b/dist/unstable/httpapi/HttpApiSchema.js
-@@ -91,6 +91,6 @@ export const StreamSse = options => {
+@@ -88,7 +88,7 @@
+ export const StreamSse = options => {
    const events = options.events ?? (options.data === undefined ? undefined : Schema.Struct({
      ...Sse.EventEncoded.fields,
 -    data: Schema.fromJsonString(options.data)
@@ -9,25 +10,26 @@ diff --git a/dist/unstable/httpapi/HttpApiSchema.js b/dist/unstable/httpapi/Http
    }));
    if (events === undefined) {
      throw new Error("StreamSse requires either an events schema or a data schema");
-@@ -108,6 +108,14 @@ export const StreamSse = options => {
+@@ -101,6 +101,14 @@
+     contentType: options.contentType ?? defaultStreamContentType("sse"),
+     events,
      error: options.error ?? Schema.Never
-   });
- };
++  });
++};
 +const sseDataJsonSchema = data => {
 +  const identifier = SchemaAST.resolveIdentifier(data.ast);
 +  return identifier === undefined ? Schema.fromJsonString(data) : Schema.fromJsonString(data).annotate({
 +    // The SSE transport field is a JSON string. Give that wrapper its own
 +    // OpenAPI identifier so it does not claim the decoded data schema's name.
 +    identifier: `${identifier}Stream`
-+  });
-+};
+   });
+ };
  /**
-  * Creates a streaming `Uint8Array` success response schema.
-  *
 diff --git a/src/unstable/httpapi/HttpApiSchema.ts b/src/unstable/httpapi/HttpApiSchema.ts
 --- a/src/unstable/httpapi/HttpApiSchema.ts
 +++ b/src/unstable/httpapi/HttpApiSchema.ts
-@@ -386,6 +386,6 @@ export const StreamSse: {
+@@ -382,7 +382,7 @@
+ }): StreamSse<Sse.EventCodec, Schema.Top, unknown> => {
    const events = options.events ?? (options.data === undefined ? undefined : Schema.Struct({
      ...Sse.EventEncoded.fields,
 -    data: Schema.fromJsonString(options.data)
@@ -35,19 +37,18 @@ diff --git a/src/unstable/httpapi/HttpApiSchema.ts b/src/unstable/httpapi/HttpAp
    }))
    if (events === undefined) {
      throw new Error("StreamSse requires either an events schema or a data schema")
-@@ -403,6 +403,15 @@ export const StreamSse: {
-   })
- }
- 
+@@ -395,6 +395,14 @@
+     contentType: options.contentType ?? defaultStreamContentType("sse"),
+     events,
+     error: options.error ?? Schema.Never
++  })
++}
 +const sseDataJsonSchema = (data: Schema.Constraint) => {
 +  const identifier = SchemaAST.resolveIdentifier(data.ast)
 +  return identifier === undefined ? Schema.fromJsonString(data) : Schema.fromJsonString(data).annotate({
 +    // The SSE transport field is a JSON string. Give that wrapper its own
 +    // OpenAPI identifier so it does not claim the decoded data schema's name.
 +    identifier: `${identifier}Stream`
-+  })
-+}
-+
- /**
-  * Creates a streaming `Uint8Array` success response schema.
-  *
+   })
+ }
+ 
