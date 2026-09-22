@@ -140,7 +140,7 @@ function expandHome(resource: string, home: string) {
 function discover(fs: FSUtil.Interface, directory: string) {
   return Effect.forEach(legacySources, (source) =>
     fs
-      .glob(source.pattern, { cwd: directory, absolute: true, dot: true, symlink: true })
+      .scan(source.pattern, { cwd: directory, absolute: true, dot: true, symlink: true })
       .pipe(
         Effect.map((files) => files.toSorted().map((filepath) => ({ directory, filepath, primary: source.primary }))),
       ),
@@ -163,10 +163,10 @@ function decode(file: { directory: string; filepath: string; primary: boolean },
   const agent = Option.getOrUndefined(
     legacy
       ? Option.map(
-          decodeLegacyAgent({ name, ...markdown.data, prompt: body }, { errors: "all", propertyOrder: "original" }),
+          decodeLegacyAgent({ name, ...markdown.data, prompt: body }, { errors: "all" }),
           ConfigMigrateV1.migrateAgent,
         )
-      : decodeAgent({ ...markdown.data, system: body }, { errors: "all", propertyOrder: "original" }),
+      : decodeAgent({ ...markdown.data, system: body }, { errors: "all" }),
   )
   if (!agent) return
   const info = Option.getOrUndefined(
