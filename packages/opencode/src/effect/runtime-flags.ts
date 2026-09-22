@@ -3,7 +3,7 @@ import { ConfigService } from "@/effect/config-service"
 
 const bool = (name: string) => Config.Boolean(name).pipe(Config.withDefault(false))
 const positiveInteger = (name: string) =>
-  Config.number(name).pipe(
+  Config.Number(name).pipe(
     Config.map((value) => (Number.isInteger(value) && value > 0 ? value : undefined)),
     Config.orElse(() => Config.succeed(undefined)),
   )
