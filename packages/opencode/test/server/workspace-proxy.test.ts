@@ -50,7 +50,12 @@ function echoWebSocket(request: HttpServerRequest.HttpServerRequest) {
     yield* Effect.gen(function* () {
       const reader = yield* socket.reader
       yield* write(`protocol:${request.headers["sec-websocket-protocol"] ?? "none"}`)
-      while (true) for (const message of yield* reader.pull) yield* write(`echo:${String(message)}`)
+      while (true) {
+        for (const message of yield* reader.pull) {
+          const text = typeof message === "string" ? message : new TextDecoder().decode(message)
+          yield* write(`echo:${text}`)
+        }
+      }
     }).pipe(Effect.catch(() => Effect.void))
     return HttpServerResponse.empty()
   })
