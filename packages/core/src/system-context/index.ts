@@ -53,7 +53,11 @@ export const SourceSnapshot = Schema.Struct({
 export type SourceSnapshot = typeof SourceSnapshot.Type
 
 /** Durable structured comparison state for one active context generation. */
-export const Snapshot = Schema.Record(Key, SourceSnapshot)
+export const Snapshot = Schema.Record(Schema.String, SourceSnapshot).check(
+  Schema.makeFilter((snapshot) =>
+    Object.keys(snapshot).every(Schema.is(Key)) ? undefined : "Expected namespaced system context keys",
+  ),
+)
 export type Snapshot = Readonly<Record<string, SourceSnapshot>>
 
 export interface Generation {
