@@ -2,7 +2,7 @@ import path from "path"
 import fs from "fs/promises"
 import { describe, expect } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
-import { FastCheck } from "effect/testing"
+import { Arbitrary } from "effect/unstable/arbitrary"
 import { Config } from "@opencode-ai/core/config"
 import { ConfigProvider } from "@opencode-ai/core/config/provider"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -77,13 +77,16 @@ describe("Config", () => {
   )
 
   it.effect("migrates arbitrary v1 configuration into valid v2 configuration", () =>
-    Effect.sync(() => {
-      FastCheck.assert(
-        FastCheck.property(Schema.toArbitrary(ConfigV1.Info), (info) => {
+    Effect.gen(function* () {
+      const result = yield* Arbitrary.checkEffect(
+        Arbitrary.schema(ConfigV1.Info),
+        (info) => {
           Schema.decodeUnknownSync(Config.Info)(ConfigMigrateV1.migrate(info), { errors: "all" })
-        }),
-        { numRuns: 100 },
+          return true
+        },
+        { runs: 100 },
       )
+      expect(Arbitrary.formatCheckFailure(result)).toBeUndefined()
     }),
   )
 
