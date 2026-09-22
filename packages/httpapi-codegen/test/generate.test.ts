@@ -16,11 +16,11 @@ import {
 import { it } from "./effect"
 import { Api as FixtureApi, Missing } from "./fixture"
 
-function api(endpoint: HttpApiEndpoint.Any) {
+function api(endpoint: HttpApiEndpoint.Constraint) {
   return HttpApi.make("test").add(HttpApiGroup.make("session").add(endpoint))
 }
 
-function compile<Id extends string, Groups extends HttpApiGroup.Any>(source: HttpApi.HttpApi<Id, Groups>) {
+function compile<Id extends string, Groups extends HttpApiGroup.Constraint>(source: HttpApi.HttpApi<Id, Groups>) {
   return emitEffect(compileContract(source))
 }
 
@@ -159,7 +159,7 @@ describe("HttpApiCodegen.generate", () => {
     )
     const contract = compileContract(source, { omitEndpoints: new Set(["pty.connect"]) })
 
-    expect(contract.groups[0]?.endpoints.map((endpoint) => endpoint.endpoint.name)).toEqual(["pty.get"])
+    expect(contract.groups[0]?.endpoints.map((endpoint) => endpoint.endpoint.identifier)).toEqual(["pty.get"])
   })
 
   test("uses bracket access for input field names", () => {
@@ -227,19 +227,22 @@ describe("HttpApiCodegen.generate", () => {
   })
 
   test("supports name-discriminated Promise errors", () => {
-    class NamedError extends Schema.ErrorClass<NamedError>("NamedError")(
+    class NamedError extends Schema.Error<NamedError>("NamedError")(
       { name: Schema.Literal("NamedError"), message: Schema.String },
       { httpApiStatus: 400 },
     ) {}
-    const output = emitPromise(
-      compileContract(
-        api(HttpApiEndpoint.get("get", "/session", { success: Schema.NumberFromString, error: NamedError })),
-      ),
+    const contract = compileContract(
+      api(HttpApiEndpoint.get("get", "/session", { success: Schema.String, error: NamedError })),
     )
+    const output = emitPromise(contract)
+    const effect = emitEffect(contract)
     const types = output.files.find((file) => file.path === "types.ts")?.content
 
     expect(types).toContain('readonly "name": "NamedError"')
     expect(types).toContain('"name" in value && value["name"] === "NamedError"')
+    expect(effect.files.find((file) => file.path === "session.ts")?.content).toContain(
+      'extends Schema.Error<Endpoint0Error0Class>("NamedError")',
+    )
   })
 
   test("preserves reflected default error statuses", () => {
@@ -857,7 +860,7 @@ describe("HttpApiCodegen.generate", () => {
       new SchemaAST.Link(Schema.String.check(Schema.isMinLength(2)).ast, link.transformation),
     ])
     if (!SchemaAST.isAST(ast)) throw new Error("Expected altered schema AST")
-    const Altered = Schema.make(ast)
+    const Altered = Schema.make<Schema.Top>(ast)
 
     expect(() => compile(api(HttpApiEndpoint.get("get", "/session", { success: Altered })))).toThrow(
       "Effect schema requires authoritative import: session.get",
