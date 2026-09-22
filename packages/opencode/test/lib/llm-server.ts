@@ -706,7 +706,7 @@ export class TestLLMServer extends Context.Service<TestLLMServer, TestLLMServer.
 
       return TestLLMServer.of({
         url:
-          server.address._tag === "TcpAddress"
+          server.address._tag === "InetAddressV4" || server.address._tag === "InetAddressV6"
             ? `http://127.0.0.1:${server.address.port}/v1`
             : `unix://${server.address.path}/v1`,
         push: Effect.fn("TestLLMServer.push")(function* (...input: (Item | Reply)[]) {
