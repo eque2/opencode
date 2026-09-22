@@ -53,7 +53,7 @@ export const makeQuestionGroup = <
         params: { sessionID: Session.ID, requestID: Question.ID },
         payload: Question.Reply,
         success: HttpApiSchema.NoContent,
-        error: [SessionNotFoundError, QuestionNotFoundError],
+        error: [QuestionNotFoundError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(
@@ -68,7 +68,7 @@ export const makeQuestionGroup = <
       HttpApiEndpoint.post("session.question.reject", "/api/session/:sessionID/question/:requestID/reject", {
         params: { sessionID: Session.ID, requestID: Question.ID },
         success: HttpApiSchema.NoContent,
-        error: [SessionNotFoundError, QuestionNotFoundError],
+        error: [QuestionNotFoundError, SessionNotFoundError],
       })
         .middleware(sessionLocationMiddleware)
         .annotateMerge(

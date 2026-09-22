@@ -1,3 +1,5 @@
+import { OpenCodeEvent } from "@opencode-ai/protocol/groups/event"
+import { Schema } from "effect"
 import { OpenApi } from "effect/unstable/httpapi"
 import { OpenCodeHttpApi } from "./api"
 import { QueryBooleanOpenApi } from "./groups/query"
@@ -34,6 +36,8 @@ type OpenApiSchema = {
   additionalProperties?: OpenApiSchema | boolean
   allOf?: OpenApiSchema[]
   anyOf?: OpenApiSchema[]
+  contentMediaType?: string
+  contentSchema?: OpenApiSchema
   description?: string
   enum?: Array<string | boolean>
   items?: OpenApiSchema
@@ -81,6 +85,8 @@ const LegacyComponentDescriptions: Record<string, string> = {
 
 function matchLegacyOpenApi(input: Record<string, unknown>) {
   const spec = input as OpenApiSpec
+
+  addV2EventComponents(spec)
 
   // Effect's multi-document JSON Schema deduplicator can produce self-referencing
   // component schemas (e.g. `{"$ref":"#/components/schemas/X"}` as the definition
@@ -239,7 +245,12 @@ function normalizeComponentNames(spec: OpenApiSpec) {
       if (stableSchema(schemas[name], schemas) === stableSchema(schemas[next], schemas)) {
         rewriteRefs(spec, name, next)
         delete schemas[name]
+        continue
       }
+      const available = nextAvailableComponentName(schemas, next)
+      schemas[available] = schemas[name]
+      rewriteRefs(spec, name, available)
+      delete schemas[name]
       continue
     }
     schemas[next] = schemas[name]
@@ -248,13 +259,46 @@ function normalizeComponentNames(spec: OpenApiSpec) {
   }
 }
 
+function nextAvailableComponentName(schemas: Record<string, OpenApiSchema>, base: string) {
+  let suffix = 2
+  while (schemas[`${base}${suffix}`]) suffix += 1
+  return `${base}${suffix}`
+}
+
 function componentTypeName(name: string) {
-  if (!name.includes(".")) return name
-  return name
+  const decoded = name.endsWith("Encoded") ? name.slice(0, -"Encoded".length) : name
+  if (!decoded.includes(".")) return decoded
+  return decoded
     .split(".")
     .filter((part) => !/^\d+$/.test(part))
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join("")
+}
+
+function addV2EventComponents(spec: OpenApiSpec) {
+  const schemas = spec.components?.schemas
+  if (!schemas) return
+  const document = Schema.toJsonSchemaDocument(OpenCodeEvent, { onExcessProperty: "error" })
+  for (const [name, schema] of Object.entries(document.definitions)) {
+    if (schemas[name] || schemas[`${name}Encoded`]) continue
+    schemas[name] = rewriteJsonSchemaDefinitionRefs(structuredClone(schema)) as OpenApiSchema
+  }
+  const stream = schemas.V2EventStreamEncoded ?? schemas.V2EventStream
+  if (stream) {
+    stream.contentMediaType = "application/json"
+    stream.contentSchema = { $ref: "#/components/schemas/V2Event" }
+  }
+}
+
+function rewriteJsonSchemaDefinitionRefs(input: unknown): unknown {
+  if (Array.isArray(input)) return input.map(rewriteJsonSchemaDefinitionRefs)
+  if (!input || typeof input !== "object") return input
+  const output = input as Record<string, unknown>
+  if (typeof output.$ref === "string" && output.$ref.startsWith("#/$defs/")) {
+    output.$ref = output.$ref.replace("#/$defs/", "#/components/schemas/")
+  }
+  for (const [key, value] of Object.entries(output)) output[key] = rewriteJsonSchemaDefinitionRefs(value)
+  return output
 }
 
 function applyLegacySchemaOverrides(spec: OpenApiSpec) {
