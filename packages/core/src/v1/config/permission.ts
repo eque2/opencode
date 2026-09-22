@@ -11,29 +11,8 @@ export type Object = Schema.Schema.Type<typeof Object>
 export const Rule = Schema.Union([Action, Object]).annotate({ identifier: "PermissionRuleConfig" })
 export type Rule = Schema.Schema.Type<typeof Rule>
 
-// Known permission keys get explicit types in the Effect schema for generated
-// docs/types. Runtime config parsing uses Effect's `propertyOrder: "original"`
-// parse option so user key order is preserved for permission precedence.
-const InputObject = Schema.StructWithRest(
-  Schema.Struct({
-    read: Schema.optional(Rule),
-    edit: Schema.optional(Rule),
-    glob: Schema.optional(Rule),
-    grep: Schema.optional(Rule),
-    list: Schema.optional(Rule),
-    bash: Schema.optional(Rule),
-    task: Schema.optional(Rule),
-    external_directory: Schema.optional(Rule),
-    todowrite: Schema.optional(Action),
-    question: Schema.optional(Action),
-    webfetch: Schema.optional(Action),
-    websearch: Schema.optional(Action),
-    lsp: Schema.optional(Rule),
-    doom_loop: Schema.optional(Action),
-    skill: Schema.optional(Rule),
-  }),
-  [Schema.Record(Schema.String, Rule)],
-)
+// A record keeps the source key order. Permission precedence depends on this order.
+const InputObject = Schema.Record(Schema.String, Rule)
 
 const InputSchema = Schema.Union([Action, InputObject])
 
