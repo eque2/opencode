@@ -36,15 +36,15 @@ const SessionsQueryFields = {
 const SessionsDirectoryQuery = Schema.Struct({
   ...SessionsQueryFields,
   directory: AbsolutePath,
-})
+}).annotate({ identifier: "SessionsDirectoryQuery" })
 
 const SessionsProjectQuery = Schema.Struct({
   ...SessionsQueryFields,
   project: Project.ID,
   subpath: RelativePath.pipe(Schema.optional),
-})
+}).annotate({ identifier: "SessionsProjectQuery" })
 
-const SessionsAllQuery = Schema.Struct(SessionsQueryFields)
+const SessionsAllQuery = Schema.Struct(SessionsQueryFields).annotate({ identifier: "SessionsAllQuery" })
 
 const withCursor = <Fields extends Schema.Struct.Fields>(schema: Schema.Struct<Fields>) =>
   schema.mapFields((fields) => ({
@@ -89,7 +89,7 @@ const SessionHistoryLimit = PositiveInt.check(Schema.isLessThanOrEqualTo(100))
 export const SessionHistoryQuery = Schema.Struct({
   limit: Schema.NumberFromString.pipe(Schema.decodeTo(SessionHistoryLimit), Schema.optional),
   after: Schema.NumberFromString.pipe(Schema.decodeTo(NonNegativeInt), Schema.optional),
-})
+}).annotate({ identifier: "SessionHistoryQuery" })
 
 const SessionsQueryCursor = SessionsCursor.annotate({
   description: "Opaque pagination cursor returned as cursor.previous or cursor.next in the previous response.",

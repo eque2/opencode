@@ -8,14 +8,14 @@ import { LocationQuery, locationQueryOpenApi } from "./location"
 const ListQuery = Schema.Struct({
   ...LocationQuery.fields,
   path: RelativePath.pipe(Schema.optional),
-})
+}).annotate({ identifier: "FileSystemListQuery" })
 
 const FindQuery = Schema.Struct({
   ...LocationQuery.fields,
   query: FileSystem.FindInput.fields.query,
   type: FileSystem.FindInput.fields.type,
   limit: Schema.NumberFromString.pipe(Schema.decodeTo(PositiveInt), Schema.optional),
-})
+}).annotate({ identifier: "FileSystemFindQuery" })
 
 export const FileSystemGroup = HttpApiGroup.make("server.fs")
   .add(
