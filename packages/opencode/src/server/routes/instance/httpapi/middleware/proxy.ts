@@ -72,9 +72,7 @@ export function websocket(
         Effect.forkScoped,
       )
 
-      yield* forward(inbound, (message) =>
-        writeOutbound(typeof message === "string" ? message : message.slice()),
-      ).pipe(
+      yield* forward(inbound, (message) => writeOutbound(typeof message === "string" ? message : message.slice())).pipe(
         Effect.catch(() => Effect.void),
         Effect.ensuring(writeOutbound(new Socket.CloseEvent()).pipe(Effect.catch(() => Effect.void))),
       )

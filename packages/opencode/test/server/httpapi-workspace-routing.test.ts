@@ -423,9 +423,12 @@ describe("HttpApi workspace routing middleware", () => {
       // detect the WebSocket upgrade and proxy it to the remote /base/probe.
       yield* serveProbe
 
-      const socket = yield* Socket.makeWebSocket(`${(yield* serverUrl).replace(/^http/, "ws")}/probe?workspace=${workspace.id}`, {
-        protocols: "chat",
-      })
+      const socket = yield* Socket.makeWebSocket(
+        `${(yield* serverUrl).replace(/^http/, "ws")}/probe?workspace=${workspace.id}`,
+        {
+          protocols: "chat",
+        },
+      )
       const messages = yield* Queue.unbounded<string>()
       const reader = yield* socket.reader
       yield* Effect.gen(function* () {

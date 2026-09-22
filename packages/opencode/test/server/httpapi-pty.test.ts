@@ -273,10 +273,7 @@ describe("pty HttpApi bridge", () => {
         yield* Effect.gen(function* () {
           while (true) {
             for (const message of yield* reader.pull) {
-              yield* Queue.offer(
-                messages,
-                typeof message === "string" ? message : new TextDecoder().decode(message),
-              )
+              yield* Queue.offer(messages, typeof message === "string" ? message : new TextDecoder().decode(message))
             }
           }
         }).pipe(
