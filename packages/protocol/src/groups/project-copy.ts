@@ -6,7 +6,7 @@ import { LocationQuery, locationQueryOpenApi } from "./location"
 
 const root = "/experimental/project/:projectID/copy"
 
-export class ProjectCopyError extends Schema.ErrorClass<ProjectCopyError>("ProjectCopyError")(
+export class ProjectCopyError extends Schema.Error<ProjectCopyError>("ProjectCopyError")(
   {
     name: Schema.Literal("ProjectCopyError"),
     data: Schema.Struct({
@@ -17,8 +17,12 @@ export class ProjectCopyError extends Schema.ErrorClass<ProjectCopyError>("Proje
   { httpApiStatus: 400 },
 ) {}
 
-const CreatePayload = Schema.Struct(Struct.omit(ProjectCopy.CreateInput.fields, ["projectID", "sourceDirectory"]))
-const RemovePayload = Schema.Struct(Struct.omit(ProjectCopy.RemoveInput.fields, ["projectID"]))
+const CreatePayload = Schema.Struct(
+  Struct.omit(ProjectCopy.CreateInput.fields, ["projectID", "sourceDirectory"]),
+).annotate({ identifier: "ProjectCopyCreatePayload" })
+const RemovePayload = Schema.Struct(Struct.omit(ProjectCopy.RemoveInput.fields, ["projectID"])).annotate({
+  identifier: "ProjectCopyRemovePayload",
+})
 
 export const ProjectCopyGroup = HttpApiGroup.make("server.projectCopy")
   .add(
