@@ -256,6 +256,11 @@ export const StepFinishPart = Schema.Struct({
 }).annotate({ identifier: "StepFinishPart" })
 export type StepFinishPart = Types.DeepMutable<Schema.Schema.Type<typeof StepFinishPart>>
 
+// Unsafe compatibility boundary: tool input and metadata come from model tool calls,
+// from the plugin API (tool.execute.before args, tool.execute.after metadata and the
+// tool context metadata are typed `any`) and from in-process writers that leave
+// undefined-valued keys. The durable event commit encodes event data on the type
+// side, so Schema.Json would reject these legacy values.
 export const ToolStatePending = Schema.Struct({
   status: Schema.Literal("pending"),
   input: Schema.Record(Schema.String, Schema.Any),
