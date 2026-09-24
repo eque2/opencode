@@ -1,7 +1,7 @@
 export * as PluginV2 from "./plugin"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect, Exit, Layer, MutableHashMap, Option, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Layer, MutableHashMap, MutableHashSet, Option, Scope } from "effect"
 import type { Plugin as PluginRuntime } from "@opencode-ai/plugin/v2/effect"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import { AgentV2 } from "./agent"
@@ -35,18 +35,20 @@ const layer = Layer.effect(
     const locks = KeyedMutex.makeUnsafe<ID>()
     const scope = yield* Scope.make()
     const active = MutableHashMap.empty<ID, Scope.Closeable>()
-    const loading = new Set<ID>()
-    const waiters = MutableHashMap.empty<ID, Set<Deferred.Deferred<void>>>()
+    const loading = MutableHashSet.empty<ID>()
+    // Waiters stay in arrays: Effect equality is structural, so two pending
+    // Deferreds would be one HashSet element. Each waiter needs its own slot.
+    const waiters = MutableHashMap.empty<ID, ReadonlyArray<Deferred.Deferred<void>>>()
     const failures = MutableHashMap.empty<ID, Exit.Exit<void, never>>()
     const waitersOf = (id: ID) => Option.getOrElse(MutableHashMap.get(waiters, id), () => [])
     let host: Parameters<PluginRuntime["effect"]>[0]
 
     const add = Effect.fn("Plugin.add")(function* (id: ID, effect: PluginRuntime["effect"]) {
-      if (loading.has(id)) return yield* Effect.die(`Plugin load cycle detected for ${id}`)
+      if (MutableHashSet.has(loading, id)) return yield* Effect.die(`Plugin load cycle detected for ${id}`)
 
       yield* locks.withLock(id)(
         Effect.sync(() => {
-          loading.add(id)
+          MutableHashSet.add(loading, id)
           MutableHashMap.remove(failures, id)
         }).pipe(
           Effect.andThen(
@@ -78,13 +80,13 @@ const layer = Layer.effect(
               discard: true,
             }).pipe(Effect.ensuring(Effect.sync(() => MutableHashMap.remove(waiters, id))))
           }),
-          Effect.ensuring(Effect.sync(() => loading.delete(id))),
+          Effect.ensuring(Effect.sync(() => MutableHashSet.remove(loading, id))),
         ),
       )
     })
 
     const remove = Effect.fn("Plugin.remove")(function* (id: ID) {
-      if (loading.has(id)) return yield* Effect.die(`Cannot remove plugin ${id} while it is loading`)
+      if (MutableHashSet.has(loading, id)) return yield* Effect.die(`Cannot remove plugin ${id} while it is loading`)
 
       yield* locks.withLock(id)(
         State.batch(
@@ -105,9 +107,7 @@ const layer = Layer.effect(
           if (MutableHashMap.has(active, id)) return false
           const failure = MutableHashMap.get(failures, id)
           if (Option.isSome(failure)) return failure.value
-          const current = Option.getOrElse(MutableHashMap.get(waiters, id), () => new Set<Deferred.Deferred<void>>())
-          current.add(waiter)
-          MutableHashMap.set(waiters, id, current)
+          MutableHashMap.set(waiters, id, [...waitersOf(id), waiter])
           return true
         }),
       )
@@ -117,10 +117,12 @@ const layer = Layer.effect(
         Effect.ensuring(
           locks.withLock(id)(
             Effect.sync(() => {
-              const current = MutableHashMap.get(waiters, id)
-              if (Option.isNone(current)) return
-              current.value.delete(waiter)
-              if (current.value.size === 0) MutableHashMap.remove(waiters, id)
+              const rest = waitersOf(id).filter((item) => item !== waiter)
+              if (rest.length > 0) {
+                MutableHashMap.set(waiters, id, rest)
+                return
+              }
+              MutableHashMap.remove(waiters, id)
             }),
           ),
         ),
