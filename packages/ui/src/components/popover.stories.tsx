@@ -56,8 +56,6 @@ export const Basic = story.Basic
 
 export const NoHeader = {
   args: {
-    title: undefined,
-    description: undefined,
     children: "Popover body only",
   },
 }
