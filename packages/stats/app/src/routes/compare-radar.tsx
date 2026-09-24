@@ -229,18 +229,18 @@ function buildRadarAxes(catalogModels: readonly ModelCatalogEntry[]): RadarAxis[
 }
 
 function benchmarkScoreGroups(catalogModels: readonly ModelCatalogEntry[], includeHarness = false) {
-  return catalogModels.reduce<Map<string, number[]>>((groups, model) => {
+  return catalogModels.reduce((groups, model) => {
     model.benchmarks
-      .reduce<Map<string, number>>((scores, benchmark) => {
+      .reduce((scores, benchmark) => {
         const key = benchmarkKey(benchmark, includeHarness)
         scores.set(key, Math.max(scores.get(key) ?? -Infinity, benchmark.score))
         return scores
-      }, new Map())
+      }, new Map<string, number>())
       .forEach((score, key) => {
         groups.set(key, [...(groups.get(key) ?? []), score])
       })
     return groups
-  }, new Map())
+  }, new Map<string, number[]>())
 }
 
 function benchmarkKey(benchmark: ModelCatalogBenchmark, includeHarness: boolean) {
