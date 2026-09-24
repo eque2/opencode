@@ -41,7 +41,7 @@ export function useFilteredList<T>(props: FilteredListProps<T>) {
           const skipped = skipFilter ? x.filter(skipFilter) : []
           const filtered =
             !props.filterKeys && Array.isArray(filterable) && filterable.every((e) => typeof e === "string")
-              ? (fuzzysort.go(needle, filterable).map((x) => x.target) as T[])
+              ? fuzzysort.go(needle, filterable, { key: (item) => item }).map((x) => x.obj)
               : fuzzysort.go(needle, filterable, { keys: props.filterKeys! }).map((x) => x.obj)
           return skipped.length ? [...filtered, ...skipped] : filtered
         },

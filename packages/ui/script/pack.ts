@@ -4,13 +4,26 @@ import { $ } from "bun"
 import { rm } from "node:fs/promises"
 import path from "node:path"
 
+type PackageManifest = Record<string, unknown> & {
+  name: string
+  version: string
+  exports: Record<string, unknown>
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function isPackageManifest(value: unknown): value is PackageManifest {
+  return (
+    isRecord(value) && typeof value.name === "string" && typeof value.version === "string" && isRecord(value.exports)
+  )
+}
+
 export async function pack() {
   const original = await Bun.file("package.json").text()
-  const pkg = JSON.parse(original) as {
-    name: string
-    version: string
-    exports: Record<string, string | { types: string; import: string }>
-  }
+  const pkg: unknown = JSON.parse(original)
+  if (!isPackageManifest(pkg)) throw new Error("package.json must declare a name, a version, and an exports map")
   const tarball = path.resolve(`${pkg.name.replace("@", "").replace("/", "-")}-${pkg.version}.tgz`)
 
   await $`bun run build`
