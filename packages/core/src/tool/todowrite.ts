@@ -20,7 +20,9 @@ export const Output = Schema.Struct({
 }).annotate({ identifier: "TodoWriteTool.Output" })
 export type Output = typeof Output.Type
 
-export const toModelOutput = (output: Output) => JSON.stringify(output.todos, null, 2)
+const encodeTodos = Schema.encodeSync(Schema.fromJsonString(Schema.Array(SessionTodo.Info), { space: 2 }))
+
+export const toModelOutput = (output: Output) => encodeTodos(output.todos)
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {
