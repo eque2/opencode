@@ -1,5 +1,5 @@
 import React from "react"
-import { AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion"
+import { AbsoluteFill, Easing, interpolate, useCurrentFrame } from "remotion"
 import { days, launchIndex, glmWeekTokensT, segments } from "./data"
 
 // stats.opencode.ai design tokens (light theme)
@@ -50,7 +50,6 @@ function DataWordmark({ height = 30, color = c.ink }: { height?: number; color?:
 
 export function GLM52Rise() {
   const frame = useCurrentFrame()
-  const { fps } = useVideoConfig()
 
   // ---------- virtual camera ----------
   // open zoomed-in on the field, pan right while the blue fills, then pull back to reveal.
