@@ -1,6 +1,8 @@
 import { Show, createEffect, createMemo, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Effect, Option } from "effect"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
+import { createFiberSlot } from "./fiber-slot"
 
 function common(active: string, done: string) {
   const a = Array.from(active)
@@ -14,9 +16,9 @@ function common(active: string, done: string) {
   }
 }
 
-function contentWidth(el: HTMLSpanElement | undefined) {
-  if (!el) return
-  return `${Math.ceil(el.getBoundingClientRect().width)}px`
+function contentWidth(el: HTMLSpanElement | undefined): Option.Option<string> {
+  if (!el) return Option.none()
+  return Option.some(`${Math.ceil(el.getBoundingClientRect().width)}px`)
 }
 
 export function ToolStatusTitle(props: {
@@ -34,27 +36,31 @@ export function ToolStatusTitle(props: {
   const activeTail = createMemo(() => (suffix() ? split().active : props.activeText))
   const doneTail = createMemo(() => (suffix() ? split().done : props.doneText))
 
-  const [state, setState] = createStore({
+  const [state, setState] = createStore<{ active: boolean; animating: boolean; width: Option.Option<string> }>({
     active: props.active,
     animating: false,
-    width: undefined as string | undefined,
+    width: Option.none(),
   })
-  const width = () => state.width
+  // The style prop takes string | undefined, and an absent width clears the inline width.
+  const width = () => Option.getOrUndefined(state.width)
   const active = () => state.active
   const animating = () => state.animating
   let activeRef: HTMLSpanElement | undefined
   let doneRef: HTMLSpanElement | undefined
   let widthRef: HTMLSpanElement | undefined
-  let frame: number | undefined
-  let finishTimer: ReturnType<typeof setTimeout> | undefined
+  let frame: Option.Option<number> = Option.none()
+  const finishTimer = createFiberSlot()
+
+  const settle = () => {
+    setState("animating", false)
+    setState("width", Option.none())
+  }
 
   const finish = () => {
-    if (frame !== undefined) cancelAnimationFrame(frame)
-    if (finishTimer !== undefined) clearTimeout(finishTimer)
-    frame = undefined
-    finishTimer = undefined
-    setState("animating", false)
-    setState("width", undefined)
+    if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
+    frame = Option.none()
+    finishTimer.interrupt()
+    settle()
   }
 
   const animate = () => {
@@ -62,20 +68,23 @@ export function ToolStatusTitle(props: {
     const next = props.active
     finish()
     setState("active", next)
-    if (!first) return
+    if (Option.isNone(first)) return
 
     setState("animating", true)
     setState("width", first)
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-      const last = contentWidth(next ? activeRef : doneRef)
-      if (!last) {
-        finish()
-        return
-      }
-      if (first !== last) setState("width", last)
-      finishTimer = setTimeout(finish, 600)
-    })
+    frame = Option.some(
+      requestAnimationFrame(() => {
+        frame = Option.none()
+        const last = contentWidth(next ? activeRef : doneRef)
+        if (Option.isNone(last)) {
+          finish()
+          return
+        }
+        if (first.value !== last.value) setState("width", last)
+        // The frame is already done here, so the timer only settles the state, as finish() did.
+        finishTimer.run(Effect.sleep("600 millis").pipe(Effect.andThen(Effect.sync(settle))))
+      }),
+    )
   }
 
   createEffect(on([() => props.active, activeTail, doneTail], () => animate(), { defer: true }))
