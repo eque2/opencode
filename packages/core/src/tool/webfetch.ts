@@ -2,7 +2,7 @@ export * as WebFetchTool from "./webfetch"
 
 import { ToolFailure } from "@opencode-ai/llm"
 import { Duration, Effect, Layer, Schema } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
 import { makeLocationNode } from "../effect/app-node"
@@ -70,20 +70,10 @@ const headers = (format: Format, userAgent: string) => ({
 const browserUserAgent =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
 
-const isCloudflareChallenge = (error: unknown) => {
-  if (!error || typeof error !== "object" || !("reason" in error)) return false
-  const reason = error.reason
-  if (
-    !reason ||
-    typeof reason !== "object" ||
-    !("_tag" in reason) ||
-    reason._tag !== "StatusCodeError" ||
-    !("response" in reason)
-  )
-    return false
-  const response = reason.response as HttpClientResponse.HttpClientResponse
-  return response.status === 403 && response.headers["cf-mitigated"] === "challenge"
-}
+const isCloudflareChallenge = (error: HttpClientError.HttpClientError) =>
+  error.reason._tag === "StatusCodeError" &&
+  error.reason.response.status === 403 &&
+  error.reason.response.headers["cf-mitigated"] === "challenge"
 
 const request = (url: string, format: Format, userAgent = browserUserAgent) =>
   HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers(format, userAgent)))
