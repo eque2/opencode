@@ -68,6 +68,11 @@ const FeishuEvent = Schema.Struct({
   ),
 }).annotate({ identifier: "FeishuEvent" })
 
+/** The JSON a Feishu text message carries in `content`. */
+const FeishuText = Schema.Struct({
+  text: Schema.String,
+}).annotate({ identifier: "FeishuText" })
+
 export class SyncServer extends DurableObject<Env> {
   // oxlint-disable-next-line no-useless-constructor
   constructor(ctx: DurableObjectState, env: Env) {
@@ -326,14 +331,12 @@ export default new Hono<{ Bindings: Env }>()
         const challenge = body.challenge
         if (challenge) return c.json({ challenge })
 
-        const content = body.event?.message?.content
-        const parsed =
-          typeof content === "string" && content.trim().startsWith("{")
-            ? (JSON.parse(content) as {
-                text?: string
-              })
-            : undefined
-        const text = typeof parsed?.text === "string" ? parsed.text : typeof content === "string" ? content : ""
+        const content = body.event?.message?.content ?? ""
+        // Invalid JSON still fails the route; JSON without a string `text` falls back to the raw content.
+        const parsed = content.trim().startsWith("{")
+          ? Schema.decodeUnknownOption(FeishuText)(yield* Schema.decodeUnknownEffect(JsonText)(content))
+          : Option.none()
+        const text = Option.match(parsed, { onNone: () => content, onSome: (value) => value.text })
 
         let message = text.trim().replace(/^@_user_\d+\s*/, "")
         message = message.replace(/^aiden,?\s*/i, "<@759257817772851260> ")
