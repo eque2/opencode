@@ -1,3 +1,4 @@
+import { Array } from "effect"
 import type { Component, JSX } from "solid-js"
 import { createMemo, createUniqueId, splitProps, Show } from "solid-js"
 import sprite from "./file-icons/sprite.svg"
@@ -559,11 +560,9 @@ const folderNameVariants = (name: string) => {
 
 const dottedSuffixesDesc = (name: string) => {
   const n = name.toLowerCase()
-  const idxs = Array.from({ length: n.length }, (_, i) => i).filter((i) => n[i] === ".")
-  const out = new Set<string>()
-  out.add(n) // allow exact whole-name "extensions" like "dockerfile"
-  for (const i of idxs) if (i + 1 < n.length) out.add(n.slice(i + 1))
-  return Array.from(out).sort((a, b) => b.length - a.length) // longest first
+  const suffixes = n.split("").flatMap((char, i) => (char === "." && i + 1 < n.length ? [n.slice(i + 1)] : []))
+  // allow exact whole-name "extensions" like "dockerfile"
+  return Array.dedupe([n, ...suffixes]).sort((a, b) => b.length - a.length) // longest first
 }
 
 export function chooseIconName(path: string, type: "directory" | "file", expanded: boolean): IconName {

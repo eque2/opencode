@@ -1,5 +1,6 @@
 // @refresh reload
 
+import { HashSet } from "effect"
 import { createEffect, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
@@ -22,7 +23,7 @@ const STORAGE_KEYS = {
 const THEME_STYLE_ID = "oc-theme"
 let files: Record<string, () => Promise<{ default: DesktopTheme }>> | undefined
 let ids: string[] | undefined
-let known: Set<string> | undefined
+let known: HashSet.HashSet<string> | undefined
 
 function getFiles() {
   if (files) return files
@@ -40,7 +41,7 @@ function themeIDs() {
 
 function knownThemes() {
   if (known) return known
-  known = new Set(themeIDs())
+  known = HashSet.fromIterable(themeIDs())
   return known
 }
 
@@ -232,7 +233,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
     const ids = () => {
       const extra = Object.keys(store.themes)
-        .filter((id) => !knownThemes().has(id))
+        .filter((id) => !HashSet.has(knownThemes(), id))
         .sort()
       const all = themeIDs()
       if (extra.length === 0) return all
@@ -245,7 +246,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       if (e.key === STORAGE_KEYS.THEME_ID && e.newValue) {
         const next = normalize(e.newValue)
         if (!next) return
-        if (next !== "oc-2" && !knownThemes().has(next) && !store.themes[next]) return
+        if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) return
         setStore("themeId", next)
         if (next === "oc-2") {
           clear()
@@ -300,7 +301,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         console.warn(`Theme "${id}" not found`)
         return
       }
-      if (next !== "oc-2" && !knownThemes().has(next) && !store.themes[next]) {
+      if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) {
         console.warn(`Theme "${id}" not found`)
         return
       }
@@ -337,7 +338,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       previewTheme: (id: string) => {
         const next = normalize(id)
         if (!next) return
-        if (next !== "oc-2" && !knownThemes().has(next) && !store.themes[next]) return
+        if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) return
         setStore("previewThemeId", next)
         void load(next).then((theme) => {
           if (!theme || store.previewThemeId !== next) return
