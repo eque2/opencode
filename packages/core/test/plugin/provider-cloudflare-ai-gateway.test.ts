@@ -68,7 +68,7 @@ function cloudflareEnv(overrides: Record<string, string | undefined> = {}) {
   }
 }
 
-mock.module("ai-gateway-provider", () => ({
+void mock.module("ai-gateway-provider", () => ({
   createAiGateway(options: Record<string, unknown>) {
     aiGatewayCalls.push(captureAiGatewayOptions(options))
     return (input: unknown) => {
@@ -82,7 +82,7 @@ mock.module("ai-gateway-provider", () => ({
   },
 }))
 
-mock.module("ai-gateway-provider/providers/unified", () => ({
+void mock.module("ai-gateway-provider/providers/unified", () => ({
   createUnified() {
     return (modelID: string) => {
       unifiedCalls.push(modelID)
