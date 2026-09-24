@@ -1,4 +1,4 @@
-import { Config, Effect, Option, Redacted, String as Str } from "effect"
+import { Config, Effect, Option, Predicate, Redacted, Schema, String as Str } from "effect"
 import { pathToFileURL } from "url"
 import { define } from "../internal"
 import { Npm } from "../../npm"
@@ -8,6 +8,27 @@ import { readEnvSnapshot } from "./env-snapshot"
 const serviceKeyEnv = Config.option(Config.Redacted("AICORE_SERVICE_KEY"))
 const deploymentIdEnv = Config.option(Config.String("AICORE_DEPLOYMENT_ID"))
 const resourceGroupEnv = Config.option(Config.String("AICORE_RESOURCE_GROUP"))
+
+class SapAICoreProviderError extends Schema.TaggedError<SapAICoreProviderError>()("SapAICore.ProviderError", {
+  message: Schema.String,
+}) {}
+
+// Import the provider package and return its first create* export, the SDK factory.
+const loadFactory = Effect.fnUntraced(function* (npm: Npm.Interface, pkg: string) {
+  const installedPath = pkg.startsWith("file://") ? pkg : (yield* npm.add(pkg).pipe(Effect.orDie)).entrypoint
+  if (!installedPath) return yield* new SapAICoreProviderError({ message: `Package ${pkg} has no import entrypoint` })
+  const url = installedPath.startsWith("file://") ? installedPath : pathToFileURL(installedPath).href
+  // A module namespace is an object of named exports.
+  const mod: { readonly [name: string]: unknown } = yield* Effect.promise(() => import(url))
+  const factory = Option.fromNullishOr(Object.keys(mod).find((name) => name.startsWith("create"))).pipe(
+    Option.map((name) => mod[name]),
+    Option.filter(Predicate.isFunction),
+  )
+  if (Option.isNone(factory)) {
+    return yield* new SapAICoreProviderError({ message: `Package ${pkg} has no provider factory export` })
+  }
+  return factory.value
+})
 
 export const SapAICorePlugin = define({
   id: "sap-ai-core",
@@ -29,20 +50,8 @@ export const SapAICorePlugin = define({
           process.env.AICORE_SERVICE_KEY = serviceKey.value
         }
 
-        const installedPath = evt.package.startsWith("file://")
-          ? evt.package
-          : (yield* npm.add(evt.package).pipe(Effect.orDie)).entrypoint
-        if (!installedPath) throw new Error(`Package ${evt.package} has no import entrypoint`)
-
-        const mod = yield* Effect.promise(async () => {
-          return (await import(
-            installedPath.startsWith("file://") ? installedPath : pathToFileURL(installedPath).href
-          )) as Record<string, (options: any) => any>
-        }).pipe(Effect.orDie)
-        const match = Object.keys(mod).find((name) => name.startsWith("create"))
-        if (!match) throw new Error(`Package ${evt.package} has no provider factory export`)
-
-        evt.sdk = mod[match](
+        const factory = yield* loadFactory(npm, evt.package).pipe(Effect.orDie)
+        evt.sdk = factory(
           Option.isSome(serviceKey)
             ? {
                 deploymentId: Option.getOrUndefined(yield* readEnvSnapshot(deploymentIdEnv)),
