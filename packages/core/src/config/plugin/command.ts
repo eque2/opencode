@@ -2,7 +2,7 @@ export * as ConfigCommandPlugin from "./command"
 
 import { define } from "../../plugin/internal"
 import path from "path"
-import { Effect, Option, Schema } from "effect"
+import { Array, Effect, Option, Schema } from "effect"
 import { Config } from "../../config"
 import { FSUtil } from "../../fs-util"
 import { ModelV2 } from "../../model"
@@ -55,28 +55,25 @@ function loadDirectory(fs: FSUtil.Interface, directory: string) {
       .pipe(Effect.catch(() => Effect.succeed([] as string[])))
     return yield* Effect.forEach(files.toSorted(), (filepath) =>
       fs.readFileStringSafe(filepath).pipe(
-        Effect.map((content) => (content === undefined ? undefined : decode(directory, filepath, content))),
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.map((content) =>
+          Option.fromUndefinedOr(content).pipe(Option.flatMap((text) => decode(directory, filepath, text))),
+        ),
+        Effect.catch(() => Effect.succeedNone),
       ),
-    ).pipe(
-      Effect.map((commands) =>
-        commands.filter((command): command is { name: string; info: ConfigCommand.Info } => command !== undefined),
-      ),
-    )
+    ).pipe(Effect.map(Array.getSomes))
   })
 }
 
 function decode(directory: string, filepath: string, content: string) {
-  const markdown = ConfigMarkdown.parseOption(content)
-  if (!markdown) return
-  const info = Option.getOrUndefined(decodeCommand({ ...markdown.data, template: markdown.content.trim() }))
-  if (!info) return
-  return {
-    name: path
-      .relative(directory, filepath)
-      .replaceAll("\\", "/")
-      .replace(/^(command|commands)\//, "")
-      .replace(/\.md$/, ""),
-    info,
-  }
+  return Option.liftThrowable(ConfigMarkdown.parse)(content).pipe(
+    Option.flatMap((markdown) => decodeCommand({ ...markdown.data, template: markdown.content.trim() })),
+    Option.map((info) => ({
+      name: path
+        .relative(directory, filepath)
+        .replaceAll("\\", "/")
+        .replace(/^(command|commands)\//, "")
+        .replace(/\.md$/, ""),
+      info,
+    })),
+  )
 }
