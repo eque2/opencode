@@ -1,9 +1,8 @@
 import tseslint from "typescript-eslint"
 import { effectLintConfig } from "./effect-eslint-config.mjs"
 
-// Start the blocking gate at the protocol and native Effect boundaries.
-// Other package configs still load the language service during type checks.
-const runtimeFiles = ["packages/protocol/src/**/*.ts", "packages/effect-sqlite-node/src/**/*.ts"]
+// The blocking gate covers every package's runtime source.
+const runtimeFiles = ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"]
 
 export default [
   {
@@ -21,6 +20,7 @@ export default [
       parserOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
+        ecmaFeatures: { jsx: true },
       },
     },
   },
