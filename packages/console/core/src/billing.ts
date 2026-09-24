@@ -356,6 +356,7 @@ export namespace Billing {
               }
             }
             if (method === "upi") {
+              const paymentMethodTypes: string[] = ["upi"]
               return {
                 line_items: [
                   {
@@ -371,7 +372,8 @@ export namespace Billing {
                     quantity: 1,
                   },
                 ],
-                payment_method_types: ["upi"] as any,
+                // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- stripe 18.0.0 Checkout PaymentMethodType omits "upi", which the Stripe Checkout API accepts
+                payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
                 adaptive_pricing: {
                   enabled: false,
                 },
@@ -462,7 +464,8 @@ export namespace Billing {
       const intent = await Billing.stripe().paymentIntents.retrieve(paymentID)
       if (!intent.latest_charge) throw new Error("No charge found")
 
-      const charge = await Billing.stripe().charges.retrieve(intent.latest_charge as string)
+      const chargeID = typeof intent.latest_charge === "string" ? intent.latest_charge : intent.latest_charge.id
+      const charge = await Billing.stripe().charges.retrieve(chargeID)
       if (!charge.receipt_url) throw new Error("No receipt URL found")
 
       return charge.receipt_url
