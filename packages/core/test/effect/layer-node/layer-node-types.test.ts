@@ -33,7 +33,7 @@ const c = make({ service: C, layer: cLayer, deps: [a, b] })
 const failing = make({ service: A, layer: failingA, deps: [] })
 const dependent = make({ service: B, layer: bLayer, deps: [failing] })
 const inputA = LayerNode.unbound(A, tags.values.app)
-const inputDependent = make({ service: B, layer: bLayer, deps: [inputA] })
+make({ service: B, layer: bLayer, deps: [inputA] })
 
 make({ name: "manual-a", layer: aLayer, deps: [] })
 
