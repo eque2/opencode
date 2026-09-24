@@ -66,9 +66,12 @@ export namespace FSUtil {
       })
 
       const readFileStringSafe = Effect.fn("FileSystem.readFileStringSafe")(function* (path: string) {
+        // A missing or unreadable file is None; the Interface reports it as undefined.
         return yield* fs.readFileString(path).pipe(
-          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)),
-          Effect.catchReason("PlatformError", "PermissionDenied", () => Effect.succeed(undefined)),
+          Effect.map(Option.some),
+          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+          Effect.catchReason("PlatformError", "PermissionDenied", () => Effect.succeedNone),
+          Effect.map(Option.getOrUndefined),
         )
       })
 

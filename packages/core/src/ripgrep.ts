@@ -1,6 +1,6 @@
 export * as Ripgrep from "./ripgrep"
 
-import { Context, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { Entry, Match } from "@opencode-ai/schema/filesystem"
 import { makeGlobalNode } from "./effect/app-node"
@@ -103,7 +103,8 @@ const layer = Layer.effect(
       readonly args: string[]
       readonly limit: number
       readonly signal?: AbortSignal
-      readonly parse: (line: string) => Effect.Effect<A | undefined, Error>
+      /** Parses one output line; None skips a line that carries no row. */
+      readonly parse: (line: string) => Effect.Effect<Option.Option<A>, Error>
       readonly pattern?: string
       readonly onItem?: (item: A) => Effect.Effect<void>
     }) => {
@@ -121,7 +122,8 @@ const layer = Layer.effect(
             Stream.splitLines,
             Stream.filter((line) => line.length > 0),
             Stream.mapEffect(input.parse),
-            Stream.filter((row): row is A => row !== undefined),
+            Stream.filter(Option.isSome),
+            Stream.map((row) => row.value),
             Stream.tap((row) => {
               if (!input.onItem || observed++ >= input.limit) return Effect.void
               return input.onItem(row)
@@ -171,10 +173,12 @@ const layer = Layer.effect(
           ],
           parse: (line) =>
             Effect.succeed(
-              line
-                .replace(/^(?:\.[\\/])+/u, "")
-                .replace(/^[\\/]+/u, "")
-                .replaceAll("\\", "/"),
+              Option.some(
+                line
+                  .replace(/^(?:\.[\\/])+/u, "")
+                  .replace(/^[\\/]+/u, "")
+                  .replaceAll("\\", "/"),
+              ),
             ),
         }).pipe(
           Effect.map((result) =>
@@ -207,10 +211,12 @@ const layer = Layer.effect(
               .replace(/^[\\/]+/u, "")
               .replaceAll("\\", "/")
             return Effect.succeed(
-              Entry.make({
-                path: RelativePath.make(relative),
-                type: "file",
-              }),
+              Option.some(
+                Entry.make({
+                  path: RelativePath.make(relative),
+                  type: "file",
+                }),
+              ),
             )
           },
           onItem: input.onEntry,
@@ -239,13 +245,15 @@ const layer = Layer.effect(
             ).pipe(
               Effect.flatMap((json) => {
                 if (!json || typeof json !== "object" || !("type" in json) || json.type !== "match")
-                  return Effect.succeed(undefined)
+                  return Effect.succeedNone
                 return Schema.decodeUnknownEffect(RawMatch)(json).pipe(
-                  Effect.map((match) => ({
-                    ...match.data,
-                    path: { text: match.data.path.text.replace(/^\.[\\/]/, "") },
-                    submatches: match.data.submatches.slice(0, MAX_SUBMATCHES),
-                  })),
+                  Effect.map((match) =>
+                    Option.some({
+                      ...match.data,
+                      path: { text: match.data.path.text.replace(/^\.[\\/]/, "") },
+                      submatches: match.data.submatches.slice(0, MAX_SUBMATCHES),
+                    }),
+                  ),
                   Effect.mapError((cause) => failure("Invalid ripgrep match output", cause)),
                 )
               }),
