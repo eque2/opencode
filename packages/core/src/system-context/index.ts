@@ -1,6 +1,6 @@
 export * as SystemContext from "./index"
 
-import { Effect, Option, Schema } from "effect"
+import { Data, Effect, Option, Schema } from "effect"
 
 /**
  * Models privileged system context as independently refreshable typed sources.
@@ -65,23 +65,18 @@ export interface Generation {
   readonly snapshot: Snapshot
 }
 
-export interface Updated {
-  readonly _tag: "Updated"
-  readonly text: string
-  readonly snapshot: Snapshot
-}
-
-export interface ReplacementReady {
-  readonly _tag: "ReplacementReady"
-  readonly generation: Generation
-}
-
-export interface ReplacementBlocked {
-  readonly _tag: "ReplacementBlocked"
-}
-
+/** Outcome of comparing current source values with one active generation. */
+export type ReconcileResult = Data.TaggedEnum<{
+  Unchanged: {}
+  Updated: { readonly text: string; readonly snapshot: Snapshot }
+  ReplacementReady: { readonly generation: Generation }
+  ReplacementBlocked: {}
+}>
+export const ReconcileResult = Data.taggedEnum<ReconcileResult>()
+export type Updated = Data.TaggedEnum.Value<ReconcileResult, "Updated">
+export type ReplacementReady = Data.TaggedEnum.Value<ReconcileResult, "ReplacementReady">
+export type ReplacementBlocked = Data.TaggedEnum.Value<ReconcileResult, "ReplacementBlocked">
 export type ReplacementResult = ReplacementReady | ReplacementBlocked
-export type ReconcileResult = { readonly _tag: "Unchanged" } | Updated | ReplacementResult
 
 export class InitializationBlocked extends Schema.TaggedError<InitializationBlocked>()(
   "SystemContext.InitializationBlocked",
@@ -115,22 +110,22 @@ interface Rendered {
   readonly snapshot: SourceSnapshot
 }
 
-type Compared =
-  | { readonly _tag: "Incompatible" }
-  | { readonly _tag: "Unchanged" }
-  | { readonly _tag: "Updated"; readonly render: () => Rendered }
+type Compared = Data.TaggedEnum<{
+  Incompatible: {}
+  Unchanged: {}
+  Updated: { readonly render: () => Rendered }
+}>
+const Compared = Data.taggedEnum<Compared>()
 
-interface AvailableEntry extends Loaded {
-  readonly _tag: "Available"
-  readonly key: Key
-}
-
-interface UnavailableEntry {
-  readonly _tag: "Unavailable"
-  readonly key: Key
-}
-
-type Entry = AvailableEntry | UnavailableEntry
+type Entry = Data.TaggedEnum<{
+  Available: {
+    readonly key: Key
+    readonly baseline: () => Rendered
+    readonly compare: (previous: Schema.Json) => Compared
+  }
+  Unavailable: { readonly key: Key }
+}>
+const Entry = Data.taggedEnum<Entry>()
 
 /** The identity context. */
 export const empty = context([])
@@ -157,17 +152,16 @@ export function make<A>(source: Source<A>): SystemContext {
             }),
             compare: (previous): Compared =>
               Option.match(decode(previous), {
-                onNone: (): Compared => ({ _tag: "Incompatible" }),
-                onSome: (decoded): Compared =>
+                onNone: () => Compared.Incompatible(),
+                onSome: (decoded) =>
                   equivalent(decoded, value)
-                    ? { _tag: "Unchanged" }
-                    : {
-                        _tag: "Updated",
+                    ? Compared.Unchanged()
+                    : Compared.Updated({
                         render: () => ({
                           text: requireText(source.key, "update", source.update(decoded, value)),
                           snapshot: snapshot(),
                         }),
-                      },
+                      }),
               }),
           }
         }),
@@ -191,8 +185,8 @@ const observe = (value: SystemContext) =>
         Effect.map(
           (result): Entry =>
             result === unavailable
-              ? { _tag: "Unavailable", key: source.key }
-              : { _tag: "Available", key: source.key, ...result },
+              ? Entry.Unavailable({ key: source.key })
+              : Entry.Available({ key: source.key, ...result }),
         ),
       ),
     { concurrency: "unbounded" },
@@ -210,7 +204,7 @@ export function initialize(value: SystemContext): Effect.Effect<Generation, Init
 }
 
 function initializeObservation(entries: ReadonlyArray<Entry>): Generation {
-  const available = entries.filter((entry): entry is AvailableEntry => entry._tag === "Available")
+  const available = entries.filter(Entry.$is("Available"))
   const rendered = available.map((entry) => [entry.key, entry.baseline()] as const)
   return {
     baseline: render(rendered.map(([, result]) => result.text)),
@@ -221,18 +215,11 @@ function initializeObservation(entries: ReadonlyArray<Entry>): Generation {
 /** Reconciles current source values with one active generation. */
 export function reconcile(value: SystemContext, previous: Snapshot): Effect.Effect<ReconcileResult> {
   return observe(value).pipe(
-    Effect.map((entries): ReconcileResult => {
-      const result = reconcileObservation(entries, previous)
-      if (result._tag === "Unchanged" || result._tag === "Updated") return result
-      return replaceObservation(entries, previous)
-    }),
+    Effect.map((entries) => reconcileObservation(entries, previous)),
   )
 }
 
-function reconcileObservation(
-  entries: ReadonlyArray<Entry>,
-  previous: Snapshot,
-): { readonly _tag: "Unchanged" } | Updated | { readonly _tag: "Replace" } {
+function reconcileObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReconcileResult {
   const keys = new Set(entries.map((entry) => entry.key))
   const comparisons = new Map<Key, Compared>()
   for (const entry of entries) {
@@ -240,12 +227,12 @@ function reconcileObservation(
     const stored = getSnapshot(previous, entry.key)
     if (!stored) continue
     const compared = entry.compare(stored.value)
-    if (compared._tag === "Incompatible") return { _tag: "Replace" }
+    if (compared._tag === "Incompatible") return replaceObservation(entries, previous)
     comparisons.set(entry.key, compared)
   }
   for (const key of Object.keys(previous).sort()) {
     if (keys.has(Key.make(key))) continue
-    if (previous[key].removed === undefined) return { _tag: "Replace" }
+    if (previous[key].removed === undefined) return replaceObservation(entries, previous)
   }
 
   const snapshot: Record<string, SourceSnapshot> = {}
@@ -279,8 +266,8 @@ function reconcileObservation(
     if (removed === undefined) throw new Error(`Missing removal rendering for system context source ${key}`)
     updates.push(removed)
   }
-  if (updates.length === 0) return { _tag: "Unchanged" }
-  return { _tag: "Updated", text: render(updates), snapshot }
+  if (updates.length === 0) return ReconcileResult.Unchanged()
+  return ReconcileResult.Updated({ text: render(updates), snapshot })
 }
 
 /** Creates a complete replacement generation or blocks while admitted context is unavailable. */
@@ -290,8 +277,8 @@ export function replace(value: SystemContext, previous: Snapshot): Effect.Effect
 
 function replaceObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReplacementResult {
   if (entries.some((entry) => entry._tag === "Unavailable" && getSnapshot(previous, entry.key) !== undefined))
-    return { _tag: "ReplacementBlocked" }
-  return { _tag: "ReplacementReady", generation: initializeObservation(entries) }
+    return ReconcileResult.ReplacementBlocked()
+  return ReconcileResult.ReplacementReady({ generation: initializeObservation(entries) })
 }
 
 function context(sources: ReadonlyArray<PackedSource>): SystemContext {
