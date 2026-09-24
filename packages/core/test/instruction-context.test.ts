@@ -247,10 +247,11 @@ describe("InstructionContext", () => {
         ),
       )
 
+      const repo = yield* FSUtil.use.resolve("/repo").pipe(Effect.provide(LayerNode.compile(FSUtil.node)))
       expect(observed).toEqual({
         targets: ["AGENTS.md"],
-        start: FSUtil.resolve("/repo"),
-        stop: FSUtil.resolve("/repo"),
+        start: repo,
+        stop: repo,
       })
     }),
   )

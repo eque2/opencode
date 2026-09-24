@@ -13,17 +13,23 @@ import { SystemContextRegistry } from "@opencode-ai/core/system-context/registry
 import { location } from "../fixture/location"
 import { testEffect } from "../lib/effect"
 
-const directory = AbsolutePath.make(FSUtil.resolve("/repo/packages/core"))
-const projectDirectory = AbsolutePath.make(FSUtil.resolve("/repo"))
-const instructionFile = FSUtil.resolve("/repo/AGENTS.md")
+// The fixture paths do not exist, so FSUtil resolves each one to its absolute form.
+const fixturePaths = Effect.gen(function* () {
+  const fs = yield* FSUtil.Service
+  return {
+    directory: AbsolutePath.make(yield* fs.resolve("/repo/packages/core")),
+    projectDirectory: AbsolutePath.make(yield* fs.resolve("/repo")),
+    instructionFile: yield* fs.resolve("/repo/AGENTS.md"),
+    store: AbsolutePath.make(yield* fs.resolve("/repo/.git")),
+  }
+}).pipe(Effect.provide(LayerNode.compile(FSUtil.node)))
 const timestamp = Date.parse("2026-06-03T12:00:00.000Z")
 const localDate = (time: number) => new Date(time).toDateString()
-const locationLayer = Layer.succeed(
+const locationLayer = Layer.effect(
   Location.Service,
-  Location.Service.of(
-    location(
-      { directory },
-      { projectDirectory, vcs: { type: "git", store: AbsolutePath.make(FSUtil.resolve("/repo/.git")) } },
+  fixturePaths.pipe(
+    Effect.map(({ directory, projectDirectory, store }) =>
+      Location.Service.of(location({ directory }, { projectDirectory, vcs: { type: "git", store } })),
     ),
   ),
 )
@@ -36,15 +42,15 @@ const it = testEffect(
 )
 const instructionFS = Layer.effect(
   FSUtil.Service,
-  FSUtil.Service.pipe(
-    Effect.map((fs) =>
-      FSUtil.Service.of({
-        ...fs,
-        up: () => Effect.succeed([instructionFile]),
-        readFileStringSafe: (path) => Effect.succeed(path === instructionFile ? "Be precise." : undefined),
-      }),
-    ),
-  ),
+  Effect.gen(function* () {
+    const fs = yield* FSUtil.Service
+    const { instructionFile } = yield* fixturePaths
+    return FSUtil.Service.of({
+      ...fs,
+      up: () => Effect.succeed([instructionFile]),
+      readFileStringSafe: (path) => Effect.succeed(path === instructionFile ? "Be precise." : undefined),
+    })
+  }),
 ).pipe(Layer.provide(LayerNode.compile(FSUtil.node)))
 const itWithInstructions = testEffect(
   AppNodeBuilder.build(builtInsNode, [
@@ -57,6 +63,7 @@ const itWithInstructions = testEffect(
 describe("SystemContextBuiltIns", () => {
   it.effect("loads location-scoped environment and host-local date context", () =>
     Effect.gen(function* () {
+      const { directory, projectDirectory } = yield* fixturePaths
       yield* TestClock.setTime(timestamp)
       const context = yield* SystemContextRegistry.Service
       const initialized = yield* SystemContext.initialize(yield* context.load())
@@ -106,6 +113,7 @@ describe("SystemContextBuiltIns", () => {
 
   itWithInstructions.effect("composes ambient instructions after built-in context", () =>
     Effect.gen(function* () {
+      const { directory, projectDirectory, instructionFile } = yield* fixturePaths
       yield* TestClock.setTime(timestamp)
       const context = yield* SystemContextRegistry.Service
 

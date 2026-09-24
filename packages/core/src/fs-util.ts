@@ -1,7 +1,6 @@
 import { dirname, isAbsolute, join, relative, resolve as pathResolve, sep } from "path"
-import { realpathSync } from "fs"
 import { lookup } from "mime-types"
-import { Context, Effect, FileSystem, Layer, Option, Predicate, Result, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Predicate, Schema } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { Glob } from "./util/glob"
 import { serviceUse } from "./effect/service-use"
@@ -44,7 +43,21 @@ export namespace FSUtil {
     readonly ensureDir: (path: string) => Effect.Effect<void, Error>
     readonly writeWithDirs: (path: string, content: string | Uint8Array, mode?: number) => Effect.Effect<void, Error>
     readonly readDirectoryEntries: (path: string) => Effect.Effect<DirEntry[], Error>
+    /**
+     * The real path of `path`. A missing path resolves to its absolute form. Any other
+     * realpath failure is a defect.
+     */
     readonly resolve: (path: string) => Effect.Effect<string>
+    /**
+     * On Windows, the real path of `path`, so that equal paths compare equal. Any realpath
+     * failure keeps the absolute form. Other platforms return `path` unchanged.
+     */
+    readonly normalizePath: (path: string) => Effect.Effect<string>
+    /**
+     * normalizePath for a permission pattern: a trailing `*` segment is kept, and the
+     * folder before it is normalized. Other platforms return `pattern` unchanged.
+     */
+    readonly normalizePathPattern: (pattern: string) => Effect.Effect<string>
     readonly findUp: (target: string, start: string, stop?: string) => Effect.Effect<string[], Error>
     readonly up: (options: { targets: string[]; start: string; stop?: string }) => Effect.Effect<string[], Error>
     readonly globUp: (pattern: string, start: string, stop?: string) => Effect.Effect<string[], Error>
@@ -113,6 +126,22 @@ export namespace FSUtil {
           Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(resolved)),
           Effect.orDie,
         )
+      })
+
+      const normalizePath = Effect.fn("FileSystem.normalizePath")(function* (path: string) {
+        if (process.platform !== "win32") return path
+        const resolved = pathResolve(windowsPath(path))
+        // Any realpath failure keeps the resolved path.
+        return yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved))
+      })
+
+      const normalizePathPattern = Effect.fn("FileSystem.normalizePathPattern")(function* (pattern: string) {
+        if (process.platform !== "win32") return pattern
+        if (pattern === "*") return pattern
+        const match = pattern.match(/^(.*)[\\/]\*$/)
+        if (!match) return yield* normalizePath(pattern)
+        const dir = /^[A-Za-z]:$/.test(match[1]) ? match[1] + "\\" : match[1]
+        return join(yield* normalizePath(dir), "*")
       })
 
       const readJson = Effect.fn("FileSystem.readJson")(function* (path: string) {
@@ -222,6 +251,8 @@ export namespace FSUtil {
         isFile,
         readDirectoryEntries,
         resolve,
+        normalizePath,
+        normalizePathPattern,
         readJson,
         writeJson,
         ensureDir,
@@ -237,44 +268,11 @@ export namespace FSUtil {
 
   export const node = makeGlobalNode({ service: Service, layer: layer, deps: [filesystem] })
 
-  // Pure helpers that don't need Effect (path manipulation, sync operations)
+  // Pure helpers that don't need Effect (path manipulation only). The realpath helpers
+  // resolve, normalizePath and normalizePathPattern are Service methods.
   export function mimeType(p: string): string {
     return lookup(p) || "application/octet-stream"
   }
-
-  export function normalizePath(p: string): string {
-    if (process.platform !== "win32") return p
-    const resolved = pathResolve(windowsPath(p))
-    // Any realpath failure keeps the resolved path.
-    return Result.getOrElse(
-      Result.try(() => realpathSync.native(resolved)),
-      () => resolved,
-    )
-  }
-
-  export function normalizePathPattern(p: string): string {
-    if (process.platform !== "win32") return p
-    if (p === "*") return p
-    const match = p.match(/^(.*)[\\/]\*$/)
-    if (!match) return normalizePath(p)
-    const dir = /^[A-Za-z]:$/.test(match[1]) ? match[1] + "\\" : match[1]
-    return join(normalizePath(dir), "*")
-  }
-
-  /**
-   * Synchronous realpath for sync callers. A missing path resolves to itself; any
-   * other realpath failure (for example EACCES or ENOTDIR) reaches the caller as the
-   * original Node error, as before.
-   */
-  export function resolve(p: string): string {
-    const resolved = pathResolve(windowsPath(p))
-    const real = Result.try(() => realpathSync(resolved)).pipe(
-      Result.orElse((error) => (isNotFound(error) ? Result.succeed(resolved) : Result.fail(error))),
-    )
-    return normalizePath(Result.getOrThrow(real))
-  }
-
-  const isNotFound = (error: unknown) => Predicate.hasProperty(error, "code") && error.code === "ENOENT"
 
   export function windowsPath(p: string): string {
     if (process.platform !== "win32") return p
