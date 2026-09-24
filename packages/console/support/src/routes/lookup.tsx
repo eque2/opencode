@@ -28,7 +28,9 @@ export default function LookupPage() {
       <h1>Lookup: {identifier() || "(no identifier)"}</h1>
 
       <Show when={identifier()} fallback={<div data-empty>Provide an `identifier` query parameter.</div>}>
-        <ErrorBoundary fallback={(err) => <div data-component="error">{(err as Error).message}</div>}>
+        <ErrorBoundary
+          fallback={(err) => <div data-component="error">{err instanceof Error ? err.message : String(err)}</div>}
+        >
           <Show when={data()} fallback={<div data-empty>Loading...</div>}>
             {(result) => <Result data={result()} />}
           </Show>
