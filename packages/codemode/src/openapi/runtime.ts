@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
-import { isRecord, own } from "./spec.js"
+import { isJsonMediaType, isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
@@ -30,8 +30,7 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
         ),
       )
     const text = yield* readResponseBody(response, plan)
-    const mediaType = response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase()
-    const json = mediaType === "application/json" || mediaType?.endsWith("+json") === true
+    const json = Option.exists(Headers.get(response.headers, "content-type"), isJsonMediaType)
     // An empty body is absent; the program receives it as JSON null.
     const body: Option.Option<unknown> = text === "" ? Option.none() : json ? decodeJson(text) : Option.some(text)
     if (response.status < 200 || response.status >= 300) {

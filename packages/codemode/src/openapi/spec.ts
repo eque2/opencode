@@ -72,7 +72,7 @@ const withDefinitions = (schema: JsonSchema, definitions: Readonly<Record<string
   return { ...schema, $defs: { ...definitions, ...local } }
 }
 
-const isJsonMediaType = (mediaType: string): boolean => {
+export const isJsonMediaType = (mediaType: string): boolean => {
   const normalized = mediaType.split(";")[0]?.trim().toLowerCase() ?? ""
   return normalized === "application/json" || normalized.endsWith("+json")
 }
