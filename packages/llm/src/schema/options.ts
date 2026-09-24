@@ -157,8 +157,12 @@ export namespace ModelDefaults {
         readonly http?: HttpOptions.Input
       }
 
-  /** Normalize selected-model request defaults without applying precedence. */
-  export const make = (input: Input) => {
+  /**
+   * Normalize selected-model request defaults without applying precedence.
+   * Like the schema class `make` it overrides, it accepts no argument for empty defaults.
+   */
+  export const make = (input: Input | void) => {
+    if (input === undefined) return new ModelDefaults({})
     if (input instanceof ModelDefaults) return input
     return new ModelDefaults({
       ...(input.limits === undefined ? {} : { limits: ModelLimits.make(input.limits) }),

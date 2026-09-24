@@ -39,5 +39,5 @@ export type MessageRole = Schema.Schema.Type<typeof MessageRole>
 export const FinishReason = Schema.Literals(["stop", "length", "tool-calls", "content-filter", "error", "unknown"])
 export type FinishReason = Schema.Schema.Type<typeof FinishReason>
 
-export const JsonSchema = Schema.Record(Schema.String, Schema.Unknown)
+export const JsonSchema = Schema.JsonObject
 export type JsonSchema = Schema.Schema.Type<typeof JsonSchema>
