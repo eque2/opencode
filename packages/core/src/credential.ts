@@ -1,7 +1,7 @@
 export * as Credential from "./credential"
 
 import { asc, eq } from "drizzle-orm"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Credential } from "@opencode-ai/schema/credential"
 import { Integration } from "@opencode-ai/schema/integration"
 import { Database } from "./database/database"
@@ -53,15 +53,20 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const { db } = yield* Database.Service
     const decode = Schema.decodeUnknownSync(Value)
-    const stored = (row: typeof CredentialTable.$inferSelect) => {
-      if (!row.integration_id) return
-      return new Info({
-        id: row.id,
-        integrationID: row.integration_id,
-        label: row.label,
-        value: decode(row.value),
-      })
-    }
+    // A row without an integration is not a usable credential.
+    const stored = (row: typeof CredentialTable.$inferSelect) =>
+      Option.fromNullishOr(row.integration_id).pipe(
+        Option.filter((integrationID) => integrationID !== ""),
+        Option.map(
+          (integrationID) =>
+            new Info({
+              id: row.id,
+              integrationID,
+              label: row.label,
+              value: decode(row.value),
+            }),
+        ),
+      )
 
     return Service.of({
       all: Effect.fn("Credential.all")(function* () {
@@ -70,10 +75,7 @@ const layer = Layer.effect(
           .from(CredentialTable)
           .orderBy(asc(CredentialTable.time_created))
           .all()
-          .pipe(Effect.orDie)).flatMap((row) => {
-          const credential = stored(row)
-          return credential ? [credential] : []
-        })
+          .pipe(Effect.orDie)).flatMap((row) => Option.toArray(stored(row)))
       }),
       list: Effect.fn("Credential.list")(function* (integrationID) {
         return (yield* db
@@ -82,14 +84,11 @@ const layer = Layer.effect(
           .where(eq(CredentialTable.integration_id, integrationID))
           .orderBy(asc(CredentialTable.time_created))
           .all()
-          .pipe(Effect.orDie)).flatMap((row) => {
-          const credential = stored(row)
-          return credential ? [credential] : []
-        })
+          .pipe(Effect.orDie)).flatMap((row) => Option.toArray(stored(row)))
       }),
       get: Effect.fn("Credential.get")(function* (id) {
         const row = yield* db.select().from(CredentialTable).where(eq(CredentialTable.id, id)).get().pipe(Effect.orDie)
-        return row ? stored(row) : undefined
+        return Option.getOrUndefined(Option.flatMap(Option.fromNullishOr(row), stored))
       }),
       create: Effect.fn("Credential.create")(function* (input) {
         const credential = new Info({

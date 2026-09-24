@@ -46,7 +46,7 @@ const layer = Layer.effect(
     const add = Effect.fn("Plugin.add")(function* (id: ID, effect: PluginRuntime["effect"]) {
       if (MutableHashSet.has(loading, id)) return yield* Effect.die(`Plugin load cycle detected for ${id}`)
 
-      yield* locks.withLock(id)(
+      return yield* locks.withLock(id)(
         Effect.sync(() => {
           MutableHashSet.add(loading, id)
           MutableHashMap.remove(failures, id)
@@ -88,7 +88,7 @@ const layer = Layer.effect(
     const remove = Effect.fn("Plugin.remove")(function* (id: ID) {
       if (MutableHashSet.has(loading, id)) return yield* Effect.die(`Cannot remove plugin ${id} while it is loading`)
 
-      yield* locks.withLock(id)(
+      return yield* locks.withLock(id)(
         State.batch(
           Effect.gen(function* () {
             const current = MutableHashMap.get(active, id)
@@ -102,31 +102,27 @@ const layer = Layer.effect(
 
     const wait = Effect.fn("Plugin.wait")(function* (id: ID) {
       const waiter = yield* Deferred.make<void>()
-      const pending = yield* locks.withLock(id)(
+      const unregister = locks.withLock(id)(
         Effect.sync(() => {
-          if (MutableHashMap.has(active, id)) return false
+          const rest = waitersOf(id).filter((item) => item !== waiter)
+          if (rest.length > 0) {
+            MutableHashMap.set(waiters, id, rest)
+            return
+          }
+          MutableHashMap.remove(waiters, id)
+        }),
+      )
+      // Choose the outcome under the lock, then run it outside the lock so a load can finish.
+      const outcome = yield* locks.withLock(id)(
+        Effect.sync(() => {
+          if (MutableHashMap.has(active, id)) return Effect.void
           const failure = MutableHashMap.get(failures, id)
           if (Option.isSome(failure)) return failure.value
           MutableHashMap.set(waiters, id, [...waitersOf(id), waiter])
-          return true
+          return Deferred.await(waiter).pipe(Effect.ensuring(unregister))
         }),
       )
-      if (!pending) return
-      if (typeof pending !== "boolean") return yield* pending
-      yield* Deferred.await(waiter).pipe(
-        Effect.ensuring(
-          locks.withLock(id)(
-            Effect.sync(() => {
-              const rest = waitersOf(id).filter((item) => item !== waiter)
-              if (rest.length > 0) {
-                MutableHashMap.set(waiters, id, rest)
-                return
-              }
-              MutableHashMap.remove(waiters, id)
-            }),
-          ),
-        ),
-      )
+      return yield* outcome
     })
 
     yield* Effect.addFinalizer((exit) =>

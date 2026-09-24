@@ -441,7 +441,7 @@ export const locationLayer = Layer.effect(
             value: Credential.Key.make({ type: "key", key: input.key }),
           })
           yield* events.publish(Event.ConnectionUpdated, { integrationID: input.integrationID })
-          yield* events.publish(Event.Updated, {})
+          return yield* events.publish(Event.Updated, {}).pipe(Effect.asVoid)
         }),
         oauth: Effect.fn("Integration.connection.oauth")(function* (input) {
           const method = implementationOf(input.integrationID, input.methodID)
@@ -524,7 +524,7 @@ export const locationLayer = Layer.effect(
           )
           if (Option.isNone(found)) return yield* Effect.die(`OAuth attempt not found: ${input.attemptID}`)
           const attempt = found.value
-          if (attempt.status !== "pending") return
+          if (attempt.status !== "pending") return yield* Effect.void
           if (attempt.authorization.mode === "code" && input.code === undefined) {
             return yield* new CodeRequiredError({ attemptID: input.attemptID })
           }
@@ -535,7 +535,7 @@ export const locationLayer = Layer.effect(
               : attempt.authorization.callback(input.code as string)
           const exit = yield* authorize(callback).pipe(Effect.exit)
           yield* settle(input.attemptID, exit)
-          if (Exit.isFailure(exit)) return yield* exit
+          return yield* Exit.asVoid(exit)
         }),
         cancel: Effect.fn("Integration.attempt.cancel")(function* (attemptID) {
           const attempt = yield* SynchronizedRef.modify(attempts, (current) => {
