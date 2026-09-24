@@ -11,7 +11,7 @@ import { FSUtil } from "../fs-util"
 import { Location } from "../location"
 import { Ripgrep } from "../ripgrep"
 import { RelativePath } from "../schema"
-import { Flag } from "../flag/flag"
+import { FlagConfig } from "../flag/flag"
 
 export interface Interface {
   readonly find: (input: FileSystem.FindInput) => Effect.Effect<FileSystem.Entry[]>
@@ -266,7 +266,13 @@ export const fffLayer = Layer.effect(
   }),
 )
 
-const layer = Layer.unwrap(Effect.sync(() => (Flag.OPENCODE_DISABLE_FFF || !Fff.available() ? ripgrepLayer : fffLayer)))
+// OPENCODE_DISABLE_FFF is an optional variable, so a ConfigError is a defect.
+const layer = Layer.unwrap(
+  Effect.gen(function* () {
+    const disabled = yield* FlagConfig.OPENCODE_DISABLE_FFF.pipe(Effect.orDie)
+    return disabled || !Fff.available() ? ripgrepLayer : fffLayer
+  }),
+)
 
 export const locationLayer = layer
 
