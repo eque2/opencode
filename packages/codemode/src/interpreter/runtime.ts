@@ -1,5 +1,5 @@
 import { parse } from "acorn"
-import { Cause, Effect, Exit, Fiber, Option, Predicate, Semaphore } from "effect"
+import { Cause, Effect, Exit, Fiber, Option, Predicate, Result, Semaphore } from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
@@ -13,7 +13,13 @@ import {
   type Services,
 } from "../tool-runtime.js"
 import { ToolError } from "../tool-error.js"
-import type { DataValue, Diagnostic, ExecuteOptions, ResolvedExecutionLimits, Result } from "../codemode.js"
+import type {
+  DataValue,
+  Diagnostic,
+  ExecuteOptions,
+  ResolvedExecutionLimits,
+  Result as ExecutionResult,
+} from "../codemode.js"
 import {
   type AstNode,
   asNode,
@@ -194,11 +200,11 @@ const normalizeError = (error: unknown): Diagnostic => {
     ) {
       message = (value as { message: string }).message
     } else {
-      try {
-        message = JSON.stringify(copyOut(value)) ?? String(value)
-      } catch {
-        message = String(value)
-      }
+      // copyOut rejects values that cannot cross the data boundary; those render with String().
+      message = Result.getOrElse(
+        Result.try(() => JSON.stringify(copyOut(value)) ?? String(value)),
+        () => String(value),
+      )
     }
     return { kind: "ExecutionFailure", message: `Uncaught: ${message}` }
   }
@@ -286,6 +292,16 @@ const containsContainer = (container: object, value: unknown, seen: Set<object>)
   const found = items.some((item) => containsContainer(container, item, seen))
   seen.delete(value)
   return found
+}
+
+// Renders a container with it marked as on the current formatting path, so a nested reference
+// back to it prints "[Circular]"; the mark is cleared once the container has rendered. Console
+// formatting never throws, so no cleanup-on-failure path is needed.
+const renderOnPath = (seen: Set<object>, container: object, render: () => string): string => {
+  seen.add(container)
+  const rendered = render()
+  seen.delete(container)
+  return rendered
 }
 
 // `typeof` never throws in JS; map every interpreter value to its JS-visible category.
@@ -2162,34 +2178,28 @@ class Interpreter<R> {
     if (depth > MAX_CONSOLE_DEPTH) return "..."
     if (seen.has(value)) return "[Circular]"
     if (value instanceof SandboxMap) {
-      seen.add(value)
-      try {
-        const entries = Array.from(value.map.entries(), ([key, item]): Array<unknown> => [key, item])
-        return `Map(${value.map.size}) ${this.formatConsoleValue(entries, seen, depth + 1)}`
-      } finally {
-        seen.delete(value)
-      }
+      const entries = Array.from(value.map.entries(), ([key, item]): Array<unknown> => [key, item])
+      return renderOnPath(
+        seen,
+        value,
+        () => `Map(${value.map.size}) ${this.formatConsoleValue(entries, seen, depth + 1)}`,
+      )
     }
     if (value instanceof SandboxSet) {
-      seen.add(value)
-      try {
-        return `Set(${value.set.size}) ${this.formatConsoleValue(Array.from(value.set.values()), seen, depth + 1)}`
-      } finally {
-        seen.delete(value)
-      }
+      return renderOnPath(
+        seen,
+        value,
+        () => `Set(${value.set.size}) ${this.formatConsoleValue(Array.from(value.set.values()), seen, depth + 1)}`,
+      )
     }
     if (isRuntimeReference(value)) return "[CodeMode reference]"
-    seen.add(value)
-    try {
-      if (Array.isArray(value)) {
-        return `[${value.map((item) => this.formatConsoleValue(item, seen, depth + 1)).join(",")}]`
-      }
-      return `{${Object.entries(value)
-        .map(([key, item]) => `${JSON.stringify(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
-        .join(",")}}`
-    } finally {
-      seen.delete(value)
-    }
+    return renderOnPath(seen, value, () =>
+      Array.isArray(value)
+        ? `[${value.map((item) => this.formatConsoleValue(item, seen, depth + 1)).join(",")}]`
+        : `{${Object.entries(value)
+            .map(([key, item]) => `${JSON.stringify(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
+            .join(",")}}`,
+    )
   }
 
   private formatConsoleTable(value: unknown, columnsArgument: unknown): string {
@@ -3539,7 +3549,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   options: ExecuteOptions<Tools>,
   limits: ResolvedExecutionLimits,
   searchIndex: ToolRuntime.DiscoveryPlan["searchIndex"],
-): Effect.Effect<Result, never, Services<Tools>> => {
+): Effect.Effect<ExecutionResult, never, Services<Tools>> => {
   const hooks = {
     ...(options.onToolCallStart === undefined ? {} : { onToolCallStart: options.onToolCallStart }),
     ...(options.onToolCallEnd === undefined ? {} : { onToolCallEnd: options.onToolCallEnd }),
@@ -3571,7 +3581,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       value: result,
       ...logged(),
       toolCalls: tools.calls,
-    } satisfies Result
+    } satisfies ExecutionResult
   }).pipe((program) => {
     const timeoutMs = limits.timeoutMs
     if (timeoutMs === undefined) return program
@@ -3584,7 +3594,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
             error: { kind: "TimeoutExceeded", message: `Execution timed out after ${timeoutMs}ms.` },
             ...logged(),
             toolCalls: tools.calls,
-          } satisfies Result),
+          } satisfies ExecutionResult),
       }),
     )
   })
@@ -3598,7 +3608,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
             error: normalizeError(Cause.squash(cause)),
             ...logged(),
             toolCalls: tools.calls,
-          } satisfies Result),
+          } satisfies ExecutionResult),
     ),
     Effect.map((result) => (limits.maxOutputBytes === undefined ? result : boundOutput(result, limits.maxOutputBytes))),
   )
@@ -3622,7 +3632,7 @@ const utf8Truncate = (value: string, maxBytes: number): string => {
  * fails the execution; `truncated: true` marks affected results. Only runs when the host set
  * `maxOutputBytes` - with the limit absent, output passes through unbounded.
  */
-const boundOutput = (result: Result, maxOutputBytes: number): Result => {
+const boundOutput = (result: ExecutionResult, maxOutputBytes: number): ExecutionResult => {
   let truncated = false
 
   let value: DataValue = null
