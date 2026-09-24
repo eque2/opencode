@@ -5,7 +5,7 @@ import { spawn, type ChildProcess } from "child_process"
 import { readFile } from "fs/promises"
 import { statSync } from "fs"
 import { setTimeout as sleep } from "node:timers/promises"
-import { Schema } from "effect"
+import { Array, Schema } from "effect"
 import { Flag } from "./flag/flag"
 import { FSUtil } from "./fs-util"
 import { which } from "./util/which"
@@ -100,18 +100,17 @@ function resolve(file: string) {
 }
 
 function win() {
-  return Array.from(
-    new Set(
-      [which("pwsh"), which("powershell"), gitbash(), process.env.COMSPEC || "cmd.exe"]
-        .filter((item): item is string => Boolean(item))
-        .map(full),
-    ),
+  // Array.dedupe keeps the first occurrence, like the insertion order of a Set.
+  return Array.dedupe(
+    [which("pwsh"), which("powershell"), gitbash(), process.env.COMSPEC || "cmd.exe"]
+      .filter((item): item is string => Boolean(item))
+      .map(full),
   )
 }
 
 async function unix() {
   const text = await readFile("/etc/shells", "utf8").catch(() => "")
-  if (text) return Array.from(new Set(text.split("\n").filter((line) => line.trim() && !line.startsWith("#"))))
+  if (text) return Array.dedupe(text.split("\n").filter((line) => line.trim() && !line.startsWith("#")))
   return ["/bin/bash", "/bin/zsh", "/bin/sh"]
 }
 
