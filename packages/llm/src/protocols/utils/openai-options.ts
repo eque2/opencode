@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { HashSet, Schema } from "effect"
 import type { LLMRequest, ReasoningEffort, TextVerbosity as TextVerbosityValue } from "../../schema"
 import { ReasoningEfforts, TextVerbosity } from "../../schema"
 
@@ -23,11 +23,11 @@ export type OpenAIResponseIncludable = (typeof OpenAIResponseIncludables)[number
 export const OpenAIServiceTiers = ["auto", "default", "flex", "priority"] as const
 export type OpenAIServiceTier = (typeof OpenAIServiceTiers)[number]
 
-const REASONING_EFFORTS = new Set<string>(ReasoningEfforts)
-const OPENAI_REASONING_EFFORTS = new Set<string>(OpenAIReasoningEfforts)
-const TEXT_VERBOSITY = new Set<string>(["low", "medium", "high"])
-const INCLUDABLES = new Set<string>(OpenAIResponseIncludables)
-const SERVICE_TIERS = new Set<string>(OpenAIServiceTiers)
+const REASONING_EFFORTS = HashSet.fromIterable<string>(ReasoningEfforts)
+const OPENAI_REASONING_EFFORTS = HashSet.fromIterable<string>(OpenAIReasoningEfforts)
+const TEXT_VERBOSITY = HashSet.fromIterable<string>(["low", "medium", "high"])
+const INCLUDABLES = HashSet.fromIterable<string>(OpenAIResponseIncludables)
+const SERVICE_TIERS = HashSet.fromIterable<string>(OpenAIServiceTiers)
 
 export const OpenAIReasoningEffort = Schema.Literals(OpenAIReasoningEfforts)
 export const OpenAITextVerbosity = TextVerbosity
@@ -35,16 +35,16 @@ export const OpenAIResponseIncludable = Schema.Literals(OpenAIResponseIncludable
 export const OpenAIServiceTier = Schema.Literals(OpenAIServiceTiers)
 
 const isAnyReasoningEffort = (effort: unknown): effort is ReasoningEffort =>
-  typeof effort === "string" && REASONING_EFFORTS.has(effort)
+  typeof effort === "string" && HashSet.has(REASONING_EFFORTS, effort)
 
 export const isReasoningEffort = (effort: unknown): effort is OpenAIReasoningEffort =>
-  typeof effort === "string" && OPENAI_REASONING_EFFORTS.has(effort)
+  typeof effort === "string" && HashSet.has(OPENAI_REASONING_EFFORTS, effort)
 
 const isTextVerbosity = (value: unknown): value is TextVerbosityValue =>
-  typeof value === "string" && TEXT_VERBOSITY.has(value)
+  typeof value === "string" && HashSet.has(TEXT_VERBOSITY, value)
 
 const isServiceTier = (value: unknown): value is OpenAIServiceTier =>
-  typeof value === "string" && SERVICE_TIERS.has(value)
+  typeof value === "string" && HashSet.has(SERVICE_TIERS, value)
 
 const options = (request: LLMRequest) => request.providerOptions?.openai
 
@@ -69,7 +69,7 @@ export const reasoningSummary = (request: LLMRequest): "auto" | undefined =>
 export const include = (request: LLMRequest): ReadonlyArray<OpenAIResponseIncludable> | undefined => {
   const value = options(request)?.include
   if (!Array.isArray(value)) return undefined
-  const filtered = value.filter((entry): entry is OpenAIResponseIncludable => INCLUDABLES.has(entry))
+  const filtered = value.filter((entry): entry is OpenAIResponseIncludable => HashSet.has(INCLUDABLES, entry))
   return filtered.length > 0 ? filtered : undefined
 }
 

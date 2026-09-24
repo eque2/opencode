@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, HashSet, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -310,11 +310,7 @@ const lowerUserContent = Effect.fn("OpenAIResponses.lowerUserContent")(function*
 ) {
   if (part.type === "text") return { type: "input_text" as const, text: part.text }
   if (part.type === "media") {
-    const media = yield* ProviderShared.validateMedia(
-      "OpenAI Responses",
-      part,
-      new Set<string>(ProviderShared.IMAGE_MIMES),
-    )
+    const media = yield* ProviderShared.validateMedia("OpenAI Responses", part, ProviderShared.IMAGE_MIMES)
     return { type: "input_image" as const, image_url: media.dataUrl }
   }
   return yield* ProviderShared.unsupportedContent("OpenAI Responses", "user", ["text", "media"])
@@ -326,11 +322,7 @@ const lowerToolResultContentItem = Effect.fn("OpenAIResponses.lowerToolResultCon
   item: ToolContent,
 ) {
   if (item.type === "text") return { type: "input_text" as const, text: item.text }
-  const media = yield* ProviderShared.validateToolFile(
-    "OpenAI Responses",
-    item,
-    new Set<string>(ProviderShared.IMAGE_MIMES),
-  )
+  const media = yield* ProviderShared.validateToolFile("OpenAI Responses", item, ProviderShared.IMAGE_MIMES)
   return { type: "input_image" as const, image_url: media.dataUrl }
 })
 
@@ -370,8 +362,8 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
     if (message.role === "assistant") {
       const content: TextPart[] = []
       const reasoningItems: Record<string, OpenAIResponsesReasoningReplay> = {}
-      const reasoningReferences = new Set<string>()
-      const hostedToolReferences = new Set<string>()
+      let reasoningReferences = HashSet.empty<string>()
+      let hostedToolReferences = HashSet.empty<string>()
       const flushText = () => {
         if (content.length === 0) return
         input.push({ role: "assistant", content: content.map((part) => ({ type: "output_text", text: part.text })) })
@@ -387,8 +379,9 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
           const reasoning = lowerReasoning(part)
           if (!reasoning) continue
           if (store !== false) {
-            if (!reasoningReferences.has(reasoning.id)) input.push({ type: "item_reference", id: reasoning.id })
-            reasoningReferences.add(reasoning.id)
+            if (!HashSet.has(reasoningReferences, reasoning.id))
+              input.push({ type: "item_reference", id: reasoning.id })
+            reasoningReferences = HashSet.add(reasoningReferences, reasoning.id)
             continue
           }
           const existing = reasoningItems[reasoning.id]
@@ -416,9 +409,9 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
         if (part.type === "tool-result" && part.providerExecuted === true) {
           flushText()
           const itemID = hostedToolItemID(part)
-          if (store !== false && itemID && !hostedToolReferences.has(itemID))
+          if (store !== false && itemID && !HashSet.has(hostedToolReferences, itemID))
             input.push({ type: "item_reference", id: itemID })
-          if (itemID) hostedToolReferences.add(itemID)
+          if (itemID) hostedToolReferences = HashSet.add(hostedToolReferences, itemID)
           continue
         }
         return yield* ProviderShared.unsupportedContent("OpenAI Responses", "assistant", [
@@ -618,7 +611,7 @@ const NO_EVENTS: StepResult["1"] = []
 // `finish` event; `response.failed` is a hard failure that emits a
 // `provider-error`. All three end the stream — kept in one set so `step` and
 // the protocol's `terminal` predicate stay in sync.
-const TERMINAL_TYPES = new Set(["response.completed", "response.incomplete", "response.failed"])
+const TERMINAL_TYPES = HashSet.fromIterable<string>(["response.completed", "response.incomplete", "response.failed"])
 
 const onOutputTextDelta = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   if (!event.delta) return [state, NO_EVENTS]
@@ -971,7 +964,7 @@ export const protocol = Protocol.make({
       store: OpenAIOptions.store(request),
     }),
     step,
-    terminal: (event) => TERMINAL_TYPES.has(event.type),
+    terminal: (event) => HashSet.has(TERMINAL_TYPES, event.type),
   },
 })
 

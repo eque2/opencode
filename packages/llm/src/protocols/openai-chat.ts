@@ -24,7 +24,6 @@ import { ToolSchemaProjection } from "./utils/tool-schema"
 import { ToolStream } from "./utils/tool-stream"
 
 const ADAPTER = "openai-chat"
-const IMAGE_MIMES = new Set<string>(ProviderShared.IMAGE_MIMES)
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1"
 export const PATH = "/chat/completions"
 
@@ -203,7 +202,7 @@ const lowerToolCall = (part: ToolCallPart): OpenAIChatAssistantToolCall => ({
 })
 
 const lowerMedia = Effect.fn("OpenAIChat.lowerMedia")(function* (part: MediaPart) {
-  const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, IMAGE_MIMES)
+  const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, ProviderShared.IMAGE_MIMES)
   return { type: "image_url" as const, image_url: { url: media.dataUrl } }
 })
 
