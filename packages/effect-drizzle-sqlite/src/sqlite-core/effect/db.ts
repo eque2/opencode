@@ -69,13 +69,13 @@ export class SQLiteEffectDatabase<
       session,
     }
 
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm types db.query as a mapped type over the generic TRelations keys; TypeScript cannot build that mapped type from Object.entries without an assertion (upstream sqlite-core/db.ts does the same)
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm declares db.query as a mapped type over the generic keyof TRelations; no Record or Partial source is assignable to it (TS2322), so the empty start needs the same cast upstream sqlite-core/db.ts uses
     this.query = {} as (typeof this)["query"]
     for (const [tableName, relation] of Object.entries(relations)) {
       ;(this.query as SQLiteEffectDatabase<TEffectHKT, TRunResult, AnyRelations>["query"])[tableName] =
         new SQLiteEffectRelationalQueryBuilder(
           relations,
-          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm TableRelationalConfig.table is the generic Table | View, but the RelationalQueryBuilder API takes SQLiteTable (upstream sqlite-core/db.ts casts the same entry)
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm TableRelationalConfig.table is the dialect-neutral Table | View, but the relational builder takes SQLiteTable; a runtime guard would add a failure path upstream lacks, and upstream sqlite-core/db.ts casts the same entry
           relations[relation.name].table as SQLiteTable,
           relation,
           dialect,

@@ -44,7 +44,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
-      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm findMany/findFirst API types config as KnownKeysOnly<TConfig, DBQueryConfig>, a mapped type TypeScript cannot relate back to DBQueryConfig
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm findMany takes KnownKeysOnly<TConfig, DBQueryConfig<"many", TSchema, TFields>>, but the relational query and dialect take the non-generic DBQueryConfig; TS cannot relate the generic where filter (TS2322), and upstream casts the same
       (config as DBQueryConfig<"many"> | undefined) ?? true,
       "many",
       this.rowMode,
@@ -61,7 +61,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
-      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm findMany/findFirst API types config as KnownKeysOnly<TConfig, DBQueryConfig>, a mapped type TypeScript cannot relate back to DBQueryConfig
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle-orm findFirst takes KnownKeysOnly<TConfig, DBQueryConfig<"one", TSchema, TFields>>, but the relational query and dialect take the non-generic DBQueryConfig; TS cannot relate the generic where filter (TS2322), and upstream casts the same
       (config as DBQueryConfig<"one"> | undefined) ?? true,
       "first",
       this.rowMode,
