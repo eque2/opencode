@@ -7,7 +7,7 @@ import {
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
-import { Effect, Schema } from "effect"
+import { Effect, HashSet, Schema } from "effect"
 import type {
   OpenAIResponsesInput,
   OpenAIResponsesReasoning,
@@ -47,7 +47,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 }) {
   const input: OpenAIResponsesInput = []
   const warnings: Array<SharedV3Warning> = []
-  const processedApprovalIds = new Set<string>()
+  let processedApprovalIds = HashSet.empty<string>()
 
   for (const { role, content } of prompt) {
     switch (role) {
@@ -225,10 +225,10 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
       case "tool": {
         for (const part of content) {
           if (part.type === "tool-approval-response") {
-            if (processedApprovalIds.has(part.approvalId)) {
+            if (HashSet.has(processedApprovalIds, part.approvalId)) {
               continue
             }
-            processedApprovalIds.add(part.approvalId)
+            processedApprovalIds = HashSet.add(processedApprovalIds, part.approvalId)
 
             if (store) {
               input.push({
