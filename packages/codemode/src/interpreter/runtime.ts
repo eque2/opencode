@@ -1698,7 +1698,15 @@ class Interpreter<R> {
     const [year, month, day = 1, hours = 0, minutes = 0, seconds = 0, milliseconds = 0] = args.map((arg) =>
       coerceToNumber(arg),
     )
-    return Effect.succeed(new SandboxDate(new Date(year, month, day, hours, minutes, seconds, milliseconds).getTime()))
+    // DateTime.makeZoned(wall, { timeZone: zoneMakeLocal(), adjustForTimeZone: true }) is not the
+    // same: it is wrong for negative years (Intl offsets) and for second-precision historic offsets
+    // (Asia/Kolkata in 1905 is off by 530 s), so the host constructor resolves the local time.
+    return Effect.succeed(
+      new SandboxDate(
+        // eslint-disable-next-line effect/no-new-date-use-datetime -- (b) sandbox local-time Date components need host Date resolution; DateTime.makeZoned gives wrong results for negative years and second-precision historic offsets
+        new Date(year, month, day, hours, minutes, seconds, milliseconds).getTime(),
+      ),
+    )
   }
 
   private constructRegExp(args: Array<unknown>, node: AstNode): Effect.Effect<SandboxRegExp, InterpreterRuntimeError> {
