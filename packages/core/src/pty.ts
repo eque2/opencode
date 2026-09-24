@@ -29,7 +29,8 @@ type Subscriber = {
   active: boolean
   detached: boolean
   pending: string[]
-  end?: { exitCode?: number }
+  // The end event that arrived before activate(), delivered when the subscriber activates.
+  end: Option.Option<{ exitCode?: number }>
 }
 
 type Active = {
@@ -111,7 +112,7 @@ const layer = Layer.effect(
     function notifyEnd(session: Active, event: { exitCode?: number }) {
       for (const subscriber of MutableHashMap.values(session.subscribers)) {
         if (!subscriber.active) {
-          subscriber.end = event
+          subscriber.end = Option.some(event)
           continue
         }
         attempt(subscriber.onEnd, event)
@@ -266,6 +267,7 @@ const layer = Layer.effect(
         active: false,
         detached: false,
         pending: [],
+        end: Option.none(),
       }
       MutableHashMap.set(session.subscribers, token, subscriber)
       const start = session.bufferCursor
@@ -294,14 +296,14 @@ const layer = Layer.effect(
           const flushed = attempt(() => {
             for (const chunk of subscriber.pending) subscriber.onData(chunk)
             subscriber.pending.length = 0
-            if (subscriber.end) subscriber.onEnd(subscriber.end)
+            if (Option.isSome(subscriber.end)) subscriber.onEnd(subscriber.end.value)
           })
           if (!flushed) MutableHashMap.remove(session.subscribers, token)
         },
         detach: () => {
           subscriber.detached = true
           subscriber.pending.length = 0
-          subscriber.end = undefined
+          subscriber.end = Option.none()
           MutableHashMap.remove(session.subscribers, token)
         },
       }
