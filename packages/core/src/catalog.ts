@@ -119,6 +119,22 @@ const layer = Layer.effect(
       })
     }
 
+    // A new, empty model that transforms edit in place. Model.Info types its arrays as readonly, so the
+    // arrays are copied into mutable ones; the copies hold the same (empty) contents.
+    const emptyModel = (providerID: ProviderV2.ID, modelID: ModelV2.ID): ModelV2.MutableInfo => {
+      const model = ModelV2.Info.empty(providerID, modelID)
+      return {
+        ...model,
+        capabilities: {
+          ...model.capabilities,
+          input: [...model.capabilities.input],
+          output: [...model.capabilities.output],
+        },
+        variants: [...model.variants],
+        cost: [...model.cost],
+      }
+    }
+
     const normalizeApi = (item: ProviderV2.MutableInfo | ModelV2.MutableInfo) => {
       if (typeof item.request.body.baseURL !== "string") return
       item.api.url = item.request.body.baseURL
@@ -162,8 +178,7 @@ const layer = Layer.effect(
               ),
             update: (providerID, modelID, fn) => {
               const record = providerRecord(providerID)
-              const model =
-                record.models.get(modelID) ?? (ModelV2.Info.empty(providerID, modelID) as ModelV2.MutableInfo)
+              const model = record.models.get(modelID) ?? emptyModel(providerID, modelID)
               if (!record.models.has(modelID)) record.models.set(modelID, model)
               fn(model)
               model.id = modelID
