@@ -16,7 +16,7 @@ export default function Black() {
   const i18n = useI18n()
   const language = useLanguage()
   const paused = createAsync(() => getPaused())
-  const [selected, setSelected] = createSignal((params.plan as string) || null)
+  const [selected, setSelected] = createSignal(typeof params.plan === "string" && params.plan ? params.plan : null)
   const [mounted, setMounted] = createSignal(false)
   const selectedPlan = createMemo(() => plans.find((p) => p.id === selected()))
 
@@ -26,7 +26,7 @@ export default function Black() {
 
   const transition = (action: () => void) => {
     if (mounted() && "startViewTransition" in document) {
-      ;(document as any).startViewTransition(action)
+      document.startViewTransition(action)
       return
     }
 

@@ -4,87 +4,83 @@ import { createSignal, For, Show } from "solid-js"
 import { Database, eq } from "@opencode-ai/console-core/drizzle/index.js"
 import { BenchmarkTable } from "@opencode-ai/console-core/schema/benchmark.sql.js"
 import { useI18n } from "~/context/i18n"
-
-interface TaskSource {
-  repo: string
-  from: string
-  to: string
-}
-
-interface Judge {
-  score: number
-  rationale: string
-  judge: string
-}
-
-interface ScoreDetail {
-  criterion: string
-  weight: number
-  average: number
-  variance?: number
-  judges?: Judge[]
-}
-
-interface RunUsage {
-  input: number
-  output: number
-  cost: number
-}
-
-interface Run {
-  task: string
-  model: string
-  agent: string
-  score: {
-    final: number
-    base: number
-    penalty: number
-  }
-  scoreDetails: ScoreDetail[]
-  usage?: RunUsage
-  duration?: number
-}
-
-interface Prompt {
-  commit: string
-  prompt: string
-}
-
-interface AverageUsage {
-  input: number
-  output: number
-  cost: number
-}
-
-interface Task {
-  averageScore: number
-  averageDuration?: number
-  averageUsage?: AverageUsage
-  model?: string
-  agent?: string
-  summary?: string
-  runs?: Run[]
-  task: {
-    id: string
-    source: TaskSource
-    prompts?: Prompt[]
-  }
-}
-
-interface BenchmarkResult {
-  averageScore: number
-  tasks: Task[]
-}
+import { z } from "zod"
 
 async function getTaskDetail(benchmarkId: string, taskId: string) {
   "use server"
+  // Built inside the server function so that the client bundle for this page does not load zod.
+  // Loose objects keep unknown keys, because the page shows the task as raw JSON.
+  const usage = z.looseObject({
+    input: z.number(),
+    output: z.number(),
+    cost: z.number(),
+  })
+  const run = z.looseObject({
+    task: z.string(),
+    model: z.string(),
+    agent: z.string(),
+    score: z.looseObject({
+      final: z.number(),
+      base: z.number(),
+      penalty: z.number(),
+    }),
+    scoreDetails: z.array(
+      z.looseObject({
+        criterion: z.string(),
+        weight: z.number(),
+        average: z.number(),
+        variance: z.number().optional(),
+        judges: z
+          .array(
+            z.looseObject({
+              score: z.number(),
+              rationale: z.string(),
+              judge: z.string(),
+            }),
+          )
+          .optional(),
+      }),
+    ),
+    usage: usage.optional(),
+    duration: z.number().optional(),
+  })
+  const task = z.looseObject({
+    averageScore: z.number(),
+    averageDuration: z.number().optional(),
+    averageUsage: usage.optional(),
+    model: z.string().optional(),
+    agent: z.string().optional(),
+    summary: z.string().optional(),
+    runs: z.array(run).optional(),
+    task: z.looseObject({
+      id: z.string(),
+      source: z.looseObject({
+        repo: z.string(),
+        from: z.string(),
+        to: z.string(),
+      }),
+      prompts: z
+        .array(
+          z.looseObject({
+            commit: z.string(),
+            prompt: z.string(),
+          }),
+        )
+        .optional(),
+    }),
+  })
+  const benchmarkResult = z.looseObject({
+    averageScore: z.number(),
+    tasks: z.array(task),
+  })
+
   const rows = await Database.use((tx) =>
     tx.select().from(BenchmarkTable).where(eq(BenchmarkTable.id, benchmarkId)).limit(1),
   )
   if (!rows[0]) return null
-  const parsed = JSON.parse(rows[0].result) as BenchmarkResult
-  const task = parsed.tasks.find((t) => t.task.id === taskId)
-  return task ?? null
+  const parsed = benchmarkResult.parse(JSON.parse(rows[0].result))
+  const found = parsed.tasks.find((t) => t.task.id === taskId)
+  return found ?? null
 }
 
 const queryTaskDetail = query(getTaskDetail, "benchmark.task.detail")

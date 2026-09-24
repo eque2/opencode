@@ -4,19 +4,20 @@ import { createMemo, For, Show } from "solid-js"
 import { Database, desc } from "@opencode-ai/console-core/drizzle/index.js"
 import { BenchmarkTable } from "@opencode-ai/console-core/schema/benchmark.sql.js"
 import { useI18n } from "~/context/i18n"
-
-interface BenchmarkResult {
-  averageScore: number
-  tasks: { averageScore: number; task: { id: string } }[]
-}
+import { z } from "zod"
 
 async function getBenchmarks() {
   "use server"
+  // Built inside the server function so that the client bundle for this page does not load zod.
+  const benchmarkResult = z.object({
+    averageScore: z.number(),
+    tasks: z.array(z.object({ averageScore: z.number(), task: z.object({ id: z.string() }) })),
+  })
   const rows = await Database.use((tx) =>
     tx.select().from(BenchmarkTable).orderBy(desc(BenchmarkTable.timeCreated)).limit(100),
   )
   return rows.map((row) => {
-    const parsed = JSON.parse(row.result) as BenchmarkResult
+    const parsed = benchmarkResult.parse(JSON.parse(row.result))
     const taskScores: Record<string, number> = {}
     for (const t of parsed.tasks) {
       taskScores[t.task.id] = t.averageScore

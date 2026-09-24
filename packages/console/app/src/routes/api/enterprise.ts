@@ -1,19 +1,21 @@
 import type { APIEvent } from "@solidjs/start/server"
+import { z } from "zod"
 import { AWS } from "@opencode-ai/console-core/aws.js"
 import { Resource } from "@opencode-ai/console-resource"
 import { i18n } from "~/i18n"
 import { localeFromRequest } from "~/lib/language"
 import { createLead } from "~/lib/salesforce"
 
-interface EnterpriseFormData {
-  name: string
-  role: string
-  company?: string
-  email: string
-  phone?: string
-  alias?: string
-  message: string
-}
+// Every field is optional here; the handler checks the required fields after the honeypot check.
+const enterpriseFormData = z.object({
+  name: z.string().optional(),
+  role: z.string().optional(),
+  company: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  alias: z.string().optional(),
+  message: z.string().optional(),
+})
 
 const EMAIL_OCTOPUS_LIST_ID = "1b381e5e-39bd-11f1-ba4a-cdd4791f0c43"
 
@@ -61,7 +63,11 @@ function subscribe(email: string, fullName: string) {
 export async function POST(event: APIEvent) {
   const dict = i18n(localeFromRequest(event.request))
   try {
-    const body = (await event.request.json()) as EnterpriseFormData
+    const parsed = enterpriseFormData.safeParse(await event.request.json())
+    if (!parsed.success) {
+      return Response.json({ error: dict["enterprise.form.error.allFieldsRequired"] }, { status: 400 })
+    }
+    const body = parsed.data
     const trap = typeof body.alias === "string" ? body.alias.trim() : ""
 
     if (trap) {

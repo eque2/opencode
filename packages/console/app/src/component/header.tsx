@@ -74,9 +74,9 @@ export function Header(props: { zen?: boolean; go?: boolean; hideGetStarted?: bo
     }
   })
 
-  const handleLogoContextMenu = (event: MouseEvent) => {
+  const handleLogoContextMenu = (event: MouseEvent & { currentTarget: HTMLElement }) => {
     event.preventDefault()
-    const logoElement = (event.currentTarget as HTMLElement).querySelector("a")
+    const logoElement = event.currentTarget.querySelector("a")
     if (logoElement) {
       const rect = logoElement.getBoundingClientRect()
       setStore("contextMenuPosition", {

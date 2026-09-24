@@ -1,4 +1,10 @@
+import { z } from "zod"
 import { Resource } from "@opencode-ai/console-resource"
+
+const tokenResponse = z.object({
+  access_token: z.string().optional(),
+  instance_url: z.string().optional(),
+})
 
 async function login() {
   const url = Resource.SALESFORCE_INSTANCE_URL.value.replace(/\/$/, "")
@@ -26,15 +32,15 @@ async function login() {
     return undefined
   }
 
-  const data = (await res.json()) as { access_token?: string; instance_url?: string }
-  if (!data.access_token) {
+  const parsed = tokenResponse.safeParse(await res.json())
+  if (!parsed.success || !parsed.data.access_token) {
     console.error("Salesforce auth response did not include an access token")
     return undefined
   }
 
   return {
-    token: data.access_token,
-    url: data.instance_url ?? url,
+    token: parsed.data.access_token,
+    url: parsed.data.instance_url ?? url,
   }
 }
 

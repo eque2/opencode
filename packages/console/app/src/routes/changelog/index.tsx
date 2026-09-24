@@ -57,13 +57,8 @@ function HighlightSection(props: { group: HighlightGroup }) {
             <Show when={item.media.type === "video"}>
               <video src={item.media.src} controls autoplay loop muted playsinline />
             </Show>
-            <Show when={item.media.type === "image"}>
-              <img
-                src={item.media.src}
-                alt={item.title}
-                width={(item.media as { width: string }).width}
-                height={(item.media as { height: string }).height}
-              />
+            <Show when={item.media.type === "image" ? item.media : undefined}>
+              {(media) => <img src={media().src} alt={item.title} width={media().width} height={media().height} />}
             </Show>
           </div>
         )}

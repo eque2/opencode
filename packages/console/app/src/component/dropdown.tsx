@@ -26,7 +26,8 @@ export function Dropdown(props: DropdownProps) {
 
   createEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef && !dropdownRef.contains(event.target as Node)) {
+      const target = event.target
+      if (dropdownRef && !(target instanceof Node && dropdownRef.contains(target))) {
         setStore("isOpen", false)
         props.onOpenChange?.(false)
       }

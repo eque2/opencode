@@ -1,12 +1,5 @@
 import { query } from "@solidjs/router"
-
-type Release = {
-  tag_name: string
-  name: string
-  body: string
-  published_at: string
-  html_url: string
-}
+import { z } from "zod"
 
 export type HighlightMedia =
   | { type: "video"; src: string }
@@ -26,7 +19,8 @@ export type HighlightGroup = {
 
 export type ChangelogRelease = {
   tag: string
-  name: string
+  // GitHub returns null for a release without a title.
+  name: string | null
   date: string
   url: string
   highlights: HighlightGroup[]
@@ -53,10 +47,20 @@ export async function loadChangelog(): Promise<ChangelogData> {
 
   if (!response?.ok) return { ok: false, releases: [] }
 
-  const data = await response.json().catch(() => undefined)
-  if (!Array.isArray(data)) return { ok: false, releases: [] }
+  // Built here, not at module scope, so that client bundles which import this module for the query do not load zod.
+  const releaseList = z.array(
+    z.object({
+      tag_name: z.string(),
+      name: z.string().nullable(),
+      body: z.string().nullable(),
+      published_at: z.string(),
+      html_url: z.string(),
+    }),
+  )
+  const data = releaseList.safeParse(await response.json().catch(() => undefined))
+  if (!data.success) return { ok: false, releases: [] }
 
-  const releases = (data as Release[]).map((release) => {
+  const releases = data.data.map((release) => {
     const parsed = parseMarkdown(release.body || "")
     return {
       tag: release.tag_name,

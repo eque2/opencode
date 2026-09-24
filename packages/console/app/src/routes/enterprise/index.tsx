@@ -24,7 +24,8 @@ export default function Enterprise() {
   const [error, setError] = createSignal("")
 
   const handleInputChange = (field: string) => (e: Event) => {
-    const target = e.target as HTMLInputElement | HTMLTextAreaElement
+    const target = e.target
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return
     setFormData((prev) => ({ ...prev, [field]: target.value }))
   }
 
@@ -58,8 +59,12 @@ export default function Enterprise() {
         return
       }
 
-      const data = (await response.json().catch(() => null)) as { error?: string } | null
-      setError(data?.error ?? i18n.t("enterprise.form.error.internalServer"))
+      const data: unknown = await response.json().catch(() => null)
+      const message =
+        typeof data === "object" && data !== null && "error" in data && typeof data.error === "string"
+          ? data.error
+          : undefined
+      setError(message ?? i18n.t("enterprise.form.error.internalServer"))
     } catch (error) {
       console.error("Failed to submit form:", error)
       setError(i18n.t("enterprise.form.error.internalServer"))

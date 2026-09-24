@@ -205,8 +205,7 @@ export function docs(locale: Locale, pathname: string) {
 
 export function parseLocale(value: unknown): Locale | null {
   if (typeof value !== "string") return null
-  if ((LOCALES as readonly string[]).includes(value)) return value as Locale
-  return null
+  return LOCALES.find((locale) => locale === value) ?? null
 }
 
 export function fromPathname(pathname: string) {
@@ -218,8 +217,7 @@ export function fromDocsPathname(pathname: string) {
   const value = next.split("/")[2]?.toLowerCase()
   if (!value) return null
   if (!next.startsWith("/docs/")) return null
-  if (!(value in DOCS_LOCALE)) return null
-  return DOCS_LOCALE[value as keyof typeof DOCS_LOCALE]
+  return Object.entries(DOCS_LOCALE).find(([key]) => key === value)?.[1] ?? null
 }
 
 export function strip(pathname: string) {

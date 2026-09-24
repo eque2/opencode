@@ -29,8 +29,8 @@ export function Modal(props: ModalProps) {
               onClick={(e) => e.stopPropagation()}
               onOpenAutoFocus={(e) => {
                 e.preventDefault()
-                const target = e.currentTarget as HTMLElement | null
-                target?.focus({ preventScroll: true })
+                const target = e.currentTarget
+                if (target instanceof HTMLElement) target.focus({ preventScroll: true })
               }}
             >
               <Show when={props.title}>

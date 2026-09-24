@@ -1,27 +1,36 @@
+import { z } from "zod"
 import { ProviderHelper, CommonRequest, CommonResponse, CommonChunk } from "./provider"
 
-type Usage = {
-  prompt_tokens?: number
-  completion_tokens?: number
-  total_tokens?: number
+const usageSchema = z.object({
+  prompt_tokens: z.number().nullish(),
+  completion_tokens: z.number().nullish(),
+  total_tokens: z.number().nullish(),
   // used by moonshot
-  cached_tokens?: number
+  cached_tokens: z.number().nullish(),
   // used by xai & alibaba
-  prompt_tokens_details?: {
-    text_tokens?: number
-    audio_tokens?: number
-    image_tokens?: number
-    cached_tokens?: number
-    // used by alibaba
-    cache_creation_input_tokens?: number
-  }
-  completion_tokens_details?: {
-    reasoning_tokens?: number
-    audio_tokens?: number
-    accepted_prediction_tokens?: number
-    rejected_prediction_tokens?: number
-  }
-}
+  prompt_tokens_details: z
+    .object({
+      text_tokens: z.number().nullish(),
+      audio_tokens: z.number().nullish(),
+      image_tokens: z.number().nullish(),
+      cached_tokens: z.number().nullish(),
+      // used by alibaba
+      cache_creation_input_tokens: z.number().nullish(),
+    })
+    .nullish(),
+  completion_tokens_details: z
+    .object({
+      reasoning_tokens: z.number().nullish(),
+      audio_tokens: z.number().nullish(),
+      accepted_prediction_tokens: z.number().nullish(),
+      rejected_prediction_tokens: z.number().nullish(),
+    })
+    .nullish(),
+})
+
+type Usage = z.infer<typeof usageSchema>
+
+const usageChunkSchema = z.object({ usage: usageSchema.nullish() })
 
 export const oaCompatHelper: ProviderHelper = ({ adjustCacheUsage }) => ({
   format: "oa-compat",
@@ -44,15 +53,16 @@ export const oaCompatHelper: ProviderHelper = ({ adjustCacheUsage }) => ({
       parse: (chunk: string) => {
         if (!chunk.startsWith("data: ")) return
 
-        let json
+        let json: unknown
         try {
-          json = JSON.parse(chunk.slice(6)) as { usage?: Usage }
+          json = JSON.parse(chunk.slice(6))
         } catch {
           return
         }
 
-        if (!json.usage) return
-        usage = json.usage
+        const parsed = usageChunkSchema.safeParse(json)
+        if (!parsed.success || !parsed.data.usage) return
+        usage = parsed.data.usage
       },
       retrieve: () => usage,
     }
@@ -216,7 +226,7 @@ export function toOaCompatibleRequest(body: CommonRequest) {
     stream: !!body.stream,
     tools,
     tool_choice: body.tool_choice,
-    response_format: (body as any).response_format,
+    response_format: "response_format" in body ? body.response_format : undefined,
   }
 }
 
@@ -321,17 +331,18 @@ export function fromOaCompatibleResponse(resp: any): CommonResponse {
 export function toOaCompatibleResponse(resp: CommonResponse) {
   if (!resp || typeof resp !== "object") return resp
 
-  if (Array.isArray((resp as any).choices)) return resp
+  if (Array.isArray(resp.choices)) return resp
 
-  const isAnthropic = typeof (resp as any).type === "string" && (resp as any).type === "message"
+  // CommonResponse does not declare the Anthropic message fields that this branch converts, so narrow them with `in`.
+  const isAnthropic = "type" in resp && resp.type === "message"
   if (!isAnthropic) return resp
 
-  const idIn = (resp as any).id
+  const idIn = resp.id
   const id =
     typeof idIn === "string" ? idIn.replace(/^msg_/, "chatcmpl_") : `chatcmpl_${Math.random().toString(36).slice(2)}`
-  const model = (resp as any).model
+  const model = resp.model
 
-  const blocks: any[] = Array.isArray((resp as any).content) ? (resp as any).content : []
+  const blocks: any[] = "content" in resp && Array.isArray(resp.content) ? resp.content : []
   const text = blocks
     .filter((b) => b && b.type === "text" && typeof b.text === "string")
     .map((b) => b.text)
@@ -349,10 +360,7 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
           return String(inp ?? "")
         }
       })()
-      const tid =
-        typeof b.id === "string" && b.id.length > 0
-          ? b.id
-          : `toolu_${Math.random().toString(36).slice(2)}`
+      const tid = typeof b.id === "string" && b.id.length > 0 ? b.id : `toolu_${Math.random().toString(36).slice(2)}`
       return { id: tid, type: "function" as const, function: { name, arguments: args } }
     })
 
@@ -364,13 +372,17 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
     return null
   }
 
-  const u = (resp as any).usage
+  const u: unknown = resp.usage
   const usage = (() => {
-    if (!u) return undefined as any
-    const pt = typeof u.input_tokens === "number" ? u.input_tokens : undefined
-    const ct = typeof u.output_tokens === "number" ? u.output_tokens : undefined
+    if (!u) return undefined
+    const fields: object = typeof u === "object" ? u : {}
+    const pt = "input_tokens" in fields && typeof fields.input_tokens === "number" ? fields.input_tokens : undefined
+    const ct = "output_tokens" in fields && typeof fields.output_tokens === "number" ? fields.output_tokens : undefined
     const total = pt != null && ct != null ? pt + ct : undefined
-    const cached = typeof u.cache_read_input_tokens === "number" ? u.cache_read_input_tokens : undefined
+    const cached =
+      "cache_read_input_tokens" in fields && typeof fields.cache_read_input_tokens === "number"
+        ? fields.cache_read_input_tokens
+        : undefined
     const details = cached != null ? { cached_tokens: cached } : undefined
     return {
       prompt_tokens: pt,
@@ -393,7 +405,7 @@ export function toOaCompatibleResponse(resp: CommonResponse) {
           ...(text && text.length > 0 ? { content: text } : {}),
           ...(tcs.length > 0 ? { tool_calls: tcs } : {}),
         },
-        finish_reason: finish((resp as any).stop_reason ?? null),
+        finish_reason: finish("stop_reason" in resp && typeof resp.stop_reason === "string" ? resp.stop_reason : null),
       },
     ],
     ...(usage ? { usage } : {}),
