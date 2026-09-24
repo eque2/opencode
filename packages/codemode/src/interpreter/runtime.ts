@@ -1,5 +1,17 @@
 import { parse } from "acorn"
-import { Array as Arr, Cause, Effect, Exit, Fiber, HashSet, Option, Predicate, Result, Semaphore } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Effect,
+  Exit,
+  Fiber,
+  HashSet,
+  MutableHashMap,
+  Option,
+  Predicate,
+  Result,
+  Semaphore,
+} from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
@@ -48,6 +60,7 @@ import {
   promiseNamespace,
   ProgramThrow,
   type ProgramNode,
+  type Scope,
   type StatementResult,
   sourceLocation,
   supportedSyntaxMessage,
@@ -292,6 +305,15 @@ const containsContainer = (container: object, value: unknown, seen: WeakSet<obje
   const found = items.some((item) => containsContainer(container, item, seen))
   seen.delete(value)
   return found
+}
+
+// Copies each named binding (as a fresh binding object) from one scope into another: a `for`
+// loop gives every iteration its own copies of the loop variables, then writes them back.
+const copyBindings = (from: Scope, to: Scope, names: ReadonlyArray<string>): void => {
+  for (const name of names) {
+    const binding = MutableHashMap.get(from, name)
+    if (Option.isSome(binding)) MutableHashMap.set(to, name, { ...binding.value })
+  }
 }
 
 // Renders a container with it marked as on the current formatting path, so a nested reference
@@ -676,7 +698,7 @@ const collectPatternNames = (pattern: AstNode): Effect.Effect<ReadonlyArray<stri
 }
 
 class Interpreter<R> {
-  private scopes: Array<Map<string, Binding>>
+  private scopes: Array<Scope>
   private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   // Enumerable namespace/tool names at a node of the host tool tree, threaded from
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
@@ -695,45 +717,54 @@ class Interpreter<R> {
     toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
     logs: Array<string> = [],
   ) {
-    const globalScope = new Map<string, Binding>()
+    const globalScope = MutableHashMap.empty<string, Binding>()
     this.scopes = [globalScope]
     this.invokeTool = invokeTool
     this.toolKeys = toolKeys
     this.logs = logs
     this.lastValue = undefined
     this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
-    globalScope.set("tools", { mutable: false, value: new ToolReference([]) })
-    globalScope.set("Promise", { mutable: false, value: promiseNamespace })
-    globalScope.set("undefined", { mutable: false, value: undefined })
-    globalScope.set("Object", { mutable: false, value: new GlobalNamespace("Object") })
-    globalScope.set("Math", { mutable: false, value: new GlobalNamespace("Math") })
-    globalScope.set("JSON", { mutable: false, value: new GlobalNamespace("JSON") })
-    globalScope.set("Number", { mutable: false, value: new CoercionFunction("Number") })
-    globalScope.set("String", { mutable: false, value: new CoercionFunction("String") })
-    globalScope.set("Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
-    globalScope.set("Array", { mutable: false, value: new GlobalNamespace("Array") })
-    globalScope.set("console", { mutable: false, value: new GlobalNamespace("console") })
-    globalScope.set("parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
-    globalScope.set("parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
-    globalScope.set("Date", { mutable: false, value: new GlobalNamespace("Date") })
-    globalScope.set("RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
-    globalScope.set("Map", { mutable: false, value: new GlobalNamespace("Map") })
-    globalScope.set("Set", { mutable: false, value: new GlobalNamespace("Set") })
-    globalScope.set("URL", { mutable: false, value: new GlobalNamespace("URL") })
-    globalScope.set("URLSearchParams", { mutable: false, value: new GlobalNamespace("URLSearchParams") })
-    globalScope.set("encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
-    globalScope.set("encodeURIComponent", { mutable: false, value: new UriFunction("encodeURIComponent") })
-    globalScope.set("decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
-    globalScope.set("decodeURIComponent", { mutable: false, value: new UriFunction("decodeURIComponent") })
+    MutableHashMap.set(globalScope, "tools", { mutable: false, value: new ToolReference([]) })
+    MutableHashMap.set(globalScope, "Promise", { mutable: false, value: promiseNamespace })
+    MutableHashMap.set(globalScope, "undefined", { mutable: false, value: undefined })
+    MutableHashMap.set(globalScope, "Object", { mutable: false, value: new GlobalNamespace("Object") })
+    MutableHashMap.set(globalScope, "Math", { mutable: false, value: new GlobalNamespace("Math") })
+    MutableHashMap.set(globalScope, "JSON", { mutable: false, value: new GlobalNamespace("JSON") })
+    MutableHashMap.set(globalScope, "Number", { mutable: false, value: new CoercionFunction("Number") })
+    MutableHashMap.set(globalScope, "String", { mutable: false, value: new CoercionFunction("String") })
+    MutableHashMap.set(globalScope, "Boolean", { mutable: false, value: new CoercionFunction("Boolean") })
+    MutableHashMap.set(globalScope, "Array", { mutable: false, value: new GlobalNamespace("Array") })
+    MutableHashMap.set(globalScope, "console", { mutable: false, value: new GlobalNamespace("console") })
+    MutableHashMap.set(globalScope, "parseInt", { mutable: false, value: new CoercionFunction("parseInt") })
+    MutableHashMap.set(globalScope, "parseFloat", { mutable: false, value: new CoercionFunction("parseFloat") })
+    MutableHashMap.set(globalScope, "Date", { mutable: false, value: new GlobalNamespace("Date") })
+    MutableHashMap.set(globalScope, "RegExp", { mutable: false, value: new GlobalNamespace("RegExp") })
+    MutableHashMap.set(globalScope, "Map", { mutable: false, value: new GlobalNamespace("Map") })
+    MutableHashMap.set(globalScope, "Set", { mutable: false, value: new GlobalNamespace("Set") })
+    MutableHashMap.set(globalScope, "URL", { mutable: false, value: new GlobalNamespace("URL") })
+    MutableHashMap.set(globalScope, "URLSearchParams", {
+      mutable: false,
+      value: new GlobalNamespace("URLSearchParams"),
+    })
+    MutableHashMap.set(globalScope, "encodeURI", { mutable: false, value: new UriFunction("encodeURI") })
+    MutableHashMap.set(globalScope, "encodeURIComponent", {
+      mutable: false,
+      value: new UriFunction("encodeURIComponent"),
+    })
+    MutableHashMap.set(globalScope, "decodeURI", { mutable: false, value: new UriFunction("decodeURI") })
+    MutableHashMap.set(globalScope, "decodeURIComponent", {
+      mutable: false,
+      value: new UriFunction("decodeURIComponent"),
+    })
     // Error constructors are real values, so `x instanceof Error` works and `Error("msg")`
     // (with or without `new`) constructs a branded { name, message } error object.
     for (const name of errorConstructors) {
-      globalScope.set(name, { mutable: false, value: new ErrorConstructorReference(name) })
+      MutableHashMap.set(globalScope, name, { mutable: false, value: new ErrorConstructorReference(name) })
     }
     // NaN/Infinity flow as ordinary in-sandbox values (normalized to null only at the data
     // boundary - see copyOut), so their global bindings must exist too, e.g. `reduce(max, -Infinity)`.
-    globalScope.set("NaN", { mutable: false, value: NaN })
-    globalScope.set("Infinity", { mutable: false, value: Infinity })
+    MutableHashMap.set(globalScope, "NaN", { mutable: false, value: NaN })
+    MutableHashMap.set(globalScope, "Infinity", { mutable: false, value: Infinity })
   }
 
   run(program: ProgramNode): Effect.Effect<unknown, unknown, R> {
@@ -1106,19 +1137,14 @@ class Interpreter<R> {
           Option.isSome(initNode) &&
           initNode.value.type === "VariableDeclaration" &&
           (yield* getString(initNode.value, "kind")) !== "var"
-            ? Array.from((yield* this.currentScope()).keys())
+            ? Array.from(MutableHashMap.keys(yield* this.currentScope()))
             : []
 
         while (Option.isSome(testNode) ? yield* this.evaluateExpression(testNode.value) : true) {
-          let iterationScope: Map<string, Binding> | undefined
+          let iterationScope: Scope | undefined
           if (perIterationBindings.length > 0) {
-            const loopScope = yield* this.currentScope()
-            iterationScope = new Map(
-              perIterationBindings.map((name) => {
-                const binding = loopScope.get(name)!
-                return [name, { ...binding }]
-              }),
-            )
+            iterationScope = MutableHashMap.empty<string, Binding>()
+            copyBindings(yield* this.currentScope(), iterationScope, perIterationBindings)
             this.scopes.push(iterationScope)
           }
           const result = yield* this.evaluateStatement(bodyNode).pipe(
@@ -1142,10 +1168,7 @@ class Interpreter<R> {
           }
 
           if (iterationScope) {
-            const loopScope = yield* this.currentScope()
-            for (const name of perIterationBindings) {
-              loopScope.set(name, { ...iterationScope.get(name)! })
-            }
+            copyBindings(iterationScope, yield* this.currentScope(), perIterationBindings)
           }
 
           if (Option.isSome(updateNode)) {
@@ -1907,7 +1930,7 @@ class Interpreter<R> {
       if (
         operator === "typeof" &&
         argument.type === "Identifier" &&
-        !this.resolveBinding(yield* getString(argument, "name"))
+        Option.isNone(this.resolveBinding(yield* getString(argument, "name")))
       ) {
         return "undefined"
       }
@@ -2395,7 +2418,7 @@ class Interpreter<R> {
   private invokeFunction(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
     return Effect.suspend(() => {
       const savedScopes = this.scopes
-      this.scopes = [...fn.capturedScopes, new Map<string, Binding>()]
+      this.scopes = [...fn.capturedScopes, MutableHashMap.empty<string, Binding>()]
       const run = Effect.gen({ self: this }, function* () {
         // Seed every parameter name into the scope as a TDZ slot first, so a default that
         // references another parameter resolves to that (uninitialized) param rather than
@@ -2403,7 +2426,7 @@ class Interpreter<R> {
         const paramScope = yield* this.currentScope()
         for (const parameter of fn.parameters) {
           for (const name of yield* collectPatternNames(parameter)) {
-            paramScope.set(name, { mutable: true, value: undefined, initialized: false })
+            MutableHashMap.set(paramScope, name, { mutable: true, value: undefined, initialized: false })
           }
         }
         for (const [index, parameter] of fn.parameters.entries()) {
@@ -3451,12 +3474,12 @@ class Interpreter<R> {
     return Effect.flatMap(this.currentScope(), (scope) => {
       // A pre-seeded parameter slot (initialized === false) is being bound for the first time;
       // anything else already present is a genuine duplicate declaration.
-      const existing = scope.get(name)
-      if (existing && existing.initialized !== false) {
+      const existing = MutableHashMap.get(scope, name)
+      if (Option.isSome(existing) && existing.value.initialized !== false) {
         return Effect.fail(new InterpreterRuntimeError(`Identifier '${name}' has already been declared.`, node))
       }
       return Effect.sync(() => {
-        scope.set(name, { mutable, value, initialized: true })
+        MutableHashMap.set(scope, name, { mutable, value, initialized: true })
       })
     })
   }
@@ -3465,18 +3488,18 @@ class Interpreter<R> {
     return Effect.gen({ self: this }, function* () {
       const binding = this.resolveBinding(name)
 
-      if (!binding) {
+      if (Option.isNone(binding)) {
         return yield* new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
       }
 
       // A parameter default that forward-references a later (not-yet-bound) parameter - JS TDZ.
-      if (binding.initialized === false) {
+      if (binding.value.initialized === false) {
         return yield* new InterpreterRuntimeError(`Cannot access '${name}' before initialization.`, node).as(
           "ReferenceError",
         )
       }
 
-      return binding.value
+      return binding.value.value
     })
   }
 
@@ -3488,35 +3511,35 @@ class Interpreter<R> {
     return Effect.gen({ self: this }, function* () {
       const binding = this.resolveBinding(name)
 
-      if (!binding) {
+      if (Option.isNone(binding)) {
         return yield* new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
       }
 
-      if (!binding.mutable) {
+      if (!binding.value.mutable) {
         return yield* new InterpreterRuntimeError(`Cannot assign to constant '${name}'.`, node).as("TypeError")
       }
 
-      binding.value = value
+      binding.value.value = value
       return value
     })
   }
 
-  private resolveBinding(name: string): Binding | undefined {
+  // The innermost binding of `name`, searching from the current scope outwards.
+  private resolveBinding(name: string): Option.Option<Binding> {
     for (let index = this.scopes.length - 1; index >= 0; index -= 1) {
-      const scope = this.scopes[index]
-      const binding = scope?.get(name)
+      const binding = MutableHashMap.get(this.scopes[index], name)
 
-      if (binding) {
+      if (Option.isSome(binding)) {
         return binding
       }
     }
 
-    return undefined
+    return Option.none()
   }
 
   // The innermost scope. The stack is never empty while a program runs (the global scope stays
   // at its base), so an empty stack is an interpreter defect rather than a program error.
-  private currentScope(): Effect.Effect<Map<string, Binding>> {
+  private currentScope(): Effect.Effect<Scope> {
     return Effect.suspend(() => {
       const scope = this.scopes[this.scopes.length - 1]
       return scope
@@ -3526,7 +3549,7 @@ class Interpreter<R> {
   }
 
   private pushScope(): void {
-    this.scopes.push(new Map())
+    this.scopes.push(MutableHashMap.empty())
   }
 
   private popScope(): void {

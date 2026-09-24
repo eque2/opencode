@@ -1,4 +1,4 @@
-import { Data, Effect, Option, Predicate } from "effect"
+import { Data, Effect, type MutableHashMap, Option, Predicate } from "effect"
 import type { SafeObject } from "../tool-runtime.js"
 import type { SandboxURL } from "../values.js"
 
@@ -41,11 +41,15 @@ export type MemberReference = {
   key: string | number
 }
 
+// One lexical scope, keyed by binding name. It is mutable in place: closures capture scope
+// objects by reference, so a later declaration or assignment must be visible to every capture.
+export type Scope = MutableHashMap.MutableHashMap<string, Binding>
+
 export class CodeModeFunction {
   constructor(
     readonly parameters: ReadonlyArray<AstNode>,
     readonly body: AstNode,
-    readonly capturedScopes: ReadonlyArray<Map<string, Binding>>,
+    readonly capturedScopes: ReadonlyArray<Scope>,
   ) {}
 }
 
