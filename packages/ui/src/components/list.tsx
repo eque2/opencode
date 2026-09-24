@@ -206,15 +206,15 @@ export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) 
     setFilter: (value) => applyFilter(value, { ref: true }),
   })
 
-  const renderAdd = () => {
-    const add = addProps()
-    if (!add) return null
-    return (
-      <div data-slot="list-item-add" classList={{ [add.class ?? ""]: !!add.class }}>
-        {add.render()}
-      </div>
-    )
-  }
+  const renderAdd = () => (
+    <Show when={addProps()} keyed>
+      {(add) => (
+        <div data-slot="list-item-add" classList={{ [add.class ?? ""]: !!add.class }}>
+          {add.render()}
+        </div>
+      )}
+    </Show>
+  )
 
   function GroupHeader(groupProps: { group: { category: string; items: T[] } }): JSX.Element {
     const [state, setState] = createStore<{ stuck: boolean; header?: HTMLDivElement }>({
