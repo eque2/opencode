@@ -7,6 +7,7 @@ import {
   inputProperties,
   inputTypeScript,
   outputTypeScript,
+  quoteJsonString,
 } from "./tool-schema.js"
 import { isDefinition as isToolDefinition, make as makeTool, type Definition } from "./tool.js"
 import {
@@ -104,7 +105,7 @@ const toolExpression = (path: string) =>
   "tools" +
   path
     .split(".")
-    .map((segment) => (identifierSegment.test(segment) ? `.${segment}` : `[${JSON.stringify(segment)}]`))
+    .map((segment) => (identifierSegment.test(segment) ? `.${segment}` : `[${quoteJsonString(segment)}]`))
     .join("")
 
 export class ToolReference {

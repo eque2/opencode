@@ -1,9 +1,15 @@
-import { JsonPointer, Schema } from "effect"
+import { JsonPointer, Result, Schema } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.js"
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top => Schema.isSchema(schema)
 
-const renderLiteral = (value: unknown): string => JSON.stringify(value) ?? "unknown"
+/** Encodes a string as a JSON string literal (quoted and escaped). */
+export const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
+/** Encodes a JSON value as JSON text; fails for a value that is not JSON data. */
+const encodeJson = Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Json))
+
+const renderLiteral = (value: unknown): string => Result.getOrElse(encodeJson(value), () => "unknown")
 
 /**
  * Bare TypeScript identifier - usable unquoted as an object key (and, in the tool runtime,
@@ -12,7 +18,7 @@ const renderLiteral = (value: unknown): string => JSON.stringify(value) ?? "unkn
 export const identifierSegment = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
 /** Renders a property name as a valid TS object key: bare when an identifier, quoted otherwise. */
-const renderKey = (name: string): string => (identifierSegment.test(name) ? name : JSON.stringify(name))
+const renderKey = (name: string): string => (identifierSegment.test(name) ? name : quoteJsonString(name))
 
 const effectNumberSentinel = (schema: JsonSchema) =>
   schema.type === "string" &&
@@ -72,12 +78,9 @@ const docTags = (schema: JsonSchema): Array<string> => {
   const tags: Array<string> = []
   if (schema.deprecated === true) tags.push("@deprecated")
   if (schema.default !== undefined) {
-    try {
-      const rendered = JSON.stringify(schema.default)
-      if (rendered !== undefined) tags.push(`@default ${rendered}`)
-    } catch {
-      // unserializable default: skip rather than emit a broken tag
-    }
+    // An unserializable default is skipped rather than emitted as a broken tag.
+    const rendered = encodeJson(schema.default)
+    if (Result.isSuccess(rendered)) tags.push(`@default ${rendered.success}`)
   }
   if (typeof schema.format === "string") tags.push(`@format ${schema.format}`)
   if (typeof schema.minItems === "number") tags.push(`@minItems ${schema.minItems}`)
