@@ -1,11 +1,11 @@
 export * as SessionRunCoordinator from "./run-coordinator"
 
-import { Deferred, Effect, Exit, Fiber, FiberSet, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, FiberSet, MutableHashMap, Option, Scope } from "effect"
 
 /** Serializes execution for each key while allowing different keys to run concurrently. */
 export interface Coordinator<Key, E> {
-  /** Snapshots keys with an execution owned by this coordinator. */
-  readonly active: Effect.Effect<ReadonlySet<Key>>
+  /** Snapshots keys with an execution owned by this coordinator, in the order the keys became active. */
+  readonly active: Effect.Effect<ReadonlyArray<Key>>
   /** Starts execution while idle or joins the active execution. */
   readonly run: (key: Key) => Effect.Effect<void, E>
   /** Registers one coalesced follow-up after newly recorded work. */
@@ -25,7 +25,7 @@ export const make = <Key, E>(options: {
   readonly drain: (key: Key, force: boolean) => Effect.Effect<void, E>
 }): Effect.Effect<Coordinator<Key, E>, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const active = new Map<Key, Entry<E>>()
+    const active = MutableHashMap.empty<Key, Entry<E>>()
     const fork = yield* FiberSet.makeRuntime<never, void, never>()
 
     const makeEntry = (): Entry<E> => ({
@@ -57,47 +57,50 @@ export const make = <Key, E>(options: {
 
       if (entry.pendingWake) {
         const successor = makeEntry()
-        active.set(key, successor)
+        MutableHashMap.set(active, key, successor)
         start(key, successor, false, true)
-      } else active.delete(key)
+      } else MutableHashMap.remove(active, key)
       Deferred.doneUnsafe(entry.done, exit)
     }
 
     const run = (key: Key): Effect.Effect<void, E> =>
       Effect.uninterruptibleMask((restore) => {
-        const entry = active.get(key)
-        if (entry !== undefined) {
+        const current = MutableHashMap.get(active, key)
+        if (Option.isSome(current)) {
+          const entry = current.value
           if (entry.stopping) return restore(Deferred.await(entry.done).pipe(Effect.andThen(run(key))))
           return restore(Deferred.await(entry.done))
         }
 
         const next = makeEntry()
-        active.set(key, next)
+        MutableHashMap.set(active, key, next)
         start(key, next, true)
         return restore(Deferred.await(next.done))
       })
 
     const wake = (key: Key) =>
       Effect.sync(() => {
-        const entry = active.get(key)
-        if (entry !== undefined) {
-          entry.pendingWake = true
+        const current = MutableHashMap.get(active, key)
+        if (Option.isSome(current)) {
+          current.value.pendingWake = true
           return
         }
 
         const next = makeEntry()
-        active.set(key, next)
+        MutableHashMap.set(active, key, next)
         start(key, next, false)
       })
 
     const interrupt = (key: Key): Effect.Effect<void> =>
       Effect.suspend(() => {
-        const entry = active.get(key)
-        if (entry?.owner === undefined) return Effect.void
+        const current = MutableHashMap.get(active, key)
+        if (Option.isNone(current)) return Effect.void
+        const entry = current.value
+        if (entry.owner === undefined) return Effect.void
         entry.stopping = true
         entry.pendingWake = false
         return Fiber.interrupt(entry.owner)
       })
 
-    return { active: Effect.sync(() => new Set(active.keys())), run, wake, interrupt }
+    return { active: Effect.sync(() => Array.from(MutableHashMap.keys(active))), run, wake, interrupt }
   })

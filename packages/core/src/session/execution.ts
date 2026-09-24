@@ -8,7 +8,7 @@ import { SessionSchema } from "./schema"
 
 export interface Interface {
   /** Snapshots active execution owned by this process. */
-  readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
+  readonly active: Effect.Effect<ReadonlyArray<SessionSchema.ID>>
   /** Starts execution while idle or joins the active execution. */
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, SessionRunner.RunError>
   /** Registers newly recorded work. Repeated wakeups may coalesce. */
@@ -26,7 +26,7 @@ export const node = LayerNode.unbound(Service, Node.tags.values.global)
 export const noopLayer = Layer.succeed(
   Service,
   Service.of({
-    active: Effect.succeed(new Set()),
+    active: Effect.succeed([]),
     resume: () => Effect.void,
     wake: () => Effect.void,
     interrupt: () => Effect.void,
