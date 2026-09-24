@@ -1,3 +1,4 @@
+import { Data } from "effect"
 import type { SafeObject } from "../tool-runtime.js"
 import type { SandboxURL } from "../values.js"
 
@@ -59,7 +60,11 @@ export class ComputedValue {
   constructor(readonly value: unknown) {}
 }
 
-export class PromiseNamespace {}
+// The sandbox `Promise` global: an opaque tagged value (never plain data), so data checkpoints
+// reject it exactly like the other runtime references.
+export class PromiseNamespace extends Data.TaggedClass("PromiseNamespace") {}
+
+export const promiseNamespace: PromiseNamespace = new PromiseNamespace()
 
 export type PromiseMethodName = "all" | "allSettled" | "race" | "resolve" | "reject"
 

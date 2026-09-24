@@ -44,6 +44,7 @@ import {
   PromiseMethodReference,
   type PromiseMethodName,
   PromiseNamespace,
+  promiseNamespace,
   ProgramThrow,
   type ProgramNode,
   type StatementResult,
@@ -624,7 +625,7 @@ class Interpreter<R> {
     this.lastValue = undefined
     this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
     globalScope.set("tools", { mutable: false, value: new ToolReference([]) })
-    globalScope.set("Promise", { mutable: false, value: new PromiseNamespace() })
+    globalScope.set("Promise", { mutable: false, value: promiseNamespace })
     globalScope.set("undefined", { mutable: false, value: undefined })
     globalScope.set("Object", { mutable: false, value: new GlobalNamespace("Object") })
     globalScope.set("Math", { mutable: false, value: new GlobalNamespace("Math") })
