@@ -8,6 +8,10 @@ import ts from "typescript"
  * every declared property, so the same member can occur more than once.
  * Each rewrite keeps the type that TypeScript already computes for the
  * union:
+ * - A union with an `any` or `unknown` member is that keyword.
+ * - A string, number, bigint or boolean literal is absorbed when its keyword
+ *   type is also a member, so `"a" | string` is `string`.
+ * - A `never` member adds nothing.
  * - A member whose text repeats an earlier member adds nothing.
  *
  * The rewrite works on the source text: only a union that loses a member
@@ -22,6 +26,28 @@ const flatten = (node: ts.UnionTypeNode): ReadonlyArray<ts.TypeNode> =>
     const inner = unwrap(member)
     return ts.isUnionTypeNode(inner) ? flatten(inner) : [member]
   })
+
+/** Returns the keyword type that contains a literal type, such as `string` for `"a"`. */
+const literalKeyword = (node: ts.TypeNode): ts.SyntaxKind | undefined => {
+  if (!ts.isLiteralTypeNode(node)) {
+    return undefined
+  }
+  const literal = node.literal
+  if (literal.kind === ts.SyntaxKind.TrueKeyword || literal.kind === ts.SyntaxKind.FalseKeyword) {
+    return ts.SyntaxKind.BooleanKeyword
+  }
+  if (ts.isStringLiteral(literal) || ts.isNoSubstitutionTemplateLiteral(literal)) {
+    return ts.SyntaxKind.StringKeyword
+  }
+  const value = ts.isPrefixUnaryExpression(literal) ? literal.operand : literal
+  if (ts.isNumericLiteral(value)) {
+    return ts.SyntaxKind.NumberKeyword
+  }
+  if (ts.isBigIntLiteral(value)) {
+    return ts.SyntaxKind.BigIntKeyword
+  }
+  return undefined
+}
 
 interface Edit {
   readonly start: number
@@ -53,11 +79,25 @@ const spliceChildren = (node: ts.Node, source: ts.SourceFile, start: number, tex
 const simplifyUnion = (node: ts.UnionTypeNode, source: ts.SourceFile): string | undefined => {
   const members = flatten(node).map((member) => {
     const simplified = simplifyNode(member, source)
-    return { changed: simplified !== undefined, text: simplified ?? member.getText(source) }
+    return { changed: simplified !== undefined, inner: unwrap(member), text: simplified ?? member.getText(source) }
   })
+  const kinds = new Set(members.map((member) => member.inner.kind))
+  if (kinds.has(ts.SyntaxKind.AnyKeyword)) {
+    return "any"
+  }
+  if (kinds.has(ts.SyntaxKind.UnknownKeyword)) {
+    return "unknown"
+  }
   const seen = new Set<string>()
   const kept: Array<string> = []
   for (const member of members) {
+    if (member.inner.kind === ts.SyntaxKind.NeverKeyword) {
+      continue
+    }
+    const keyword = literalKeyword(member.inner)
+    if (keyword !== undefined && kinds.has(keyword)) {
+      continue
+    }
     if (seen.has(member.text)) {
       continue
     }
@@ -67,7 +107,7 @@ const simplifyUnion = (node: ts.UnionTypeNode, source: ts.SourceFile): string | 
   if (kept.length === members.length && !members.some((member) => member.changed)) {
     return undefined
   }
-  return kept.join(" | ")
+  return kept.length === 0 ? "never" : kept.join(" | ")
 }
 
 function simplifyNode(node: ts.Node, source: ts.SourceFile): string | undefined {

@@ -1052,7 +1052,7 @@ export class Workspace extends HeyApiClient {
       id?: string
       type?: string
       branch?: string | null
-      extra?: unknown | null
+      extra?: unknown
     },
     options?: Options<never, ThrowOnError>,
   ) {
