@@ -1,4 +1,4 @@
-import { Option, Schema } from "effect"
+import { Array as Arr, Option, Schema } from "effect"
 import { REDACTED, secretFindings } from "./redaction.js"
 import type { HttpInteraction, RequestMatcher, RequestSnapshot } from "./types.js"
 
@@ -100,10 +100,14 @@ export const selectSequential = (
   incoming: RequestSnapshot,
   match: RequestMatcher,
   index: number,
-): { readonly interaction: HttpInteraction | undefined; readonly detail: string } => {
-  const interaction = interactions[index]
-  if (!interaction) return { interaction, detail: `interaction ${index + 1} of ${interactions.length} not recorded` }
-  if (!match(incoming, interaction.request))
-    return { interaction: undefined, detail: requestDiff(interaction.request, incoming).join("\n") }
-  return { interaction, detail: "" }
-}
+): { readonly interaction: Option.Option<HttpInteraction>; readonly detail: string } =>
+  Option.match(Arr.get(interactions, index), {
+    onNone: () => ({
+      interaction: Option.none(),
+      detail: `interaction ${index + 1} of ${interactions.length} not recorded`,
+    }),
+    onSome: (interaction) =>
+      match(incoming, interaction.request)
+        ? { interaction: Option.some(interaction), detail: "" }
+        : { interaction: Option.none(), detail: requestDiff(interaction.request, incoming).join("\n") },
+  })

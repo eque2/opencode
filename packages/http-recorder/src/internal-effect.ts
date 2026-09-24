@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { Deferred, Effect, Layer, Option, Ref } from "effect"
+import { Deferred, Effect, Exit, Layer, Option, Ref } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -119,7 +119,7 @@ export const recordingLayer = (
 
       if (mode === "record") {
         const initial = yield* Deferred.make<void>()
-        yield* Deferred.succeed(initial, undefined)
+        yield* Deferred.done(initial, Exit.void)
         const tail = yield* Ref.make(initial)
         return HttpClient.make((request) =>
           Effect.gen(function* () {
@@ -148,7 +148,7 @@ export const recordingLayer = (
                   ),
                 )
               return responseFromSnapshot(request, responseSnapshot)
-            }).pipe(Effect.ensuring(Deferred.succeed(completed, undefined)))
+            }).pipe(Effect.ensuring(Deferred.done(completed, Exit.void)))
           }),
         )
       }
@@ -160,7 +160,7 @@ export const recordingLayer = (
           const claimed = yield* replay
             .claim((interaction, index, interactions) => {
               const result = selectSequential(interactions, incoming, match, index)
-              if (result.interaction) return Effect.void
+              if (Option.isSome(result.interaction)) return Effect.void
               return Effect.fail(
                 transportError(request, `Fixture "${name}" does not match the current request: ${result.detail}.`),
               )
