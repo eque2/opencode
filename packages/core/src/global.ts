@@ -2,9 +2,9 @@ import path from "path"
 import { xdgData, xdgCache, xdgConfig, xdgState } from "xdg-basedir"
 import os from "os"
 import { NodeFileSystem } from "@effect/platform-node"
-import { Context, Effect, FileSystem, Layer } from "effect"
+import { Context, Effect, FileSystem, Layer, Option } from "effect"
 import { Flock } from "./util/flock"
-import { Flag } from "./flag/flag"
+import { FlagConfig } from "./flag/flag"
 import { makeGlobalNode } from "./effect/app-node"
 
 const app = "opencode"
@@ -58,12 +58,13 @@ export interface Interface {
   readonly repos: string
 }
 
+/** The default directories with the input on top. It reads no environment variable. */
 export function make(input: Partial<Interface> = {}): Interface {
   return {
     home: Path.home,
     data: Path.data,
     cache: Path.cache,
-    config: Flag.OPENCODE_CONFIG_DIR ?? Path.config,
+    config: Path.config,
     state: Path.state,
     tmp: Path.tmp,
     bin: Path.bin,
@@ -73,17 +74,21 @@ export function make(input: Partial<Interface> = {}): Interface {
   }
 }
 
-const layer = Layer.effect(
-  Service,
-  Effect.sync(() => Service.of(make())),
-)
+/**
+ * The directories with the environment overrides, then the input, on top. The CLI and tests set
+ * OPENCODE_CONFIG_DIR after start, so each build reads the live value. The variable is optional,
+ * so a ConfigError is a defect.
+ */
+const fromEnvironment = (input: Partial<Interface>) =>
+  Effect.gen(function* () {
+    const config = Option.getOrElse(yield* FlagConfig.OPENCODE_CONFIG_DIR, () => Path.config)
+    return Service.of(make({ config, ...input }))
+  }).pipe(Effect.orDie)
+
+const layer = Layer.effect(Service, fromEnvironment({}))
 
 export const node = makeGlobalNode({ service: Service, layer: layer, deps: [] })
 
-export const layerWith = (input: Partial<Interface>) =>
-  Layer.effect(
-    Service,
-    Effect.sync(() => Service.of(make(input))),
-  )
+export const layerWith = (input: Partial<Interface>) => Layer.effect(Service, fromEnvironment(input))
 
 export * as Global from "./global"
