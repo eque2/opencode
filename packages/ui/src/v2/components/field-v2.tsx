@@ -11,6 +11,7 @@ import {
   type ComponentProps,
   type ParentProps,
 } from "solid-js"
+import { MissingProviderError } from "../../context/errors"
 import { TooltipV2 } from "./tooltip-v2"
 import "./field-v2.css"
 
@@ -32,8 +33,8 @@ const FieldContext = createContext<FieldContextValue>()
 function useField() {
   const ctx = useContext(FieldContext)
   if (!ctx) {
-    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
-    throw new Error("Field subcomponents must be used within <Field>")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "Field subcomponents must be used within <Field>" })
   }
   return ctx
 }

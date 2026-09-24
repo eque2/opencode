@@ -15,6 +15,7 @@ import {
 } from "solid-js"
 import { Dialog as Kobalte } from "@kobalte/core/dialog"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { MissingProviderError } from "./errors"
 
 type DialogElement = () => JSX.Element
 
@@ -171,12 +172,12 @@ export function useDialog() {
   const owner = getOwner()
 
   if (!owner) {
-    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider; getOwner() must return the reactive owner that show and push run under
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider; show and push need the reactive owner from getOwner()
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
   if (!ctx) {
-    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
 
   return {

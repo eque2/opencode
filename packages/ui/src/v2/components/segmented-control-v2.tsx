@@ -10,6 +10,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import type { ComponentProps } from "solid-js"
+import { MissingProviderError } from "../../context/errors"
 import "./segmented-control-v2.css"
 
 type OnChange = (value: string | null) => void
@@ -26,8 +27,10 @@ const SegmentedControlContext = createContext<SegmentedControlContextValue>()
 
 function useSegmentedControlContext() {
   const ctx = useContext(SegmentedControlContext)
-  // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
-  if (!ctx) throw new Error("SegmentedControlItemV2 must be used inside SegmentedControlV2")
+  if (!ctx) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "SegmentedControlItemV2 must be used inside SegmentedControlV2" })
+  }
   return ctx
 }
 
