@@ -12,7 +12,9 @@ import {
 import { Portal } from "solid-js/web"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createStore } from "solid-js/store"
+import { Effect } from "effect"
 import { useI18n } from "../context/i18n"
+import { createFiberSlot } from "../hooks/create-fiber-slot"
 
 export type ScrollViewThumbVisibility = "hover" | "scroll"
 
@@ -156,12 +158,11 @@ export function ScrollView(props: ScrollViewProps) {
   const thumbTop = () => state.thumbTop
   const showThumb = () => state.showThumb
 
-  let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined
+  const scrollIdle = createFiberSlot()
 
   const markScrolling = () => {
     setState("isScrolling", true)
-    if (scrollIdleTimer !== undefined) clearTimeout(scrollIdleTimer)
-    scrollIdleTimer = setTimeout(() => setState("isScrolling", false), 800)
+    scrollIdle.run(Effect.sleep("800 millis").pipe(Effect.andThen(Effect.sync(() => setState("isScrolling", false)))))
   }
 
   const thumbVisible = () => {
@@ -169,10 +170,6 @@ export function ScrollView(props: ScrollViewProps) {
     if (isScrolling()) return true
     return local.thumbVisibility === "hover" && isHovered()
   }
-
-  onCleanup(() => {
-    if (scrollIdleTimer !== undefined) clearTimeout(scrollIdleTimer)
-  })
 
   const updateThumb = () => {
     if (!viewportRef) return
