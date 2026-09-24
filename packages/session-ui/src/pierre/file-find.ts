@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 
 export type FindHost = {
   element: () => HTMLElement | undefined
@@ -76,16 +77,21 @@ function installShortcuts() {
   )
 }
 
+// The CSS Custom Highlight API is missing on the server and in older engines, so detect it before use.
+function highlightRegistry(): Option.Option<HighlightRegistry> {
+  if (typeof CSS === "undefined" || !("highlights" in CSS)) return Option.none()
+  return Option.fromNullishOr(CSS.highlights)
+}
+
 function clearHighlightFind() {
-  const api = (globalThis as { CSS?: { highlights?: { delete: (name: string) => void } } }).CSS?.highlights
-  if (!api) return
-  api.delete("opencode-find")
-  api.delete("opencode-find-current")
+  const api = highlightRegistry()
+  if (Option.isNone(api)) return
+  api.value.delete("opencode-find")
+  api.value.delete("opencode-find-current")
 }
 
 function supportsHighlights() {
-  const g = globalThis as unknown as { CSS?: { highlights?: unknown }; Highlight?: unknown }
-  return typeof g.Highlight === "function" && g.CSS?.highlights != null
+  return typeof Highlight === "function" && Option.isSome(highlightRegistry())
 }
 
 function scrollParent(el: HTMLElement): HTMLElement | undefined {
@@ -292,9 +298,9 @@ export function createFileFind(opts: CreateFileFindOptions) {
   }
 
   const setHighlights = (ranges: Range[], currentIndex: number) => {
-    const api = (globalThis as unknown as { CSS?: { highlights?: any }; Highlight?: any }).CSS?.highlights
-    const Highlight = (globalThis as unknown as { Highlight?: any }).Highlight
-    if (!api || typeof Highlight !== "function") return false
+    const registry = highlightRegistry()
+    if (Option.isNone(registry) || typeof Highlight !== "function") return false
+    const api = registry.value
 
     api.delete("opencode-find")
     api.delete("opencode-find-current")

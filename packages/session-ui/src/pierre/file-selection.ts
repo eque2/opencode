@@ -1,5 +1,6 @@
 import { type SelectedLineRange } from "@pierre/diffs"
-import { toRange } from "./selection-bridge"
+import { Array as Arr, Option } from "effect"
+import { readShadowSelection, toRange } from "./selection-bridge"
 
 export function findElement(node: Node | null): HTMLElement | undefined {
   if (!node) return
@@ -43,26 +44,34 @@ export function findCodeSelectionSide(node: Node | null): SelectedLineRange["sid
   return "additions"
 }
 
+// Selection.getComposedRanges is missing in older engines, so check for it before the call.
+function composedRange(selection: Selection, root: ShadowRoot): Option.Option<StaticRange> {
+  if (typeof selection.getComposedRanges !== "function") return Option.none()
+  return Arr.head(selection.getComposedRanges({ shadowRoots: [root] }))
+}
+
 export function readShadowLineSelection(opts: {
   root: ShadowRoot
   lineForNode: (node: Node | null) => number | undefined
   sideForNode?: (node: Node | null) => SelectedLineRange["side"]
   preserveTextSelection?: boolean
 }) {
-  const selection =
-    (opts.root as unknown as { getSelection?: () => Selection | null }).getSelection?.() ?? window.getSelection()
-  if (!selection || selection.isCollapsed) return
+  const found = readShadowSelection(opts.root)
+  if (Option.isNone(found) || found.value.isCollapsed) return
+  const selection = found.value
 
-  const domRange =
-    (
-      selection as unknown as {
-        getComposedRanges?: (options?: { shadowRoots?: ShadowRoot[] }) => StaticRange[]
-      }
-    ).getComposedRanges?.({ shadowRoots: [opts.root] })?.[0] ??
-    (selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined)
+  const domRange = Option.orElse(composedRange(selection, opts.root), () =>
+    selection.rangeCount > 0 ? Option.some(selection.getRangeAt(0)) : Option.none(),
+  )
 
-  const startNode = domRange?.startContainer ?? selection.anchorNode
-  const endNode = domRange?.endContainer ?? selection.focusNode
+  const startNode = Option.match(domRange, {
+    onNone: () => selection.anchorNode,
+    onSome: (range) => range.startContainer,
+  })
+  const endNode = Option.match(domRange, {
+    onNone: () => selection.focusNode,
+    onSome: (range) => range.endContainer,
+  })
   if (!startNode || !endNode) return
   if (!opts.root.contains(startNode) || !opts.root.contains(endNode)) return
 
@@ -80,6 +89,6 @@ export function readShadowLineSelection(opts: {
 
   return {
     range,
-    text: opts.preserveTextSelection && domRange ? toRange(domRange).cloneRange() : undefined,
+    text: opts.preserveTextSelection && Option.isSome(domRange) ? toRange(domRange.value).cloneRange() : undefined,
   }
 }

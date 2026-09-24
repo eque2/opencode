@@ -191,7 +191,11 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
 
 export type FileSSRProps<T = {}> = FileProps<T>
 
+function hasPreloadedDiff<T>(props: DiffFileProps<T>): props is SSRDiffFileProps<T> {
+  return props.preloadedDiff !== undefined
+}
+
 export function FileSSR<T>(props: FileSSRProps<T>) {
-  if (props.mode !== "diff" || !props.preloadedDiff) return File(props)
-  return DiffSSRViewer(props as SSRDiffFileProps<T>)
+  if (props.mode !== "diff" || !hasPreloadedDiff(props)) return File(props)
+  return DiffSSRViewer(props)
 }

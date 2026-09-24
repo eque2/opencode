@@ -1,4 +1,5 @@
 import { type SelectedLineRange } from "@pierre/diffs"
+import { Option, Predicate } from "effect"
 
 type SelectionKey = "ui.sessionReview.selection.line" | "ui.sessionReview.selection.lines"
 type SelectionVars = Record<string, string | number>
@@ -64,17 +65,28 @@ export function toRange(source: Range | StaticRange): Range {
   return range
 }
 
+type SelectionOwner = ShadowRoot & { getSelection: () => Selection | null }
+
+// ShadowRoot.getSelection is a non-standard Chromium method, so lib.dom does not declare it.
+function ownsSelection(root: ShadowRoot): root is SelectionOwner {
+  return Predicate.hasProperty(root, "getSelection") && typeof root.getSelection === "function"
+}
+
+export function readShadowSelection(root: ShadowRoot): Option.Option<Selection> {
+  const own = ownsSelection(root) ? Option.fromNullOr(root.getSelection()) : Option.none<Selection>()
+  return Option.orElse(own, () => Option.fromNullOr(window.getSelection()))
+}
+
 export function restoreShadowTextSelection(root: ShadowRoot | undefined, range: Range | undefined) {
   if (!root || !range) return
 
   requestAnimationFrame(() => {
-    const selection =
-      (root as unknown as { getSelection?: () => Selection | null }).getSelection?.() ?? window.getSelection()
-    if (!selection) return
+    const selection = readShadowSelection(root)
+    if (Option.isNone(selection)) return
 
     try {
-      selection.removeAllRanges()
-      selection.addRange(range)
+      selection.value.removeAllRanges()
+      selection.value.addRange(range)
     } catch {}
   })
 }
