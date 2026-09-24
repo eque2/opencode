@@ -189,8 +189,8 @@ export function BillingSection() {
                         </button>
                       </div>
                     </div>
-                    <Show when={checkoutSubmission.result && (checkoutSubmission.result as any).error}>
-                      {(err: any) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
+                    <Show when={checkoutSubmission.result?.error}>
+                      {(err) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
                     </Show>
                   </div>
                 }

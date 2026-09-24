@@ -82,8 +82,13 @@ export function ReloadSection() {
     return (((reloadAmount + 0.3) / 0.956) * 0.044 + 0.3).toFixed(2)
   })
 
+  const setReloadError = () => {
+    const result = setReloadSubmission.result
+    return result && "error" in result ? result.error : undefined
+  }
+
   createEffect(() => {
-    if (!setReloadSubmission.pending && setReloadSubmission.result && !(setReloadSubmission.result as any).error) {
+    if (!setReloadSubmission.pending && setReloadSubmission.result && !setReloadError()) {
       setStore("show", false)
     }
   })
@@ -181,8 +186,8 @@ export function ReloadSection() {
             </div>
           </div>
 
-          <Show when={setReloadSubmission.result && (setReloadSubmission.result as any).error}>
-            {(err: any) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
+          <Show when={setReloadError()}>
+            {(err) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
           </Show>
           <input type="hidden" name="workspaceID" value={params.id} />
           <div data-slot="form-actions">

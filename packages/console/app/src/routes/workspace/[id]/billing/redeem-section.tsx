@@ -58,10 +58,14 @@ export function RedeemSection() {
               {submission.pending ? i18n.t("workspace.redeem.redeeming") : i18n.t("workspace.redeem.redeem")}
             </button>
           </div>
-          <Show when={submission.result && (submission.result as any).error}>
-            {(err: any) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
+          <Show when={submission.result?.error}>
+            {(err) => <div data-slot="form-error">{localizeError(i18n.t, err())}</div>}
           </Show>
-          <Show when={submission.result && !(submission.result as any).error && (submission.result as any).data}>
+          <Show
+            when={
+              submission.result && !submission.result.error && "data" in submission.result && submission.result.data
+            }
+          >
             <div data-slot="form-success">{i18n.t("workspace.redeem.success")}</div>
           </Show>
           <input type="hidden" name="workspaceID" value={params.id} />

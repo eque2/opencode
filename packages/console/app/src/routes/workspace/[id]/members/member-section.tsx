@@ -89,8 +89,10 @@ const updateMember = action(async (form: FormData) => {
   )
 }, "member.update")
 
+type Member = Awaited<ReturnType<typeof listMembers>>["members"][number]
+
 function MemberRow(props: {
-  member: any
+  member: Member
   workspaceID: string
   actorID: string
   actorRole: string
@@ -102,7 +104,7 @@ function MemberRow(props: {
   const isAdmin = () => props.actorRole === "admin"
   const [store, setStore] = createStore({
     editing: false,
-    selectedRole: props.member.role as (typeof UserRole)[number],
+    selectedRole: props.member.role,
     limit: "",
   })
 
