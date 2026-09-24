@@ -1,5 +1,11 @@
-import { convertToOpenAICompatibleChatMessages as convertToCopilotMessages } from "@opencode-ai/core/github-copilot/chat/convert-to-openai-compatible-chat-messages"
+import { convertToOpenAICompatibleChatMessages } from "@opencode-ai/core/github-copilot/chat/convert-to-openai-compatible-chat-messages"
+import type { LanguageModelV3Prompt } from "@ai-sdk/provider"
 import { describe, test, expect } from "bun:test"
+import { Effect } from "effect"
+
+// The conversion is an Effect that fails on an unsupported part; these prompts convert synchronously.
+const convertToCopilotMessages = (prompt: LanguageModelV3Prompt) =>
+  Effect.runSync(convertToOpenAICompatibleChatMessages(prompt))
 
 describe("system messages", () => {
   test("should convert system message content to string", () => {

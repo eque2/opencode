@@ -153,7 +153,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         tools: openaiTools,
         toolChoice: openaiToolChoice,
         toolWarnings,
-      } = prepareTools({
+      } = yield* prepareTools({
         tools,
         toolChoice,
       })
@@ -198,7 +198,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           verbosity: compatibleOptions.textVerbosity,
 
           // messages:
-          messages: convertToOpenAICompatibleChatMessages(prompt),
+          messages: yield* convertToOpenAICompatibleChatMessages(prompt),
 
           // tools:
           tools: openaiTools,
@@ -504,14 +504,18 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
               const delta = choice.delta
 
-              // Capture reasoning_opaque for Copilot multi-turn reasoning
+              // Capture reasoning_opaque for Copilot multi-turn reasoning.
+              // An invalid chunk errors the stream through its controller, as a throw from transform did.
               if (delta.reasoning_opaque) {
                 if (reasoningOpaque != null) {
-                  throw new InvalidResponseDataError({
-                    data: delta,
-                    message:
-                      "Multiple reasoning_opaque values received in a single response. Only one thinking part per response is supported.",
-                  })
+                  controller.error(
+                    new InvalidResponseDataError({
+                      data: delta,
+                      message:
+                        "Multiple reasoning_opaque values received in a single response. Only one thinking part per response is supported.",
+                    }),
+                  )
+                  return
                 }
                 reasoningOpaque = delta.reasoning_opaque
               }
@@ -578,17 +582,23 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
                   if (toolCalls[index] == null) {
                     if (toolCallDelta.id == null) {
-                      throw new InvalidResponseDataError({
-                        data: toolCallDelta,
-                        message: `Expected 'id' to be a string.`,
-                      })
+                      controller.error(
+                        new InvalidResponseDataError({
+                          data: toolCallDelta,
+                          message: `Expected 'id' to be a string.`,
+                        }),
+                      )
+                      return
                     }
 
                     if (toolCallDelta.function?.name == null) {
-                      throw new InvalidResponseDataError({
-                        data: toolCallDelta,
-                        message: `Expected 'function.name' to be a string.`,
-                      })
+                      controller.error(
+                        new InvalidResponseDataError({
+                          data: toolCallDelta,
+                          message: `Expected 'function.name' to be a string.`,
+                        }),
+                      )
+                      return
                     }
 
                     controller.enqueue({

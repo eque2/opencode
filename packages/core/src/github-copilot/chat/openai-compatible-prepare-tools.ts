@@ -1,4 +1,5 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
+import { Effect } from "effect"
 
 export function prepareTools({
   tools,
@@ -6,27 +7,30 @@ export function prepareTools({
 }: {
   tools: LanguageModelV3CallOptions["tools"]
   toolChoice?: LanguageModelV3CallOptions["toolChoice"]
-}): {
-  tools:
-    | undefined
-    | Array<{
-        type: "function"
-        function: {
-          name: string
-          description: string | undefined
-          parameters: unknown
-        }
-      }>
-  toolChoice: { type: "function"; function: { name: string } } | "auto" | "none" | "required" | undefined
-  toolWarnings: SharedV3Warning[]
-} {
+}): Effect.Effect<
+  {
+    tools:
+      | undefined
+      | Array<{
+          type: "function"
+          function: {
+            name: string
+            description: string | undefined
+            parameters: unknown
+          }
+        }>
+    toolChoice: { type: "function"; function: { name: string } } | "auto" | "none" | "required" | undefined
+    toolWarnings: SharedV3Warning[]
+  },
+  UnsupportedFunctionalityError
+> {
   // when the tools array is empty, change it to undefined to prevent errors:
   tools = tools?.length ? tools : undefined
 
   const toolWarnings: SharedV3Warning[] = []
 
   if (tools == null) {
-    return { tools: undefined, toolChoice: undefined, toolWarnings }
+    return Effect.succeed({ tools: undefined, toolChoice: undefined, toolWarnings })
   }
 
   const openaiCompatTools: Array<{
@@ -54,7 +58,7 @@ export function prepareTools({
   }
 
   if (toolChoice == null) {
-    return { tools: openaiCompatTools, toolChoice: undefined, toolWarnings }
+    return Effect.succeed({ tools: openaiCompatTools, toolChoice: undefined, toolWarnings })
   }
 
   const type = toolChoice.type
@@ -63,21 +67,23 @@ export function prepareTools({
     case "auto":
     case "none":
     case "required":
-      return { tools: openaiCompatTools, toolChoice: type, toolWarnings }
+      return Effect.succeed({ tools: openaiCompatTools, toolChoice: type, toolWarnings })
     case "tool":
-      return {
+      return Effect.succeed({
         tools: openaiCompatTools,
         toolChoice: {
-          type: "function",
+          type: "function" as const,
           function: { name: toolChoice.toolName },
         },
         toolWarnings,
-      }
+      })
     default: {
       const _exhaustiveCheck: never = type
-      throw new UnsupportedFunctionalityError({
-        functionality: `tool choice type: ${_exhaustiveCheck}`,
-      })
+      return Effect.fail(
+        new UnsupportedFunctionalityError({
+          functionality: `tool choice type: ${_exhaustiveCheck}`,
+        }),
+      )
     }
   }
 }
