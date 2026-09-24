@@ -10,6 +10,7 @@ import {
   Option,
   Predicate,
   Result,
+  Schema,
   Semaphore,
 } from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
@@ -173,6 +174,30 @@ const parseProgram = (code: string): Effect.Effect<ProgramNode, unknown> =>
     return parsed
   })
 
+// JSON text written into diagnostics and console output goes through Schema codecs.
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
+// The JSON value that JSON.stringify writes for copied-out sandbox data: undefined object
+// members are omitted, undefined array slots (holes included) become null, and a bare
+// undefined has no JSON form (None). Other non-JSON values also map to None, as JSON omits them.
+const toJsonValue = (value: unknown): Option.Option<Schema.Json> => {
+  if (Predicate.isNull(value) || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return Option.some(value)
+  }
+  if (Array.isArray(value)) return Option.some(Array.from(value, (item) => Option.getOrNull(toJsonValue(item))))
+  if (Predicate.isObject(value)) {
+    return Option.some(
+      Object.fromEntries(
+        Object.entries(value).flatMap(([key, item]) =>
+          Option.toArray(Option.map(toJsonValue(item), (json): readonly [string, Schema.Json] => [key, json])),
+        ),
+      ),
+    )
+  }
+  return Option.none()
+}
+
 const publicErrorMessage = (message: string): string =>
   message.replace(/\/(?:Users|home|private|tmp|var\/folders)\/[^\s"'`]+/g, "<redacted-path>")
 
@@ -215,7 +240,9 @@ const normalizeError = (error: unknown): Diagnostic => {
     } else {
       // copyOut rejects values that cannot cross the data boundary; those render with String().
       message = Result.getOrElse(
-        Result.try(() => JSON.stringify(copyOut(value)) ?? String(value)),
+        Result.try(() =>
+          Option.getOrElse(Option.map(toJsonValue(copyOut(value)), encodeJsonText), () => String(value)),
+        ),
         () => String(value),
       )
     }
@@ -451,11 +478,16 @@ const invokeStringMethod = (
         break
       case "normalize": {
         const form = yield* optStr(0)
+        // Without a form, normalize uses NFC and cannot fail.
+        if (form === undefined) {
+          result = value.normalize()
+          break
+        }
         result = yield* Effect.try({
           try: () => value.normalize(form),
           catch: () =>
             new InterpreterRuntimeError(
-              `String.normalize expects the form "NFC", "NFD", "NFKC", or "NFKD" (got ${JSON.stringify(form)}).`,
+              `String.normalize expects the form "NFC", "NFD", "NFKC", or "NFKD" (got ${quoteJsonString(form)}).`,
               node,
             ).as("RangeError"),
         })
@@ -1681,8 +1713,8 @@ class Interpreter<R> {
           const reason = regexFailureReason(error)
           return new InterpreterRuntimeError(
             /flag/i.test(reason)
-              ? `new RegExp(...) received invalid flags ${JSON.stringify(flags)} (${reason}). Valid flags are d, g, i, m, s, u, v, and y.`
-              : `new RegExp(...) received ${JSON.stringify(pattern)}, which is not a valid regular expression pattern (${reason}). ${escapeRegexHint}`,
+              ? `new RegExp(...) received invalid flags ${quoteJsonString(flags)} (${reason}). Valid flags are d, g, i, m, s, u, v, and y.`
+              : `new RegExp(...) received ${quoteJsonString(pattern)}, which is not a valid regular expression pattern (${reason}). ${escapeRegexHint}`,
             node,
           ).as("SyntaxError")
         },
@@ -2182,7 +2214,7 @@ class Interpreter<R> {
       case "undefined":
         return "null"
       case "string":
-        return JSON.stringify(value)
+        return quoteJsonString(value)
       // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
       case "number":
       case "boolean":
@@ -2220,7 +2252,7 @@ class Interpreter<R> {
       Array.isArray(value)
         ? `[${value.map((item) => this.formatConsoleValue(item, seen, depth + 1)).join(",")}]`
         : `{${Object.entries(value)
-            .map(([key, item]) => `${JSON.stringify(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
+            .map(([key, item]) => `${quoteJsonString(key)}:${this.formatConsoleValue(item, seen, depth + 1)}`)
             .join(",")}}`,
     )
   }
@@ -3661,7 +3693,7 @@ const boundOutput = (result: ExecutionResult, maxOutputBytes: number): Execution
   let value: DataValue = null
   let valueBytes = 0
   if (result.ok) {
-    const serialized = JSON.stringify(result.value) ?? "null"
+    const serialized = Option.match(toJsonValue(result.value), { onNone: () => "null", onSome: encodeJsonText })
     const bytes = utf8ByteLength(serialized)
     if (bytes > maxOutputBytes) {
       truncated = true
