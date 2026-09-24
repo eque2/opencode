@@ -95,7 +95,7 @@ const withDefaults = (model: ModelV2.Info, route: AnyRoute) => {
     : body
   return route.with({
     provider: model.providerID,
-    endpoint: model.api.url === undefined ? undefined : { baseURL: model.api.url },
+    ...(model.api.url === undefined ? {} : { endpoint: { baseURL: model.api.url } }),
     headers: model.request.headers,
     http: { body: httpBody },
     limits: { context: model.limit.context, output: model.limit.output },
@@ -187,17 +187,20 @@ export const locationLayer = Layer.effect(
   Effect.gen(function* () {
     const catalog = yield* Catalog.Service
     const integrations = yield* Integration.Service
+    /** The catalog default when the runner supports it, otherwise the first available supported model. */
+    const defaultSelection = Effect.fnUntraced(function* () {
+      const defaultModel = yield* catalog.model.default()
+      if (defaultModel && supported(defaultModel)) return defaultModel
+      return (yield* catalog.model.available()).find(supported)
+    })
     return Service.of({
       resolve: Effect.fn("SessionRunnerModel.resolve")(function* (session) {
         // Location plugins populate and filter the catalog asynchronously during layer startup.
-        const defaultModel = session.model ? undefined : yield* catalog.model.default()
         const selected = session.model
           ? (yield* catalog.model.available()).find(
               (model) => model.providerID === session.model?.providerID && model.id === session.model.id,
             )
-          : defaultModel && supported(defaultModel)
-            ? defaultModel
-            : (yield* catalog.model.available()).find(supported)
+          : yield* defaultSelection()
         if (!selected && session.model)
           return yield* new ModelUnavailableError({
             providerID: session.model.providerID,
@@ -208,11 +211,8 @@ export const locationLayer = Layer.effect(
         const connection = yield* integrations.connection.active(
           provider?.integrationID ?? Integration.ID.make(selected.providerID),
         )
-        return yield* resolve(
-          session,
-          selected,
-          connection ? yield* integrations.connection.resolve(connection) : undefined,
-        )
+        if (!connection) return yield* resolve(session, selected)
+        return yield* resolve(session, selected, yield* integrations.connection.resolve(connection))
       }),
     })
   }),
