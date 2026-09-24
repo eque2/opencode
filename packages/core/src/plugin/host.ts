@@ -15,6 +15,10 @@ import { Reference } from "../reference"
 import type { DeepMutable } from "../schema"
 import { SkillV2 } from "../skill"
 
+// The plugin API hands plugins the live draft and hook objects. Core types them read-only;
+// the plugin types use the generated SDK types, whose arrays are mutable. A copy would
+// detach plugin writes from the draft, so the host passes the same objects through.
+// oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- @opencode-ai/plugin v2 draft and hook signatures use generated @opencode-ai/sdk types with mutable arrays for the live core objects
 const mutable = <T>(value: T) => value as DeepMutable<T>
 
 export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Interface) {
