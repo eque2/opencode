@@ -4,6 +4,8 @@ import { makeLocationNode } from "./effect/app-node"
 import {
   Cause,
   Clock,
+  Config,
+  ConfigProvider,
   Context,
   Duration,
   Effect,
@@ -12,6 +14,7 @@ import {
   Layer,
   MutableHashMap,
   Option,
+  Redacted,
   Schedule,
   Schema,
   Scope,
@@ -224,6 +227,12 @@ type Attempts = HashMap.HashMap<AttemptID, AttemptEntry>
 
 const isPending = (attempt: AttemptEntry): attempt is PendingAttempt => attempt.status === "pending"
 
+// Reads an env-method secret. The ambient ConfigProvider copies process.env once per
+// process, so each read uses a fresh env provider and sees variables set at run time.
+// An empty value counts as missing, as it did with the old truthiness check.
+const envSecret = (name: string) =>
+  Config.option(Config.Redacted(name)).parse(ConfigProvider.fromEnv()).pipe(Effect.orDie)
+
 const isOAuthImplementation = (implementation: Implementation): implementation is OAuthImplementation =>
   implementation.method.type === "oauth"
 
@@ -297,7 +306,10 @@ export const locationLayer = Layer.effect(
         Option.flatMap((entry) => MutableHashMap.get(entry.implementations, methodID)),
       )
 
-    const resolveConnections = (methods: readonly Method[], saved: readonly Credential.Info[]) => {
+    const resolveConnections = Effect.fnUntraced(function* (
+      methods: readonly Method[],
+      saved: readonly Credential.Info[],
+    ) {
       const credentials = saved
         .map((credential) => ({
           type: "credential" as const,
@@ -305,12 +317,12 @@ export const locationLayer = Layer.effect(
           label: credential.label,
         }))
         .toReversed()
-      const env = methods
-        .filter((method) => method.type === "env")
-        .flatMap((method) => method.names.filter((name) => process.env[name]))
-        .map((name) => ({ type: "env" as const, name }))
-      return [...credentials, ...env]
-    }
+      const names = methods.filter((method) => method.type === "env").flatMap((method) => method.names)
+      const env = yield* Effect.forEach(names, (name) =>
+        envSecret(name).pipe(Effect.map((secret) => (Option.isSome(secret) ? [{ type: "env" as const, name }] : []))),
+      )
+      return [...credentials, ...env.flat()]
+    })
 
     const project = (entry: Entry, connections: IntegrationConnection.Info[]) =>
       new Info({
@@ -394,13 +406,16 @@ export const locationLayer = Layer.effect(
       get: Effect.fn("Integration.get")(function* (id) {
         const entry = MutableHashMap.get(state.get().integrations, id)
         if (Option.isNone(entry)) return undefined
-        return project(entry.value, resolveConnections(entry.value.methods, yield* credentials.list(id)))
+        return project(entry.value, yield* resolveConnections(entry.value.methods, yield* credentials.list(id)))
       }),
       list: Effect.fn("Integration.list")(function* () {
         const saved = Map.groupBy(yield* credentials.all(), (credential) => credential.integrationID)
-        return Array.from(MutableHashMap.values(state.get().integrations), (entry) =>
-          project(entry, resolveConnections(entry.methods, saved.get(entry.ref.id) ?? [])),
-        ).toSorted((a, b) => a.name.localeCompare(b.name))
+        const infos = yield* Effect.forEach(MutableHashMap.values(state.get().integrations), (entry) =>
+          resolveConnections(entry.methods, saved.get(entry.ref.id) ?? []).pipe(
+            Effect.map((connections) => project(entry, connections)),
+          ),
+        )
+        return infos.toSorted((a, b) => a.name.localeCompare(b.name))
       }),
       connection: {
         active: Effect.fn("Integration.connection.active")(function* (id) {
@@ -408,12 +423,14 @@ export const locationLayer = Layer.effect(
             onNone: () => [],
             onSome: (entry) => entry.methods,
           })
-          return resolveConnections(methods, yield* credentials.list(id))[0]
+          return (yield* resolveConnections(methods, yield* credentials.list(id)))[0]
         }),
         resolve: Effect.fn("Integration.connection.resolve")(function* (connection) {
           if (connection.type === "env") {
-            const key = process.env[connection.name]
-            return key ? Credential.Key.make({ type: "key", key }) : undefined
+            const secret = yield* envSecret(connection.name)
+            return Option.getOrUndefined(
+              Option.map(secret, (key) => Credential.Key.make({ type: "key", key: Redacted.value(key) })),
+            )
           }
           const credential = yield* credentials.get(connection.id)
           if (!credential) return undefined

@@ -1,4 +1,4 @@
-import { Duration, Effect, Schema, Semaphore, Stream } from "effect"
+import { Config, ConfigProvider, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import type { Scope } from "effect"
 import type { IntegrationOAuthMethodRegistration } from "@opencode-ai/plugin/v2/effect/integration"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
@@ -31,6 +31,9 @@ const Token = Schema.Struct({
 })
 const TokenPending = Schema.Struct({ error: Schema.String })
 const DeviceToken = Schema.Union([Token, TokenPending])
+// The ambient ConfigProvider copies process.env once per process; read a fresh env
+// provider on each reload so a key set at run time still counts.
+const apiKeyFromEnv = Config.option(Config.Redacted("OPENCODE_API_KEY"))
 const User = Schema.Struct({ id: Schema.String, email: Schema.String })
 const Org = Schema.Struct({ id: Schema.String, name: Schema.String })
 
@@ -116,75 +119,78 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
     })
 
     connected = (yield* ctx.integration.connection.active("opencode")) !== undefined
-    yield* ctx.catalog.transform((catalog) => {
-      for (const [providerID, item] of Object.entries(providers ?? {})) {
-        catalog.provider.update(providerID, (provider) => {
-          provider.integrationID = Integration.ID.make("opencode")
-          if (item.name !== undefined) provider.name = item.name
-          provider.api = item.npm
-            ? { type: "aisdk", package: item.npm, url: item.api }
-            : { type: "native", url: item.api, settings: {} }
-          Object.assign(provider.request.headers, item.options?.headers)
-          Object.assign(provider.request.body, withoutCredentials(item.options))
-        })
+    yield* ctx.catalog.transform(
+      Effect.fnUntraced(function* (catalog) {
+        for (const [providerID, item] of Object.entries(providers ?? {})) {
+          catalog.provider.update(providerID, (provider) => {
+            provider.integrationID = Integration.ID.make("opencode")
+            if (item.name !== undefined) provider.name = item.name
+            provider.api = item.npm
+              ? { type: "aisdk", package: item.npm, url: item.api }
+              : { type: "native", url: item.api, settings: {} }
+            Object.assign(provider.request.headers, item.options?.headers)
+            Object.assign(provider.request.body, withoutCredentials(item.options))
+          })
 
-        for (const [modelID, config] of Object.entries(item.models ?? {})) {
-          catalog.model.update(providerID, modelID, (model) => {
-            if (config.family !== undefined) model.family = config.family
-            if (config.name !== undefined) model.name = config.name
-            if (config.id !== undefined) model.api.id = config.id
-            if (config.provider !== undefined) {
-              model.api = config.provider.npm
-                ? {
-                    id: model.api.id,
-                    type: "aisdk",
-                    package: config.provider.npm,
-                    url: config.provider.api,
-                  }
-                : { id: model.api.id, type: "native", url: config.provider.api, settings: {} }
-            }
-            if (config.tool_call !== undefined) model.capabilities.tools = config.tool_call
-            if (config.modalities?.input !== undefined) model.capabilities.input = [...config.modalities.input]
-            if (config.modalities?.output !== undefined) model.capabilities.output = [...config.modalities.output]
-            const packageName = config.provider?.npm ?? item.npm
-            const lowerer = ConfigProviderOptionsV1.get(packageName)
-            Object.assign(model.request.headers, config.headers)
-            Object.assign(model.request.body, lowerer.request(withoutCredentials(config.options)))
-            if (config.variants !== undefined) {
-              model.variants = Object.entries(config.variants).map(([id, options]) => ({
-                id: ModelV2.VariantID.make(id),
-                headers: { ...(options.headers ?? {}) },
-                body: lowerer.request(withoutCredentials(options)),
-              }))
-            }
-            if (config.release_date !== undefined) {
-              const released = Date.parse(config.release_date)
-              model.time.released = Number.isFinite(released) ? released : 0
-            }
-            if (config.cost !== undefined) {
-              model.cost = remoteCost(config.cost)
-            }
-            model.status = config.status ?? "active"
-            model.enabled = config.status !== "deprecated"
-            if (config.limit !== undefined) model.limit = { ...config.limit }
+          for (const [modelID, config] of Object.entries(item.models ?? {})) {
+            catalog.model.update(providerID, modelID, (model) => {
+              if (config.family !== undefined) model.family = config.family
+              if (config.name !== undefined) model.name = config.name
+              if (config.id !== undefined) model.api.id = config.id
+              if (config.provider !== undefined) {
+                model.api = config.provider.npm
+                  ? {
+                      id: model.api.id,
+                      type: "aisdk",
+                      package: config.provider.npm,
+                      url: config.provider.api,
+                    }
+                  : { id: model.api.id, type: "native", url: config.provider.api, settings: {} }
+              }
+              if (config.tool_call !== undefined) model.capabilities.tools = config.tool_call
+              if (config.modalities?.input !== undefined) model.capabilities.input = [...config.modalities.input]
+              if (config.modalities?.output !== undefined) model.capabilities.output = [...config.modalities.output]
+              const packageName = config.provider?.npm ?? item.npm
+              const lowerer = ConfigProviderOptionsV1.get(packageName)
+              Object.assign(model.request.headers, config.headers)
+              Object.assign(model.request.body, lowerer.request(withoutCredentials(config.options)))
+              if (config.variants !== undefined) {
+                model.variants = Object.entries(config.variants).map(([id, options]) => ({
+                  id: ModelV2.VariantID.make(id),
+                  headers: { ...(options.headers ?? {}) },
+                  body: lowerer.request(withoutCredentials(options)),
+                }))
+              }
+              if (config.release_date !== undefined) {
+                const released = Date.parse(config.release_date)
+                model.time.released = Number.isFinite(released) ? released : 0
+              }
+              if (config.cost !== undefined) {
+                model.cost = remoteCost(config.cost)
+              }
+              model.status = config.status ?? "active"
+              model.enabled = config.status !== "deprecated"
+              if (config.limit !== undefined) model.limit = { ...config.limit }
+            })
+          }
+        }
+
+        const item = catalog.provider.get(ProviderV2.ID.opencode)
+        if (!item) return
+        const envKey = yield* apiKeyFromEnv.parse(ConfigProvider.fromEnv()).pipe(Effect.orDie)
+        const hasKey = Option.isSome(envKey) || connected || Boolean(item.provider.request.body.apiKey)
+        catalog.provider.update(item.provider.id, (provider) => {
+          if (!hasKey) provider.request.body.apiKey = "public"
+        })
+        if (hasKey) return
+        for (const model of item.models.values()) {
+          if (!model.cost.some((cost) => cost.input > 0)) continue
+          catalog.model.update(item.provider.id, model.id, (draft) => {
+            draft.enabled = false
           })
         }
-      }
-
-      const item = catalog.provider.get(ProviderV2.ID.opencode)
-      if (!item) return
-      const hasKey = Boolean(process.env.OPENCODE_API_KEY || connected || item.provider.request.body.apiKey)
-      catalog.provider.update(item.provider.id, (provider) => {
-        if (!hasKey) provider.request.body.apiKey = "public"
-      })
-      if (hasKey) return
-      for (const model of item.models.values()) {
-        if (!model.cost.some((cost) => cost.input > 0)) continue
-        catalog.model.update(item.provider.id, model.id, (draft) => {
-          draft.enabled = false
-        })
-      }
-    })
+      }),
+    )
 
     const refresh = () => loading.withPermit(load().pipe(Effect.andThen(ctx.catalog.reload())))
     yield* events.subscribe(Integration.Event.ConnectionUpdated).pipe(
