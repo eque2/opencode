@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Result, Schema, Semaphore } from "effect"
+import { Context, Effect, FileSystem, HashMap, Layer, Option, Ref, Result, Schema, Semaphore } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
@@ -88,7 +88,12 @@ export const fileSystem = (
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = options.directory ?? DEFAULT_RECORDINGS_DIR
-      const recorded = new Map<string, { interactions: Interaction[]; findings: SecretFinding[] }>()
+      const recorded = yield* Ref.make(
+        HashMap.empty<
+          string,
+          { readonly interactions: ReadonlyArray<Interaction>; readonly findings: ReadonlyArray<SecretFinding> }
+        >(),
+      )
       const appendLock = yield* Semaphore.make(1)
 
       const pathFor = (name: string) => Effect.fromResult(cassettePath(directory, name)).pipe(Effect.orDie)
@@ -119,7 +124,10 @@ export const fileSystem = (
         append: (name, interaction, metadata) =>
           appendLock.withPermit(
             Effect.gen(function* () {
-              const entry = recorded.get(name) ?? { interactions: [], findings: [] }
+              const entry = Option.getOrElse(HashMap.get(yield* Ref.get(recorded), name), () => ({
+                interactions: [],
+                findings: [],
+              }))
               const interactions = [...entry.interactions, interaction]
               const interactionFindings = [...entry.findings, ...secretFindings(interaction)]
               const cassette = buildCassette(name, interactions, metadata)
@@ -133,7 +141,9 @@ export const fileSystem = (
                 Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.catch(() => Effect.void))),
                 Effect.orDie,
               )
-              recorded.set(name, { interactions, findings: interactionFindings })
+              yield* Ref.update(recorded, (entries) =>
+                HashMap.set(entries, name, { interactions, findings: interactionFindings }),
+              )
             }),
           ),
         exists: (name) =>
@@ -165,34 +175,42 @@ export const fileSystem = (
 
 export const memory = (initial: Record<string, ReadonlyArray<Interaction>> = {}): Layer.Layer<Service> =>
   Layer.sync(Service, () => {
-    const stored = new Map<string, Interaction[]>(
-      Object.entries(initial).map(([name, interactions]) => [name, [...interactions]]),
+    const stored = Ref.makeUnsafe(
+      HashMap.fromIterable(
+        Object.entries(initial).map(([name, interactions]): readonly [string, ReadonlyArray<Interaction>] => [
+          name,
+          [...interactions],
+        ]),
+      ),
     )
-    const accumulatedFindings = new Map<string, SecretFinding[]>()
+    const accumulatedFindings = Ref.makeUnsafe(HashMap.empty<string, ReadonlyArray<SecretFinding>>())
     const appendLock = Semaphore.makeUnsafe(1)
 
     return Service.of({
       read: (name) =>
-        stored.has(name)
-          ? Effect.succeed(stored.get(name) ?? [])
-          : Effect.fail(new CassetteNotFoundError({ cassetteName: name })),
+        Ref.get(stored).pipe(
+          Effect.flatMap((cassettes) =>
+            Option.match(HashMap.get(cassettes, name), {
+              onNone: () => Effect.fail(new CassetteNotFoundError({ cassetteName: name })),
+              onSome: Effect.succeed,
+            }),
+          ),
+        ),
       append: (name, interaction, metadata) =>
         appendLock.withPermit(
-          Effect.suspend(() => {
-            const interactions = [...(stored.get(name) ?? []), interaction]
-            const findings = [...(accumulatedFindings.get(name) ?? []), ...secretFindings(interaction)]
+          Effect.gen(function* () {
+            const interactions = [...Option.getOrElse(HashMap.get(yield* Ref.get(stored), name), () => []), interaction]
+            const findings = [
+              ...Option.getOrElse(HashMap.get(yield* Ref.get(accumulatedFindings), name), () => []),
+              ...secretFindings(interaction),
+            ]
             const allFindings = metadata ? [...findings, ...secretFindings({ name, ...metadata })] : findings
-            return failIfUnsafe(name, allFindings).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  stored.set(name, interactions)
-                  accumulatedFindings.set(name, findings)
-                }),
-              ),
-            )
+            yield* failIfUnsafe(name, allFindings)
+            yield* Ref.update(stored, (cassettes) => HashMap.set(cassettes, name, interactions))
+            yield* Ref.update(accumulatedFindings, (entries) => HashMap.set(entries, name, findings))
           }),
         ),
-      exists: (name) => Effect.sync(() => stored.has(name)),
-      list: () => Effect.sync(() => Array.from(stored.keys()).toSorted()),
+      exists: (name) => Ref.get(stored).pipe(Effect.map((cassettes) => HashMap.has(cassettes, name))),
+      list: () => Ref.get(stored).pipe(Effect.map((cassettes) => Array.from(HashMap.keys(cassettes)).toSorted())),
     })
   })
