@@ -10,6 +10,7 @@ import path from "path"
 import { createClient } from "@hey-api/openapi-ts"
 
 import { patchRuntime } from "./patch-runtime"
+import { simplifyUnionFiles } from "./simplify-types"
 
 const opencode = path.resolve(dir, "../../opencode")
 
@@ -122,6 +123,8 @@ await Bun.write(sseTypesPath, sseTypesPatched)
 // replace the template constructs that oxlint flags (see patch-runtime.ts).
 await $`bun prettier --write src/v2/gen`
 await patchRuntime("./src/v2/gen")
+// Remove the redundant union members that hey-api emits (see simplify-types.ts).
+await simplifyUnionFiles("./src/v2/gen")
 
 await $`bun prettier --write src/gen`
 await $`bun prettier --write src/v2`

@@ -1620,7 +1620,7 @@ export type ProviderConfig = {
      * Timeout in milliseconds between streamed SSE chunks for this provider (default: 300000). If no chunk arrives within this window, the request is aborted. Set to false to disable timeout.
      */
     chunkTimeout?: number | false
-    [key: string]: unknown | string | boolean | number | false | number | false | number | false | undefined
+    [key: string]: unknown | string | boolean | number | false | undefined
   }
   models?: {
     [key: string]: {
@@ -4644,15 +4644,12 @@ export type AgentConfig = {
     | {
         [key: string]: unknown
       }
-    | string
-    | "primary"
     | "secondary"
     | "accent"
     | "success"
     | "warning"
     | "error"
     | "info"
-    | number
     | PermissionConfig
     | undefined
 }
