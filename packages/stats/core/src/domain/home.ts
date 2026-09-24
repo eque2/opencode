@@ -333,8 +333,12 @@ function databaseUrl() {
   return process.env.DATABASE_URL ?? Resource.StatsDatabase.url
 }
 
-function stringValue(value: unknown) {
-  return value == null ? "" : String(value)
+function stringValue(value: unknown): string {
+  if (value == null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value)
+  if (value instanceof Date) return value.toString()
+  return JSON.stringify(value)
 }
 
 function numberValue(value: unknown) {
