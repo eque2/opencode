@@ -31,7 +31,7 @@ const CostTier = Schema.Struct({
     type: Schema.Literal("context"),
     size: Schema.Finite,
   }),
-})
+}).annotate({ identifier: "ModelsDev.CostTier" })
 
 const Cost = Schema.Struct({
   input: Schema.Finite,
@@ -47,7 +47,7 @@ const Cost = Schema.Struct({
       cache_write: Schema.optional(Schema.Finite),
     }),
   ),
-})
+}).annotate({ identifier: "ModelsDev.Cost" })
 
 const ReasoningOption = Schema.Union([
   Schema.Struct({
@@ -117,7 +117,7 @@ export const Model = Schema.Struct({
   provider: Schema.optional(
     Schema.Struct({ npm: Schema.optional(Schema.String), api: Schema.optional(Schema.String) }),
   ),
-})
+}).annotate({ identifier: "ModelsDev.Model" })
 export type Model = Schema.Schema.Type<typeof Model>
 
 export const Provider = Schema.Struct({
@@ -127,7 +127,7 @@ export const Provider = Schema.Struct({
   id: Schema.String,
   npm: Schema.optional(Schema.String),
   models: Schema.Record(Schema.String, Model),
-})
+}).annotate({ identifier: "ModelsDev.Provider" })
 
 export type Provider = Schema.Schema.Type<typeof Provider>
 
