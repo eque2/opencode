@@ -27,7 +27,7 @@ const PluginModule = Schema.Struct({
       ),
     }),
   ]),
-})
+}).annotate({ identifier: "ConfigV2.Plugin.Module" })
 
 export const Plugin = define({
   id: "config-plugin",

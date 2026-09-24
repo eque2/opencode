@@ -7,7 +7,7 @@ export const Entry = Schema.Struct({
   command: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
   environment: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   extensions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
-})
+}).annotate({ identifier: "FormatterEntryConfig" })
 
 export const Info = Schema.Union([Schema.Boolean, Schema.Record(Schema.String, Entry)])
 export type Info = Schema.Schema.Type<typeof Info>

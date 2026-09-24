@@ -4,7 +4,7 @@ import { Schema } from "effect"
 
 export const Disabled = Schema.Struct({
   disabled: Schema.Literal(true),
-})
+}).annotate({ identifier: "ConfigV2.LSP.Disabled" })
 
 export class Server extends Schema.Class<Server>("ConfigV2.LSP.Server")({
   command: Schema.String.pipe(Schema.Array),
