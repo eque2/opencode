@@ -5,6 +5,7 @@ import { isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Json))
 const maxErrorBodyChars = 1_024
 const maxResponseBodyBytes = 50 * 1024 * 1024
 
@@ -36,7 +37,7 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
     if (response.status < 200 || response.status >= 300) {
       const rendered = Option.match(body, {
         onNone: () => text,
-        onSome: (value) => (typeof value === "string" ? value : (JSON.stringify(value) ?? "")),
+        onSome: (value) => (typeof value === "string" ? value : Option.getOrElse(encodeJson(value), () => text)),
       })
       const summary =
         rendered === "" || rendered === "null"
