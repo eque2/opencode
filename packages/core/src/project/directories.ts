@@ -19,13 +19,13 @@ export const CreateInput = Schema.Struct({
   directory: AbsolutePath,
   strategy: Schema.optional(Schema.String),
   behavior: Schema.Literals(["ignore", "replace"]).pipe(Schema.optional),
-})
+}).annotate({ identifier: "ProjectDirectories.CreateInput" })
 export type CreateInput = typeof CreateInput.Type
 
 export const RemoveInput = Schema.Struct({
   projectID: ProjectSchema.ID,
   directory: AbsolutePath,
-})
+}).annotate({ identifier: "ProjectDirectories.RemoveInput" })
 export type RemoveInput = typeof RemoveInput.Type
 
 type DatabaseClient = EffectDrizzleSqlite.EffectSQLiteDatabase

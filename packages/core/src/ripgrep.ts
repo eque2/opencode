@@ -34,7 +34,7 @@ const RawMatch = Schema.Struct({
       }),
     ),
   }),
-})
+}).annotate({ identifier: "Ripgrep.RawMatch" })
 
 type RawMatchData = (typeof RawMatch.Type)["data"]
 
