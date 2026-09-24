@@ -1,4 +1,4 @@
-import { Effect, HashSet, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -633,26 +633,17 @@ const TERMINAL_TYPES = HashSet.fromIterable<string>(["response.completed", "resp
 
 const onOutputTextDelta = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   if (!event.delta) return [state, NO_EVENTS]
-  const events: LLMEvent[] = []
-  return [
-    { ...state, lifecycle: Lifecycle.textDelta(state.lifecycle, events, event.item_id ?? "text-0", event.delta) },
-    events,
-  ]
+  const [lifecycle, events] = Lifecycle.textDelta(state.lifecycle, event.item_id ?? "text-0", event.delta)
+  return [{ ...state, lifecycle }, events]
 }
 
 const onReasoningDelta = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   if (!event.delta) return [state, NO_EVENTS]
-  const events: LLMEvent[] = []
   const itemID = event.item_id ?? "reasoning-0"
   const id =
     event.summary_index !== undefined || state.reasoningItems[itemID] ? `${itemID}:${event.summary_index ?? 0}` : itemID
-  return [
-    {
-      ...state,
-      lifecycle: Lifecycle.reasoningDelta(state.lifecycle, events, id, event.delta),
-    },
-    events,
-  ]
+  const [lifecycle, events] = Lifecycle.reasoningDelta(state.lifecycle, id, event.delta)
+  return [{ ...state, lifecycle }, events]
 }
 
 const onReasoningDone = (state: ParserState, _event: OpenAIResponsesEvent): StepResult => [state, NO_EVENTS]
@@ -688,11 +679,11 @@ const reasoningItemMetadata = (item: OpenAIResponsesStreamItem & { id: string })
 const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   const item = event.item
   if (item && isReasoningItem(item)) {
-    const events: LLMEvent[] = []
+    const [lifecycle, events] = Lifecycle.reasoningStart(state.lifecycle, `${item.id}:0`, reasoningItemMetadata(item))
     return [
       {
         ...state,
-        lifecycle: Lifecycle.reasoningStart(state.lifecycle, events, `${item.id}:0`, reasoningItemMetadata(item)),
+        lifecycle,
         reasoningItems: {
           ...state.reasoningItems,
           [item.id]: { encryptedContent: Option.fromNullishOr(item.encrypted_content), summaryParts: { 0: "active" } },
@@ -703,8 +694,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
   }
   if (item?.type !== "function_call" || !item.id) return [state, NO_EVENTS]
   const providerMetadata = openaiMetadata({ itemId: item.id })
-  const events: LLMEvent[] = []
-  const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
+  const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
   return [
     {
       ...state,
@@ -717,7 +707,10 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
         providerMetadata,
       }),
     },
-    [...events, LLMEvent.toolInputStart({ id: item.call_id ?? item.id, name: item.name ?? "", providerMetadata })],
+    Arr.append(
+      started,
+      LLMEvent.toolInputStart({ id: item.call_id ?? item.id, name: item.name ?? "", providerMetadata }),
+    ),
   ]
 }
 
@@ -726,16 +719,15 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
   const item = state.reasoningItems[event.item_id] ?? { encryptedContent: Option.none(), summaryParts: {} }
   if (event.summary_index === 0) {
     if (state.reasoningItems[event.item_id]) return [state, NO_EVENTS]
-    const events: LLMEvent[] = []
+    const [lifecycle, events] = Lifecycle.reasoningStart(
+      state.lifecycle,
+      `${event.item_id}:0`,
+      reasoningMetadata(event.item_id, Option.none()),
+    )
     return [
       {
         ...state,
-        lifecycle: Lifecycle.reasoningStart(
-          state.lifecycle,
-          events,
-          `${event.item_id}:0`,
-          reasoningMetadata(event.item_id, Option.none()),
-        ),
+        lifecycle,
         reasoningItems: {
           ...state.reasoningItems,
           [event.item_id]: { ...item, summaryParts: { 0: "active" } },
@@ -745,23 +737,24 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
     ]
   }
 
-  const events: LLMEvent[] = []
-  const endMetadata = openaiMetadata({ itemId: event.item_id })
-  const closed = Object.entries(item.summaryParts)
-    .filter((entry) => entry[1] === "can-conclude")
-    .reduce(
-      (lifecycle, entry) => Lifecycle.reasoningEnd(lifecycle, events, `${event.item_id}:${entry[0]}`, endMetadata),
-      state.lifecycle,
-    )
+  const itemID = event.item_id
+  const summaryIndex = event.summary_index
+  const endMetadata = openaiMetadata({ itemId: itemID })
+  const closed = Arr.reduce(
+    Arr.filter(Object.entries(item.summaryParts), (entry) => entry[1] === "can-conclude"),
+    Lifecycle.unchanged(state.lifecycle),
+    (transition, entry) =>
+      Lifecycle.andThen(transition, (lifecycle) =>
+        Lifecycle.reasoningEnd(lifecycle, `${itemID}:${entry[0]}`, endMetadata),
+      ),
+  )
+  const [lifecycle, events] = Lifecycle.andThen(closed, (lifecycle) =>
+    Lifecycle.reasoningStart(lifecycle, `${itemID}:${summaryIndex}`, reasoningMetadata(itemID, item.encryptedContent)),
+  )
   return [
     {
       ...state,
-      lifecycle: Lifecycle.reasoningStart(
-        closed,
-        events,
-        `${event.item_id}:${event.summary_index}`,
-        reasoningMetadata(event.item_id, item.encryptedContent),
-      ),
+      lifecycle,
       reasoningItems: {
         ...state.reasoningItems,
         [event.item_id]: {
@@ -785,19 +778,18 @@ const onReasoningSummaryPartDone = (state: ParserState, event: OpenAIResponsesEv
   if (!event.item_id || event.summary_index === undefined) return [state, NO_EVENTS]
   const item = state.reasoningItems[event.item_id]
   if (!item) return [state, NO_EVENTS]
-  const events: LLMEvent[] = []
+  const [lifecycle, events] =
+    state.store !== false
+      ? Lifecycle.reasoningEnd(
+          state.lifecycle,
+          `${event.item_id}:${event.summary_index}`,
+          openaiMetadata({ itemId: event.item_id }),
+        )
+      : Lifecycle.unchanged(state.lifecycle)
   return [
     {
       ...state,
-      lifecycle:
-        state.store !== false
-          ? Lifecycle.reasoningEnd(
-              state.lifecycle,
-              events,
-              `${event.item_id}:${event.summary_index}`,
-              openaiMetadata({ itemId: event.item_id }),
-            )
-          : state.lifecycle,
+      lifecycle,
       reasoningItems: {
         ...state.reasoningItems,
         [event.item_id]: {
@@ -826,9 +818,7 @@ const onFunctionCallArgumentsDelta = Effect.fn("OpenAIResponses.onFunctionCallAr
     "OpenAI Responses tool argument delta is missing its tool call",
   )
   if (ToolStream.isError(result)) return yield* result
-  const events: LLMEvent[] = []
-  const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-  events.push(...result.events)
+  const [lifecycle, events] = Lifecycle.emit(state.lifecycle, result.events)
   return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
 })
 
@@ -848,10 +838,8 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
       item.arguments === undefined
         ? yield* ToolStream.finish(ADAPTER, tools, item.id)
         : yield* ToolStream.finishWithInput(ADAPTER, tools, item.id, item.arguments)
-    const events: LLMEvent[] = []
     const resultEvents = result.events ?? []
-    const lifecycle = resultEvents.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-    events.push(...resultEvents)
+    const [lifecycle, events] = Lifecycle.emit(state.lifecycle, resultEvents)
     return [
       {
         ...state,
@@ -864,44 +852,48 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
   }
 
   if (isHostedToolItem(item)) {
-    const events: LLMEvent[] = []
-    const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
-    events.push(...hostedToolEvents(item))
-    return [{ ...state, lifecycle }, events] satisfies StepResult
+    const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
+    return [{ ...state, lifecycle }, Arr.appendAll(started, hostedToolEvents(item))] satisfies StepResult
   }
 
   if (isReasoningItem(item)) {
-    const events: LLMEvent[] = []
+    const itemID = item.id
     const providerMetadata = reasoningItemMetadata(item)
-    const reasoningItem = state.reasoningItems[item.id]
+    const reasoningItem = state.reasoningItems[itemID]
     if (reasoningItem) {
-      const lifecycle = Object.entries(reasoningItem.summaryParts)
-        .filter((entry) => entry[1] === "active" || entry[1] === "can-conclude")
-        .reduce(
-          (lifecycle, entry) => Lifecycle.reasoningEnd(lifecycle, events, `${item.id}:${entry[0]}`, providerMetadata),
-          state.lifecycle,
-        )
-      const { [item.id]: _removed, ...reasoningItems } = state.reasoningItems
+      const [lifecycle, events] = Arr.reduce(
+        Arr.filter(
+          Object.entries(reasoningItem.summaryParts),
+          (entry) => entry[1] === "active" || entry[1] === "can-conclude",
+        ),
+        Lifecycle.unchanged(state.lifecycle),
+        (transition, entry) =>
+          Lifecycle.andThen(transition, (lifecycle) =>
+            Lifecycle.reasoningEnd(lifecycle, `${itemID}:${entry[0]}`, providerMetadata),
+          ),
+      )
+      const { [itemID]: _removed, ...reasoningItems } = state.reasoningItems
       return [{ ...state, lifecycle, reasoningItems }, events] satisfies StepResult
     }
-    if (!Lifecycle.isReasoningOpen(state.lifecycle, item.id)) {
-      const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
-      events.push(LLMEvent.reasoningStart({ id: item.id, providerMetadata }))
-      events.push(LLMEvent.reasoningEnd({ id: item.id, providerMetadata }))
-      return [{ ...state, lifecycle }, events] satisfies StepResult
+    if (!Lifecycle.isReasoningOpen(state.lifecycle, itemID)) {
+      const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
+      return [
+        { ...state, lifecycle },
+        Arr.appendAll(started, [
+          LLMEvent.reasoningStart({ id: itemID, providerMetadata }),
+          LLMEvent.reasoningEnd({ id: itemID, providerMetadata }),
+        ]),
+      ] satisfies StepResult
     }
-    return [
-      { ...state, lifecycle: Lifecycle.reasoningEnd(state.lifecycle, events, item.id, providerMetadata) },
-      events,
-    ] satisfies StepResult
+    const [lifecycle, events] = Lifecycle.reasoningEnd(state.lifecycle, itemID, providerMetadata)
+    return [{ ...state, lifecycle }, events] satisfies StepResult
   }
 
   return [state, NO_EVENTS] satisfies StepResult
 })
 
 const onResponseFinish = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
-  const events: LLMEvent[] = []
-  const lifecycle = Lifecycle.finish(state.lifecycle, events, {
+  const [lifecycle, events] = Lifecycle.finish(state.lifecycle, {
     reason: mapFinishReason(event, state.hasFunctionCall),
     usage: mapUsage(event.response?.usage),
     ...(event.response?.id || event.response?.service_tier

@@ -705,8 +705,7 @@ const onContentBlockStart = (state: ParserState, event: AnthropicEvent): StepRes
   if (!block) return [state, NO_EVENTS]
 
   if ((block.type === "tool_use" || block.type === "server_tool_use") && event.index !== undefined) {
-    const events: LLMEvent[] = []
-    const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
+    const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
     return [
       {
         ...state,
@@ -717,33 +716,28 @@ const onContentBlockStart = (state: ParserState, event: AnthropicEvent): StepRes
           providerExecuted: block.type === "server_tool_use",
         }),
       },
-      [...events, LLMEvent.toolInputStart({ id: block.id ?? String(event.index), name: block.name ?? "" })],
+      Arr.append(started, LLMEvent.toolInputStart({ id: block.id ?? String(event.index), name: block.name ?? "" })),
     ]
   }
 
   if (block.type === "text" && block.text) {
-    const events: LLMEvent[] = []
-    return [
-      { ...state, lifecycle: Lifecycle.textDelta(state.lifecycle, events, `text-${event.index ?? 0}`, block.text) },
-      events,
-    ]
+    const [lifecycle, events] = Lifecycle.textDelta(state.lifecycle, `text-${event.index ?? 0}`, block.text)
+    return [{ ...state, lifecycle }, events]
   }
 
   if (block.type === "thinking" && block.thinking) {
-    const events: LLMEvent[] = []
-    return [
-      {
-        ...state,
-        lifecycle: Lifecycle.reasoningDelta(state.lifecycle, events, `reasoning-${event.index ?? 0}`, block.thinking),
-      },
-      events,
-    ]
+    const [lifecycle, events] = Lifecycle.reasoningDelta(
+      state.lifecycle,
+      `reasoning-${event.index ?? 0}`,
+      block.thinking,
+    )
+    return [{ ...state, lifecycle }, events]
   }
 
   const result = serverToolResultEvent(block)
   if (!result) return [state, NO_EVENTS]
-  const events: LLMEvent[] = []
-  return [{ ...state, lifecycle: Lifecycle.stepStart(state.lifecycle, events) }, [...events, result]]
+  const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
+  return [{ ...state, lifecycle }, Arr.append(started, result)]
 }
 
 const onContentBlockDelta = Effect.fn("AnthropicMessages.onContentBlockDelta")(function* (
@@ -753,38 +747,26 @@ const onContentBlockDelta = Effect.fn("AnthropicMessages.onContentBlockDelta")(f
   const delta = event.delta
 
   if (delta?.type === "text_delta" && delta.text) {
-    const events: LLMEvent[] = []
-    return [
-      { ...state, lifecycle: Lifecycle.textDelta(state.lifecycle, events, `text-${event.index ?? 0}`, delta.text) },
-      events,
-    ] satisfies StepResult
+    const [lifecycle, events] = Lifecycle.textDelta(state.lifecycle, `text-${event.index ?? 0}`, delta.text)
+    return [{ ...state, lifecycle }, events] satisfies StepResult
   }
 
   if (delta?.type === "thinking_delta" && delta.thinking) {
-    const events: LLMEvent[] = []
-    return [
-      {
-        ...state,
-        lifecycle: Lifecycle.reasoningDelta(state.lifecycle, events, `reasoning-${event.index ?? 0}`, delta.thinking),
-      },
-      events,
-    ] satisfies StepResult
+    const [lifecycle, events] = Lifecycle.reasoningDelta(
+      state.lifecycle,
+      `reasoning-${event.index ?? 0}`,
+      delta.thinking,
+    )
+    return [{ ...state, lifecycle }, events] satisfies StepResult
   }
 
   if (delta?.type === "signature_delta" && delta.signature) {
-    const events: LLMEvent[] = []
-    return [
-      {
-        ...state,
-        lifecycle: Lifecycle.reasoningEnd(
-          state.lifecycle,
-          events,
-          `reasoning-${event.index ?? 0}`,
-          anthropicMetadata({ signature: delta.signature }),
-        ),
-      },
-      events,
-    ] satisfies StepResult
+    const [lifecycle, events] = Lifecycle.reasoningEnd(
+      state.lifecycle,
+      `reasoning-${event.index ?? 0}`,
+      anthropicMetadata({ signature: delta.signature }),
+    )
+    return [{ ...state, lifecycle }, events] satisfies StepResult
   }
 
   if (delta?.type === "input_json_delta" && event.index !== undefined) {
@@ -797,9 +779,7 @@ const onContentBlockDelta = Effect.fn("AnthropicMessages.onContentBlockDelta")(f
       "Anthropic Messages tool argument delta is missing its tool call",
     )
     if (ToolStream.isError(result)) return yield* result
-    const events: LLMEvent[] = []
-    const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-    events.push(...result.events)
+    const [lifecycle, events] = Lifecycle.emit(state.lifecycle, result.events)
     return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
   }
 
@@ -811,24 +791,20 @@ const onContentBlockStop = Effect.fn("AnthropicMessages.onContentBlockStop")(fun
   event: AnthropicEvent,
 ) {
   if (event.index === undefined) return [state, NO_EVENTS] satisfies StepResult
-  const result = yield* ToolStream.finish(ADAPTER, state.tools, event.index)
-  const events: LLMEvent[] = []
+  const index = event.index
+  const result = yield* ToolStream.finish(ADAPTER, state.tools, index)
   const resultEvents = result.events ?? []
-  const lifecycle = resultEvents.length
-    ? Lifecycle.stepStart(state.lifecycle, events)
-    : Lifecycle.reasoningEnd(
-        Lifecycle.textEnd(state.lifecycle, events, `text-${event.index}`),
-        events,
-        `reasoning-${event.index}`,
+  const [lifecycle, events] = resultEvents.length
+    ? Lifecycle.emit(state.lifecycle, resultEvents)
+    : Lifecycle.andThen(Lifecycle.textEnd(state.lifecycle, `text-${index}`), (closed) =>
+        Lifecycle.reasoningEnd(closed, `reasoning-${index}`),
       )
-  events.push(...resultEvents)
   return [{ ...state, lifecycle, tools: result.tools }, events] satisfies StepResult
 })
 
 const onMessageDelta = (state: ParserState, event: AnthropicEvent): StepResult => {
   const usage = mergeUsage(state.usage, mapUsage(event.usage))
-  const events: LLMEvent[] = []
-  const lifecycle = Lifecycle.finish(state.lifecycle, events, {
+  const [lifecycle, events] = Lifecycle.finish(state.lifecycle, {
     reason: mapFinishReason(event.delta?.stop_reason),
     usage,
     ...(event.delta?.stop_sequence

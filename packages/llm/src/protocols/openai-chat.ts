@@ -436,45 +436,62 @@ const mapUsage = (usage: OpenAIChatEvent["usage"]): Usage | undefined => {
   })
 }
 
+// Tool-call deltas fold into the tool accumulator and the lifecycle; the fold
+// keeps the events of every delta in stream order.
+interface ToolDeltaFold {
+  readonly tools: ToolStream.State<number>
+  readonly lifecycle: Lifecycle.State
+  readonly events: ReadonlyArray<LLMEvent>
+}
+
 const step = (state: ParserState, event: OpenAIChatEvent) =>
   Effect.gen(function* () {
-    const events: LLMEvent[] = []
     const usage = mapUsage(event.usage) ?? state.usage
     const choice = event.choices[0]
     const finishReason = choice?.finish_reason ? mapFinishReason(choice.finish_reason) : state.finishReason
     const delta = choice?.delta
     const toolDeltas = delta?.tool_calls ?? []
-    let tools = state.tools
+    const reasoningText = delta?.reasoning_content
+    const text = delta?.content
 
-    let lifecycle = state.lifecycle
+    const reasoned = reasoningText
+      ? Lifecycle.reasoningDelta(state.lifecycle, "reasoning-0", reasoningText)
+      : Lifecycle.unchanged(state.lifecycle)
+    const texted = text
+      ? Lifecycle.andThen(
+          Lifecycle.andThen(reasoned, (lifecycle) => Lifecycle.reasoningEnd(lifecycle, "reasoning-0")),
+          (lifecycle) => Lifecycle.textDelta(lifecycle, "text-0", text),
+        )
+      : reasoned
+    const [contentLifecycle, contentEvents] = toolDeltas.length
+      ? Lifecycle.andThen(texted, (lifecycle) => Lifecycle.reasoningEnd(lifecycle, "reasoning-0"))
+      : texted
 
-    if (delta?.reasoning_content)
-      lifecycle = Lifecycle.reasoningDelta(lifecycle, events, "reasoning-0", delta.reasoning_content)
-
-    if (delta?.content) {
-      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
-      lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", delta.content)
-    }
-
-    if (toolDeltas.length) lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0")
-
-    for (const tool of toolDeltas) {
-      const result = ToolStream.appendOrStart(
-        ADAPTER,
-        tools,
-        tool.index,
-        {
-          id: Option.getOrUndefined(Option.fromNullishOr(tool.id)),
-          name: Option.getOrUndefined(Option.fromNullishOr(tool.function?.name)),
-          text: tool.function?.arguments ?? "",
-        },
-        "OpenAI Chat tool call delta is missing id or name",
-      )
-      if (ToolStream.isError(result)) return yield* result
-      tools = result.tools
-      if (result.events.length) lifecycle = Lifecycle.stepStart(lifecycle, events)
-      events.push(...result.events)
-    }
+    const toolFold = yield* Effect.reduce(
+      toolDeltas,
+      (): ToolDeltaFold => ({ tools: state.tools, lifecycle: contentLifecycle, events: contentEvents }),
+      (fold, tool) => {
+        const result = ToolStream.appendOrStart(
+          ADAPTER,
+          fold.tools,
+          tool.index,
+          {
+            id: Option.getOrUndefined(Option.fromNullishOr(tool.id)),
+            name: Option.getOrUndefined(Option.fromNullishOr(tool.function?.name)),
+            text: tool.function?.arguments ?? "",
+          },
+          "OpenAI Chat tool call delta is missing id or name",
+        )
+        if (ToolStream.isError(result)) return Effect.fail(result)
+        const [lifecycle, events] = Lifecycle.emit(fold.lifecycle, result.events)
+        return Effect.succeed<ToolDeltaFold>({
+          tools: result.tools,
+          lifecycle,
+          events: Arr.appendAll(fold.events, events),
+        })
+      },
+    )
+    const tools = toolFold.tools
 
     // Finalize accumulated tool inputs eagerly when finish_reason arrives so
     // JSON parse failures fail the stream at the boundary rather than at halt.
@@ -490,20 +507,19 @@ const step = (state: ParserState, event: OpenAIChatEvent) =>
         toolCallEvents: settled.events,
         usage,
         finishReason,
-        lifecycle,
+        lifecycle: toolFold.lifecycle,
       },
-      events,
+      toolFold.events,
     ] as const
   })
 
 const finishEvents = (state: ParserState): ReadonlyArray<LLMEvent> => {
-  const events: LLMEvent[] = []
   const hasToolCalls = state.toolCallEvents.length > 0
   const reason = state.finishReason === "stop" && hasToolCalls ? "tool-calls" : state.finishReason
-  const lifecycle = state.toolCallEvents.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-  events.push(...state.toolCallEvents)
-  if (reason) Lifecycle.finish(lifecycle, events, { reason, usage: state.usage })
-  return events
+  const [lifecycle, toolEvents] = Lifecycle.emit(state.lifecycle, state.toolCallEvents)
+  if (!reason) return toolEvents
+  const [, finishing] = Lifecycle.finish(lifecycle, { reason, usage: state.usage })
+  return Arr.appendAll(toolEvents, finishing)
 }
 
 // =============================================================================

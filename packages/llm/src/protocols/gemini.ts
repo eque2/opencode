@@ -62,6 +62,7 @@ const GeminiContentPart = Schema.Union([
   GeminiFunctionCallPart,
   GeminiFunctionResponsePart,
 ])
+type GeminiContentPart = Schema.Schema.Type<typeof GeminiContentPart>
 
 const GeminiContent = Schema.Struct({
   role: Schema.Literals(["user", "model"]),
@@ -403,25 +404,71 @@ const mapFinishReason = (finishReason: string | undefined, hasToolCalls: boolean
   return "unknown"
 }
 
-const finish = (state: ParserState): ReadonlyArray<LLMEvent> =>
-  state.finishReason || state.usage
-    ? (() => {
-        const events: LLMEvent[] = []
-        const lifecycle = state.reasoningSignature
-          ? Lifecycle.reasoningEnd(
-              state.lifecycle,
-              events,
-              "reasoning-0",
-              googleMetadata({ thoughtSignature: state.reasoningSignature }),
-            )
-          : state.lifecycle
-        Lifecycle.finish(lifecycle, events, {
-          reason: mapFinishReason(state.finishReason, state.hasToolCalls),
-          usage: state.usage,
-        })
-        return events
-      })()
-    : []
+const finish = (state: ParserState): ReadonlyArray<LLMEvent> => {
+  if (!state.finishReason && !state.usage) return []
+  const closed = state.reasoningSignature
+    ? Lifecycle.reasoningEnd(
+        state.lifecycle,
+        "reasoning-0",
+        googleMetadata({ thoughtSignature: state.reasoningSignature }),
+      )
+    : Lifecycle.unchanged(state.lifecycle)
+  const [, events] = Lifecycle.andThen(closed, (lifecycle) =>
+    Lifecycle.finish(lifecycle, {
+      reason: mapFinishReason(state.finishReason, state.hasToolCalls),
+      usage: state.usage,
+    }),
+  )
+  return events
+}
+
+// The candidate parts of one stream event fold into this accumulator, part by
+// part, and keep the events in stream order.
+interface PartFold {
+  readonly hasToolCalls: boolean
+  readonly lifecycle: Lifecycle.State
+  readonly nextToolCallId: number
+  readonly reasoningSignature: string | undefined
+  readonly events: ReadonlyArray<LLMEvent>
+}
+
+const stepPart = (fold: PartFold, part: GeminiContentPart): PartFold => {
+  const reasoningSignature =
+    "thoughtSignature" in part && part.thoughtSignature && "thought" in part && part.thought
+      ? part.thoughtSignature
+      : fold.reasoningSignature
+  if ("text" in part && part.text.length > 0) {
+    const [lifecycle, events] = part.thought
+      ? Lifecycle.reasoningDelta(fold.lifecycle, "reasoning-0", part.text, signatureMetadata(part.thoughtSignature))
+      : Lifecycle.andThen(
+          Lifecycle.reasoningEnd(fold.lifecycle, "reasoning-0", signatureMetadata(reasoningSignature)),
+          (closed) => Lifecycle.textDelta(closed, "text-0", part.text),
+        )
+    return { ...fold, reasoningSignature, lifecycle, events: Arr.appendAll(fold.events, events) }
+  }
+
+  if ("functionCall" in part) {
+    const [lifecycle, events] = Lifecycle.andThen(
+      Lifecycle.reasoningEnd(fold.lifecycle, "reasoning-0", signatureMetadata(reasoningSignature)),
+      Lifecycle.stepStart,
+    )
+    const toolCall = LLMEvent.toolCall({
+      id: `tool_${fold.nextToolCallId}`,
+      name: part.functionCall.name,
+      input: part.functionCall.args,
+      providerMetadata: signatureMetadata(part.thoughtSignature),
+    })
+    return {
+      hasToolCalls: true,
+      lifecycle,
+      nextToolCallId: fold.nextToolCallId + 1,
+      reasoningSignature,
+      events: Arr.append(Arr.appendAll(fold.events, events), toolCall),
+    }
+  }
+
+  return { ...fold, reasoningSignature }
+}
 
 const step = (state: ParserState, event: GeminiEvent) => {
   const nextState = {
@@ -435,55 +482,19 @@ const step = (state: ParserState, event: GeminiEvent) => {
       [],
     ] as const)
 
-  const events: LLMEvent[] = []
-  let hasToolCalls = nextState.hasToolCalls
-  let lifecycle = nextState.lifecycle
-  let nextToolCallId = nextState.nextToolCallId
-  let reasoningSignature = nextState.reasoningSignature
-
-  for (const part of candidate.content.parts) {
-    if ("thoughtSignature" in part && part.thoughtSignature && "thought" in part && part.thought)
-      reasoningSignature = part.thoughtSignature
-    if ("text" in part && part.text.length > 0) {
-      if (part.thought) {
-        lifecycle = Lifecycle.reasoningDelta(
-          lifecycle,
-          events,
-          "reasoning-0",
-          part.text,
-          signatureMetadata(part.thoughtSignature),
-        )
-        continue
-      }
-      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0", signatureMetadata(reasoningSignature))
-      lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", part.text)
-      continue
-    }
-
-    if ("functionCall" in part) {
-      const input = part.functionCall.args
-      const id = `tool_${nextToolCallId++}`
-      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0", signatureMetadata(reasoningSignature))
-      lifecycle = Lifecycle.stepStart(lifecycle, events)
-      events.push(
-        LLMEvent.toolCall({
-          id,
-          name: part.functionCall.name,
-          input,
-          providerMetadata: signatureMetadata(part.thoughtSignature),
-        }),
-      )
-      hasToolCalls = true
-    }
+  const start: PartFold = {
+    hasToolCalls: nextState.hasToolCalls,
+    lifecycle: nextState.lifecycle,
+    nextToolCallId: nextState.nextToolCallId,
+    reasoningSignature: nextState.reasoningSignature,
+    events: [],
   }
+  const { events, ...folded } = Arr.reduce(candidate.content.parts, start, stepPart)
 
   return Effect.succeed([
     {
       ...nextState,
-      hasToolCalls,
-      lifecycle,
-      nextToolCallId,
-      reasoningSignature,
+      ...folded,
       finishReason: candidate.finishReason ?? nextState.finishReason,
     },
     events,

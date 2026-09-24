@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Endpoint } from "../route/endpoint"
 import { Protocol } from "../route/protocol"
@@ -515,8 +515,7 @@ const step = (state: ParserState, event: BedrockEvent) =>
   Effect.gen(function* () {
     if (event.contentBlockStart?.start?.toolUse) {
       const index = event.contentBlockStart.contentBlockIndex
-      const events: LLMEvent[] = []
-      const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
+      const [lifecycle, started] = Lifecycle.stepStart(state.lifecycle)
       return [
         {
           ...state,
@@ -526,42 +525,35 @@ const step = (state: ParserState, event: BedrockEvent) =>
             name: event.contentBlockStart.start.toolUse.name,
           }),
         },
-        [
-          ...events,
+        Arr.append(
+          started,
           LLMEvent.toolInputStart({
             id: event.contentBlockStart.start.toolUse.toolUseId,
             name: event.contentBlockStart.start.toolUse.name,
           }),
-        ],
+        ),
       ] as const
     }
 
     if (event.contentBlockDelta?.delta?.text) {
-      const events: LLMEvent[] = []
-      return [
-        {
-          ...state,
-          lifecycle: Lifecycle.textDelta(
-            state.lifecycle,
-            events,
-            `text-${event.contentBlockDelta.contentBlockIndex}`,
-            event.contentBlockDelta.delta.text,
-          ),
-        },
-        events,
-      ] as const
+      const [lifecycle, events] = Lifecycle.textDelta(
+        state.lifecycle,
+        `text-${event.contentBlockDelta.contentBlockIndex}`,
+        event.contentBlockDelta.delta.text,
+      )
+      return [{ ...state, lifecycle }, events] as const
     }
 
     if (event.contentBlockDelta?.delta?.reasoningContent) {
       const index = event.contentBlockDelta.contentBlockIndex
       const reasoning = event.contentBlockDelta.delta.reasoningContent
-      const events: LLMEvent[] = []
+      const [lifecycle, events] = reasoning.text
+        ? Lifecycle.reasoningDelta(state.lifecycle, `reasoning-${index}`, reasoning.text)
+        : Lifecycle.unchanged(state.lifecycle)
       return [
         {
           ...state,
-          lifecycle: reasoning.text
-            ? Lifecycle.reasoningDelta(state.lifecycle, events, `reasoning-${index}`, reasoning.text)
-            : state.lifecycle,
+          lifecycle,
           reasoningSignatures: reasoning.signature
             ? { ...state.reasoningSignatures, [index]: reasoning.signature }
             : state.reasoningSignatures,
@@ -580,30 +572,24 @@ const step = (state: ParserState, event: BedrockEvent) =>
         "Bedrock Converse tool delta is missing its tool call",
       )
       if (ToolStream.isError(result)) return yield* result
-      const events: LLMEvent[] = []
-      const lifecycle = result.events.length ? Lifecycle.stepStart(state.lifecycle, events) : state.lifecycle
-      events.push(...result.events)
+      const [lifecycle, events] = Lifecycle.emit(state.lifecycle, result.events)
       return [{ ...state, lifecycle, tools: result.tools }, events] as const
     }
 
     if (event.contentBlockStop) {
       const index = event.contentBlockStop.contentBlockIndex
       const result = yield* ToolStream.finish(ADAPTER, state.tools, index)
-      const events: LLMEvent[] = []
       const resultEvents = result.events ?? []
-      const lifecycle = resultEvents.length
-        ? Lifecycle.stepStart(state.lifecycle, events)
-        : Lifecycle.reasoningEnd(
-            Lifecycle.textEnd(state.lifecycle, events, `text-${index}`),
-            events,
-            `reasoning-${index}`,
-            Option.getOrUndefined(
-              Option.map(Option.fromNullishOr(state.reasoningSignatures[index]), (signature) =>
-                bedrockMetadata({ signature }),
-              ),
-            ),
+      const reasoningMetadata = Option.getOrUndefined(
+        Option.map(Option.fromNullishOr(state.reasoningSignatures[index]), (signature) =>
+          bedrockMetadata({ signature }),
+        ),
+      )
+      const [lifecycle, events] = resultEvents.length
+        ? Lifecycle.emit(state.lifecycle, resultEvents)
+        : Lifecycle.andThen(Lifecycle.textEnd(state.lifecycle, `text-${index}`), (closed) =>
+            Lifecycle.reasoningEnd(closed, `reasoning-${index}`, reasoningMetadata),
           )
-      events.push(...resultEvents)
       return [
         {
           ...state,
@@ -677,8 +663,7 @@ const onHalt = (state: ParserState): ReadonlyArray<LLMEvent> =>
   Option.match(state.pendingFinish, {
     onNone: () => [],
     onSome: (pending) => {
-      const events: LLMEvent[] = []
-      Lifecycle.finish(state.lifecycle, events, {
+      const [, events] = Lifecycle.finish(state.lifecycle, {
         reason: pending.reason === "stop" && state.hasToolCalls ? "tool-calls" : pending.reason,
         usage: Option.getOrUndefined(pending.usage),
       })
