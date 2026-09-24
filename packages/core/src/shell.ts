@@ -2,10 +2,9 @@ export * as Shell from "./shell"
 
 import path from "path"
 import { spawn, type ChildProcess } from "child_process"
-import { readFile } from "fs/promises"
-import { statSync } from "fs"
-import { Array, Effect, Schema } from "effect"
-import { Flag } from "./flag/flag"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array, ByteSize, Config, ConfigProvider, Effect, FileSystem, Option, Schema } from "effect"
+import { FlagConfig } from "./flag/flag"
 import { FSUtil } from "./fs-util"
 import { which } from "./util/which"
 
@@ -27,6 +26,13 @@ export type Item = {
   name: string
   acceptable: boolean
 }
+
+// The ambient ConfigProvider copies the environment once, and tests change SHELL at run
+// time, so these read a fresh environment provider on each run.
+const shellVariable = Config.option(Config.String("SHELL"))
+const comspecVariable = Config.String("COMSPEC").pipe(Config.withDefault("cmd.exe"))
+const fromEnvironment = <A>(config: Config.Config<A>) =>
+  Effect.suspend(() => config.parse(ConfigProvider.fromEnv())).pipe(Effect.orDie)
 
 // The command as a JSON string literal, which the POSIX shells below eval as double-quoted text.
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String))
@@ -67,20 +73,25 @@ export const killTree = Effect.fn("Shell.killTree")(function* (proc: ChildProces
   yield* killGroup.pipe(Effect.catch(() => killProcess))
 })
 
-function stat(file: string) {
-  return statSync(file, { throwIfNoEntry: false }) ?? undefined
-}
+// File information, or None when the path cannot be read.
+const stat = (file: string) =>
+  FileSystem.FileSystem.pipe(
+    Effect.flatMap((fs) => fs.stat(file)),
+    Effect.option,
+  )
 
-function full(file: string) {
+const full = Effect.fnUntraced(function* (file: string) {
   if (process.platform !== "win32") return file
   const shell = FSUtil.windowsPath(file)
   if (path.win32.dirname(shell) !== ".") {
-    if (shell.startsWith("/") && name(shell) === "bash") return gitbash() || shell
+    if (shell.startsWith("/") && name(shell) === "bash") return Option.getOrElse(yield* gitbashPath(), () => shell)
     return shell
   }
-  if (name(shell) === "bash") return gitbash() || which(shell) || shell
+  if (name(shell) === "bash") {
+    return Option.getOrElse(yield* gitbashPath(), () => which(shell) || shell)
+  }
   return which(shell) || shell
-}
+})
 
 function meta(file: string) {
   return META[name(file)]
@@ -94,47 +105,54 @@ function rooted(file: string) {
   return path.isAbsolute(FSUtil.windowsPath(file))
 }
 
-function resolve(file: string) {
-  const shell = full(file)
-  if (rooted(shell)) {
-    if (stat(shell)?.isFile()) return shell
-    return
-  }
-  return which(shell) ?? undefined
-}
+const resolve = Effect.fnUntraced(function* (file: string) {
+  const shell = yield* full(file)
+  if (!rooted(shell)) return Option.fromNullishOr(which(shell))
+  const info = yield* stat(shell)
+  return Option.isSome(info) && info.value.type === "File" ? Option.some(shell) : Option.none()
+})
 
-function win() {
+const win = Effect.fnUntraced(function* () {
+  const shells = Array.getSomes([
+    Option.fromNullishOr(which("pwsh")),
+    Option.fromNullishOr(which("powershell")),
+    yield* gitbashPath(),
+    Option.some(yield* fromEnvironment(comspecVariable)),
+  ])
   // Array.dedupe keeps the first occurrence, like the insertion order of a Set.
-  return Array.dedupe(
-    [which("pwsh"), which("powershell"), gitbash(), process.env.COMSPEC || "cmd.exe"]
-      .filter((item): item is string => Boolean(item))
-      .map(full),
-  )
-}
+  return Array.dedupe(yield* Effect.forEach(shells, full))
+})
 
-async function unix() {
-  const text = await readFile("/etc/shells", "utf8").catch(() => "")
+const unix = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem
+  const text = yield* fs.readFileString("/etc/shells").pipe(Effect.orElseSucceed(() => ""))
   if (text) return Array.dedupe(text.split("\n").filter((line) => line.trim() && !line.startsWith("#")))
   return ["/bin/bash", "/bin/zsh", "/bin/sh"]
-}
+})
 
-function select(file: string | undefined, opts?: { acceptable?: boolean }) {
-  if (file && (!opts?.acceptable || ok(file))) {
-    const shell = resolve(file)
-    if (shell) return shell
+const select = Effect.fnUntraced(function* (file: Option.Option<string>, opts?: { acceptable?: boolean }) {
+  if (Option.isSome(file) && (!opts?.acceptable || ok(file.value))) {
+    const shell = yield* resolve(file.value)
+    if (Option.isSome(shell)) return shell.value
   }
-  if (process.platform === "win32") return win()[0]
+  if (process.platform === "win32") return (yield* win())[0]
   return fallback()
-}
+})
 
-export function gitbash() {
-  if (process.platform !== "win32") return
-  if (Flag.OPENCODE_GIT_BASH_PATH) return Flag.OPENCODE_GIT_BASH_PATH
+// Git Bash next to git on Windows, or the OPENCODE_GIT_BASH_PATH override.
+const gitbashPath = Effect.fnUntraced(function* () {
+  if (process.platform !== "win32") return Option.none<string>()
+  const configured = yield* FlagConfig.OPENCODE_GIT_BASH_PATH.pipe(Effect.orDie)
+  if (Option.isSome(configured) && configured.value) return configured
   const git = which("git")
-  if (!git) return
+  if (!git) return Option.none<string>()
   const file = path.join(git, "..", "..", "bin", "bash.exe")
-  if (stat(file)?.size) return file
-}
+  const info = yield* stat(file)
+  return Option.isSome(info) && !ByteSize.isZero(info.value.size) ? Option.some(file) : Option.none<string>()
+})
+
+export const gitbash = (): Effect.Effect<Option.Option<string>> =>
+  gitbashPath().pipe(Effect.provide(NodeFileSystem.layer))
 
 function fallback() {
   if (process.platform === "darwin") return "/bin/zsh"
@@ -160,15 +178,16 @@ export function ps(file: string) {
   return meta(file)?.ps === true
 }
 
-function info(file: string): Item {
-  const item = full(file)
+const info = Effect.fnUntraced(function* (file: string) {
+  const item = yield* full(file)
   const n = name(item)
+  const resolved = yield* resolve(n)
   return {
     path: item,
-    name: resolve(n) ? n : item,
+    name: Option.isSome(resolved) ? n : item,
     acceptable: ok(item),
-  }
-}
+  } satisfies Item
+})
 
 export function args(file: string, command: string, cwd: string) {
   const n = name(file)
@@ -206,28 +225,45 @@ export function args(file: string, command: string, cwd: string) {
   return ["-c", command]
 }
 
-let defaultPreferred: string | undefined
-let defaultAcceptable: string | undefined
+// The default shell comes from SHELL and is resolved once; reset() forgets it.
+function defaultShell(opts?: { acceptable?: boolean }) {
+  let resolved = Option.none<string>()
+  const get = Effect.suspend(() =>
+    Option.isSome(resolved)
+      ? Effect.succeed(resolved.value)
+      : fromEnvironment(shellVariable).pipe(
+          Effect.flatMap((shell) => select(shell, opts)),
+          Effect.tap((shell) =>
+            Effect.sync(() => {
+              resolved = Option.some(shell)
+            }),
+          ),
+        ),
+  )
+  const reset = () => {
+    resolved = Option.none()
+  }
+  return { get, reset }
+}
 
-export function preferred(configShell?: string) {
-  if (configShell) return select(configShell)
-  defaultPreferred ??= select(process.env.SHELL)
-  return defaultPreferred
-}
-preferred.reset = () => {
-  defaultPreferred = undefined
-}
+const defaultPreferred = defaultShell()
+const defaultAcceptable = defaultShell({ acceptable: true })
 
-export function acceptable(configShell?: string) {
-  if (configShell) return select(configShell, { acceptable: true })
-  defaultAcceptable ??= select(process.env.SHELL, { acceptable: true })
-  return defaultAcceptable
+export function preferred(configShell?: string): Effect.Effect<string> {
+  const shell = configShell ? select(Option.some(configShell)) : defaultPreferred.get
+  return shell.pipe(Effect.provide(NodeFileSystem.layer))
 }
-acceptable.reset = () => {
-  defaultAcceptable = undefined
-}
+preferred.reset = defaultPreferred.reset
 
-export async function list(): Promise<Item[]> {
-  const shells = process.platform === "win32" ? win() : await unix()
-  return shells.filter((s) => resolve(s)).map(info)
+export function acceptable(configShell?: string): Effect.Effect<string> {
+  const shell = configShell ? select(Option.some(configShell), { acceptable: true }) : defaultAcceptable.get
+  return shell.pipe(Effect.provide(NodeFileSystem.layer))
 }
+acceptable.reset = defaultAcceptable.reset
+
+export const list = (): Effect.Effect<Item[]> =>
+  Effect.gen(function* () {
+    const shells = process.platform === "win32" ? yield* win() : yield* unix()
+    const resolved = yield* Effect.filter(shells, (shell) => Effect.map(resolve(shell), Option.isSome))
+    return yield* Effect.forEach(resolved, info)
+  }).pipe(Effect.provide(NodeFileSystem.layer))
