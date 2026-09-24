@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { ConfigProvider, Effect, Layer, Stream } from "effect"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
-import { LLM, LLMError, Message, Model, ToolCallPart, Usage } from "../../src"
+import { LLM, LLMError, Message, Model, ToolCallID, ToolCallPart, Usage } from "../../src"
 import { Auth, LLMClient, RequestExecutor, WebSocketExecutor } from "../../src/route"
 import * as Azure from "../../src/providers/azure"
 import * as OpenAI from "../../src/providers/openai"
@@ -1044,7 +1044,7 @@ describe("OpenAI Responses route", () => {
               }),
               {
                 type: "tool-result",
-                id: "ws_1",
+                id: ToolCallID.make("ws_1"),
                 name: "web_search",
                 result: { type: "json", value: { type: "web_search_call", id: "ws_1", status: "completed" } },
                 providerExecuted: true,
@@ -1179,31 +1179,31 @@ describe("OpenAI Responses route", () => {
         { type: "step-start", index: 0 },
         {
           type: "tool-input-start",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           providerMetadata: { openai: { itemId: "item_1" } },
         },
         {
           type: "tool-input-delta",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           text: '{"query"',
         },
         {
           type: "tool-input-delta",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           text: ':"weather"}',
         },
         {
           type: "tool-input-end",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           providerMetadata: { openai: { itemId: "item_1" } },
         },
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -1241,7 +1241,7 @@ describe("OpenAI Responses route", () => {
       expect(callsAndResults).toEqual([
         {
           type: "tool-call",
-          id: "ws_1",
+          id: ToolCallID.make("ws_1"),
           name: "web_search",
           input: { type: "search", query: "effect 4" },
           providerExecuted: true,
@@ -1249,7 +1249,7 @@ describe("OpenAI Responses route", () => {
         },
         {
           type: "tool-result",
-          id: "ws_1",
+          id: ToolCallID.make("ws_1"),
           name: "web_search",
           result: { type: "json", value: item },
           providerExecuted: true,
@@ -1278,7 +1278,7 @@ describe("OpenAI Responses route", () => {
       const toolCall = response.events.find((event) => event.type === "tool-call")
       expect(toolCall).toEqual({
         type: "tool-call",
-        id: "ci_1",
+        id: ToolCallID.make("ci_1"),
         name: "code_interpreter",
         input: { code: "print(1+1)", container_id: "cnt_xyz" },
         providerExecuted: true,
@@ -1287,7 +1287,7 @@ describe("OpenAI Responses route", () => {
       const toolResult = response.events.find((event) => event.type === "tool-result")
       expect(toolResult).toEqual({
         type: "tool-result",
-        id: "ci_1",
+        id: ToolCallID.make("ci_1"),
         name: "code_interpreter",
         result: { type: "json", value: item },
         providerExecuted: true,

@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { LLM, LLMError, Message, ToolCallPart, Usage } from "../../src"
+import { LLM, LLMError, Message, ToolCallID, ToolCallPart, Usage } from "../../src"
 import { Auth, LLMClient } from "../../src/route"
 import * as Gemini from "../../src/protocols/gemini"
 import { ProviderShared } from "../../src/protocols/shared"
@@ -463,7 +463,7 @@ describe("Gemini route", () => {
       expect(response.toolCalls).toEqual([
         {
           type: "tool-call",
-          id: "tool_0",
+          id: ToolCallID.make("tool_0"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -474,7 +474,7 @@ describe("Gemini route", () => {
         { type: "step-start", index: 0 },
         {
           type: "tool-call",
-          id: "tool_0",
+          id: ToolCallID.make("tool_0"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -513,8 +513,8 @@ describe("Gemini route", () => {
       ).pipe(Effect.provide(fixedResponse(body)))
 
       expect(response.toolCalls).toEqual([
-        { type: "tool-call", id: "tool_0", name: "lookup", input: { query: "weather" } },
-        { type: "tool-call", id: "tool_1", name: "lookup", input: { query: "news" } },
+        { type: "tool-call", id: ToolCallID.make("tool_0"), name: "lookup", input: { query: "weather" } },
+        { type: "tool-call", id: ToolCallID.make("tool_1"), name: "lookup", input: { query: "news" } },
       ])
       expect(response.events.at(-1)).toMatchObject({ type: "finish", reason: "tool-calls" })
     }),

@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { HttpClientRequest } from "effect/unstable/http"
-import { CacheHint, LLM, LLMError, Message, ToolCallPart, Usage } from "../../src"
+import { CacheHint, LLM, LLMError, Message, ToolCallID, ToolCallPart, Usage } from "../../src"
 import { Auth, LLMClient } from "../../src/route"
 import * as AnthropicMessages from "../../src/protocols/anthropic-messages"
 import { continuationRequest, nativeAnthropicMessagesContinuation } from "../continuation-scenarios"
@@ -451,7 +451,7 @@ describe("Anthropic Messages route", () => {
       expect(response.toolCalls).toEqual([
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -460,13 +460,13 @@ describe("Anthropic Messages route", () => {
       ])
       expect(response.events).toEqual([
         { type: "step-start", index: 0 },
-        { type: "tool-input-start", id: "call_1", name: "lookup" },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' },
-        { type: "tool-input-end", id: "call_1", name: "lookup", providerMetadata: undefined },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup" },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup", providerMetadata: undefined },
         {
           type: "tool-call",
-          id: "call_1",
+          id: ToolCallID.make("call_1"),
           name: "lookup",
           input: { query: "weather" },
           providerExecuted: undefined,
@@ -597,7 +597,7 @@ describe("Anthropic Messages route", () => {
       const toolCall = response.events.find((event) => event.type === "tool-call")
       expect(toolCall).toEqual({
         type: "tool-call",
-        id: "srvtoolu_abc",
+        id: ToolCallID.make("srvtoolu_abc"),
         name: "web_search",
         input: { query: "effect 4" },
         providerExecuted: true,
@@ -605,7 +605,7 @@ describe("Anthropic Messages route", () => {
       const toolResult = response.events.find((event) => event.type === "tool-result")
       expect(toolResult).toEqual({
         type: "tool-result",
-        id: "srvtoolu_abc",
+        id: ToolCallID.make("srvtoolu_abc"),
         name: "web_search",
         result: { type: "json", value: [{ type: "web_search_result", url: "https://example.com", title: "Example" }] },
         providerExecuted: true,
@@ -667,14 +667,14 @@ describe("Anthropic Messages route", () => {
             Message.assistant([
               {
                 type: "tool-call",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "web_search",
                 input: { query: "effect 4" },
                 providerExecuted: true,
               },
               {
                 type: "tool-result",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "web_search",
                 result: { type: "json", value: [{ url: "https://example.com" }] },
                 providerExecuted: true,
@@ -717,7 +717,7 @@ describe("Anthropic Messages route", () => {
             Message.assistant([
               {
                 type: "tool-result",
-                id: "srvtoolu_abc",
+                id: ToolCallID.make("srvtoolu_abc"),
                 name: "future_server_tool",
                 result: { type: "json", value: {} },
                 providerExecuted: true,

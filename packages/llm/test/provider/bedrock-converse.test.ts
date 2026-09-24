@@ -2,7 +2,7 @@ import { EventStreamCodec } from "@smithy/eventstream-codec"
 import { fromUtf8, toUtf8 } from "@smithy/util-utf8"
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { CacheHint, LLM, Message, ToolCallPart, ToolChoice } from "../../src"
+import { CacheHint, LLM, Message, ToolCallID, ToolCallPart, ToolChoice } from "../../src"
 import { LLMClient } from "../../src/route"
 import { AmazonBedrock } from "../../src/providers"
 import * as BedrockConverse from "../../src/protocols/bedrock-converse"
@@ -292,12 +292,12 @@ describe("Bedrock Converse route", () => {
       ).pipe(Effect.provide(fixedBytes(body)))
 
       expect(response.toolCalls).toEqual([
-        { type: "tool-call", id: "tool_1", name: "lookup", input: { query: "weather" } },
+        { type: "tool-call", id: ToolCallID.make("tool_1"), name: "lookup", input: { query: "weather" } },
       ])
       const events = response.events.filter((event) => event.type === "tool-input-delta")
       expect(events).toEqual([
-        { type: "tool-input-delta", id: "tool_1", name: "lookup", text: '{"query"' },
-        { type: "tool-input-delta", id: "tool_1", name: "lookup", text: ':"weather"}' },
+        { type: "tool-input-delta", id: ToolCallID.make("tool_1"), name: "lookup", text: '{"query"' },
+        { type: "tool-input-delta", id: ToolCallID.make("tool_1"), name: "lookup", text: ':"weather"}' },
       ])
       expect(response.events.at(-1)).toMatchObject({ type: "finish", reason: "tool-calls" })
     }),
