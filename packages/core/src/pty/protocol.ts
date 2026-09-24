@@ -6,6 +6,11 @@ export * as PtyProtocol from "./protocol"
 // Outbound frames are raw UTF-8 terminal chunks. One control frame — a 0x00 byte followed by
 // UTF-8 JSON — carries the absolute output cursor after replay so clients can resume later.
 
+import { Schema } from "effect"
+
+const MetaFrame = Schema.Struct({ cursor: Schema.Number }).annotate({ identifier: "PtyProtocol.MetaFrame" })
+const encodeMetaFrame = Schema.encodeSync(Schema.fromJsonString(MetaFrame))
+
 const encoder = new TextEncoder()
 const decoder = new TextDecoder("utf-8", { fatal: true })
 
@@ -13,7 +18,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true })
 export const REPLAY_CHUNK = 64 * 1024
 
 export function metaFrame(cursor: number) {
-  const bytes = encoder.encode(JSON.stringify({ cursor }))
+  const bytes = encoder.encode(encodeMetaFrame({ cursor }))
   const out = new Uint8Array(bytes.length + 1)
   out[0] = 0
   out.set(bytes, 1)
