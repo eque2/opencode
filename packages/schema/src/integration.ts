@@ -108,7 +108,7 @@ export type AttemptID = typeof AttemptID.Type
 const AttemptTime = Schema.Struct({
   created: Schema.Number,
   expires: Schema.Number,
-})
+}).annotate({ identifier: "Integration.AttemptTime" })
 
 export class Attempt extends Schema.Class<Attempt>("Integration.Attempt")({
   attemptID: AttemptID,
