@@ -12,7 +12,7 @@ function resolve(text: string, params?: Record<string, string | number>) {
   })
 }
 
-export const { use: useI18n, provider: I18nProvider } = createSimpleContext({
+const ctx = createSimpleContext({
   name: "StatsI18n",
   init: () => {
     const language = useLanguage()
@@ -25,3 +25,6 @@ export const { use: useI18n, provider: I18nProvider } = createSimpleContext({
     }
   },
 })
+
+export const useI18n = () => ctx.use()
+export const I18nProvider = ctx.provider
