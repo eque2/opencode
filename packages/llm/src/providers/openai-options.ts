@@ -1,3 +1,4 @@
+import type { Schema } from "effect"
 import type { ProviderOptions, ReasoningEffort, TextVerbosity } from "../schema"
 import { mergeProviderOptions } from "../schema"
 import type { OpenAIResponseIncludable, OpenAIServiceTier } from "../protocols/utils/openai-options"
@@ -22,8 +23,8 @@ export type OpenAIProviderOptionsInput = ProviderOptions & {
   readonly openai?: OpenAIOptionsInput
 }
 
-const definedEntries = (input: Record<string, unknown>) =>
-  Object.entries(input).filter((entry) => entry[1] !== undefined)
+const definedEntries = (input: Record<string, Schema.Json | undefined>) =>
+  Object.entries(input).filter((entry): entry is [string, Schema.Json] => entry[1] !== undefined)
 
 const openAIProviderOptions = (options: OpenAIOptionsInput | undefined): ProviderOptions | undefined => {
   const openai = Object.fromEntries(
