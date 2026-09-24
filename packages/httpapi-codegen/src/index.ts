@@ -731,9 +731,11 @@ export function write(
     const paths = new Set<string>()
     const normalizedPaths = new Set<string>()
     for (const file of output.files) {
-      if (!isSafeOutputPath(file.path)) yield* new GenerationError({ reason: `Unsafe output path: ${file.path}` })
+      if (!isSafeOutputPath(file.path))
+        return yield* new GenerationError({ reason: `Unsafe output path: ${file.path}` })
       const path = file.path.toLowerCase()
-      if (normalizedPaths.has(path)) yield* new GenerationError({ reason: `Duplicate output path: ${file.path}` })
+      if (normalizedPaths.has(path))
+        return yield* new GenerationError({ reason: `Duplicate output path: ${file.path}` })
       normalizedPaths.add(path)
       paths.add(file.path)
     }
@@ -747,7 +749,7 @@ export function write(
         )
       : []
     if (previous.some((path) => !isSafeOutputPath(path))) {
-      yield* new GenerationError({ reason: `Invalid generated file manifest: ${manifest}` })
+      return yield* new GenerationError({ reason: `Invalid generated file manifest: ${manifest}` })
     }
     yield* Effect.forEach(
       previous.filter((path) => !paths.has(path)),
@@ -776,7 +778,10 @@ export function write(
         }).pipe(Effect.flatMap((content) => fs.writeFileString(join(directory, file.path), content))),
       { concurrency: 8, discard: true },
     )
-    yield* fs.writeFileString(manifest, JSON.stringify(output.files.map((file) => file.path).sort(), null, 2) + "\n")
+    return yield* fs.writeFileString(
+      manifest,
+      JSON.stringify(output.files.map((file) => file.path).sort(), null, 2) + "\n",
+    )
   })
 }
 
