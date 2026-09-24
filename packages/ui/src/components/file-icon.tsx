@@ -559,8 +559,7 @@ const folderNameVariants = (name: string) => {
 
 const dottedSuffixesDesc = (name: string) => {
   const n = name.toLowerCase()
-  const idxs: number[] = []
-  for (let i = 0; i < n.length; i++) if (n[i] === ".") idxs.push(i)
+  const idxs = Array.from({ length: n.length }, (_, i) => i).filter((i) => n[i] === ".")
   const out = new Set<string>()
   out.add(n) // allow exact whole-name "extensions" like "dockerfile"
   for (const i of idxs) if (i + 1 < n.length) out.add(n.slice(i + 1))
