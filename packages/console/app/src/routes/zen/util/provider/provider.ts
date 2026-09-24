@@ -191,6 +191,7 @@ export function createBodyConverter(from: ZenData.Format, to: ZenData.Format) {
     if (to === "anthropic") return toAnthropicRequest(raw)
     if (to === "openai") return toOpenaiRequest(raw)
     if (to === "oa-compat") return toOaCompatibleRequest(raw)
+    return undefined
   }
 }
 
@@ -209,6 +210,7 @@ export function createStreamPartConverter(from: ZenData.Format, to: ZenData.Form
     if (to === "anthropic") return toAnthropicChunk(raw)
     if (to === "openai") return toOpenaiChunk(raw)
     if (to === "oa-compat") return toOaCompatibleChunk(raw)
+    return undefined
   }
 }
 
@@ -224,5 +226,6 @@ export function createResponseConverter(from: ZenData.Format, to: ZenData.Format
     if (to === "anthropic") return toAnthropicResponse(raw)
     if (to === "openai") return toOpenaiResponse(raw)
     if (to === "oa-compat") return toOaCompatibleResponse(raw)
+    return undefined
   }
 }
