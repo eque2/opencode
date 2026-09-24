@@ -3,7 +3,8 @@ export * as PtyTicket from "./ticket"
 import { WorkspaceV2 } from "../workspace"
 import { PtyTicket } from "@opencode-ai/schema/pty-ticket"
 import { PtyID } from "./schema"
-import { Cache, Context, Duration, Effect, Layer } from "effect"
+import { NodeCrypto } from "@effect/platform-node"
+import { Cache, Context, Crypto, Duration, Effect, Layer } from "effect"
 import { makeGlobalNode } from "../effect/app-node"
 
 const DEFAULT_TTL = Duration.seconds(60)
@@ -35,13 +36,15 @@ function matches(record: Scope, input: Scope) {
 const noLookup = () => Effect.die("PtyTicket cache must be used via set/invalidateWhen, never get")
 
 // Visible for tests so the TTL can be shortened. Production uses `layer` with the default TTL.
+// Tickets are random UUIDs from the Crypto service, which `layer` provides with NodeCrypto.
 export const make = (ttl: Duration.Input = DEFAULT_TTL) =>
   Effect.gen(function* () {
+    const cryptoService = yield* Crypto.Crypto
     const cache = yield* Cache.make<string, Scope>({ capacity: CAPACITY, lookup: noLookup, timeToLive: ttl })
     const expiresIn = Math.max(1, Math.round(Duration.toSeconds(Duration.fromInputUnsafe(ttl))))
     return Service.of({
       issue: Effect.fn("PtyTicket.issue")(function* (input) {
-        const ticket = crypto.randomUUID()
+        const ticket = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
         yield* Cache.set(cache, ticket, input)
         return { ticket, expires_in: expiresIn }
       }),
@@ -51,6 +54,6 @@ export const make = (ttl: Duration.Input = DEFAULT_TTL) =>
     })
   })
 
-const layer = Layer.effect(Service, make())
+const layer = Layer.effect(Service, make()).pipe(Layer.provide(NodeCrypto.layer))
 
 export const node = makeGlobalNode({ service: Service, layer: layer, deps: [] })
