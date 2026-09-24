@@ -49,14 +49,14 @@ const BedrockToolUseBlock = Schema.Struct({
   toolUse: Schema.Struct({
     toolUseId: ToolUseId,
     name: Schema.String,
-    input: Schema.Unknown,
+    input: Schema.Json,
   }),
 }).annotate({ identifier: "BedrockConverse.ToolUseBlock" })
 type BedrockToolUseBlock = Schema.Schema.Type<typeof BedrockToolUseBlock>
 
 const BedrockToolResultContentItem = Schema.Union([
   Schema.Struct({ text: Schema.String }),
-  Schema.Struct({ json: Schema.Unknown }),
+  Schema.Struct({ json: Schema.Json }),
   BedrockMedia.ImageBlock,
 ])
 
@@ -196,13 +196,13 @@ const BedrockEvent = Schema.Struct({
   messageStop: Schema.optional(
     Schema.Struct({
       stopReason: Schema.String,
-      additionalModelResponseFields: Schema.optional(Schema.Unknown),
+      additionalModelResponseFields: Schema.optional(Schema.Json),
     }),
   ),
   metadata: Schema.optional(
     Schema.Struct({
       usage: Schema.optional(BedrockUsageSchema),
-      metrics: Schema.optional(Schema.Unknown),
+      metrics: Schema.optional(Schema.Json),
     }),
   ),
   internalServerException: Schema.optional(Schema.Struct({ message: Schema.String })),
@@ -271,12 +271,21 @@ const reasoningText = (part: ReasoningPart) =>
     onSome: (signature) => ({ text: part.text, signature }),
   })
 
-const lowerToolCall = (part: ToolCallPart): BedrockToolUseBlock => ({
-  toolUse: {
-    toolUseId: ToolUseId.make(part.id),
-    name: part.name,
-    input: part.input,
-  },
+// Tool inputs and JSON tool results are `unknown` in the common model. Encode
+// them as the request body will, then read the text back as Schema.Json:
+// undefined-valued keys drop out and Dates become strings, exactly as on the
+// wire. A value that JSON cannot represent yields Option.none().
+const WireJson = Schema.fromJsonString(Schema.Json)
+const toWireJson = (value: unknown) =>
+  Option.flatMap(Schema.encodeUnknownOption(ProviderShared.Json)(value), Schema.decodeUnknownOption(WireJson))
+
+const lowerToolCall = Effect.fn("BedrockConverse.lowerToolCall")(function* (part: ToolCallPart) {
+  const input = toWireJson(part.input)
+  if (Option.isNone(input))
+    return yield* ProviderShared.invalidRequest(`Bedrock Converse tool call ${part.name} input must be JSON`)
+  return {
+    toolUse: { toolUseId: ToolUseId.make(part.id), name: part.name, input: input.value },
+  } satisfies BedrockToolUseBlock
 })
 
 const lowerToolResultItem = Effect.fn("BedrockConverse.lowerToolResultItem")(function* (item: ToolContent) {
@@ -295,7 +304,12 @@ const lowerToolResultItem = Effect.fn("BedrockConverse.lowerToolResultItem")(fun
 const lowerToolResultContent = Effect.fn("BedrockConverse.lowerToolResultContent")(function* (part: ToolResultPart) {
   if (part.result.type === "text" || part.result.type === "error")
     return [{ text: ProviderShared.toolResultText(part) }]
-  if (part.result.type === "json") return [{ json: part.result.value }]
+  if (part.result.type === "json") {
+    const json = toWireJson(part.result.value)
+    if (Option.isNone(json))
+      return yield* ProviderShared.invalidRequest(`Bedrock Converse tool result ${part.name} must be JSON`)
+    return [{ json: json.value }]
+  }
   return yield* Effect.forEach(part.result.value, lowerToolResultItem)
 })
 
@@ -326,9 +340,8 @@ const lowerAssistantPart = Effect.fn("BedrockConverse.lowerAssistantPart")(funct
   if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
     return yield* ProviderShared.unsupportedContent("Bedrock Converse", "assistant", ["text", "reasoning", "tool-call"])
   if (part.type === "text") return textWithCache(breakpoints, part.text, part.cache)
-  if (part.type === "reasoning")
-    return [{ reasoningContent: { reasoningText: reasoningText(part) } }]
-  return [lowerToolCall(part)]
+  if (part.type === "reasoning") return [{ reasoningContent: { reasoningText: reasoningText(part) } }]
+  return [yield* lowerToolCall(part)]
 })
 
 const lowerToolPart = Effect.fn("BedrockConverse.lowerToolPart")(function* (
