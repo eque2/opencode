@@ -1,7 +1,7 @@
 export * as AgentV2 from "./agent"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Array, Context, Effect, Layer, Types } from "effect"
+import { Array, Context, Effect, Layer, MutableHashMap, Option, Types } from "effect"
 import { Agent } from "@opencode-ai/schema/agent"
 import { State } from "./state"
 
@@ -20,7 +20,8 @@ export interface Selection {
 }
 
 type Data = {
-  agents: Map<ID, Types.DeepMutable<Info>>
+  // MutableHashMap iterates in insertion order, which list(), all() and the default fallback rely on.
+  agents: MutableHashMap.MutableHashMap<ID, Types.DeepMutable<Info>>
   default?: ID
 }
 
@@ -46,21 +47,24 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const state = State.create<Data, Draft>({
-      initial: () => ({ agents: new Map() }),
+      initial: () => ({ agents: MutableHashMap.empty() }),
       draft: (draft) => ({
-        list: () => Array.fromIterable(draft.agents.values()) as Info[],
-        get: (id) => draft.agents.get(id),
+        list: () => Array.fromIterable(MutableHashMap.values(draft.agents)) as Info[],
+        get: (id) => Option.getOrUndefined(MutableHashMap.get(draft.agents, id)),
         default: (id) => {
           draft.default = id
         },
         update: (id, fn) => {
-          const current = draft.agents.get(id) ?? (Info.empty(id) as Types.DeepMutable<Info>)
-          if (!draft.agents.has(id)) draft.agents.set(id, current)
+          const current = Option.getOrElse(
+            MutableHashMap.get(draft.agents, id),
+            () => Info.empty(id) as Types.DeepMutable<Info>,
+          )
+          if (!MutableHashMap.has(draft.agents, id)) MutableHashMap.set(draft.agents, id, current)
           fn(current)
           current.id = id
         },
         remove: (id) => {
-          draft.agents.delete(id)
+          MutableHashMap.remove(draft.agents, id)
         },
       }),
     })
@@ -68,11 +72,13 @@ const layer = Layer.effect(
       agent && agent.mode !== "subagent" && !agent.hidden ? agent : undefined
     const selectedDefault = () => {
       const data = state.get()
-      const configured = data.default ? selectable(data.agents.get(data.default)) : undefined
+      const configured = data.default
+        ? selectable(Option.getOrUndefined(MutableHashMap.get(data.agents, data.default)))
+        : undefined
       if (configured) return configured
-      const build = selectable(data.agents.get(ID.make("build")))
+      const build = selectable(Option.getOrUndefined(MutableHashMap.get(data.agents, ID.make("build"))))
       if (build) return build
-      for (const agent of data.agents.values()) {
+      for (const agent of MutableHashMap.values(data.agents)) {
         const fallback = selectable(agent)
         if (fallback) return fallback
       }
@@ -82,25 +88,25 @@ const layer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       get: Effect.fn("AgentV2.get")(function* (id) {
-        return state.get().agents.get(id)
+        return Option.getOrUndefined(MutableHashMap.get(state.get().agents, id))
       }),
       default: Effect.fn("AgentV2.default")(function* () {
         return selectedDefault()
       }),
       resolve: Effect.fn("AgentV2.resolve")(function* (id) {
-        if (id !== undefined) return state.get().agents.get(ID.make(id))
+        if (id !== undefined) return Option.getOrUndefined(MutableHashMap.get(state.get().agents, ID.make(id)))
         return selectedDefault()
       }),
       select: Effect.fn("AgentV2.select")(function* (id) {
         if (id !== undefined) {
           const selected = ID.make(id)
-          return { id: selected, info: state.get().agents.get(selected) }
+          return { id: selected, info: Option.getOrUndefined(MutableHashMap.get(state.get().agents, selected)) }
         }
         const info = selectedDefault()
         return { id: info?.id ?? defaultID, info }
       }),
       all: Effect.fn("AgentV2.all")(function* () {
-        return Array.fromIterable(state.get().agents.values())
+        return Array.fromIterable(MutableHashMap.values(state.get().agents))
       }),
     })
   }),
