@@ -43,6 +43,9 @@ export const isReasoningEffort = (effort: unknown): effort is OpenAIReasoningEff
 const isTextVerbosity = (value: unknown): value is TextVerbosityValue =>
   typeof value === "string" && TEXT_VERBOSITY.has(value)
 
+const isServiceTier = (value: unknown): value is OpenAIServiceTier =>
+  typeof value === "string" && SERVICE_TIERS.has(value)
+
 const options = (request: LLMRequest) => request.providerOptions?.openai
 
 export const store = (request: LLMRequest): boolean | undefined => {
@@ -82,7 +85,7 @@ export const textVerbosity = (request: LLMRequest) => {
 
 export const serviceTier = (request: LLMRequest) => {
   const value = options(request)?.serviceTier
-  return typeof value === "string" && SERVICE_TIERS.has(value) ? (value as OpenAIServiceTier) : undefined
+  return isServiceTier(value) ? value : undefined
 }
 
 export const instructions = (request: LLMRequest) => {
