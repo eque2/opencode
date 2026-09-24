@@ -2,7 +2,7 @@ export * as BashTool from "./bash"
 
 import path from "path"
 import { ToolFailure } from "@opencode-ai/llm"
-import { Duration, Effect, Layer, Option, Schema } from "effect"
+import { Array as Arr, Duration, Effect, Layer, Option, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
@@ -89,15 +89,16 @@ const externalCommandDirectories = Effect.fn("BashTool.externalCommandDirectorie
   command: string,
   cwd: string,
 ) {
-  const directories = new Set<string>()
-  for (const token of shellTokens(command)) {
-    const value = unquote(token).replace(/[;,|&]+$/, "")
-    if (!path.isAbsolute(value)) continue
-    const resolved = yield* fs.resolve(value)
-    if (FSUtil.contains(cwd, resolved)) continue
-    directories.add(yield* fs.resolve(path.dirname(resolved)))
-  }
-  return [...directories]
+  const directories = yield* Effect.forEach(shellTokens(command), (token) =>
+    Effect.gen(function* () {
+      const value = unquote(token).replace(/[;,|&]+$/, "")
+      if (!path.isAbsolute(value)) return Option.none<string>()
+      const resolved = yield* fs.resolve(value)
+      if (FSUtil.contains(cwd, resolved)) return Option.none<string>()
+      return Option.some(yield* fs.resolve(path.dirname(resolved)))
+    }),
+  )
+  return Arr.dedupe(Arr.getSomes(directories))
 })
 
 const layer = Layer.effectDiscard(
