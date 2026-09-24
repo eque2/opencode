@@ -1,6 +1,6 @@
 export * as Event from "./event"
 
-import { MutableHashMap, Option, Schema } from "effect"
+import { MutableHashMap, Option, Result, Schema } from "effect"
 import { optional } from "./schema"
 import { ascending } from "./identifier"
 import { Location } from "./location"
@@ -73,21 +73,40 @@ export function inventory<const Definitions extends ReadonlyArray<Definition>>(.
   return Object.freeze(definitions)
 }
 
+/** Raised when a manifest lists two different definitions for one event key. */
+export class DuplicateDefinitionError extends Schema.TaggedError<DuplicateDefinitionError>()(
+  "Event.DuplicateDefinition",
+  { key: Schema.String, message: Schema.String },
+) {}
+
+type Index<Value> = Result.Result<MutableHashMap.MutableHashMap<string, Value>, DuplicateDefinitionError>
+
 export function latest(definitions: ReadonlyArray<Definition>) {
-  return readonlyMap(
-    definitions.reduce((result, definition) => {
-      const found = MutableHashMap.get(result, definition.type)
-      if (Option.isNone(found)) return MutableHashMap.set(result, definition.type, definition)
-      const existing = found.value
-      if (definition.durable && existing.durable && definition.durable.version !== existing.durable.version) {
-        return definition.durable.version > existing.durable.version
-          ? MutableHashMap.set(result, definition.type, definition)
-          : result
-      }
-      if (definition !== existing) throw new Error(`Duplicate latest event definition for ${definition.type}`)
-      return result
-    }, MutableHashMap.empty<string, Definition>()),
-  )
+  return definitions
+    .reduce<Index<Definition>>(
+      (index, definition) =>
+        Result.flatMap(index, (result) => {
+          const found = MutableHashMap.get(result, definition.type)
+          if (Option.isNone(found)) return Result.succeed(MutableHashMap.set(result, definition.type, definition))
+          const existing = found.value
+          if (definition.durable && existing.durable && definition.durable.version !== existing.durable.version) {
+            return Result.succeed(
+              definition.durable.version > existing.durable.version
+                ? MutableHashMap.set(result, definition.type, definition)
+                : result,
+            )
+          }
+          if (definition === existing) return Result.succeed(result)
+          return Result.fail(
+            new DuplicateDefinitionError({
+              key: definition.type,
+              message: `Duplicate latest event definition for ${definition.type}`,
+            }),
+          )
+        }),
+      Result.succeed(MutableHashMap.empty()),
+    )
+    .pipe(Result.map(readonlyMap))
 }
 
 export function versionedType(type: string, version: number) {
@@ -95,15 +114,23 @@ export function versionedType(type: string, version: number) {
 }
 
 export function durable<const Definitions extends ReadonlyArray<Definition>>(definitions: Definitions) {
-  return readonlyMap(
-    definitions.reduce((result, definition) => {
-      if (!definition.durable) return result
-      const key = versionedType(definition.type, definition.durable.version)
-      if (MutableHashMap.has(result, key)) throw new Error(`Duplicate durable event definition for ${key}`)
-      MutableHashMap.set(result, key, definition)
-      return result
-    }, MutableHashMap.empty<string, Definitions[number]>()),
-  )
+  return definitions
+    .reduce<Index<Definitions[number]>>(
+      (index, definition) =>
+        Result.flatMap(index, (result) => {
+          if (!definition.durable) return Result.succeed(result)
+          const key = versionedType(definition.type, definition.durable.version)
+          if (MutableHashMap.has(result, key)) {
+            return Result.fail(
+              new DuplicateDefinitionError({ key, message: `Duplicate durable event definition for ${key}` }),
+            )
+          }
+          MutableHashMap.set(result, key, definition)
+          return Result.succeed(result)
+        }),
+      Result.succeed(MutableHashMap.empty()),
+    )
+    .pipe(Result.map(readonlyMap))
 }
 
 // MutableHashMap keeps string keys in insertion order, which the OpenAPI event unions built from

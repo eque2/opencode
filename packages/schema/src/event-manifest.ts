@@ -1,5 +1,6 @@
 export * as EventManifest from "./event-manifest"
 
+import { Result } from "effect"
 import { Catalog } from "./catalog"
 import { Durable } from "./durable-event-manifest"
 import { Event } from "./event"
@@ -80,5 +81,6 @@ export const Definitions = Event.inventory(
   ...WorktreeEvent.Definitions,
   ...ServerEvent.Definitions,
 )
-export const Latest = Event.latest(Definitions)
+// A duplicate definition is a defect in this module, so it fails module load.
+export const Latest = Result.getOrThrow(Event.latest(Definitions))
 export { Durable }
