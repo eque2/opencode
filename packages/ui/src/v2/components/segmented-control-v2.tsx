@@ -97,7 +97,7 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
   const assignRef = (el: HTMLDivElement) => {
     const r = local.ref
     if (typeof r === "function") r(el)
-    else if (r != null && typeof r === "object" && "value" in r) r.value = el
+    else if (typeof r === "object" && "value" in r) r.value = el
   }
 
   return (

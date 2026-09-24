@@ -48,14 +48,14 @@ export function InlineInputV2(props: InlineInputV2Props) {
       data-invalid={local.invalid ? "" : undefined}
       data-numeric={local.numeric ? "" : undefined}
       data-appearance={local.appearance ?? "base"}
-      data-label-width={local.labelWidth != null ? "" : undefined}
+      data-label-width={local.labelWidth !== undefined ? "" : undefined}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
       }}
       style={{
-        ...(typeof local.style === "object" && local.style != null ? local.style : {}),
-        ...(local.labelWidth != null
+        ...(typeof local.style === "object" ? local.style : {}),
+        ...(local.labelWidth !== undefined
           ? {
               "--inline-input-v2-label-width":
                 typeof local.labelWidth === "number" ? `${local.labelWidth}px` : local.labelWidth,
