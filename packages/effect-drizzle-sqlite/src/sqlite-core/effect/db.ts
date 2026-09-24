@@ -120,7 +120,7 @@ export class SQLiteEffectDatabase<
       fields?: SelectedFields,
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
-        fields: fields ?? undefined,
+        fields,
         session: self.session,
         dialect: self.dialect,
         withList: queries,
@@ -135,7 +135,7 @@ export class SQLiteEffectDatabase<
       fields?: SelectedFields,
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
-        fields: fields ?? undefined,
+        fields,
         session: self.session,
         dialect: self.dialect,
         withList: queries,
@@ -169,7 +169,7 @@ export class SQLiteEffectDatabase<
     fields: TSelection,
   ): SQLiteEffectSelectBuilder<TSelection, TRunResult, TEffectHKT>
   select(fields?: SelectedFields): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
-    return new SQLiteEffectSelectBuilder({ fields: fields ?? undefined, session: this.session, dialect: this.dialect })
+    return new SQLiteEffectSelectBuilder({ fields, session: this.session, dialect: this.dialect })
   }
 
   selectDistinct(): SQLiteEffectSelectBuilder<undefined, TRunResult, TEffectHKT>
@@ -180,7 +180,7 @@ export class SQLiteEffectDatabase<
     fields?: SelectedFields,
   ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
     return new SQLiteEffectSelectBuilder({
-      fields: fields ?? undefined,
+      fields,
       session: this.session,
       dialect: this.dialect,
       distinct: true,
