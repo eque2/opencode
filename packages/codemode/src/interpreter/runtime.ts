@@ -1,5 +1,5 @@
 import { parse } from "acorn"
-import { Cause, Effect, Exit, Fiber, Option, Predicate, Result, Semaphore } from "effect"
+import { Array as Arr, Cause, Effect, Exit, Fiber, HashSet, Option, Predicate, Result, Semaphore } from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
@@ -253,7 +253,7 @@ const isRuntimeReference = (value: unknown): boolean =>
   value instanceof ErrorConstructorReference ||
   isSandboxValue(value)
 
-const containsRuntimeReference = (value: unknown, seen = new Set<object>()): boolean => {
+const containsRuntimeReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isRuntimeReference(value)) return true
   if (value === null || typeof value !== "object") return false
   if (seen.has(value)) return false
@@ -268,7 +268,7 @@ const containsRuntimeReference = (value: unknown, seen = new Set<object>()): boo
 // Like containsRuntimeReference, but sandbox standard-library values count as data:
 // operators and switch treat them as ordinary object operands (identity equality, ToPrimitive
 // coercion) rather than rejecting them as opaque interpreter machinery.
-const containsOpaqueReference = (value: unknown, seen = new Set<object>()): boolean => {
+const containsOpaqueReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isSandboxValue(value)) return false
   if (isRuntimeReference(value)) return true
   if (value === null || typeof value !== "object") return false
@@ -284,7 +284,7 @@ const containsOpaqueReference = (value: unknown, seen = new Set<object>()): bool
 // True when `value` is `container` or (through nested data arrays and objects) contains it:
 // inserting such a value into `container` would create a circular structure. `seen` guards the
 // current path, so shared (non-circular) substructures are still walked from each parent.
-const containsContainer = (container: object, value: unknown, seen: Set<object>): boolean => {
+const containsContainer = (container: object, value: unknown, seen: WeakSet<object>): boolean => {
   if (value === container) return true
   if (value === null || typeof value !== "object" || isRuntimeReference(value) || seen.has(value)) return false
   seen.add(value)
@@ -297,7 +297,7 @@ const containsContainer = (container: object, value: unknown, seen: Set<object>)
 // Renders a container with it marked as on the current formatting path, so a nested reference
 // back to it prints "[Circular]"; the mark is cleared once the container has rendered. Console
 // formatting never throws, so no cleanup-on-failure path is needed.
-const renderOnPath = (seen: Set<object>, container: object, render: () => string): string => {
+const renderOnPath = (seen: WeakSet<object>, container: object, render: () => string): string => {
   seen.add(container)
   const rendered = render()
   seen.delete(container)
@@ -688,7 +688,7 @@ class Interpreter<R> {
   // Fiber-backed promises whose settlement no program construct has observed yet. Successful
   // program completion drains these (like a runtime waiting on in-flight work at exit) and
   // surfaces a never-awaited failure as an unhandled-rejection diagnostic.
-  private readonly pendingSettlements = new Set<SandboxPromise>()
+  private pendingSettlements: ReadonlyArray<SandboxPromise> = []
 
   constructor(
     invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>,
@@ -789,7 +789,7 @@ class Interpreter<R> {
   // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
   private drainPendingSettlements(): Effect.Effect<void, unknown> {
     return Effect.forEach(
-      [...this.pendingSettlements],
+      this.pendingSettlements,
       (promise) =>
         Effect.flatMap(this.observePromise(promise), (exit) => {
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return Effect.void
@@ -821,7 +821,7 @@ class Interpreter<R> {
       }),
       (fiber) => {
         const promise = new SandboxPromise(fiber)
-        this.pendingSettlements.add(promise)
+        this.pendingSettlements = [...this.pendingSettlements, promise]
         return promise
       },
     )
@@ -831,7 +831,7 @@ class Interpreter<R> {
   // Fiber settlement is idempotent, so observing the same promise repeatedly (await twice,
   // Promise.all([p, p])) never re-runs the underlying call.
   private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
-    this.pendingSettlements.delete(promise)
+    this.pendingSettlements = this.pendingSettlements.filter((pending) => pending !== promise)
     return promise.fiber !== undefined ? Fiber.await(promise.fiber) : Effect.exit(promise.immediate ?? Effect.void)
   }
 
@@ -1457,7 +1457,7 @@ class Interpreter<R> {
         new InterpreterRuntimeError("Object destructuring requires a data object value.", pattern, "InvalidDataValue"),
       )
     }
-    const consumed = new Set<string>()
+    let consumed = HashSet.empty<string>()
     return Effect.flatMap(getArray(pattern, "properties"), (properties) =>
       Effect.forEach(
         properties,
@@ -1469,7 +1469,7 @@ class Interpreter<R> {
             if (property.type === "RestElement") {
               const rest: SafeObject = Object.create(null) as SafeObject
               for (const [key, item] of Object.entries(value as SafeObject)) {
-                if (!consumed.has(key) && !isBlockedMember(key)) rest[key] = item
+                if (!HashSet.has(consumed, key) && !isBlockedMember(key)) rest[key] = item
               }
               return yield* this.declarePattern(yield* getNode(property, "argument"), rest, mutable, property)
             }
@@ -1490,7 +1490,7 @@ class Interpreter<R> {
             if (isBlockedMember(key)) {
               return yield* new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, keyNode)
             }
-            consumed.add(key)
+            consumed = HashSet.add(consumed, key)
             return yield* this.declarePattern(
               yield* getNode(property, "value"),
               (value as SafeObject)[key],
@@ -2150,10 +2150,10 @@ class Interpreter<R> {
     if (value === undefined) return "undefined"
     // A top-level string prints bare; nested strings are JSON-quoted (see formatConsoleValue).
     if (typeof value === "string") return value
-    return this.formatConsoleValue(value, new Set(), 0)
+    return this.formatConsoleValue(value, new WeakSet(), 0)
   }
 
-  private formatConsoleValue(value: unknown, seen: Set<object>, depth: number): string {
+  private formatConsoleValue(value: unknown, seen: WeakSet<object>, depth: number): string {
     switch (typeof value) {
       // Nested undefined renders as null, matching what JSON boundary output would show.
       case "undefined":
@@ -2210,7 +2210,7 @@ class Interpreter<R> {
     const data = boundedData(value, "console.table argument")
     const columns = this.consoleTableColumns(columnsArgument)
     const rows = this.consoleTableRows(data, columns)
-    const keys = columns ?? Array.from(new Set(rows.flatMap((row) => Object.keys(row.values))))
+    const keys = columns ?? Arr.dedupe(rows.flatMap((row) => Object.keys(row.values)))
     const header = ["(index)", ...keys].join("\t")
     return [
       header,
@@ -2250,7 +2250,7 @@ class Interpreter<R> {
   private formatConsoleTableCell(value: unknown): string {
     if (value === undefined) return ""
     if (typeof value === "string") return value
-    return this.formatConsoleValue(value, new Set(), 0)
+    return this.formatConsoleValue(value, new WeakSet(), 0)
   }
 
   private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> {
@@ -3384,7 +3384,7 @@ class Interpreter<R> {
     label: string,
     node: AstNode,
   ): Effect.Effect<void, InterpreterRuntimeError> {
-    return containsContainer(container, value, new Set())
+    return containsContainer(container, value, new WeakSet())
       ? Effect.fail(new InterpreterRuntimeError(`${label} contains a circular value.`, node, "InvalidDataValue"))
       : Effect.void
   }
