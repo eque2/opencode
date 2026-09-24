@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as FileSystem from "effect/FileSystem"
 import * as Layer from "effect/Layer"
+import * as MutableHashMap from "effect/MutableHashMap"
+import * as Option from "effect/Option"
 import * as Path from "effect/Path"
 import * as PlatformError from "effect/PlatformError"
 import * as Predicate from "effect/Predicate"
@@ -178,8 +180,8 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const ins = new Map<number, Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError>>()
-    const outs = new Map<number, Stream.Stream<Uint8Array, PlatformError.PlatformError>>()
+    const ins = MutableHashMap.empty<number, Sink.Sink<void, Uint8Array, never, PlatformError.PlatformError>>()
+    const outs = MutableHashMap.empty<number, Stream.Stream<Uint8Array, PlatformError.PlatformError>>()
 
     for (const x of extra) {
       const node = proc.stdio[x.fd]
@@ -194,7 +196,7 @@ export const make = Effect.gen(function* () {
             })
           }
           if (x.config.stream) yield* Effect.forkScoped(Stream.run(x.config.stream, sink))
-          ins.set(x.fd, sink)
+          MutableHashMap.set(ins, x.fd, sink)
           break
         }
         case "output": {
@@ -209,15 +211,15 @@ export const make = Effect.gen(function* () {
             })
           }
           if (x.config.sink) stream = Stream.transduce(stream, x.config.sink)
-          outs.set(x.fd, stream)
+          MutableHashMap.set(outs, x.fd, stream)
           break
         }
       }
     }
 
     return {
-      getInputFd: (fd: number) => ins.get(fd) ?? Sink.drain,
-      getOutputFd: (fd: number) => outs.get(fd) ?? Stream.empty,
+      getInputFd: (fd: number) => Option.getOrElse(MutableHashMap.get(ins, fd), () => Sink.drain),
+      getOutputFd: (fd: number) => Option.getOrElse(MutableHashMap.get(outs, fd), () => Stream.empty),
     }
   })
 
