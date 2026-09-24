@@ -55,11 +55,12 @@ type SettledOutput =
   | { readonly structured: Schema.JsonObject; readonly content: ToolOutput["content"] }
   | { readonly error: { readonly type: "unknown"; readonly message: string } }
 
-const settledOutput = (value: ToolOutput | undefined, result: ToolResultValue): SettledOutput => {
-  if (result.type === "error") return { error: { type: "unknown", message: message(result.value) } }
-  const settled = value ?? ToolOutput.fromResultValue(result)
-  if (!settled) throw new Error(`Unsupported tool result: ${message(result)}`)
-  return { structured: record(settled.structured), content: settled.content }
+const settledOutput = (value: ToolOutput | undefined, result: ToolResultValue): Effect.Effect<SettledOutput> => {
+  if (result.type === "error") return Effect.succeed({ error: { type: "unknown", message: message(result.value) } })
+  return Option.match(Option.fromUndefinedOr(value ?? ToolOutput.fromResultValue(result)), {
+    onNone: () => Effect.die(`Unsupported tool result: ${message(result)}`),
+    onSome: (settled) => Effect.succeed({ structured: record(settled.structured), content: settled.content }),
+  })
 }
 
 /** A provider stream that breaks the event grammar is a defect, not a recoverable failure. */
@@ -377,7 +378,7 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
           return
         }
         tool.settled = true
-        const result = settledOutput(event.output, event.result)
+        const result = yield* settledOutput(event.output, event.result)
         const provider = {
           executed: event.providerExecuted === true || tool.providerExecuted,
           ...(event.providerMetadata === undefined ? {} : { metadata: event.providerMetadata }),
