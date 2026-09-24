@@ -229,14 +229,15 @@ async function printWorkspace(workspaceID: string) {
       tx
         .select({
           date: sql<string>`DATE(${UsageTable.timeCreated})`.as("date"),
-          requests: sql<number>`COUNT(*)`.as("requests"),
-          inputTokens: sql<number>`SUM(${UsageTable.inputTokens})`.as("input_tokens"),
-          outputTokens: sql<number>`SUM(${UsageTable.outputTokens})`.as("output_tokens"),
-          reasoningTokens: sql<number>`SUM(${UsageTable.reasoningTokens})`.as("reasoning_tokens"),
-          cacheReadTokens: sql<number>`SUM(${UsageTable.cacheReadTokens})`.as("cache_read_tokens"),
-          cacheWrite5mTokens: sql<number>`SUM(${UsageTable.cacheWrite5mTokens})`.as("cache_write_5m_tokens"),
-          cacheWrite1hTokens: sql<number>`SUM(${UsageTable.cacheWrite1hTokens})`.as("cache_write_1h_tokens"),
-          cost: sql<number>`SUM(${UsageTable.cost})`.as("cost"),
+          // The PlanetScale driver returns COUNT and SUM results as strings.
+          requests: sql<string>`COUNT(*)`.as("requests"),
+          inputTokens: sql<string>`SUM(${UsageTable.inputTokens})`.as("input_tokens"),
+          outputTokens: sql<string>`SUM(${UsageTable.outputTokens})`.as("output_tokens"),
+          reasoningTokens: sql<string>`SUM(${UsageTable.reasoningTokens})`.as("reasoning_tokens"),
+          cacheReadTokens: sql<string>`SUM(${UsageTable.cacheReadTokens})`.as("cache_read_tokens"),
+          cacheWrite5mTokens: sql<string>`SUM(${UsageTable.cacheWrite5mTokens})`.as("cache_write_5m_tokens"),
+          cacheWrite1hTokens: sql<string>`SUM(${UsageTable.cacheWrite1hTokens})`.as("cache_write_1h_tokens"),
+          cost: sql<string>`SUM(${UsageTable.cost})`.as("cost"),
         })
         .from(UsageTable)
         .where(
