@@ -68,20 +68,17 @@ const layer = Layer.effect(
         },
       }),
     })
-    const selectable = (agent: Info | undefined) =>
-      agent && agent.mode !== "subagent" && !agent.hidden ? agent : undefined
-    const selectedDefault = () => {
+    const selectable = (agent: Info) => agent.mode !== "subagent" && !agent.hidden
+    // The configured default wins, then "build", then the first selectable agent in insertion order.
+    const selectedDefault = (): Option.Option<Info> => {
       const data = state.get()
-      const configured = data.default
-        ? selectable(Option.getOrUndefined(MutableHashMap.get(data.agents, data.default)))
-        : undefined
-      if (configured) return configured
-      const build = selectable(Option.getOrUndefined(MutableHashMap.get(data.agents, ID.make("build"))))
-      if (build) return build
-      for (const agent of MutableHashMap.values(data.agents)) {
-        const fallback = selectable(agent)
-        if (fallback) return fallback
-      }
+      return Option.fromUndefinedOr(data.default).pipe(
+        Option.filter((id) => id.length > 0),
+        Option.flatMap((id) => MutableHashMap.get(data.agents, id)),
+        Option.filter(selectable),
+        Option.orElse(() => MutableHashMap.get(data.agents, ID.make("build")).pipe(Option.filter(selectable))),
+        Option.orElse(() => Array.findFirst(MutableHashMap.values(data.agents), selectable)),
+      )
     }
 
     return Service.of({
@@ -91,11 +88,11 @@ const layer = Layer.effect(
         return Option.getOrUndefined(MutableHashMap.get(state.get().agents, id))
       }),
       default: Effect.fn("AgentV2.default")(function* () {
-        return selectedDefault()
+        return Option.getOrUndefined(selectedDefault())
       }),
       resolve: Effect.fn("AgentV2.resolve")(function* (id) {
         if (id !== undefined) return Option.getOrUndefined(MutableHashMap.get(state.get().agents, ID.make(id)))
-        return selectedDefault()
+        return Option.getOrUndefined(selectedDefault())
       }),
       select: Effect.fn("AgentV2.select")(function* (id) {
         if (id !== undefined) {
@@ -103,7 +100,10 @@ const layer = Layer.effect(
           return { id: selected, info: Option.getOrUndefined(MutableHashMap.get(state.get().agents, selected)) }
         }
         const info = selectedDefault()
-        return { id: info?.id ?? defaultID, info }
+        return {
+          id: Option.match(info, { onNone: () => defaultID, onSome: (agent) => agent.id }),
+          info: Option.getOrUndefined(info),
+        }
       }),
       all: Effect.fn("AgentV2.all")(function* () {
         return Array.fromIterable(MutableHashMap.values(state.get().agents))
