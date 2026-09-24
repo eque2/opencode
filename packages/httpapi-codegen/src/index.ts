@@ -71,7 +71,9 @@ type SseStreamSchema = Exclude<HttpApiSchema.StreamSchema, HttpApiSchema.StreamU
 
 const resolveHttpApiStatus = SchemaAST.resolveAt<number>("httpApiStatus")
 const resolveHttpApiEncoding = SchemaAST.resolveAt<HttpApiSchema.Encoding>("~httpApiEncoding")
-const Manifest = Schema.fromJsonString(Schema.Array(Schema.String))
+const Manifest = Schema.fromJsonString(Schema.Array(Schema.String), { space: 2 })
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+const encodeJsonValue = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 const manifestName = ".httpapi-codegen.json"
 
 export function compile<Id extends string, Groups extends HttpApiGroup.Constraint>(
@@ -330,7 +332,9 @@ function renderImportedEffectFiles(
     | { readonly module: string; readonly endpoints: Readonly<Record<string, string>> },
 ): Output["files"] {
   const adapters = groups.map((group, groupIndex) => {
-    const rawGroup = group.endpoints[0]?.topLevel ? "RawClient" : `RawClient[${JSON.stringify(group.sourceIdentifier)}]`
+    const rawGroup = group.endpoints[0]?.topLevel
+      ? "RawClient"
+      : `RawClient[${encodeJsonString(group.sourceIdentifier)}]`
     const methods = group.endpoints.map((item, endpointIndex) => {
       const prefix = `Endpoint${groupIndex}_${endpointIndex}`
       const request = (["params", "query", "headers", "payload"] as const)
@@ -338,30 +342,30 @@ function renderImportedEffectFiles(
           const fields = item.input.filter((field) => field.source === source)
           if (fields.length === 0) return []
           return [
-            `${source}: { ${fields.map((field) => `${JSON.stringify(field.name)}: input${item.operation.inputMode === "optional" ? "?." : ""}[${JSON.stringify(field.name)}]`).join(", ")} }`,
+            `${source}: { ${fields.map((field) => `${encodeJsonString(field.name)}: input${item.operation.inputMode === "optional" ? "?." : ""}[${encodeJsonString(field.name)}]`).join(", ")} }`,
           ]
         })
         .join(", ")
       const input = item.input
         .map(
           (field) =>
-            `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: ${prefix}Request[${JSON.stringify(field.source)}][${JSON.stringify(field.name)}]`,
+            `readonly ${encodeJsonString(field.name)}${field.optional ? "?" : ""}: ${prefix}Request[${encodeJsonString(field.source)}][${encodeJsonString(field.name)}]`,
         )
         .join("; ")
       const argument =
         item.operation.inputMode === "none"
           ? ""
           : `input${item.operation.inputMode === "optional" ? "?" : ""}: ${prefix}Input`
-      const rawCall = `raw[${JSON.stringify(item.endpoint.identifier)}]({ ${request} })`
+      const rawCall = `raw[${encodeJsonString(item.endpoint.identifier)}]({ ${request} })`
       const mapped = `${rawCall}.pipe(Effect.mapError(mapClientError)${item.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
-      return `${item.operation.inputMode === "none" ? "" : `type ${prefix}Request = Parameters<${rawGroup}[${JSON.stringify(item.endpoint.identifier)}]>[0]\ntype ${prefix}Input = { ${input} }\n`}const ${prefix} = (raw: ${rawGroup}) => (${argument}) => ${item.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(mapClientError), Effect.map((stream) => stream.pipe(Stream.mapError(mapClientError)))))` : mapped}`
+      return `${item.operation.inputMode === "none" ? "" : `type ${prefix}Request = Parameters<${rawGroup}[${encodeJsonString(item.endpoint.identifier)}]>[0]\ntype ${prefix}Input = { ${input} }\n`}const ${prefix} = (raw: ${rawGroup}) => (${argument}) => ${item.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(mapClientError), Effect.map((stream) => stream.pipe(Stream.mapError(mapClientError)))))` : mapped}`
     })
-    return `${methods.join("\n\n")}\n\nconst adaptGroup${groupIndex} = (raw: ${rawGroup}) => ({ ${group.endpoints.map((item, endpointIndex) => `${JSON.stringify(item.operation.name)}: Endpoint${groupIndex}_${endpointIndex}(raw)`).join(", ")} })`
+    return `${methods.join("\n\n")}\n\nconst adaptGroup${groupIndex} = (raw: ${rawGroup}) => ({ ${group.endpoints.map((item, endpointIndex) => `${encodeJsonString(item.operation.name)}: Endpoint${groupIndex}_${endpointIndex}(raw)`).join(", ")} })`
   })
   const fields = groups.flatMap((group, index) =>
     group.endpoints[0]?.topLevel
       ? [`...adaptGroup${index}(raw)`]
-      : [`${JSON.stringify(group.identifier)}: adaptGroup${index}(raw[${JSON.stringify(group.sourceIdentifier)}])`],
+      : [`${encodeJsonString(group.identifier)}: adaptGroup${index}(raw[${encodeJsonString(group.sourceIdentifier)}])`],
   )
   const usesStream = groups.some((group) => group.endpoints.some((item) => item.operation.success === "stream"))
   const imported = "api" in options
@@ -373,8 +377,8 @@ function renderImportedEffectFiles(
   const api = imported ? options.api : "Api"
   const imports =
     projection === undefined
-      ? `import { ${api} } from ${JSON.stringify(options.module)}`
-      : `import { HttpApi, HttpApiClient${"endpoints" in options ? ", HttpApiGroup" : ""} } from "effect/unstable/httpapi"\nimport { ${projection.imports.join(", ")} } from ${JSON.stringify(options.module)}`
+      ? `import { ${api} } from ${encodeJsonString(options.module)}`
+      : `import { HttpApi, HttpApiClient${"endpoints" in options ? ", HttpApiGroup" : ""} } from "effect/unstable/httpapi"\nimport { ${projection.imports.join(", ")} } from ${encodeJsonString(options.module)}`
   const httpApiImport = projection === undefined ? 'import { HttpApiClient } from "effect/unstable/httpapi"\n' : ""
   const client = `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect${usesStream ? ", Stream" : ""}, Schema } from "effect"\nimport { Sse } from "effect/unstable/encoding"\nimport { HttpClientError } from "effect/unstable/http"\n${httpApiImport}${imports}\nimport { ClientError } from "./client-error"\n\n${projection?.source ?? ""}type RawClient = HttpApiClient.ForApi<typeof ${api}>\n\nconst mapClientError = <E>(error: E) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : error\n\n${adapters.join("\n\n")}\n\nconst adaptClient = (raw: RawClient) => ({ ${fields.join(", ")} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) => HttpApiClient.make(${api}, options).pipe(Effect.map(adaptClient))\n`
   return [
@@ -413,7 +417,7 @@ function renderImportedProjection(groups: ReadonlyArray<Group>, endpoints: Reado
   const source = `const Api = HttpApi.make("generated").${groups
     .map((group) => {
       const options = group.endpoints[0]?.topLevel ? ", { topLevel: true }" : ""
-      return `add(HttpApiGroup.make(${JSON.stringify(group.identifier)}${options})${group.endpoints.map((endpoint) => `.add(${endpoints[`${group.identifier}.${endpoint.endpoint.identifier}`]})`).join("")})`
+      return `add(HttpApiGroup.make(${encodeJsonString(group.identifier)}${options})${group.endpoints.map((endpoint) => `.add(${endpoints[`${group.identifier}.${endpoint.endpoint.identifier}`]})`).join("")})`
     })
     .join(".")}\n\n`
   return { imports: [...new Set(imports)], source }
@@ -444,9 +448,9 @@ function renderPromiseTypes(
   )
   const errorTypes = Array.from(errors.values()).map((error) => {
     const fields = error.fields
-      .map(([name, schema, optional]) => `readonly ${JSON.stringify(name)}${optional ? "?" : ""}: ${typeOf(schema)}`)
+      .map(([name, schema, optional]) => `readonly ${encodeJsonString(name)}${optional ? "?" : ""}: ${typeOf(schema)}`)
       .join("; ")
-    return `export type ${error.identifier} = { readonly ${JSON.stringify(error.key)}: ${JSON.stringify(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => typeof value === "object" && value !== null && ${JSON.stringify(error.key)} in value && value[${JSON.stringify(error.key)}] === ${JSON.stringify(error.tag)}`
+    return `export type ${error.identifier} = { readonly ${encodeJsonString(error.key)}: ${encodeJsonString(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => typeof value === "object" && value !== null && ${encodeJsonString(error.key)} in value && value[${encodeJsonString(error.key)}] === ${encodeJsonString(error.tag)}`
   })
   const operations = groups
     .flatMap((group) =>
@@ -463,7 +467,7 @@ function renderPromiseTypes(
             const schema = schemas[field.source]
             if (schema === undefined)
               throw new GenerationError({ reason: `Missing input schema: ${prefix}.${field.name}` })
-            return `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: (${typeOf(schema, field.source === "query")})[${JSON.stringify(field.name)}]`
+            return `readonly ${encodeJsonString(field.name)}${field.optional ? "?" : ""}: (${typeOf(schema, field.source === "query")})[${encodeJsonString(field.name)}]`
           })
           .join("; ")
         const successSchema = endpoint.successes[0]
@@ -506,12 +510,12 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
           : `input${endpoint.operation.inputMode === "optional" ? "?" : ""}: ${prefix}Input, requestOptions?: RequestOptions`
       const path = promisePath(endpoint.endpoint.path, endpoint.input)
       const access = (name: string) =>
-        `input${endpoint.operation.inputMode === "optional" ? "?." : ""}[${JSON.stringify(name)}]`
+        `input${endpoint.operation.inputMode === "optional" ? "?." : ""}[${encodeJsonString(name)}]`
       const part = (source: InputField["source"]) => {
         const inputs = endpoint.input.filter((field) => field.source === source)
         return inputs.length === 0
           ? undefined
-          : `{ ${inputs.map((field) => `${JSON.stringify(field.name)}: ${access(field.name)}`).join(", ")} }`
+          : `{ ${inputs.map((field) => `${encodeJsonString(field.name)}: ${access(field.name)}`).join(", ")} }`
       }
       const parts = [
         endpoint.query === undefined ? undefined : `query: ${part("query")}`,
@@ -519,7 +523,7 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
         endpoint.payloads.length === 0 ? undefined : `body: ${part("payload")}`,
       ].filter((value): value is string => value !== undefined)
       const declaredStatuses = [...new Set(endpoint.errors.map((error) => error.status))]
-      const descriptor = `{ method: ${JSON.stringify(endpoint.endpoint.method)}, path: ${path}${parts.length === 0 ? "" : `, ${parts.join(", ")}`}, successStatus: ${resolveHttpApiStatus(endpoint.successes[0].ast) ?? 200}, declaredStatuses: [${declaredStatuses.join(", ")}], empty: ${endpoint.operation.success === "void"} }`
+      const descriptor = `{ method: ${encodeJsonString(endpoint.endpoint.method)}, path: ${path}${parts.length === 0 ? "" : `, ${parts.join(", ")}`}, successStatus: ${resolveHttpApiStatus(endpoint.successes[0].ast) ?? 200}, declaredStatuses: [${declaredStatuses.join(", ")}], empty: ${endpoint.operation.success === "void"} }`
       if (endpoint.operation.success === "stream") {
         const success = endpoint.successes[0]
         if (!isStreamSchema(success) || success._tag !== "StreamSse" || success.sseMode !== "data") {
@@ -527,13 +531,13 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
             reason: `Promise stream emission is not implemented: ${group.identifier}.${endpoint.endpoint.identifier}`,
           })
         }
-        return `${JSON.stringify(endpoint.operation.name)}: (${argument}): AsyncIterable<${prefix}Output> => sse<${prefix}Output>(${descriptor}, requestOptions)`
+        return `${encodeJsonString(endpoint.operation.name)}: (${argument}): AsyncIterable<${prefix}Output> => sse<${prefix}Output>(${descriptor}, requestOptions)`
       }
       const unwrap = endpoint.unwrapData ? ".then((value) => value.data)" : ""
-      return `${JSON.stringify(endpoint.operation.name)}: (${argument}) => request<${endpoint.unwrapData ? `{ readonly data: ${prefix}Output }` : `${prefix}Output`}>(${descriptor}, requestOptions)${unwrap}`
+      return `${encodeJsonString(endpoint.operation.name)}: (${argument}) => request<${endpoint.unwrapData ? `{ readonly data: ${prefix}Output }` : `${prefix}Output`}>(${descriptor}, requestOptions)${unwrap}`
     })
     if (group.endpoints[0]?.topLevel) return methods.join(", ")
-    return `${JSON.stringify(group.identifier)}: { ${methods.join(", ")} }`
+    return `${encodeJsonString(group.identifier)}: { ${methods.join(", ")} }`
   })
   return `import type { ${imports.join(", ")} } from "./types"\nimport { ClientError } from "./client-error"\n\nexport interface ClientOptions {\n  readonly baseUrl: string\n  readonly fetch?: typeof globalThis.fetch\n  readonly headers?: HeadersInit\n}\n\nexport interface RequestOptions {\n  readonly signal?: AbortSignal\n  readonly headers?: HeadersInit\n}\n\ninterface RequestDescriptor {\n  readonly method: string\n  readonly path: string\n  readonly query?: Record<string, unknown>\n  readonly headers?: Record<string, unknown>\n  readonly body?: unknown\n  readonly successStatus: number\n  readonly declaredStatuses: ReadonlyArray<number>\n  readonly empty: boolean\n}\n\nexport function make(options: ClientOptions) {\n  const fetch = options.fetch ?? globalThis.fetch\n\n  const prepare = (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    const url = new URL(descriptor.path, options.baseUrl)\n    for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)\n    const headers = new Headers(options.headers)\n    for (const [key, value] of Object.entries(descriptor.headers ?? {})) {\n      if (value !== undefined && value !== null) headers.set(key, String(value))\n    }\n    for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)\n    if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")\n    return {\n      url,\n      init: {\n        method: descriptor.method,\n        signal: requestOptions?.signal,\n        headers,\n        body: descriptor.body === undefined ? undefined : JSON.stringify(descriptor.body),\n      } satisfies RequestInit,\n    }\n  }\n\n  const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    try {\n      const prepared = prepare(descriptor, requestOptions)\n      return await fetch(prepared.url, prepared.init)\n    } catch (cause) {\n      throw new ClientError("Transport", { cause })\n    }\n  }\n\n  const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {\n    if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })\n  }\n\n  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {\n    const response = await execute(descriptor, requestOptions)\n    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)\n    if (descriptor.empty) {\n      try {\n        await response.body?.cancel()\n      } catch {}\n      return undefined as A\n    }\n    return await json(response) as A\n  }\n\n  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({\n    async *[Symbol.asyncIterator]() {\n      const response = await execute(descriptor, requestOptions)\n      if (response.status !== descriptor.successStatus) await responseError(response, descriptor)\n      if (!isContentType(response, "text/event-stream")) {\n        try {\n          await response.body?.cancel()\n        } catch {}\n        throw new ClientError("UnsupportedContentType")\n      }\n      if (response.body === null) throw new ClientError("MalformedResponse")\n      const reader = response.body.getReader()\n      const decoder = new TextDecoder()\n      let buffer = ""\n      try {\n        while (true) {\n          let next: ReadableStreamReadResult<Uint8Array>\n          try {\n            next = await reader.read()\n          } catch (cause) {\n            throw new ClientError("Transport", { cause })\n          }\n          buffer += decoder.decode(next.value, { stream: !next.done })\n          if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")\n          const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")\n          if (trailingCarriageReturn) buffer = buffer.slice(0, -1)\n          buffer = buffer.replaceAll("\\r\\n", "\\n").replaceAll("\\r", "\\n")\n          if (trailingCarriageReturn) buffer += "\\r"\n          if (next.done && buffer !== "") buffer += "\\n\\n"\n          let boundary = buffer.indexOf("\\n\\n")\n          while (boundary >= 0) {\n            const block = buffer.slice(0, boundary)\n            buffer = buffer.slice(boundary + 2)\n            const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")\n            if (data !== "") {\n              try {\n                yield JSON.parse(data) as A\n              } catch (cause) {\n                throw new ClientError("MalformedResponse", { cause })\n              }\n            }\n            boundary = buffer.indexOf("\\n\\n")\n          }\n          if (next.done) return\n        }\n      } finally {\n        try {\n          await reader.cancel()\n        } catch {}\n        reader.releaseLock()\n      }\n    },\n  })\n\n  return { ${fields.join(", ")} }\n}\n\nfunction appendQuery(params: URLSearchParams, key: string, value: unknown): void {\n  if (value === undefined || value === null) return\n  if (Array.isArray(value)) {\n    for (const item of value) appendQuery(params, key, item)\n    return\n  }\n  if (typeof value === "object") {\n    for (const [child, item] of Object.entries(value)) appendQuery(params, \`\${key}[\${child}]\`, item)\n    return\n  }\n  params.append(key, String(value))\n}\n\nasync function json(response: Response): Promise<unknown> {\n  if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnsupportedContentType")\n  }\n  let text: string\n  try {\n    text = await response.text()\n  } catch (cause) {\n    throw new ClientError("Transport", { cause })\n  }\n  if (text === "") throw new ClientError("MalformedResponse")\n  try {\n    return JSON.parse(text)\n  } catch (cause) {\n    throw new ClientError("MalformedResponse", { cause })\n  }\n}\n\nfunction isContentType(response: Response, expected: string) {\n  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === expected\n}\n`
 }
@@ -780,10 +784,10 @@ export function write(
         }).pipe(Effect.flatMap((content) => fs.writeFileString(join(directory, file.path), content))),
       { concurrency: 8, discard: true },
     )
-    return yield* fs.writeFileString(
-      manifest,
-      JSON.stringify(output.files.map((file) => file.path).sort(), null, 2) + "\n",
+    const content = yield* Schema.encodeEffect(Manifest)(output.files.map((file) => file.path).sort()).pipe(
+      Effect.orDie,
     )
+    return yield* fs.writeFileString(manifest, content + "\n")
   })
 }
 
@@ -1128,7 +1132,7 @@ function renderGroup(group: Group, groupIndex: number) {
         if (slot === undefined) {
           throw new GenerationError({ reason: `Missing input schema: ${group.identifier}.${endpoint.identifier}` })
         }
-        return `readonly ${JSON.stringify(field.name)}${field.optional ? "?" : ""}: (typeof ${slot.name}.Type)[${JSON.stringify(field.name)}]`
+        return `readonly ${encodeJsonString(field.name)}${field.optional ? "?" : ""}: (typeof ${slot.name}.Type)[${encodeJsonString(field.name)}]`
       })
       .join("; ")
     const argument =
@@ -1143,7 +1147,7 @@ function renderGroup(group: Group, groupIndex: number) {
           .filter((field) => field.source === source)
           .map(
             (field) =>
-              `${JSON.stringify(field.name)}: input${operation.operation.inputMode === "optional" ? "?." : ""}[${JSON.stringify(field.name)}]`,
+              `${encodeJsonString(field.name)}: input${operation.operation.inputMode === "optional" ? "?." : ""}[${encodeJsonString(field.name)}]`,
           )
         return [`${source}: { ${fields.join(", ")} }`]
       })
@@ -1151,13 +1155,13 @@ function renderGroup(group: Group, groupIndex: number) {
     const declared = [...errorSlots, ...(success.streamError === undefined ? [] : [success.streamError])]
     const declaredSchema =
       declared.length === 0 ? "Schema.Never" : `Schema.Union([${declared.map((slot) => slot.name).join(", ")}])`
-    const rawCall = `raw[${JSON.stringify(endpoint.identifier)}]({ ${request} })`
+    const rawCall = `raw[${encodeJsonString(endpoint.identifier)}]({ ${request} })`
     const mapped = `${rawCall}.pipe(Effect.mapError(map${prefix}Error)${operation.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
     const inputDeclaration = operation.operation.inputMode === "none" ? "" : `type ${prefix}Input = { ${inputType} }\n`
     adapters.push(
       `${inputDeclaration}const ${prefix}DeclaredError = ${declaredSchema}\nconst map${prefix}Error = (error: unknown) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : Schema.is(${prefix}DeclaredError)(error) ? error : new ClientError({ cause: error })\nconst ${prefix} = (raw: RawGroup) => (${argument}) => ${operation.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(map${prefix}Error), Effect.map((stream) => stream.pipe(Stream.mapError(map${prefix}Error)))))` : mapped}`,
     )
-    return `HttpApiEndpoint.make(${JSON.stringify(endpoint.method)})(${JSON.stringify(endpoint.identifier)}, ${JSON.stringify(endpoint.path)}, { ${options.join(", ")} })`
+    return `HttpApiEndpoint.make(${encodeJsonString(endpoint.method)})(${encodeJsonString(endpoint.identifier)}, ${encodeJsonString(endpoint.path)}, { ${options.join(", ")} })`
   })
 
   function addSlot(schema: Schema.Top | undefined, name: string) {
@@ -1173,7 +1177,7 @@ function renderGroup(group: Group, groupIndex: number) {
     const annotate = status === 200 ? "" : `.pipe(HttpApiSchema.status(${status}))`
     if (schema._tag === "StreamUint8Array") {
       return {
-        source: `HttpApiSchema.StreamUint8Array({ contentType: ${JSON.stringify(schema.contentType)} })${annotate}`,
+        source: `HttpApiSchema.StreamUint8Array({ contentType: ${encodeJsonString(schema.contentType)} })${annotate}`,
       }
     }
     const value = addSlot(
@@ -1182,16 +1186,16 @@ function renderGroup(group: Group, groupIndex: number) {
     )!
     const error = addSlot(schema.error, `${name}Error`)!
     return {
-      source: `HttpApiSchema.StreamSse({ ${schema.sseMode}: ${value.name}, error: ${error.name}, contentType: ${JSON.stringify(schema.contentType)} })${annotate}`,
+      source: `HttpApiSchema.StreamSse({ ${schema.sseMode}: ${value.name}, error: ${error.name}, contentType: ${encodeJsonString(schema.contentType)} })${annotate}`,
       streamError: error,
     }
   }
 
   const declarations = renderSchemas(slots)
-  const groupSource = `HttpApiGroup.make(${JSON.stringify(group.identifier)}, { topLevel: ${group.endpoints[0]?.topLevel ?? false} })${endpointSources.map((endpoint) => `.add(${endpoint})`).join("")}`
+  const groupSource = `HttpApiGroup.make(${encodeJsonString(group.identifier)}, { topLevel: ${group.endpoints[0]?.topLevel ?? false} })${endpointSources.map((endpoint) => `.add(${endpoint})`).join("")}`
   const usesHttpApiSchema = endpointSources.some((source) => source.includes("HttpApiSchema."))
   const methods = group.endpoints
-    .map((item, index) => `${JSON.stringify(item.operation.name)}: Endpoint${index}(raw)`)
+    .map((item, index) => `${encodeJsonString(item.operation.name)}: Endpoint${index}(raw)`)
     .join(", ")
   const rawGroup = group.endpoints[0]?.topLevel
     ? `HttpApiClient.Client<typeof Group${groupIndex}>`
@@ -1234,7 +1238,7 @@ function renderSchemas(slots: ReadonlyArray<Slot>) {
     const declared = classes.get(index)
     if (declared === undefined) return `const ${slot.name} = ${document.codes[index].runtime}`
     const fields = declared.fields
-      .map(([name]) => `${JSON.stringify(name)}: ${document.codes[fieldIndex++].runtime}`)
+      .map(([name]) => `${encodeJsonString(name)}: ${document.codes[fieldIndex++].runtime}`)
       .join(", ")
     const annotations = Object.entries({
       httpApiStatus: resolveHttpApiStatus(slot.schema.ast),
@@ -1243,11 +1247,11 @@ function renderSchemas(slots: ReadonlyArray<Slot>) {
     const annotate =
       annotations.length === 0
         ? ""
-        : `.annotate({ ${annotations.map(([key, value]) => `${JSON.stringify(key)}: ${JSON.stringify(value)}`).join(", ")} })`
+        : `.annotate({ ${annotations.map(([key, value]) => `${encodeJsonString(key)}: ${encodeJsonValue(value)}`).join(", ")} })`
     const source =
       declared.key === "_tag"
-        ? `Schema.TaggedError<${slot.name}Class>(${JSON.stringify(declared.identifier)})(${JSON.stringify(declared.tag)}, { ${fields} })`
-        : `Schema.Error<${slot.name}Class>(${JSON.stringify(declared.identifier)})({ "name": Schema.Literal(${JSON.stringify(declared.tag)})${fields === "" ? "" : `, ${fields}`} })`
+        ? `Schema.TaggedError<${slot.name}Class>(${encodeJsonString(declared.identifier)})(${encodeJsonString(declared.tag)}, { ${fields} })`
+        : `Schema.Error<${slot.name}Class>(${encodeJsonString(declared.identifier)})({ "name": Schema.Literal(${encodeJsonString(declared.tag)})${fields === "" ? "" : `, ${fields}`} })`
     return `class ${slot.name}Class extends ${source} {}\nconst ${slot.name} = ${slot.name}Class${annotate}`
   })
   return [...artifacts, ...references, ...declarations].join("\n\n")
@@ -1255,14 +1259,14 @@ function renderSchemas(slots: ReadonlyArray<Slot>) {
 
 function renderClient(groups: ReadonlyArray<Group>) {
   const imports = groups
-    .map((group, index) => `import { adaptGroup${index}, Group${index} } from ${JSON.stringify(`./${group.module}`)}`)
+    .map((group, index) => `import { adaptGroup${index}, Group${index} } from ${encodeJsonString(`./${group.module}`)}`)
     .join("\n")
   const api = `HttpApi.make("generated")${groups.map((_, index) => `.add(Group${index})`).join("")}`
   const fields = groups.flatMap((group, index) => {
     if (!group.endpoints[0]?.topLevel) {
-      return [`${JSON.stringify(group.identifier)}: adaptGroup${index}(raw[${JSON.stringify(group.identifier)}])`]
+      return [`${encodeJsonString(group.identifier)}: adaptGroup${index}(raw[${encodeJsonString(group.identifier)}])`]
     }
-    const raw = `{ ${group.endpoints.map((item) => `${JSON.stringify(item.endpoint.identifier)}: raw[${JSON.stringify(item.endpoint.identifier)}]`).join(", ")} }`
+    const raw = `{ ${group.endpoints.map((item) => `${encodeJsonString(item.endpoint.identifier)}: raw[${encodeJsonString(item.endpoint.identifier)}]`).join(", ")} }`
     return [`...adaptGroup${index}(${raw})`]
   })
   return `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect } from "effect"\nimport { HttpApi, HttpApiClient } from "effect/unstable/httpapi"\n${imports}\n\nconst Api = ${api}\nconst adaptClient = (raw: HttpApiClient.ForApi<typeof Api>) => ({ ${fields.join(", ")} })\n\nexport const make = (options?: { readonly baseUrl?: URL | string }) =>\n  HttpApiClient.make(Api, options).pipe(Effect.map(adaptClient))\n`
