@@ -31,18 +31,18 @@ const main = Effect.gen(function* () {
     catch: (cause) => new SlackBotError({ operation: "new App", cause }),
   })
 
-  console.log("🔧 Bot configuration:")
-  console.log("- Bot token present:", !!process.env.SLACK_BOT_TOKEN)
-  console.log("- Signing secret present:", !!process.env.SLACK_SIGNING_SECRET)
-  console.log("- App token present:", !!process.env.SLACK_APP_TOKEN)
+  yield* Effect.logInfo("🔧 Bot configuration:")
+  yield* Effect.logInfo("- Bot token present:", !!process.env.SLACK_BOT_TOKEN)
+  yield* Effect.logInfo("- Signing secret present:", !!process.env.SLACK_SIGNING_SECRET)
+  yield* Effect.logInfo("- App token present:", !!process.env.SLACK_APP_TOKEN)
 
-  console.log("🚀 Starting opencode server...")
+  yield* Effect.logInfo("🚀 Starting opencode server...")
   const opencode = yield* attempt("createOpencode", () =>
     createOpencode({
       port: 0,
     }),
   )
-  console.log("✅ Opencode server ready")
+  yield* Effect.logInfo("✅ Opencode server ready")
 
   const sessions = new Map<string, { client: any; server: any; sessionId: string; channel: string; thread: string }>()
 
@@ -88,7 +88,7 @@ const main = Effect.gen(function* () {
   )
 
   const logRawEvent = Effect.fn("Slack.logRawEvent")(function* ({ next, context }: AllMiddlewareArgs) {
-    console.log("📡 Raw Slack event:", JSON.stringify(context, null, 2))
+    yield* Effect.logInfo("📡 Raw Slack event:", JSON.stringify(context, null, 2))
     yield* Effect.promise(() => next())
   })
 
@@ -96,14 +96,14 @@ const main = Effect.gen(function* () {
     message,
     say,
   }: SlackEventMiddlewareArgs<"message">) {
-    console.log("📨 Received message event:", JSON.stringify(message, null, 2))
+    yield* Effect.logInfo("📨 Received message event:", JSON.stringify(message, null, 2))
 
     if (message.subtype || !("text" in message) || !message.text) {
-      console.log("⏭️ Skipping message - no text or has subtype")
+      yield* Effect.logInfo("⏭️ Skipping message - no text or has subtype")
       return
     }
 
-    console.log("✅ Processing message:", message.text)
+    yield* Effect.logInfo("✅ Processing message:", message.text)
 
     const channel = message.channel
     const thread = message.thread_ts || message.ts
@@ -112,7 +112,7 @@ const main = Effect.gen(function* () {
     let session = sessions.get(sessionKey)
 
     if (!session) {
-      console.log("🆕 Creating new opencode session...")
+      yield* Effect.logInfo("🆕 Creating new opencode session...")
       const { client, server } = opencode
 
       const createResult = yield* attempt("session.create", () =>
@@ -122,7 +122,7 @@ const main = Effect.gen(function* () {
       )
 
       if (createResult.error) {
-        console.error("❌ Failed to create session:", createResult.error)
+        yield* Effect.logError("❌ Failed to create session:", createResult.error)
         yield* attempt("say", () =>
           say({
             text: "Sorry, I had trouble creating a session. Please try again.",
@@ -132,7 +132,7 @@ const main = Effect.gen(function* () {
         return
       }
 
-      console.log("✅ Created opencode session:", createResult.data.id)
+      yield* Effect.logInfo("✅ Created opencode session:", createResult.data.id)
 
       session = { client, server, sessionId: createResult.data.id, channel, thread }
       sessions.set(sessionKey, session)
@@ -142,14 +142,14 @@ const main = Effect.gen(function* () {
       )
       if (!shareResult.error && shareResult.data) {
         const sessionUrl = shareResult.data.share?.url
-        console.log("🔗 Session shared:", sessionUrl)
+        yield* Effect.logInfo("🔗 Session shared:", sessionUrl)
         yield* attempt("chat.postMessage", () =>
           app.client.chat.postMessage({ channel, thread_ts: thread, text: sessionUrl }),
         )
       }
     }
 
-    console.log("📝 Sending to opencode:", message.text)
+    yield* Effect.logInfo("📝 Sending to opencode:", message.text)
     // session.client is untyped, so the prompt result stays untyped as before.
     const result = yield* attempt<any>("session.prompt", () =>
       session.client.session.prompt({
@@ -158,10 +158,10 @@ const main = Effect.gen(function* () {
       }),
     )
 
-    console.log("📤 Opencode response:", JSON.stringify(result, null, 2))
+    yield* Effect.logInfo("📤 Opencode response:", JSON.stringify(result, null, 2))
 
     if (result.error) {
-      console.error("❌ Failed to send message:", result.error)
+      yield* Effect.logError("❌ Failed to send message:", result.error)
       yield* attempt("say", () =>
         say({
           text: "Sorry, I had trouble processing your message. Please try again.",
@@ -182,7 +182,7 @@ const main = Effect.gen(function* () {
         .join("\n") ||
       "I received your message but didn't have a response."
 
-    console.log("💬 Sending response:", responseText)
+    yield* Effect.logInfo("💬 Sending response:", responseText)
 
     // Send main response (tool updates will come via live events)
     yield* attempt("say", () => say({ text: responseText, thread_ts: thread }))
@@ -194,7 +194,7 @@ const main = Effect.gen(function* () {
     say,
   }: SlackCommandMiddlewareArgs) {
     yield* attempt("ack", () => ack())
-    console.log("🧪 Test command received:", JSON.stringify(command, null, 2))
+    yield* Effect.logInfo("🧪 Test command received:", JSON.stringify(command, null, 2))
     yield* attempt("say", () => say("🤖 Bot is working! I can hear you loud and clear."))
   })
 
@@ -204,7 +204,7 @@ const main = Effect.gen(function* () {
   app.command("/test", (args) => Effect.runPromise(handleTestCommand(args)))
 
   yield* attempt("app.start", () => app.start())
-  console.log("⚡️ Slack bot is running!")
+  yield* Effect.logInfo("⚡️ Slack bot is running!")
 })
 
 Effect.runFork(main.pipe(exitOnFailure))
