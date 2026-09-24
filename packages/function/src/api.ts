@@ -5,7 +5,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose"
 import { createAppAuth } from "@octokit/auth-app"
 import { Octokit } from "@octokit/rest"
 import { Resource } from "sst"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { parseRepositoryClaim } from "./github"
 
 type Env = {
@@ -279,13 +279,13 @@ export default new Hono<{ Bindings: Env }>()
 
     // verify token
     const JWKS = createRemoteJWKSet(new URL(JWKS_URL))
-    let repository: ReturnType<typeof parseRepositoryClaim>
+    let repository: Effect.Success<ReturnType<typeof parseRepositoryClaim>>
     try {
       const { payload } = await jwtVerify(token, JWKS, {
         issuer: GITHUB_ISSUER,
         audience: EXPECTED_AUDIENCE,
       })
-      repository = parseRepositoryClaim(payload)
+      repository = await Effect.runPromise(parseRepositoryClaim(payload))
     } catch (err) {
       console.error("Token verification failed:", err)
       return c.json({ error: "Invalid or expired token" }, { status: 403 })
