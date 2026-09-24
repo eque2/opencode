@@ -236,7 +236,7 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
   const protocol = input.protocol
   const encodeBody = Schema.encodeSync(Schema.fromJsonString(protocol.body.schema))
   const decodeEventEffect = Schema.decodeUnknownEffect(protocol.stream.event)
-  const decodeEvent = (route: string) => (frame: Frame) =>
+  const decodeEvent = (route: string) => (frame: unknown) =>
     decodeEventEffect(frame).pipe(
       Effect.mapError(() =>
         ProviderShared.eventError(
@@ -247,7 +247,11 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
       ),
     )
 
-  type BuiltRouteInput = Omit<MakeTransportInput<Body, Prepared, Frame, Event, State>, "defaults"> & {
+  // A built route reads transport frames as unknown: `decodeEvent` decodes
+  // them with the protocol event schema, so a patched transport of any frame
+  // type fits without a cast.
+  type BuiltRouteInput = Omit<MakeTransportInput<Body, Prepared, Frame, Event, State>, "defaults" | "transport"> & {
+    readonly transport: Transport<Body, Prepared, unknown>
     readonly defaults?: RouteDefaults
   }
 
@@ -269,7 +273,7 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
           provider: provider ?? routeInput.provider,
           auth: auth ?? routeInput.auth,
           endpoint: endpoint ? Endpoint.merge(routeInput.endpoint, endpoint) : routeInput.endpoint,
-          transport: (transport as Transport<Body, Prepared, Frame> | undefined) ?? routeInput.transport,
+          transport: transport ?? routeInput.transport,
           defaults: mergeRouteDefaults(defaults, route.defaults),
         })
       },
@@ -292,11 +296,9 @@ function makeFromTransport<Body, Prepared, Frame, Event, State>(
             protocol.stream.terminal ? Stream.takeUntil(protocol.stream.terminal) : (stream) => stream,
           )
         return events.pipe(
-          Stream.mapAccumEffect(
-            () => protocol.stream.initial(request),
-            protocol.stream.step,
-            { onHalt: protocol.stream.onHalt },
-          ),
+          Stream.mapAccumEffect(() => protocol.stream.initial(request), protocol.stream.step, {
+            onHalt: protocol.stream.onHalt,
+          }),
           Stream.catchCause((cause) => Stream.fail(streamError(route, `Failed to read ${route} stream`, cause))),
         )
       },
@@ -401,21 +403,29 @@ const generateWith = (stream: Interface["stream"]) =>
     )
   })
 
-export const prepare = <Body = unknown>(request: LLMRequest) =>
-  prepareWith(request) as Effect.Effect<PreparedRequestOf<Body>, LLMError>
+/**
+ * The `Body` type argument is a type-level assertion about which route the
+ * request resolves to; the runtime body is the same. The overload carries the
+ * asserted type, and the implementation returns the `PreparedRequest` that
+ * `prepareWith` builds.
+ */
+export function prepare<Body = unknown>(request: LLMRequest): Effect.Effect<PreparedRequestOf<Body>, LLMError>
+export function prepare(request: LLMRequest): Effect.Effect<PreparedRequest, LLMError> {
+  return prepareWith(request)
+}
 
-export function stream(request: LLMRequest): Stream.Stream<LLMEvent, LLMError> {
+export function stream(request: LLMRequest): Stream.Stream<LLMEvent, LLMError, Service> {
   return Stream.unwrap(
     Effect.gen(function* () {
       return (yield* Service).stream(request)
     }),
-  ) as Stream.Stream<LLMEvent, LLMError>
+  )
 }
 
-export function generate(request: LLMRequest): Effect.Effect<LLMResponse, LLMError> {
+export function generate(request: LLMRequest): Effect.Effect<LLMResponse, LLMError, Service> {
   return Effect.gen(function* () {
     return yield* (yield* Service).generate(request)
-  }) as Effect.Effect<LLMResponse, LLMError>
+  })
 }
 
 export const streamRequest = (request: LLMRequest) =>
@@ -432,7 +442,7 @@ export const layer: Layer.Layer<Service, never, RequestExecutor.Service> = Layer
       http: yield* RequestExecutor.Service,
       webSocket: Option.getOrUndefined(yield* Effect.serviceOption(WebSocketExecutor.Service)),
     })
-    return Service.of({ prepare: prepareWith as Interface["prepare"], stream, generate: generateWith(stream) })
+    return Service.of({ prepare, stream, generate: generateWith(stream) })
   }),
 )
 
