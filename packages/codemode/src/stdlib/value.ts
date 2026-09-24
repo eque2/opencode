@@ -44,8 +44,20 @@ export const boundedData = (value: unknown, label: string): Result.Result<unknow
   copyIn(value, label, true)
 
 export const coerceToString = (value: unknown): string => {
+  // Each primitive type converts with String; the typeof cases narrow it, so no object reaches it.
+  switch (typeof value) {
+    case "undefined":
+      return "undefined"
+    case "string":
+    case "number":
+    case "boolean":
+    case "bigint":
+    case "symbol":
+    case "function":
+      return String(value)
+  }
+  // Only objects remain here.
   if (Predicate.isNull(value)) return "null"
-  if (value === undefined) return "undefined"
   if (value instanceof SandboxDate)
     return Number.isFinite(value.time) ? new Date(value.time).toISOString() : "Invalid Date"
   if (value instanceof SandboxRegExp) return `/${value.regex.source}/${value.regex.flags}`
@@ -53,12 +65,9 @@ export const coerceToString = (value: unknown): string => {
   if (value instanceof SandboxSet) return "[object Set]"
   if (value instanceof SandboxURL) return value.url.href
   if (value instanceof SandboxURLSearchParams) return value.params.toString()
-  if (typeof value === "object") {
-    return Array.isArray(value)
-      ? value.map((item) => (Predicate.isNullish(item) ? "" : coerceToString(item))).join(",")
-      : "[object Object]"
-  }
-  return String(value)
+  return Array.isArray(value)
+    ? value.map((item) => (Predicate.isNullish(item) ? "" : coerceToString(item))).join(",")
+    : "[object Object]"
 }
 
 export const coerceToNumber = (value: unknown): number => {
