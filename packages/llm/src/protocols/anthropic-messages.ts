@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -656,11 +656,10 @@ const isServerToolResultType = (type: string): type is AnthropicServerToolResult
 
 const serverToolResultEvent = (block: NonNullable<AnthropicEvent["content_block"]>): LLMEvent | undefined => {
   if (!block.type || !isServerToolResultType(block.type)) return undefined
-  const errorPayload =
-    typeof block.content === "object" && block.content !== null && "type" in block.content
-      ? String((block.content as Record<string, unknown>).type)
-      : ""
-  const isError = errorPayload.endsWith("_tool_result_error")
+  const isError =
+    ProviderShared.isRecord(block.content) &&
+    Predicate.isString(block.content.type) &&
+    block.content.type.endsWith("_tool_result_error")
   return LLMEvent.toolResult({
     id: block.tool_use_id ?? "",
     name: SERVER_TOOL_RESULT_NAMES[block.type],
