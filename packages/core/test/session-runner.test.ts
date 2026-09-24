@@ -2470,9 +2470,10 @@ describe("SessionRunnerLLM", () => {
       yield* setup
       const session = yield* SessionV2.Service
       const events = yield* EventV2.Service
-      yield* events.listen((event) =>
+      const unsubscribe = yield* events.listen((event) =>
         event.type === SessionEvent.Prompted.type ? Effect.die("fail after prompt promotion commits") : Effect.void,
       )
+      yield* Effect.addFinalizer(() => unsubscribe)
       yield* session.prompt({
         sessionID,
         prompt: Prompt.make({ text: "Run committed promotion" }),
