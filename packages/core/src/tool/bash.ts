@@ -46,6 +46,12 @@ const Output = Schema.Struct({
 
 type Output = typeof Output.Type
 
+/** The resolved working directory is not a directory when the command would start. */
+export class NotDirectoryError extends Schema.TaggedError<NotDirectoryError>()("BashTool.NotDirectoryError", {
+  path: Schema.String,
+  message: Schema.String,
+}) {}
+
 const defaultShell = () => (process.platform === "win32" ? (process.env.COMSPEC ?? "cmd.exe") : "/bin/sh")
 
 const modelOutput = (output: Output) => {
@@ -149,7 +155,10 @@ const layer = Layer.effectDiscard(
               })
 
               if ((yield* fs.stat(target.canonical)).type !== "Directory")
-                return yield* Effect.fail(new Error(`Working directory is not a directory: ${target.canonical}`))
+                return yield* new NotDirectoryError({
+                  path: target.canonical,
+                  message: `Working directory is not a directory: ${target.canonical}`,
+                })
 
               const entries = yield* config.entries()
               const shell =
