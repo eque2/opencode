@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Random } from "effect"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import type { MutationOption } from "drizzle-orm/cache/core/cache"
@@ -248,7 +248,11 @@ export const withReplicas = <
 >(
   primary: Q,
   replicas: [Q, ...Q[]],
-  getReplica: (replicas: Q[]) => Q = () => replicas[Math.floor(Math.random() * replicas.length)]!,
+  getReplica: (replicas: Q[]) => Q = () =>
+    // eslint-disable-next-line effect/no-effect-runsync-unguarded -- drizzle-orm withReplicas getReplica is a synchronous (replicas) => Q callback
+    Effect.runSync(
+      Random.nextIntBetween(0, replicas.length, { halfOpen: true }).pipe(Effect.map((index) => replicas[index])),
+    ),
 ): SQLiteEffectWithReplicas<Q> => {
   const select: Q["select"] = (...args: []) => getReplica(replicas).select(...args)
   const selectDistinct: Q["selectDistinct"] = (...args: []) => getReplica(replicas).selectDistinct(...args)
