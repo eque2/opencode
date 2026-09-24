@@ -47,7 +47,7 @@ export namespace Database {
           },
           () => callback(client()),
         )
-        await Promise.all(effects.map((x) => x()))
+        await Promise.all(effects.map((x) => Promise.resolve(x())))
         return result
       }
       throw err
@@ -76,7 +76,7 @@ export namespace Database {
         const result = await client().transaction(async (tx) => {
           return TransactionContext.provide({ tx, effects }, () => callback(tx))
         }, config)
-        await Promise.all(effects.map((x) => x()))
+        await Promise.all(effects.map((x) => Promise.resolve(x())))
         return result
       }
       throw err
