@@ -123,7 +123,7 @@ export const fromSpec = (options: Options): Result => {
 
 // Tool names come from the spec, so the tree is prototype-free: a segment such as
 // `constructor` never reads an inherited member.
-// eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
+// eslint-disable-next-line effect/no-null-use-option -- (a) Object.create(null) is the only platform API that builds a prototype-free object
 const emptyTools = (): Tools => Object.create(null)
 
 const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definition<HttpClient.HttpClient>): void => {
