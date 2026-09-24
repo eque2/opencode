@@ -149,10 +149,16 @@ export function GoReferralSection(props: {
 
     const request = { cancelled: false }
     setPreview(undefined)
-    queryGoReferralUsagePreview(props.workspaceID, reward.id).then((result) => {
-      if (request.cancelled) return
-      setPreview(result)
-    })
+    queryGoReferralUsagePreview(props.workspaceID, reward.id)
+      .then((result) => {
+        if (request.cancelled) return
+        setPreview(result)
+      })
+      .catch((error: unknown) => {
+        if (request.cancelled) return
+        console.error("Failed to load referral usage preview", error)
+        setPreview(null)
+      })
     onCleanup(() => {
       request.cancelled = true
     })
