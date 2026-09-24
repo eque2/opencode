@@ -1,2 +1,6 @@
-// eslint-disable-next-line effect/no-null-use-option -- Solid JSX.Element: a component that renders nothing returns null; Option is not a JSX child
-export const Font = () => null
+import type { JSX } from "solid-js"
+
+// Renders nothing: Solid renders an undefined JSX.Element as no output.
+export function Font(): JSX.Element {
+  return undefined
+}
