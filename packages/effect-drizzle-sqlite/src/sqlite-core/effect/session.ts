@@ -7,7 +7,11 @@ import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import { NoopCache, strategyFor } from "drizzle-orm/cache/core/cache"
 import type { WithCacheConfig } from "drizzle-orm/cache/core/types"
 import { MigratorInitError } from "drizzle-orm/effect-core/errors"
-import { EffectDrizzleQueryError, EffectTransactionRollbackError } from "drizzle-orm/effect-core/errors"
+import {
+  EffectDrizzleError,
+  EffectDrizzleQueryError,
+  EffectTransactionRollbackError,
+} from "drizzle-orm/effect-core/errors"
 import type { EffectLoggerShape } from "drizzle-orm/effect-core/logger"
 import type { QueryEffectHKTBase, QueryEffectKind } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
@@ -268,7 +272,7 @@ export class SQLiteEffectPreparedQuery<
     if (!mapResult) return Effect.succeed(result as unknown as B)
     return Effect.try({
       try: () => mapResult(result),
-      catch: (cause) => cause,
+      catch: (cause) => new EffectDrizzleError({ message: "Failed to map query result", cause }),
     })
   }
 
