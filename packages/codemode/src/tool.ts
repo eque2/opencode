@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from "effect"
+import { Data, Effect, Predicate, Schema } from "effect"
 
 /**
  * JSON Schema subset accepted for render-only tool schemas.
@@ -69,7 +69,7 @@ export type Options<I extends SchemaType, O extends SchemaType | undefined, R = 
 }
 
 export const isDefinition = <R = never>(value: unknown): value is Definition<R> =>
-  typeof value === "object" && value !== null && "_tag" in value && value._tag === "CodeModeTool"
+  Predicate.isObjectOrArray(value) && Predicate.isTagged(value, "CodeModeTool")
 
 /**
  * Defines one schema-described tool available to a CodeMode program through `tools.*`.
