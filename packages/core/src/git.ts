@@ -250,12 +250,15 @@ const layer = Layer.effect(
       )(args).pipe(
         Effect.mapError((cause) => new OperationError({ operation, directory, message: cause.message, cause })),
       )
-      if (result.exitCode === 0) return
-      return yield* new OperationError({
-        operation,
-        directory,
-        message: result.stderr.trim() || result.text.trim() || `Git ${operation} failed`,
-      })
+      return yield* result.exitCode === 0
+        ? Effect.void
+        : Effect.fail(
+            new OperationError({
+              operation,
+              directory,
+              message: result.stderr.trim() || result.text.trim() || `Git ${operation} failed`,
+            }),
+          )
     })
 
     const clone = Effect.fn("Git.repo.clone")(function* (input: {
@@ -628,7 +631,8 @@ const layer = Layer.effect(
         "--",
         file,
       ])).text.replace(/\0$/, "")
-      if (!text) return
+      // No ls-tree output means the file is absent from the tree.
+      if (!text) return Option.none<{ readonly mode: string; readonly object: string }>()
       const match = text.match(/^(\d+)\s+\w+\s+([0-9a-f]+)\t/)
       if (!match)
         return yield* new OperationError({
@@ -636,7 +640,7 @@ const layer = Layer.effect(
           directory: repository.worktree,
           message: `Invalid tree entry for ${file}`,
         })
-      return { mode: match[1], object: match[2] }
+      return Option.some({ mode: match[1], object: match[2] })
     })
 
     const preview = Effect.fn("Git.tree.preview")(
@@ -658,7 +662,7 @@ const layer = Layer.effect(
                 ([file, tree]) =>
                   Effect.gen(function* () {
                     const source = yield* entry(input.repository, tree, file)
-                    if (!source) {
+                    if (Option.isNone(source)) {
                       yield* repositoryOperation(
                         "diff",
                         input.repository,
@@ -670,7 +674,7 @@ const layer = Layer.effect(
                     yield* repositoryOperation(
                       "diff",
                       input.repository,
-                      ["update-index", "--add", "--cacheinfo", source.mode, source.object, file],
+                      ["update-index", "--add", "--cacheinfo", source.value.mode, source.value.object, file],
                       { env },
                     )
                   }),
@@ -699,7 +703,7 @@ const layer = Layer.effect(
             input.files,
             ([file, tree]) =>
               Effect.gen(function* () {
-                if (yield* entry(input.repository, tree, file)) {
+                if (Option.isSome(yield* entry(input.repository, tree, file))) {
                   yield* repositoryOperation("restore", input.repository, ["checkout", tree, "--", file])
                   return
                 }
@@ -808,13 +812,18 @@ const layer = Layer.effect(
             (cause) => new PatchError({ operation: "apply", directory: input.path, message: cause.message, cause }),
           ),
         )
-      if (result.exitCode === 0) return
-      return yield* new PatchError({
-        operation: "apply",
-        directory: input.path,
-        message:
-          result.stderr.toString("utf8").trim() || result.stdout.toString("utf8").trim() || "Failed to apply changes",
-      })
+      return yield* result.exitCode === 0
+        ? Effect.void
+        : Effect.fail(
+            new PatchError({
+              operation: "apply",
+              directory: input.path,
+              message:
+                result.stderr.toString("utf8").trim() ||
+                result.stdout.toString("utf8").trim() ||
+                "Failed to apply changes",
+            }),
+          )
     })
 
     const discard = Effect.fn("Git.change.discard")(function* (input: {
@@ -839,21 +848,26 @@ const layer = Layer.effect(
           message: restore.stderr.trim() || restore.text.trim() || "Failed to restore tracked changes",
         })
       }
-      if (input.untracked === "preserve") return
-      const clean = yield* execute(
+      const clean = execute(
         input.repository.worktree,
         proc,
       )(["clean", "-fd", "--", scope]).pipe(
         Effect.mapError(
           (cause) => new PatchError({ operation: "reset", directory: input.path, message: cause.message, cause }),
         ),
+        Effect.flatMap((result) =>
+          result.exitCode === 0
+            ? Effect.void
+            : Effect.fail(
+                new PatchError({
+                  operation: "reset",
+                  directory: input.path,
+                  message: result.stderr.trim() || result.text.trim() || "Failed to clean untracked changes",
+                }),
+              ),
+        ),
       )
-      if (clean.exitCode === 0) return
-      return yield* new PatchError({
-        operation: "reset",
-        directory: input.path,
-        message: clean.stderr.trim() || clean.text.trim() || "Failed to clean untracked changes",
-      })
+      return yield* input.untracked === "preserve" ? Effect.void : clean
     })
 
     const worktreeRun = Effect.fnUntraced(function* (
