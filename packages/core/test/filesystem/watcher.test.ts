@@ -30,8 +30,11 @@ const configLayer = Layer.succeed(
   }),
 )
 
+// The provider replaces the environment for the whole watcher graph, which holds
+// Database.node through EventV2, so it keeps the in-memory database of test/preload.ts.
 const flagsLayer = ConfigProvider.layer(
   ConfigProvider.fromUnknown({
+    OPENCODE_DB: ":memory:",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "false",
   }),
