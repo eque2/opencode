@@ -213,7 +213,8 @@ export const validateToolFile = (route: string, part: ToolFileContent, supported
 export const trimBaseUrl = (value: string) => value.replace(/\/+$/, "")
 
 export const toolResultText = (part: ToolResultPart) => {
-  if (part.result.type === "text") return String(part.result.value)
+  if (part.result.type === "text")
+    return Predicate.isString(part.result.value) ? part.result.value : encodeJson(part.result.value)
   if (part.result.type === "error") {
     const value = part.result.value
     const prototype = isRecord(value) && Object.getPrototypeOf(value)
