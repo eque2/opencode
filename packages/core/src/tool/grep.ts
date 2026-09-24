@@ -104,13 +104,16 @@ const layer = Layer.effectDiscard(
                   Effect.map((result) =>
                     result.map((match) =>
                       FileSystem.Match.make({
-                        ...match,
                         entry: FileSystem.Entry.make({
-                          ...match.entry,
                           path: RelativePath.make(
                             path.relative(location.directory, path.resolve(cwd, match.entry.path)),
                           ),
+                          type: match.entry.type,
                         }),
+                        line: match.line,
+                        offset: match.offset,
+                        text: match.text,
+                        submatches: match.submatches,
                       }),
                     ),
                   ),

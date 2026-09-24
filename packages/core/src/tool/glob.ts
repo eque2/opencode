@@ -83,8 +83,8 @@ const layer = Layer.effectDiscard(
                   Effect.map((result) =>
                     result.map((entry) =>
                       FileSystem.Entry.make({
-                        ...entry,
                         path: RelativePath.make(path.relative(location.directory, path.resolve(cwd, entry.path))),
+                        type: entry.type,
                       }),
                     ),
                   ),
