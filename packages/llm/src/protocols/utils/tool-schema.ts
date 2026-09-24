@@ -65,18 +65,15 @@ const openAI = (schema: JsonSchema): JsonSchema => {
 
 const gemini = (schema: JsonSchema): JsonSchema => GeminiToolSchema.convert(schema) ?? {}
 
-const modelCompatibility = (
-  schema: JsonSchema,
-  compatibility: ModelToolSchemaCompatibility | undefined,
-): JsonSchema => {
-  if (compatibility === undefined) return schema
-  switch (compatibility) {
-    case "gemini":
-      return gemini(schema)
-    case "moonshot":
-      return moonshot(schema)
-  }
+// One projection per compatibility mode. The mapped type keeps the table
+// exhaustive when a new mode is added.
+const projections: { readonly [Mode in ModelToolSchemaCompatibility]: (schema: JsonSchema) => JsonSchema } = {
+  gemini,
+  moonshot,
 }
+
+const modelCompatibility = (schema: JsonSchema, compatibility: ModelToolSchemaCompatibility | undefined): JsonSchema =>
+  compatibility === undefined ? schema : projections[compatibility](schema)
 
 export const ToolSchemaProjection = {
   gemini,
