@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { Effect, Schema, Stream } from "effect"
+import { Effect, HashSet, Schema, Stream } from "effect"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import {
@@ -51,7 +51,7 @@ export interface ToolAccumulator {
 export const totalTokens = (
   inputTokens: number | undefined,
   outputTokens: number | undefined,
-  total: number | undefined,
+  total?: number | undefined,
 ) => {
   if (total !== undefined) return total
   if (inputTokens === undefined && outputTokens === undefined) return undefined
@@ -174,10 +174,10 @@ export interface ValidatedMedia {
 export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function* (
   route: string,
   part: MediaPart,
-  supportedMimes: ReadonlySet<string>,
+  supportedMimes: Iterable<string>,
 ) {
   const mime = part.mediaType.toLowerCase()
-  if (!supportedMimes.has(mime)) return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
+  if (!HashSet.has(HashSet.fromIterable(supportedMimes), mime)) return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
 
   let base64: string
   if (typeof part.data !== "string") {
@@ -205,7 +205,7 @@ export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function*
   return { mime, base64, dataUrl: `data:${mime};base64,${base64}`, bytes } satisfies ValidatedMedia
 })
 
-export const validateToolFile = (route: string, part: ToolFileContent, supportedMimes: ReadonlySet<string>) =>
+export const validateToolFile = (route: string, part: ToolFileContent, supportedMimes: Iterable<string>) =>
   validateMedia(route, { type: "media", mediaType: part.mime, data: part.uri, filename: part.name }, supportedMimes)
 
 export const trimBaseUrl = (value: string) => value.replace(/\/+$/, "")
