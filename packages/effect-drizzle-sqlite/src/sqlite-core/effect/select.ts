@@ -190,7 +190,7 @@ export class SQLiteEffectSelectBase<
   _prepare(isOneTimeQuery = true): SQLiteEffectSelectPrepare<this, TEffectHKT> {
     const session = this.effectSession
     if (!session) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (prepare()) returns synchronously; its contract throws at build time
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) mirrors drizzle-orm SQLiteSelectBase.prepare(): SQLiteSelectPrepare<this>, a synchronous signature; upstream _prepare throws this same message when the builder has no session
       throw new EffectDrizzleBuilderError({
         message: "Cannot execute a query on a query builder. Please use a database instance instead.",
       })
