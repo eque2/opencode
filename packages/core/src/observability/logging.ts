@@ -1,4 +1,4 @@
-import { Formatter, Logger, Predicate, type LogLevel } from "effect"
+import { Formatter, Logger, Predicate, Schema, type LogLevel } from "effect"
 import path from "path"
 import { Global } from "../global"
 import { runID } from "./shared"
@@ -41,9 +41,11 @@ function plain(input: unknown): input is Record<string, unknown> {
   return prototype === Object.prototype || Predicate.isNull(prototype)
 }
 
+const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
 function format(input: unknown) {
   const value = typeof input === "string" ? input : Formatter.format(input)
-  return /^[^\s="\\]+$/.test(value) ? value : JSON.stringify(value)
+  return /^[^\s="\\]+$/.test(value) ? value : quote(value)
 }
 
 export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id: string = runID) {
