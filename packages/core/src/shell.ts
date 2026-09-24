@@ -88,9 +88,10 @@ const full = Effect.fnUntraced(function* (file: string) {
     return shell
   }
   if (name(shell) === "bash") {
-    return Option.getOrElse(yield* gitbashPath(), () => which(shell) || shell)
+    const bash = yield* gitbashPath()
+    if (Option.isSome(bash)) return bash.value
   }
-  return which(shell) || shell
+  return Option.getOrElse(yield* which(shell), () => shell)
 })
 
 function meta(file: string) {
@@ -107,15 +108,15 @@ function rooted(file: string) {
 
 const resolve = Effect.fnUntraced(function* (file: string) {
   const shell = yield* full(file)
-  if (!rooted(shell)) return Option.fromNullishOr(which(shell))
+  if (!rooted(shell)) return yield* which(shell)
   const info = yield* stat(shell)
   return Option.isSome(info) && info.value.type === "File" ? Option.some(shell) : Option.none()
 })
 
 const win = Effect.fnUntraced(function* () {
   const shells = Array.getSomes([
-    Option.fromNullishOr(which("pwsh")),
-    Option.fromNullishOr(which("powershell")),
+    yield* which("pwsh"),
+    yield* which("powershell"),
     yield* gitbashPath(),
     Option.some(yield* fromEnvironment(comspecVariable)),
   ])
@@ -136,7 +137,7 @@ const select = Effect.fnUntraced(function* (file: Option.Option<string>, opts?: 
     if (Option.isSome(shell)) return shell.value
   }
   if (process.platform === "win32") return (yield* win())[0]
-  return fallback()
+  return yield* fallback()
 })
 
 // Git Bash next to git on Windows, or the OPENCODE_GIT_BASH_PATH override.
@@ -144,9 +145,9 @@ const gitbashPath = Effect.fnUntraced(function* () {
   if (process.platform !== "win32") return Option.none<string>()
   const configured = yield* FlagConfig.OPENCODE_GIT_BASH_PATH.pipe(Effect.orDie)
   if (Option.isSome(configured) && configured.value) return configured
-  const git = which("git")
-  if (!git) return Option.none<string>()
-  const file = path.join(git, "..", "..", "bin", "bash.exe")
+  const git = yield* which("git")
+  if (Option.isNone(git)) return Option.none<string>()
+  const file = path.join(git.value, "..", "..", "bin", "bash.exe")
   const info = yield* stat(file)
   return Option.isSome(info) && !ByteSize.isZero(info.value.size) ? Option.some(file) : Option.none<string>()
 })
@@ -154,12 +155,10 @@ const gitbashPath = Effect.fnUntraced(function* () {
 export const gitbash = (): Effect.Effect<Option.Option<string>> =>
   gitbashPath().pipe(Effect.provide(NodeFileSystem.layer))
 
-function fallback() {
+const fallback = Effect.fnUntraced(function* () {
   if (process.platform === "darwin") return "/bin/zsh"
-  const bash = which("bash")
-  if (bash) return bash
-  return "/bin/sh"
-}
+  return Option.getOrElse(yield* which("bash"), () => "/bin/sh")
+})
 
 export function name(file: string) {
   if (process.platform === "win32") return path.win32.parse(FSUtil.windowsPath(file)).name.toLowerCase()

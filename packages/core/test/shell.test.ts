@@ -103,8 +103,10 @@ describe("shell", () => {
     })
 
     test("resolves bare PowerShell shells", async () => {
-      const shell = which("pwsh") || which("powershell")
-      if (!shell) return
+      const pwsh = await run(which("pwsh"))
+      const found = Option.isSome(pwsh) ? pwsh : await run(which("powershell"))
+      if (Option.isNone(found)) return
+      const shell = found.value
       await withShell(path.win32.basename(shell), async () => {
         expect(await run(Shell.preferred())).toBe(shell)
       })

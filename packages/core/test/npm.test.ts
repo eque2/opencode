@@ -3,7 +3,7 @@ import { statSync } from "fs"
 import path from "path"
 import { pathToFileURL } from "url"
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Global } from "@opencode-ai/core/global"
 import { Npm } from "@opencode-ai/core/npm"
@@ -63,8 +63,9 @@ describe("Npm.add", () => {
   // parent URL. Exercise the real Node branch instead of the Bun one the test runner uses.
   test("resolves an importable file URL under Node", async () => {
     await using tmp = await tmpdir()
-    const node = which("node")
-    if (!node) throw new Error("Node is required for the Npm Node runtime test")
+    const found = await Effect.runPromise(which("node"))
+    if (Option.isNone(found)) throw new Error("Node is required for the Npm Node runtime test")
+    const node = found.value
 
     const bundle = await Bun.build({
       entrypoints: [path.join(import.meta.dir, "../src/npm.ts")],

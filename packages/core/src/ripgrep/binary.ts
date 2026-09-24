@@ -63,7 +63,9 @@ export namespace RipgrepBinary {
         const dir = yield* fs.makeTempDirectoryScoped({ directory: Global.Path.bin, prefix: "ripgrep-" })
 
         if (config.extension === "zip") {
-          const shell = (yield* Effect.sync(() => which("powershell.exe") ?? which("pwsh.exe"))) ?? "powershell.exe"
+          const powershell = yield* which("powershell.exe")
+          const found = Option.isSome(powershell) ? powershell : yield* which("pwsh.exe")
+          const shell = Option.getOrElse(found, () => "powershell.exe")
           const result = yield* run(shell, [
             "-NoProfile",
             "-NonInteractive",
@@ -93,8 +95,8 @@ export namespace RipgrepBinary {
       return Service.of({
         filepath: yield* Effect.cached(
           Effect.gen(function* () {
-            const system = yield* Effect.sync(() => which(process.platform === "win32" ? "rg.exe" : "rg"))
-            if (system && (yield* fs.isFile(system).pipe(Effect.orDie))) return system
+            const system = yield* which(process.platform === "win32" ? "rg.exe" : "rg")
+            if (Option.isSome(system) && (yield* fs.isFile(system.value).pipe(Effect.orDie))) return system.value
 
             const target = path.join(Global.Path.bin, `rg${process.platform === "win32" ? ".exe" : ""}`)
             if (yield* fs.isFile(target).pipe(Effect.orDie)) return target
