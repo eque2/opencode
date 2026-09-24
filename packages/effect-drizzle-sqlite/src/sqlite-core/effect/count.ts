@@ -45,10 +45,12 @@ export class SQLiteEffectCountBuilder<TEffectHKT extends QueryEffectHKTBase = Qu
         all: unknown
         get: unknown
         values: unknown
-      }>(this.session.dialect.sqlToQuery(this.sql), undefined, "all", (rows) => {
-        const v = rows[0]?.[0]
-        if (typeof v === "number") return v
-        return v ? Number(v) : 0
+      }>(this.session.dialect.sqlToQuery(this.sql), "all", {
+        customResultMapper: (rows) => {
+          const v = rows[0]?.[0]
+          if (typeof v === "number") return v
+          return v ? Number(v) : 0
+        },
       })
       .execute(placeholderValues)
   }

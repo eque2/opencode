@@ -225,14 +225,15 @@ export class SQLiteEffectSelectBase<
     const session = this.session as unknown as SQLiteEffectSession<TEffectHKT, TRunResult, any>
     const query = session[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.dialect.sqlToQuery(this.getSQL()),
-      orderSelectedFields<SQLiteColumn>(this.effectConfig.fields),
       "all",
-      undefined,
       {
-        type: "select",
-        tables: [...this.usedTables],
+        fields: orderSelectedFields<SQLiteColumn>(this.effectConfig.fields),
+        queryMetadata: {
+          type: "select",
+          tables: [...this.usedTables],
+        },
+        cacheConfig: this.cacheConfig,
       },
-      this.cacheConfig,
     )
     query.joinsNotNullableMap = this.joinsNotNullableMap
     return query as ReturnType<this["prepare"]>

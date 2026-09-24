@@ -218,12 +218,13 @@ export class SQLiteEffectDeleteBase<
   _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this, TEffectHKT> {
     return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
       this.config.returning ? "all" : "run",
-      undefined,
       {
-        type: "delete",
-        tables: extractUsedTable(this.config.table),
+        fields: this.config.returning,
+        queryMetadata: {
+          type: "delete",
+          tables: extractUsedTable(this.config.table),
+        },
       },
     ) as SQLiteEffectDeletePrepare<this, TEffectHKT>
   }

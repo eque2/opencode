@@ -127,10 +127,11 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
 
     return this.session[isOneTimeQuery ? "prepareOneTimeRelationalQuery" : "prepareRelationalQuery"](
       builtQuery,
-      undefined,
       this.mode === "first" ? "get" : "all",
-      makeDefaultRqbMapper(mapperConfig),
-      mapperConfig,
+      {
+        customResultMapper: makeDefaultRqbMapper(mapperConfig),
+        config: mapperConfig,
+      },
     ) as SQLiteEffectPreparedQuery<
       PreparedQueryConfig & { all: TResult; get: TResult; execute: TResult },
       TEffectHKT,

@@ -279,9 +279,9 @@ export class SQLiteEffectInsertBase<
 
     if (!this.config.onConflict) this.config.onConflict = []
 
-    const whereSql = config.where ? sql` where ${config.where}` : undefined
-    const targetWhereSql = config.targetWhere ? sql` where ${config.targetWhere}` : undefined
-    const setWhereSql = config.setWhere ? sql` where ${config.setWhere}` : undefined
+    const whereSql = config.where ? sql` where ${config.where}` : sql``
+    const targetWhereSql = config.targetWhere ? sql` where ${config.targetWhere}` : sql``
+    const setWhereSql = config.setWhere ? sql` where ${config.setWhere}` : sql``
     const targetSql = Array.isArray(config.target) ? sql`${config.target}` : sql`${[config.target]}`
     const setSql = this.effectDialect.buildUpdateSet(
       this.config.table,
@@ -306,12 +306,13 @@ export class SQLiteEffectInsertBase<
   _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this, TEffectHKT> {
     return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
       this.config.returning ? "all" : "run",
-      undefined,
       {
-        type: "insert",
-        tables: extractUsedTable(this.config.table),
+        fields: this.config.returning,
+        queryMetadata: {
+          type: "insert",
+          tables: extractUsedTable(this.config.table),
+        },
       },
     ) as SQLiteEffectInsertPrepare<this, TEffectHKT>
   }

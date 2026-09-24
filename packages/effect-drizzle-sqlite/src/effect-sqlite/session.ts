@@ -1,21 +1,25 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
+import * as Option from "effect/Option"
 import * as Scope from "effect/Scope"
 import type { SqlClient } from "effect/unstable/sql/SqlClient"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
-import type { WithCacheConfig } from "drizzle-orm/cache/core/types"
 import type { EffectDrizzleQueryError } from "drizzle-orm/effect-core/errors"
 import type { EffectLoggerShape } from "drizzle-orm/effect-core/logger"
 import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import type { AnyRelations } from "drizzle-orm/relations"
-import type { RelationalQueryMapperConfig } from "drizzle-orm/relations"
 import type { Query } from "drizzle-orm/sql/sql"
 import type { SQLiteAsyncDialect } from "drizzle-orm/sqlite-core/dialect"
-import { SQLiteEffectPreparedQuery, SQLiteEffectSession, SQLiteEffectTransaction } from "../sqlite-core/effect/session"
-import type { SelectedFieldsOrdered } from "drizzle-orm/sqlite-core/query-builders/select.types"
+import {
+  type SQLiteEffectPrepareQueryOptions,
+  type SQLiteEffectPrepareRelationalQueryOptions,
+  SQLiteEffectPreparedQuery,
+  SQLiteEffectSession,
+  SQLiteEffectTransaction,
+} from "../sqlite-core/effect/session"
 import type { PreparedQueryConfig, SQLiteExecuteMethod, SQLiteTransactionConfig } from "drizzle-orm/sqlite-core/session"
 
 export interface EffectSQLiteQueryEffectHKT extends QueryEffectHKTBase {
@@ -49,53 +53,45 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
 
   override prepareQuery<T extends PreparedQueryConfig = PreparedQueryConfig>(
     query: Query,
-    fields: SelectedFieldsOrdered | undefined,
     executeMethod: SQLiteExecuteMethod,
-    customResultMapper?: (rows: unknown[][], mapColumnValue?: (value: unknown) => unknown) => unknown,
-    queryMetadata?: {
-      type: "select" | "update" | "delete" | "insert"
-      tables: string[]
-    },
-    cacheConfig?: WithCacheConfig,
+    options: SQLiteEffectPrepareQueryOptions = {},
   ): SQLiteEffectPreparedQuery<T, EffectSQLiteQueryEffectHKT> {
     return new SQLiteEffectPreparedQuery<T, EffectSQLiteQueryEffectHKT>(
       (params, method) => this.execute(query, params, method),
       query,
       this.options.logger,
       this.options.cache,
-      queryMetadata,
-      cacheConfig,
-      fields,
       executeMethod,
-      this.options.useJitMappers,
-      customResultMapper,
-      undefined,
-      undefined,
-      this.isInTransaction(),
+      {
+        queryMetadata: options.queryMetadata,
+        cacheConfig: options.cacheConfig,
+        fields: options.fields,
+        useJitMappers: this.options.useJitMappers,
+        customResultMapper: options.customResultMapper,
+        isInTransaction: this.isInTransaction(),
+      },
     )
   }
 
   override prepareRelationalQuery<T extends PreparedQueryConfig = PreparedQueryConfig>(
     query: Query,
-    fields: SelectedFieldsOrdered | undefined,
     executeMethod: SQLiteExecuteMethod,
-    customResultMapper: (rows: Record<string, unknown>[], mapColumnValue?: (value: unknown) => unknown) => unknown,
-    config: RelationalQueryMapperConfig,
+    options: SQLiteEffectPrepareRelationalQueryOptions,
   ): SQLiteEffectPreparedQuery<T, EffectSQLiteQueryEffectHKT, true> {
     return new SQLiteEffectPreparedQuery<T, EffectSQLiteQueryEffectHKT, true>(
       (params, method) => this.execute(query, params, method),
       query,
       this.options.logger,
       this.options.cache,
-      undefined,
-      undefined,
-      fields,
       executeMethod,
-      this.options.useJitMappers,
-      customResultMapper,
-      true,
-      config,
-      this.isInTransaction(),
+      {
+        fields: options.fields,
+        useJitMappers: this.options.useJitMappers,
+        customResultMapper: options.customResultMapper,
+        isRqbV2Query: true,
+        rqbConfig: options.config,
+        isInTransaction: this.isInTransaction(),
+      },
     )
   }
 
@@ -111,6 +107,7 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
   }
 
   private executeTransactionStatement(connection: Effect.Success<SqlClient["reserve"]>, query: string) {
+    // eslint-disable-next-line effect/no-undefined-use-option -- effect/unstable/sql SqlConnection.executeUnprepared requires transformRows (fn | undefined); undefined means "no row transform", as in Effect's own SqlClient
     return connection.executeUnprepared(query, [], undefined).pipe(Effect.asVoid)
   }
 
@@ -120,15 +117,15 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
         const services = fiber.context
         const connectionOption = Context.getOption(services, this.client.transactionService)
         const connection: Effect.Effect<
-          readonly [Scope.Closeable | undefined, Effect.Success<SqlClient["reserve"]>],
+          readonly [Option.Option<Scope.Closeable>, Effect.Success<SqlClient["reserve"]>],
           SqlError
         > =
           connectionOption._tag === "Some"
-            ? Effect.succeed([undefined, connectionOption.value[0]] as const)
+            ? Effect.succeed([Option.none(), connectionOption.value[0]] as const)
             : Scope.make().pipe(
                 Effect.flatMap((scope) =>
                   Scope.provide(this.client.reserve, scope).pipe(
-                    Effect.map((connection) => [scope, connection] as const),
+                    Effect.map((connection) => [Option.some(scope), connection] as const),
                     Effect.catch((error) =>
                       Scope.close(scope, Exit.fail(error)).pipe(Effect.andThen(Effect.fail(error))),
                     ),
@@ -176,9 +173,10 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
               ),
             )
 
-            return scope === undefined
-              ? transaction
-              : transaction.pipe(Effect.onExit((exit) => Scope.close(scope, exit)))
+            return Option.match(scope, {
+              onNone: () => transaction,
+              onSome: (scope) => transaction.pipe(Effect.onExit((exit) => Scope.close(scope, exit))),
+            })
           }),
         )
       }),

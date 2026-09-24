@@ -1,4 +1,5 @@
 import type * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
 import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
@@ -156,6 +157,15 @@ export type SQLiteEffectUpdateJoinFn<T extends AnySQLiteEffectUpdate> = <
     | undefined,
 ) => T
 
+function joinedTableFields(
+  table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
+): Option.Option<Record<string, unknown>> {
+  if (is(table, SQLiteTable)) return Option.some(getTableColumnsRuntime(table))
+  if (is(table, Subquery)) return Option.some(table._.selectedFields)
+  if (is(table, SQLiteViewBase)) return Option.some(getViewSelectedFieldsRuntime(table).selectedFields)
+  return Option.none()
+}
+
 export class SQLiteEffectUpdateBuilder<
   TTable extends SQLiteTable,
   TRunResult,
@@ -267,22 +277,19 @@ export class SQLiteEffectUpdateBase<
       }
 
       if (typeof on === "function") {
-        const from = this.config.from
-          ? is(table, SQLiteTable)
-            ? getTableColumnsRuntime(table)
-            : is(table, Subquery)
-              ? table._.selectedFields
-              : is(table, SQLiteViewBase)
-                ? getViewSelectedFieldsRuntime(table).selectedFields
-                : undefined
-          : undefined
+        const from = this.config.from ? joinedTableFields(table) : Option.none()
         on = on(
           new Proxy(
             this.config.table._.columns,
             new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" }),
           ) as any,
-          from &&
-            (new Proxy(from, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })) as any),
+          from.pipe(
+            Option.map(
+              (fields) =>
+                new Proxy(fields, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })) as any,
+            ),
+            Option.getOrUndefined,
+          ),
         )
       }
 
@@ -359,12 +366,13 @@ export class SQLiteEffectUpdateBase<
   _prepare(isOneTimeQuery = true): SQLiteEffectUpdatePrepare<this, TEffectHKT> {
     return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning,
       this.config.returning ? "all" : "run",
-      undefined,
       {
-        type: "update",
-        tables: extractUsedTable(this.config.table),
+        fields: this.config.returning,
+        queryMetadata: {
+          type: "update",
+          tables: extractUsedTable(this.config.table),
+        },
       },
     ) as SQLiteEffectUpdatePrepare<this, TEffectHKT>
   }
