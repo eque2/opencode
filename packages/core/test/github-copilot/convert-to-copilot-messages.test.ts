@@ -519,10 +519,7 @@ describe("full conversation", () => {
     expect(systemMsg.role).toBe("system")
 
     // Assistant message should have reasoning fields
-    const assistantMsg = result[2] as {
-      reasoning_text?: string
-      reasoning_opaque?: string
-    }
+    const assistantMsg = result[2]
     expect(assistantMsg.reasoning_text).toBe("Let me calculate 2+2...")
     expect(assistantMsg.reasoning_opaque).toBe("sig-abc")
   })

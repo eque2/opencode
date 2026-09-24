@@ -13,7 +13,7 @@ import type {
   OpenAICompatibleToolMessage,
 } from "./openai-compatible-api-types"
 import { convertToBase64 } from "@ai-sdk/provider-utils"
-import { Effect, Schema } from "effect"
+import { Effect, Predicate, Schema } from "effect"
 
 export class UnsupportedRoleError extends Schema.TaggedError<UnsupportedRoleError>()(
   "GithubCopilot.UnsupportedRoleError",
@@ -123,8 +123,8 @@ const convertAssistantMessage = Effect.fnUntraced(function* (content: AssistantC
 
   for (const part of content) {
     // Check for reasoningOpaque on any part (may be attached to text/tool-call)
-    const partOpaque = (part.providerOptions as { copilot?: { reasoningOpaque?: string } })?.copilot?.reasoningOpaque
-    if (partOpaque && !reasoningOpaque) {
+    const partOpaque = part.providerOptions?.copilot?.reasoningOpaque
+    if (Predicate.isString(partOpaque) && partOpaque && !reasoningOpaque) {
       reasoningOpaque = partOpaque
     }
 

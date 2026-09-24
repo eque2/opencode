@@ -91,12 +91,14 @@ function createMockFetch(chunks: string[]) {
   })
 }
 
-function createModel(fetchFn: ReturnType<typeof mock>) {
+function createModel(fetchFn: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>) {
   return new OpenAICompatibleChatLanguageModel("test-model", {
     provider: "copilot.chat",
     url: () => "https://api.test.com/chat/completions",
     headers: () => ({ Authorization: "Bearer test-token" }),
-    fetch: fetchFn as any,
+    fetch: Object.assign((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetchFn(input, init), {
+      preconnect: fetch.preconnect,
+    }),
   })
 }
 
@@ -151,14 +153,14 @@ describe("doStream", () => {
     expect(reasoningParts[1]).toMatchObject({
       type: "reasoning-delta",
       id: "reasoning-0",
+      delta: expect.stringContaining("**Understanding Dayzee's Purpose**"),
     })
-    expect((reasoningParts[1] as { delta: string }).delta).toContain("**Understanding Dayzee's Purpose**")
 
     expect(reasoningParts[2]).toMatchObject({
       type: "reasoning-delta",
       id: "reasoning-0",
+      delta: expect.stringContaining("**Assessing Dayzee's Functionality**"),
     })
-    expect((reasoningParts[2] as { delta: string }).delta).toContain("**Assessing Dayzee's Functionality**")
 
     // reasoning_opaque should be in reasoning-end providerMetadata
     const reasoningEnd = reasoningParts.find((p) => p.type === "reasoning-end")
@@ -590,7 +592,13 @@ describe("doGenerate", () => {
     expect(result.content).toEqual([
       { type: "text", text: "Hi there", providerMetadata: copilot },
       { type: "reasoning", text: "thinking", providerMetadata: copilot },
-      { type: "tool-call", toolCallId: "call_1", toolName: "read_file", input: '{"path":"a"}', providerMetadata: copilot },
+      {
+        type: "tool-call",
+        toolCallId: "call_1",
+        toolName: "read_file",
+        input: '{"path":"a"}',
+        providerMetadata: copilot,
+      },
     ])
     expect(result.finishReason).toEqual({ unified: "tool-calls", raw: "tool_calls" })
     expect(result.usage).toEqual({
@@ -709,7 +717,7 @@ describe("stream errors", () => {
 describe("request body", () => {
   test("should pass provider options and warn about topK", async () => {
     let capturedBody: unknown
-    const mockFetch = mock(async (_url: string, init?: RequestInit) => {
+    const mockFetch = mock(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
       capturedBody = await new Response(init?.body).json()
       return new Response(
         new ReadableStream({
@@ -745,8 +753,8 @@ describe("request body", () => {
 
   test("should send tools in OpenAI format", async () => {
     let capturedBody: unknown
-    const mockFetch = mock(async (_url: string, init?: RequestInit) => {
-      capturedBody = JSON.parse(init?.body as string)
+    const mockFetch = mock(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      capturedBody = await new Response(init?.body).json()
       return new Response(
         new ReadableStream({
           start(controller) {
@@ -779,7 +787,7 @@ describe("request body", () => {
       includeRawChunks: false,
     })
 
-    expect((capturedBody as { tools: unknown[] }).tools).toEqual([
+    expect(capturedBody).toHaveProperty("tools", [
       {
         type: "function",
         function: {
