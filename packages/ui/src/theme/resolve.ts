@@ -66,7 +66,7 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
   }
   const background = backgroundHex ?? neutral[0]
   const alphaTone = (color: HexColor, alpha: number) =>
-    overlay ? (withAlpha(color, alpha) as ColorValue) : blend(color, background, alpha)
+    overlay ? withAlpha(color, alpha) : blend(color, background, alpha)
   const borderTone = (light: number, dark: number) =>
     alphaTone(ink, isDark ? Math.min(1, dark + 0.024 + (colors.compact ? 0.08 : 0)) : Math.min(1, light + 0.024))
   const diffHiddenSurface = surface(
@@ -123,14 +123,12 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
   tokens["base"] = neutralAlpha[1]
   tokens["surface-base-hover"] = neutralAlpha[2]
   tokens["surface-base-active"] = neutralAlpha[2]
-  tokens["surface-base-interactive-active"] = withAlpha(interactive[2], 0.3) as ColorValue
+  tokens["surface-base-interactive-active"] = withAlpha(interactive[2], 0.3)
   tokens["base2"] = neutralAlpha[1]
   tokens["base3"] = neutralAlpha[1]
   tokens["surface-inset-base"] = neutralAlpha[1]
   tokens["surface-inset-base-hover"] = neutralAlpha[2]
-  tokens["surface-inset-strong"] = isDark
-    ? (withAlpha(neutral[0], 0.5) as ColorValue)
-    : (withAlpha(neutral[3], 0.09) as ColorValue)
+  tokens["surface-inset-strong"] = isDark ? withAlpha(neutral[0], 0.5) : withAlpha(neutral[3], 0.09)
   tokens["surface-inset-strong-hover"] = tokens["surface-inset-strong"]
   tokens["surface-raised-base"] = neutralAlpha[0]
   tokens["surface-float-base"] = isDark ? neutral[1] : neutral[11]
@@ -238,19 +236,19 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
   tokens["border-base"] = colors.compact ? borderTone(0.22, 0.16) : neutralAlpha[6]
   tokens["border-hover"] = colors.compact ? borderTone(0.28, 0.2) : neutralAlpha[7]
   tokens["border-active"] = colors.compact ? borderTone(0.34, 0.24) : neutralAlpha[8]
-  tokens["border-selected"] = withAlpha(interactive[8], isDark ? 0.9 : 0.99) as ColorValue
+  tokens["border-selected"] = withAlpha(interactive[8], isDark ? 0.9 : 0.99)
   tokens["border-disabled"] = colors.compact ? borderTone(0.18, 0.12) : neutralAlpha[7]
   tokens["border-focus"] = colors.compact ? borderTone(0.34, 0.24) : neutralAlpha[8]
   tokens["border-weak-base"] = colors.compact ? borderTone(0.1, 0.08) : neutralAlpha[isDark ? 5 : 4]
   tokens["border-strong-base"] = colors.compact ? borderTone(0.34, 0.24) : neutralAlpha[isDark ? 7 : 6]
   tokens["border-strong-hover"] = colors.compact ? borderTone(0.4, 0.28) : neutralAlpha[7]
   tokens["border-strong-active"] = colors.compact ? borderTone(0.46, 0.32) : neutralAlpha[isDark ? 7 : 6]
-  tokens["border-strong-selected"] = withAlpha(interactive[5], 0.6) as ColorValue
+  tokens["border-strong-selected"] = withAlpha(interactive[5], 0.6)
   tokens["border-strong-disabled"] = colors.compact ? borderTone(0.14, 0.1) : neutralAlpha[5]
   tokens["border-strong-focus"] = colors.compact ? borderTone(0.46, 0.32) : neutralAlpha[isDark ? 7 : 6]
   tokens["border-weak-hover"] = colors.compact ? borderTone(0.16, 0.12) : neutralAlpha[isDark ? 6 : 5]
   tokens["border-weak-active"] = colors.compact ? borderTone(0.22, 0.16) : neutralAlpha[isDark ? 7 : 6]
-  tokens["border-weak-selected"] = withAlpha(interactive[4], isDark ? 0.6 : 0.5) as ColorValue
+  tokens["border-weak-selected"] = withAlpha(interactive[4], isDark ? 0.6 : 0.5)
   tokens["border-weak-disabled"] = colors.compact ? borderTone(0.08, 0.06) : neutralAlpha[5]
   tokens["border-weak-focus"] = colors.compact ? borderTone(0.22, 0.16) : neutralAlpha[isDark ? 7 : 6]
   tokens["border-weaker-base"] = colors.compact ? borderTone(0.06, 0.04) : neutralAlpha[2]
