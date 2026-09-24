@@ -4,6 +4,12 @@ import path from "path"
 import { Effect, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 
+/** Failure while resolving the release channel, version, or team for a release script. */
+class ScriptError extends Schema.TaggedError<ScriptError>()("ScriptError", {
+  message: Schema.String,
+  cause: Schema.optionalKey(Schema.Defect()),
+}) {}
+
 const RootPackage = Schema.Struct({
   packageManager: Schema.optional(Schema.String),
 }).annotate({ identifier: "RootPackage" })
@@ -14,22 +20,23 @@ const RegistryRelease = Schema.Struct({
 
 const program = Effect.gen(function* () {
   const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
-  const rootPkg = yield* Effect.tryPromise(() => Bun.file(rootPkgPath).json()).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(RootPackage)),
-  )
+  const rootPkg = yield* Effect.tryPromise({
+    try: () => Bun.file(rootPkgPath).json(),
+    catch: (cause) => new ScriptError({ message: `Failed to read ${rootPkgPath}`, cause }),
+  }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(RootPackage)))
   const expectedBunVersion = rootPkg.packageManager?.split("@")[1]
 
   if (!expectedBunVersion) {
-    throw new Error("packageManager field not found in root package.json")
+    return yield* new ScriptError({ message: "packageManager field not found in root package.json" })
   }
 
   // relax version requirement
   const expectedBunVersionRange = `^${expectedBunVersion}`
 
   if (!semver.satisfies(process.versions.bun, expectedBunVersionRange)) {
-    throw new Error(
-      `This script requires bun@${expectedBunVersionRange}, but you are using bun@${process.versions.bun}`,
-    )
+    return yield* new ScriptError({
+      message: `This script requires bun@${expectedBunVersionRange}, but you are using bun@${process.versions.bun}`,
+    })
   }
 
   const env = {
@@ -43,7 +50,10 @@ const program = Effect.gen(function* () {
     if (env.OPENCODE_CHANNEL) return env.OPENCODE_CHANNEL
     if (env.OPENCODE_BUMP) return "latest"
     if (env.OPENCODE_VERSION && !env.OPENCODE_VERSION.startsWith("0.0.0-")) return "latest"
-    return yield* Effect.tryPromise(() => $`git branch --show-current`.text()).pipe(Effect.map((x) => x.trim()))
+    return yield* Effect.tryPromise({
+      try: () => $`git branch --show-current`.text(),
+      catch: (cause) => new ScriptError({ message: "Failed to run git branch --show-current", cause }),
+    }).pipe(Effect.map((x) => x.trim()))
   })
   const preview = channel !== "latest"
 
@@ -63,7 +73,10 @@ const program = Effect.gen(function* () {
 
   const bot = ["actions-user", "opencode", "opencode-agent[bot]"]
   const teamPath = path.resolve(import.meta.dir, "../../../.github/TEAM_MEMBERS")
-  const members = yield* Effect.tryPromise(() => Bun.file(teamPath).text()).pipe(
+  const members = yield* Effect.tryPromise({
+    try: () => Bun.file(teamPath).text(),
+    catch: (cause) => new ScriptError({ message: `Failed to read ${teamPath}`, cause }),
+  }).pipe(
     Effect.map((x) => x.split(/\r?\n/).map((x) => x.trim())),
     Effect.map((x) => x.filter((x) => x && !x.startsWith("#"))),
   )
