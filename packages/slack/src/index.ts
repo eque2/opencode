@@ -66,7 +66,7 @@ app.message(async ({ message, say }) => {
   console.log("✅ Processing message:", message.text)
 
   const channel = message.channel
-  const thread = (message as any).thread_ts || message.ts
+  const thread = message.thread_ts || message.ts
   const sessionKey = `${channel}-${thread}`
 
   let session = sessions.get(sessionKey)
