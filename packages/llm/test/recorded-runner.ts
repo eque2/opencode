@@ -1,3 +1,4 @@
+/// <reference types="bun" />
 import { test, type TestOptions } from "bun:test"
 import { Effect, type Layer } from "effect"
 import { testEffect } from "./lib/effect"

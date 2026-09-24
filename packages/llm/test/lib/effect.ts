@@ -1,3 +1,4 @@
+/// <reference types="bun" />
 import { test, type TestOptions } from "bun:test"
 import { Cause, Effect, Exit, Layer } from "effect"
 import type * as Scope from "effect/Scope"
