@@ -44,6 +44,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm findMany/findFirst API types config as KnownKeysOnly<TConfig, DBQueryConfig>, a mapped type TypeScript cannot relate back to DBQueryConfig
       (config as DBQueryConfig<"many"> | undefined) ?? true,
       "many",
       this.rowMode,
@@ -60,6 +61,7 @@ export class SQLiteEffectRelationalQueryBuilder<
       this.tableConfig,
       this.dialect,
       this.session,
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm findMany/findFirst API types config as KnownKeysOnly<TConfig, DBQueryConfig>, a mapped type TypeScript cannot relate back to DBQueryConfig
       (config as DBQueryConfig<"one"> | undefined) ?? true,
       "first",
       this.rowMode,

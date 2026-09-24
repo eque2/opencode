@@ -246,6 +246,7 @@ export class SQLiteEffectInsertBase<
     fields: SelectedFieldsFlat = getTableColumns(this.config.table),
   ): SQLiteEffectInsertWithout<AnySQLiteEffectInsert, TDynamic, "returning"> {
     this.config.returning = orderSelectedFields(fields)
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
     return this as any
   }
 
@@ -332,6 +333,7 @@ export class SQLiteEffectInsertBase<
   }
 
   $dynamic(): SQLiteEffectInsertDynamic<this> {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: $dynamic returns the same builder typed as its dynamic (TDynamic = true) state, which TypeScript cannot relate to `this`
     return this as any
   }
 

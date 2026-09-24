@@ -53,6 +53,7 @@ export const make = Effect.fn("SQLiteDrizzle.make")(function* <TRelations extend
   const logger = yield* EffectLogger
 
   const dialect = new SQLiteAsyncDialect()
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm DrizzleConfig.relations is optional while the database is generic over TRelations; an absent config means the empty relations object, as in upstream drizzle
   const relations = config.relations ?? ({} as TRelations)
   const session = new EffectSQLiteSession(client, dialect, relations, {
     logger,
