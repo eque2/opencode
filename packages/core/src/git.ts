@@ -2,7 +2,7 @@ export * as Git from "./git"
 
 import path from "path"
 import { randomUUID } from "crypto"
-import { Array, Context, Effect, HashSet, Layer, Option, Schema, Stream } from "effect"
+import { Array, Context, Effect, HashMap, HashSet, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { AbsolutePath, RelativePath } from "./schema"
 import { FSUtil } from "./fs-util"
@@ -159,12 +159,12 @@ export interface Interface {
     readonly preview: (input: {
       repository: Repository
       current: TreeID
-      files: ReadonlyMap<RelativePath, TreeID>
+      files: HashMap.HashMap<RelativePath, TreeID>
       context?: number
     }) => Effect.Effect<readonly File.Diff[], OperationError>
     readonly restore: (input: {
       repository: Repository
-      files: ReadonlyMap<RelativePath, TreeID>
+      files: HashMap.HashMap<RelativePath, TreeID>
     }) => Effect.Effect<void, OperationError>
     readonly checkout: (input: { repository: Repository; tree: TreeID }) => Effect.Effect<void, OperationError>
   }
@@ -647,7 +647,7 @@ const layer = Layer.effect(
       (input: {
         repository: Repository
         current: TreeID
-        files: ReadonlyMap<RelativePath, TreeID>
+        files: HashMap.HashMap<RelativePath, TreeID>
         context?: number
       }) =>
         locked(
@@ -688,7 +688,7 @@ const layer = Layer.effect(
                 from: input.current,
                 to: target,
                 context: input.context,
-                paths: Array.fromIterable(input.files.keys()),
+                paths: Array.fromIterable(HashMap.keys(input.files)),
               })
             }).pipe(Effect.ensuring(fs.remove(index).pipe(Effect.catch(() => Effect.void))))
           }),
@@ -696,7 +696,7 @@ const layer = Layer.effect(
     )
 
     const restore = Effect.fn("Git.tree.restore")(
-      (input: { repository: Repository; files: ReadonlyMap<RelativePath, TreeID> }) =>
+      (input: { repository: Repository; files: HashMap.HashMap<RelativePath, TreeID> }) =>
         locked(
           input.repository,
           Effect.forEach(

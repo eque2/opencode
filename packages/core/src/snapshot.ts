@@ -179,14 +179,12 @@ const layer = Layer.effect(
     })
 
     const plan = Effect.fnUntraced(function* (operation: "preview" | "restore", input: RestoreInput) {
-      const files = new Map<RelativePath, Git.TreeID>()
-      for (const [file, snapshot] of input.files) {
+      for (const file of HashMap.keys(input.files)) {
         const absolute = path.resolve(worktree, file)
         if (!FSUtil.contains(worktree, absolute))
           return yield* new SnapshotError({ operation, message: `Path escapes the project: ${file}` })
-        files.set(file, Git.TreeID.make(snapshot))
       }
-      return files
+      return HashMap.map(input.files, (snapshot) => Git.TreeID.make(snapshot))
     })
 
     const preview = Effect.fn("Snapshot.preview")(function* (input: PreviewInput) {
@@ -197,7 +195,7 @@ const layer = Layer.effect(
       const current = yield* git.tree
         .capture({
           repository: repo,
-          scopes: Array.from(files.keys()),
+          scopes: Array.from(HashMap.keys(files)),
           ignores: source,
           maximumUntrackedFileBytes: 2 * 1024 * 1024,
         })
