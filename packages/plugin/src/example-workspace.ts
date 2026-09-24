@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { Effect, Random, Schema } from "effect"
+// eslint-disable-next-line effect/no-fs-use-effect-fs -- @opencode-ai/plugin has no Effect FileSystem layer: effect core ships none and @effect/platform-node is not a dependency
 import { mkdir, rm } from "node:fs/promises"
 
 class FolderWorkspaceError extends Schema.TaggedError<FolderWorkspaceError>()("FolderWorkspaceError", {
