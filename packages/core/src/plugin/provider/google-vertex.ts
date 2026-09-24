@@ -142,7 +142,7 @@ export const GoogleVertexPlugin = define({
     yield* ctx.aisdk.language(
       Effect.fn(function* (evt) {
         if (evt.model.providerID !== ProviderV2.ID.googleVertex) return
-        evt.language = evt.sdk.languageModel(String(evt.model.api.id).trim())
+        evt.language = evt.sdk.languageModel(evt.model.api.id.trim())
       }),
     )
   }),
@@ -193,7 +193,7 @@ export const GoogleVertexAnthropicPlugin = define({
     yield* ctx.aisdk.language(
       Effect.fn(function* (evt) {
         if (evt.model.providerID !== ProviderV2.ID.make("google-vertex-anthropic")) return
-        evt.language = evt.sdk.languageModel(String(evt.model.api.id).trim())
+        evt.language = evt.sdk.languageModel(evt.model.api.id.trim())
       }),
     )
   }),
