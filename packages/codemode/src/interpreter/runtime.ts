@@ -316,6 +316,7 @@ const containsContainer = (container: object, value: unknown, seen: WeakSet<obje
 }
 
 // An unknown property of a string, number, array or sandbox value reads as undefined, as in JS.
+// eslint-disable-next-line effect/no-undefined-use-option -- (b) an unknown property read gives the program the JS undefined value, which Option cannot represent inside the sandbox
 const unknownPropertyRead = new ComputedValue(undefined)
 
 // Copies each named binding (as a fresh binding object) from one scope into another: a `for`
@@ -736,6 +737,7 @@ class Interpreter<R> {
     this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
     MutableHashMap.set(globalScope, "tools", { mutable: false, value: new ToolReference([]) })
     MutableHashMap.set(globalScope, "Promise", { mutable: false, value: promiseNamespace })
+    // eslint-disable-next-line effect/no-undefined-use-option -- (b) the sandbox global binding `undefined` holds the JS undefined value that the program reads
     MutableHashMap.set(globalScope, "undefined", { mutable: false, value: undefined })
     MutableHashMap.set(globalScope, "Object", { mutable: false, value: new GlobalNamespace("Object") })
     MutableHashMap.set(globalScope, "Math", { mutable: false, value: new GlobalNamespace("Math") })
@@ -1602,6 +1604,7 @@ class Interpreter<R> {
       case "ChainExpression":
         return Effect.flatMap(getNode(node, "expression"), (expression) =>
           Effect.map(this.evaluateExpression(expression), (value) =>
+            // eslint-disable-next-line effect/no-undefined-use-option -- (b) a short-circuited optional chain gives the program the JS undefined value, as in JS
             value === OptionalShortCircuit ? undefined : value,
           ),
         )
@@ -3117,6 +3120,7 @@ class Interpreter<R> {
       let values = Chunk.empty<unknown>()
       for (const elementValue of elements) {
         if (Predicate.isNull(elementValue)) {
+          // eslint-disable-next-line effect/no-undefined-use-option -- (b) an array elision adds the JS undefined element that the program sees
           values = Chunk.append(values, undefined)
           continue
         }
