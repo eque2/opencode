@@ -11,6 +11,9 @@ class SlackBotError extends Schema.TaggedError<SlackBotError>()("SlackBotError",
 const attempt = <A>(operation: string, evaluate: () => PromiseLike<A>) =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => new SlackBotError({ operation, cause }) })
 
+// Debug payloads are logged as JSON with two-space indentation.
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 // A startup failure or a broken event stream used to crash the process with exit code 1.
 const exitOnFailure = <A, E>(self: Effect.Effect<A, E>) =>
   self.pipe(
@@ -88,7 +91,7 @@ const main = Effect.gen(function* () {
   )
 
   const logRawEvent = Effect.fn("Slack.logRawEvent")(function* ({ next, context }: AllMiddlewareArgs) {
-    yield* Effect.logInfo("📡 Raw Slack event:", JSON.stringify(context, null, 2))
+    yield* Effect.logInfo("📡 Raw Slack event:", yield* encodePrettyJson(context))
     yield* Effect.promise(() => next())
   })
 
@@ -96,7 +99,7 @@ const main = Effect.gen(function* () {
     message,
     say,
   }: SlackEventMiddlewareArgs<"message">) {
-    yield* Effect.logInfo("📨 Received message event:", JSON.stringify(message, null, 2))
+    yield* Effect.logInfo("📨 Received message event:", yield* encodePrettyJson(message))
 
     if (message.subtype || !("text" in message) || !message.text) {
       yield* Effect.logInfo("⏭️ Skipping message - no text or has subtype")
@@ -158,7 +161,7 @@ const main = Effect.gen(function* () {
       }),
     )
 
-    yield* Effect.logInfo("📤 Opencode response:", JSON.stringify(result, null, 2))
+    yield* Effect.logInfo("📤 Opencode response:", yield* encodePrettyJson(result))
 
     if (result.error) {
       yield* Effect.logError("❌ Failed to send message:", result.error)
@@ -194,7 +197,7 @@ const main = Effect.gen(function* () {
     say,
   }: SlackCommandMiddlewareArgs) {
     yield* attempt("ack", () => ack())
-    yield* Effect.logInfo("🧪 Test command received:", JSON.stringify(command, null, 2))
+    yield* Effect.logInfo("🧪 Test command received:", yield* encodePrettyJson(command))
     yield* attempt("say", () => say("🤖 Bot is working! I can hear you loud and clear."))
   })
 
