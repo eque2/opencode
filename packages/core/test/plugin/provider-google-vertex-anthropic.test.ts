@@ -1,7 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
@@ -43,7 +42,7 @@ function withEnv<A, E, R>(vars: Record<string, string | undefined>, effect: () =
 function selector(calls: string[]) {
   return (id: string) => {
     calls.push(`languageModel:${id}`)
-    return { modelId: id, provider: "languageModel", specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: "languageModel", specificationVersion: "v3" }
   }
 }
 
@@ -211,7 +210,10 @@ describe("GoogleVertexAnthropicPlugin", () => {
         sdk: sdkResult.sdk,
         options: {},
       })
-      const language = languageResult.language as unknown as { config: { baseURL: string }; modelId: string }
+      // The Anthropic language model keeps its resolved baseURL on its config.
+      const language = Schema.decodeUnknownSync(
+        Schema.Struct({ config: Schema.Struct({ baseURL: Schema.String }), modelId: Schema.String }),
+      )(languageResult.language)
       expect(language.config.baseURL).toBe(
         "https://aiplatform.us.rep.googleapis.com/v1/projects/project/locations/us/publishers/anthropic/models",
       )

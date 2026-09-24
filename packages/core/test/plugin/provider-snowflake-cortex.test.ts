@@ -1,6 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect, it as bun_it } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
@@ -176,7 +176,7 @@ describe("cortexFetch", () => {
       method: "POST",
       body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1024 }),
     })
-    const body = JSON.parse(captured[0].body as string)
+    const body = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.JsonObject))(captured[0].body)
     expect(body.max_completion_tokens).toBe(1024)
     expect(body.max_tokens).toBeUndefined()
   })
@@ -200,7 +200,9 @@ describe("cortexFetch", () => {
       })
     const response = await cortexFetch(upstream)("https://test", {})
     expect(response.status).toBe(200)
-    const data = (await response.json()) as { choices: { finish_reason: string }[] }
+    const data = Schema.decodeUnknownSync(
+      Schema.Struct({ choices: Schema.Array(Schema.Struct({ finish_reason: Schema.String })) }),
+    )(await response.json())
     expect(data.choices[0].finish_reason).toBe("stop")
   })
 

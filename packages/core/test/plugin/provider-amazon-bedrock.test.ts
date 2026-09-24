@@ -1,7 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect } from "bun:test"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
@@ -48,7 +47,7 @@ function withEnv<A, E, R>(vars: Record<string, string | undefined>, fx: () => Ef
 function fakeSelectorSdk(calls: string[]) {
   const make = (method: string) => (id: string) => {
     calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: method, specificationVersion: "v3" }
   }
   return {
     responses: make("responses"),
@@ -58,23 +57,27 @@ function fakeSelectorSdk(calls: string[]) {
   }
 }
 
-function bedrockBaseURL(sdk: unknown, modelID = "anthropic.claude-sonnet-4-5") {
-  const language = (sdk as { languageModel: (id: string) => unknown }).languageModel(modelID)
-  return (language as { config: { baseUrl: () => string } }).config.baseUrl()
+type LanguageSDK = { languageModel: (id: string) => unknown }
+
+// The AI SDK language models keep their resolved request settings as functions on an internal config.
+function configFunction(language: unknown, name: string) {
+  if (Predicate.hasProperty(language, "config") && Predicate.hasProperty(language.config, name)) {
+    const value = language.config[name]
+    if (Predicate.isFunction(value)) return value
+  }
+  throw new Error(`Expected language model config.${name} to be a function`)
 }
 
-function bedrockFetch(sdk: unknown, modelID = "anthropic.claude-sonnet-4-5") {
-  const language = (sdk as { languageModel: (id: string) => unknown }).languageModel(modelID)
-  return (
-    language as { config: { fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response> } }
-  ).config.fetch
+function bedrockBaseURL(sdk: LanguageSDK, modelID = "anthropic.claude-sonnet-4-5") {
+  return configFunction(sdk.languageModel(modelID), "baseUrl")()
+}
+
+function bedrockFetch(sdk: LanguageSDK, modelID = "anthropic.claude-sonnet-4-5") {
+  return configFunction(sdk.languageModel(modelID), "fetch")
 }
 
 function openAIUrl(language: unknown, path: string, modelId: string) {
-  return (language as { config: { url: (input: { path: string; modelId: string }) => string } }).config.url({
-    path,
-    modelId,
-  })
+  return configFunction(language, "url")({ path, modelId })
 }
 
 describe("AmazonBedrockPlugin", () => {
