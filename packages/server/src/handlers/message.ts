@@ -12,7 +12,7 @@ const Cursor = Schema.Struct({
   id: SessionMessage.ID,
   order: Schema.Union([Schema.Literal("asc"), Schema.Literal("desc")]),
   direction: Schema.Union([Schema.Literal("previous"), Schema.Literal("next")]),
-})
+}).annotate({ identifier: "SessionMessagesCursor" })
 
 const decodeCursor = Schema.decodeUnknownSync(Cursor)
 
