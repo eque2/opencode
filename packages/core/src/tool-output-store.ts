@@ -1,7 +1,7 @@
 export * as ToolOutputStore from "./tool-output-store"
 
 import path from "path"
-import { Context, Duration, Effect, Layer, Option, Predicate, Schedule, Schema } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Option, Predicate, Schedule, Schema } from "effect"
 import { Config } from "./config"
 import { FSUtil } from "./fs-util"
 import { Global } from "./global"
@@ -182,7 +182,7 @@ const layer = Layer.effect(
 
     const cleanup = Effect.fn("ToolOutputStore.cleanup")(function* () {
       const entries = yield* fs.readDirectory(directory).pipe(Effect.catch(() => Effect.succeed([])))
-      const cutoff = Date.now() - Duration.toMillis(RETENTION)
+      const cutoff = (yield* Clock.currentTimeMillis) - Duration.toMillis(RETENTION)
       for (const entry of entries) {
         if (!entry.startsWith("tool_")) continue
         const file = path.join(directory, entry)
