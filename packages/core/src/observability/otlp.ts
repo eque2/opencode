@@ -1,4 +1,4 @@
-import { Layer } from "effect"
+import { Layer, Option } from "effect"
 import { OtlpLogger } from "effect/unstable/observability"
 import { Flag } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -6,16 +6,19 @@ import { runID } from "./shared"
 
 const endpoint = Flag.OTEL_EXPORTER_OTLP_ENDPOINT
 
-const headers = Flag.OTEL_EXPORTER_OTLP_HEADERS
-  ? Flag.OTEL_EXPORTER_OTLP_HEADERS.split(",").reduce(
+const headers = Option.fromUndefinedOr(Flag.OTEL_EXPORTER_OTLP_HEADERS).pipe(
+  Option.filter((value) => value.length > 0),
+  Option.map((value) =>
+    value.split(",").reduce(
       (acc, entry) => {
         const [key, ...value] = entry.split("=")
         acc[key] = value.join("=")
         return acc
       },
       {} as Record<string, string>,
-    )
-  : undefined
+    ),
+  ),
+)
 
 function resourceAttributes() {
   const value = process.env.OTEL_RESOURCE_ATTRIBUTES
@@ -49,7 +52,9 @@ export function resource(): { serviceName: string; serviceVersion: string; attri
 
 export function loggers() {
   if (!endpoint) return []
-  return [OtlpLogger.make({ url: `${endpoint}/v1/logs`, resource: resource(), headers })]
+  return [
+    OtlpLogger.make({ url: `${endpoint}/v1/logs`, resource: resource(), headers: Option.getOrUndefined(headers) }),
+  ]
 }
 
 export async function tracingLayer() {
@@ -70,7 +75,7 @@ export async function tracingLayer() {
     spanProcessor: new SdkBase.BatchSpanProcessor(
       new OTLP.OTLPTraceExporter({
         url: `${endpoint}/v1/traces`,
-        headers,
+        headers: Option.getOrUndefined(headers),
       }),
     ),
   }))
