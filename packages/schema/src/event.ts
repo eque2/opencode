@@ -36,7 +36,7 @@ export type Payload<D extends Definition = Definition> = {
     readonly version: number
   }
   readonly location?: Location.Ref
-  readonly metadata?: Record<string, unknown>
+  readonly metadata?: Schema.JsonObject
 }
 
 export function define<
@@ -53,7 +53,7 @@ export function define<
   const data = Schema.Struct(input.schema)
   return Schema.Struct({
     id: ID,
-    metadata: optional(Schema.Record(Schema.String, Schema.Unknown)),
+    metadata: optional(Schema.JsonObject),
     type: Schema.Literal(input.type),
     durable: optional(Schema.Struct({ aggregateID: Schema.String, seq: Schema.Int, version: Schema.Int })),
     location: optional(Location.Ref),
