@@ -120,7 +120,7 @@ export const waitForAbort = (signal: AbortSignal) =>
   Effect.callback<never, Error>((resume) => {
     if (signal.aborted) {
       resume(Effect.fail(abortError(signal)))
-      return
+      return Effect.void
     }
     const onabort = () => resume(Effect.fail(abortError(signal)))
     signal.addEventListener("abort", onabort, { once: true })
