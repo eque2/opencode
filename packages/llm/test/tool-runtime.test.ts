@@ -333,7 +333,7 @@ describe("LLMClient tools", () => {
         required: ["temperature", "condition"],
         additionalProperties: false,
       })
-      expect(Reflect.get(Reflect.get(typed?.outputSchema ?? {}, "properties") as object, "temperature")).toBeDefined()
+      expect(typed?.outputSchema).toHaveProperty(["properties", "temperature"])
       expect(dynamic?.outputSchema).toEqual(schema)
     }),
   )

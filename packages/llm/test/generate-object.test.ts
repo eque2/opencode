@@ -9,22 +9,34 @@ import { dynamicResponse } from "./lib/http"
 import { finishChunk, toolCallChunk } from "./lib/openai-chunks"
 import { sseEvents } from "./lib/sse"
 
-type OpenAIChatBody = {
-  readonly tool_choice?: unknown
-  readonly tools?: ReadonlyArray<{
-    readonly function: {
-      readonly parameters: unknown
-    }
-  }>
-}
+const OpenAIChatBody = Schema.Struct({
+  tool_choice: Schema.optional(Schema.Unknown),
+  tools: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        type: Schema.String,
+        function: Schema.Struct({
+          name: Schema.String,
+          parameters: Schema.Unknown,
+        }),
+      }),
+    ),
+  ),
+})
+type OpenAIChatBody = typeof OpenAIChatBody.Type
+
+const ToolParameters = Schema.Struct({
+  type: Schema.optional(Schema.Unknown),
+  required: Schema.optional(Schema.Unknown),
+  properties: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+})
 
 const model = OpenAIChat.route
   .with({ endpoint: { baseURL: "https://api.openai.test/v1/" }, auth: Auth.bearer("test") })
   .model({ id: "gpt-4o-mini" })
 
-const Json = Schema.fromJsonString(Schema.Unknown)
-const decodeJson = Schema.decodeUnknownSync(Json)
-const decodeBody = (text: string): OpenAIChatBody => decodeJson(text) as OpenAIChatBody
+const decodeBody = Schema.decodeUnknownSync(Schema.fromJsonString(OpenAIChatBody))
+const decodeToolParameters = Schema.decodeUnknownSync(ToolParameters)
 
 describe("Tool.make (dynamic JSON Schema)", () => {
   test("forwards JSON Schema and description through toDefinitions", () => {
@@ -94,11 +106,7 @@ describe("LLM.generateObject", () => {
         type: "function",
         function: { name: "generate_object" },
       })
-      const params = tool?.function.parameters as {
-        readonly type?: unknown
-        readonly required?: unknown
-        readonly properties?: Record<string, unknown>
-      }
+      const params = decodeToolParameters(tool?.function.parameters)
       expect(params.type).toBe("object")
       expect(params.required).toEqual(["city", "temp"])
       expect(params.properties?.city).toMatchObject({ type: "string" })

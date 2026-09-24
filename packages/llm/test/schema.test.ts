@@ -11,8 +11,8 @@ const model = new Model({
   route: OpenAIChat.route,
 })
 
-const decodeLLMRequest = Schema.decodeUnknownSync(LLMRequest as unknown as Schema.Decoder<LLMRequest>)
-const decodeLLMEvent = Schema.decodeUnknownSync(LLMEvent as unknown as Schema.Decoder<LLMEvent>)
+const decodeLLMRequest = Schema.decodeUnknownSync(LLMRequest)
+const decodeLLMEvent = Schema.decodeUnknownSync(LLMEvent)
 
 describe("llm schema", () => {
   test("decodes a minimal request", () => {
