@@ -493,7 +493,7 @@ export type Info = User | Assistant
 export const WithParts = Schema.Struct({
   info: Info,
   parts: Schema.Array(Part),
-})
+}).annotate({ identifier: "SessionV1.WithParts" })
 export type WithParts = {
   info: Info
   parts: Part[]
@@ -511,7 +511,7 @@ const SessionSummary = Schema.Struct({
   deletions: Schema.Finite,
   files: Schema.Finite,
   diffs: optional(Schema.Array(FileDiff.Info)),
-})
+}).annotate({ identifier: "SessionV1.Summary" })
 
 const SessionTokens = Schema.Struct({
   input: Schema.Finite,
@@ -521,24 +521,24 @@ const SessionTokens = Schema.Struct({
     read: Schema.Finite,
     write: Schema.Finite,
   }),
-})
+}).annotate({ identifier: "SessionV1.Tokens" })
 
 const SessionShare = Schema.Struct({
   url: Schema.String,
-})
+}).annotate({ identifier: "SessionV1.Share" })
 
 const SessionRevert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
   snapshot: optional(Schema.String),
   diff: optional(Schema.String),
-})
+}).annotate({ identifier: "SessionV1.Revert" })
 
 const SessionModel = Schema.Struct({
   id: Model.ID,
   providerID: Provider.ID,
   variant: optional(Schema.String),
-})
+}).annotate({ identifier: "SessionV1.Model" })
 
 export const SessionInfo = Schema.Struct({
   id: SessionID,
