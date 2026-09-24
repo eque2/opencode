@@ -25,70 +25,79 @@ export const dateMethods = new Set([
 
 export const dateStatics = new Set(["now", "parse", "UTC"])
 
-export const invokeDateStatic = (name: string, args: Array<unknown>, node: AstNode): number => {
+export const invokeDateStatic = (
+  name: string,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<number, InterpreterRuntimeError> => {
   switch (name) {
     case "now":
-      return Date.now()
+      return Effect.sync(() => Date.now())
     case "parse":
-      return Date.parse(coerceToString(args[0]))
+      return Effect.succeed(Date.parse(coerceToString(args[0])))
     case "UTC":
-      return Date.UTC(...(args.map((arg) => coerceToNumber(arg)) as Parameters<typeof Date.UTC>))
+      return Effect.succeed(Date.UTC(...(args.map((arg) => coerceToNumber(arg)) as Parameters<typeof Date.UTC>)))
     default:
-      throw new InterpreterRuntimeError(`Date.${name} is not available in CodeMode.`, node)
+      return Effect.fail(new InterpreterRuntimeError(`Date.${name} is not available in CodeMode.`, node))
   }
 }
 
-export const invokeDateMethod = (value: SandboxDate, name: string, node: AstNode): unknown => {
+export const invokeDateMethod = (
+  value: SandboxDate,
+  name: string,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError> => {
   const hosted = new Date(value.time)
   switch (name) {
     case "getTime":
     case "valueOf":
-      return value.time
+      return Effect.succeed(value.time)
     case "toISOString":
-      if (!Number.isFinite(value.time)) throw new InterpreterRuntimeError("Invalid time value.", node)
-      return hosted.toISOString()
+      if (!Number.isFinite(value.time)) return Effect.fail(new InterpreterRuntimeError("Invalid time value.", node))
+      return Effect.succeed(hosted.toISOString())
     case "toJSON":
-      return Number.isFinite(value.time) ? hosted.toISOString() : null
+      return Effect.succeed(Number.isFinite(value.time) ? hosted.toISOString() : null)
     case "toString":
-      return coerceToString(value)
+      return Effect.succeed(coerceToString(value))
     case "getFullYear":
-      return hosted.getFullYear()
+      return Effect.succeed(hosted.getFullYear())
     case "getMonth":
-      return hosted.getMonth()
+      return Effect.succeed(hosted.getMonth())
     case "getDate":
-      return hosted.getDate()
+      return Effect.succeed(hosted.getDate())
     case "getDay":
-      return hosted.getDay()
+      return Effect.succeed(hosted.getDay())
     case "getHours":
-      return hosted.getHours()
+      return Effect.succeed(hosted.getHours())
     case "getMinutes":
-      return hosted.getMinutes()
+      return Effect.succeed(hosted.getMinutes())
     case "getSeconds":
-      return hosted.getSeconds()
+      return Effect.succeed(hosted.getSeconds())
     case "getMilliseconds":
-      return hosted.getMilliseconds()
+      return Effect.succeed(hosted.getMilliseconds())
     case "getUTCFullYear":
-      return hosted.getUTCFullYear()
+      return Effect.succeed(hosted.getUTCFullYear())
     case "getUTCMonth":
-      return hosted.getUTCMonth()
+      return Effect.succeed(hosted.getUTCMonth())
     case "getUTCDate":
-      return hosted.getUTCDate()
+      return Effect.succeed(hosted.getUTCDate())
     case "getUTCDay":
-      return hosted.getUTCDay()
+      return Effect.succeed(hosted.getUTCDay())
     case "getUTCHours":
-      return hosted.getUTCHours()
+      return Effect.succeed(hosted.getUTCHours())
     case "getUTCMinutes":
-      return hosted.getUTCMinutes()
+      return Effect.succeed(hosted.getUTCMinutes())
     case "getUTCSeconds":
-      return hosted.getUTCSeconds()
+      return Effect.succeed(hosted.getUTCSeconds())
     case "getUTCMilliseconds":
-      return hosted.getUTCMilliseconds()
+      return Effect.succeed(hosted.getUTCMilliseconds())
     case "getTimezoneOffset":
-      return hosted.getTimezoneOffset()
+      return Effect.succeed(hosted.getTimezoneOffset())
     default:
-      throw new InterpreterRuntimeError(`Date method '${name}' is not available in CodeMode.`, node)
+      return Effect.fail(new InterpreterRuntimeError(`Date method '${name}' is not available in CodeMode.`, node))
   }
 }
+import { Effect } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { SandboxDate } from "../values.js"
 import { coerceToNumber, coerceToString } from "./value.js"

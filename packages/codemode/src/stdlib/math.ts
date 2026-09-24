@@ -19,47 +19,54 @@ export const mathMethods = new Set([
   "exp",
 ])
 
-export const invokeMathMethod = (name: string, args: Array<unknown>, node: AstNode): number => {
-  if (!mathMethods.has(name)) throw new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node)
-  const nums = args.map((arg) => {
-    if (typeof arg !== "number") throw new InterpreterRuntimeError(`Math.${name} expects number arguments.`, node)
-    return arg
-  })
+export const invokeMathMethod = (
+  name: string,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<number, InterpreterRuntimeError> => {
+  if (!mathMethods.has(name)) {
+    return Effect.fail(new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node))
+  }
+  if (!args.every(Predicate.isNumber)) {
+    return Effect.fail(new InterpreterRuntimeError(`Math.${name} expects number arguments.`, node))
+  }
+  const nums = args
   const [a = Number.NaN, b = Number.NaN] = nums
   switch (name) {
     case "max":
-      return Math.max(...nums)
+      return Effect.succeed(Math.max(...nums))
     case "min":
-      return Math.min(...nums)
+      return Effect.succeed(Math.min(...nums))
     case "abs":
-      return Math.abs(a)
+      return Effect.succeed(Math.abs(a))
     case "floor":
-      return Math.floor(a)
+      return Effect.succeed(Math.floor(a))
     case "ceil":
-      return Math.ceil(a)
+      return Effect.succeed(Math.ceil(a))
     case "round":
-      return Math.round(a)
+      return Effect.succeed(Math.round(a))
     case "trunc":
-      return Math.trunc(a)
+      return Effect.succeed(Math.trunc(a))
     case "sign":
-      return Math.sign(a)
+      return Effect.succeed(Math.sign(a))
     case "sqrt":
-      return Math.sqrt(a)
+      return Effect.succeed(Math.sqrt(a))
     case "cbrt":
-      return Math.cbrt(a)
+      return Effect.succeed(Math.cbrt(a))
     case "pow":
-      return Math.pow(a, b)
+      return Effect.succeed(Math.pow(a, b))
     case "hypot":
-      return Math.hypot(...nums)
+      return Effect.succeed(Math.hypot(...nums))
     case "log":
-      return Math.log(a)
+      return Effect.succeed(Math.log(a))
     case "log2":
-      return Math.log2(a)
+      return Effect.succeed(Math.log2(a))
     case "log10":
-      return Math.log10(a)
+      return Effect.succeed(Math.log10(a))
     case "exp":
-      return Math.exp(a)
+      return Effect.succeed(Math.exp(a))
   }
-  throw new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node)
+  return Effect.fail(new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node))
 }
+import { Effect, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"

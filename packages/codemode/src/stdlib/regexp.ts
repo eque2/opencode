@@ -18,21 +18,29 @@ export const regexFailureReason = (error: unknown): string =>
 export const escapeRegexHint =
   'To match special characters like ( ) [ ] { } + * ? . literally, escape them with a backslash (e.g. "\\\\(") or test for them with String.includes instead.'
 
-export const toHostRegex = (arg: unknown, method: string, node: AstNode, extraFlags = ""): RegExp => {
-  if (arg instanceof SandboxRegExp) return arg.regex
+// An invalid string pattern makes the RegExp constructor throw; the catch keeps its reason.
+export const toHostRegex = (
+  arg: unknown,
+  method: string,
+  node: AstNode,
+  extraFlags = "",
+): Effect.Effect<RegExp, InterpreterRuntimeError> => {
+  if (arg instanceof SandboxRegExp) return Effect.succeed(arg.regex)
   if (typeof arg === "string") {
-    try {
-      return new RegExp(arg, extraFlags)
-    } catch (error) {
-      throw new InterpreterRuntimeError(
-        `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
-        node,
-      ).as("SyntaxError")
-    }
+    return Effect.try({
+      try: () => new RegExp(arg, extraFlags),
+      catch: (error) =>
+        new InterpreterRuntimeError(
+          `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
+          node,
+        ).as("SyntaxError"),
+    })
   }
-  throw new InterpreterRuntimeError(
-    `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${arg === null ? "null" : typeof arg}.`,
-    node,
+  return Effect.fail(
+    new InterpreterRuntimeError(
+      `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${arg === null ? "null" : typeof arg}.`,
+      node,
+    ),
   )
 }
 
@@ -49,25 +57,28 @@ export const matchToValue = (match: RegExpMatchArray): Array<unknown> => {
   return result
 }
 
+// test and exec advance lastIndex on a global or sticky regex, so they run when the call runs.
 export const invokeRegExpMethod = (
   value: SandboxRegExp,
   name: string,
   args: Array<unknown>,
   node: AstNode,
-): unknown => {
+): Effect.Effect<unknown, InterpreterRuntimeError> => {
   switch (name) {
     case "test":
-      return value.regex.test(coerceToString(args[0]))
-    case "exec": {
-      const matched = value.regex.exec(coerceToString(args[0]))
-      return matched === null ? null : matchToValue(matched)
-    }
+      return Effect.sync(() => value.regex.test(coerceToString(args[0])))
+    case "exec":
+      return Effect.sync(() => {
+        const matched = value.regex.exec(coerceToString(args[0]))
+        return matched === null ? null : matchToValue(matched)
+      })
     case "toString":
-      return coerceToString(value)
+      return Effect.succeed(coerceToString(value))
     default:
-      throw new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node)
+      return Effect.fail(new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node))
   }
 }
+import { Effect } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, type SafeObject } from "../tool-runtime.js"
 import { SandboxRegExp } from "../values.js"

@@ -25,7 +25,8 @@ export const errorBrandName = (value: unknown): string | undefined =>
     ? ((value as Record<PropertyKey, unknown>)[ErrorBrand] as string | undefined)
     : undefined
 
-export const boundedData = (value: unknown, label: string): unknown => copyIn(value, label, true)
+export const boundedData = (value: unknown, label: string): Result.Result<unknown, ToolRuntimeError> =>
+  copyIn(value, label, true)
 
 export const coerceToString = (value: unknown): string => {
   if (value === null) return "null"
@@ -51,30 +52,39 @@ export const coerceToNumber = (value: unknown): number => {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? Number.NaN : Number(value)
 }
 
-export const invokeCoercion = (ref: CoercionFunction, args: Array<unknown>, node: AstNode): unknown => {
+export const invokeCoercion = (
+  ref: CoercionFunction,
+  args: Array<unknown>,
+  node: AstNode,
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> => {
   const raw = args[0]
   if (isSandboxValue(raw)) {
-    if (ref.name === "Boolean") return true
-    if (ref.name === "Number") return coerceToNumber(raw)
-    if (ref.name === "String") return coerceToString(raw)
-    if (ref.name === "parseInt") return parseInt(coerceToString(raw))
-    return parseFloat(coerceToString(raw))
+    if (ref.name === "Boolean") return Effect.succeed(true)
+    if (ref.name === "Number") return Effect.succeed(coerceToNumber(raw))
+    if (ref.name === "String") return Effect.succeed(coerceToString(raw))
+    if (ref.name === "parseInt") return Effect.succeed(parseInt(coerceToString(raw)))
+    return Effect.succeed(parseFloat(coerceToString(raw)))
   }
-  const value = boundedData(args[0], `${ref.name} input`)
-  if (ref.name === "Number") return coerceToNumber(value)
-  if (ref.name === "Boolean") return Boolean(value)
-  if (ref.name === "parseInt") {
-    const radix = args[1]
-    if (radix !== undefined && typeof radix !== "number") {
-      throw new InterpreterRuntimeError("parseInt expects a numeric radix.", node)
-    }
-    return parseInt(coerceToString(value), radix)
-  }
-  if (ref.name === "parseFloat") return parseFloat(coerceToString(value))
-  return coerceToString(value)
+  return Effect.flatMap(
+    Effect.fromResult(boundedData(args[0], `${ref.name} input`)),
+    (value): Effect.Effect<unknown, InterpreterRuntimeError> => {
+      if (ref.name === "Number") return Effect.succeed(coerceToNumber(value))
+      if (ref.name === "Boolean") return Effect.succeed(Boolean(value))
+      if (ref.name === "parseInt") {
+        const radix = args[1]
+        if (radix !== undefined && typeof radix !== "number") {
+          return Effect.fail(new InterpreterRuntimeError("parseInt expects a numeric radix.", node))
+        }
+        return Effect.succeed(parseInt(coerceToString(value), radix))
+      }
+      if (ref.name === "parseFloat") return Effect.succeed(parseFloat(coerceToString(value)))
+      return Effect.succeed(coerceToString(value))
+    },
+  )
 }
+import { Effect, type Result } from "effect"
 import { type AstNode, CoercionFunction, InterpreterRuntimeError } from "../interpreter/model.js"
-import { copyIn, type SafeObject } from "../tool-runtime.js"
+import { copyIn, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import {
   isSandboxValue,
   SandboxDate,

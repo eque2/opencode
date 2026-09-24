@@ -463,7 +463,7 @@ const invokeStringMethod = (
   name: string,
   args: Array<unknown>,
   node: AstNode,
-): Effect.Effect<unknown, InterpreterRuntimeError> =>
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> =>
   Effect.gen(function* () {
     const str = (index: number): Effect.Effect<string, InterpreterRuntimeError> => {
       const arg = args[index]
@@ -583,17 +583,17 @@ const invokeStringMethod = (
         break
       }
       case "match": {
-        const pattern = toHostRegex(args[0], name, node)
+        const pattern = yield* toHostRegex(args[0], name, node)
         const matched = value.match(pattern)
         // No match: String.match's own null result is the program-visible value.
         if (Predicate.isNull(matched)) return matched
         // A global match is a plain array of matched strings; a non-global match carries
         // index/groups own properties, so bypass the copying data checkpoint to keep them.
-        if (pattern.global) return boundedData(matched, "String.match result")
+        if (pattern.global) return yield* Effect.fromResult(boundedData(matched, "String.match result"))
         return matchToValue(matched)
       }
       case "matchAll": {
-        const pattern = toHostRegex(args[0], name, node, "g")
+        const pattern = yield* toHostRegex(args[0], name, node, "g")
         if (!pattern.global) {
           return yield* new InterpreterRuntimeError(
             `String.matchAll requires a regular expression with the global (g) flag: write /${pattern.source}/${pattern.flags}g, or use String.match for a single match.`,
@@ -605,7 +605,7 @@ const invokeStringMethod = (
         return Array.from(value.matchAll(pattern), matchToValue)
       }
       case "search": {
-        result = value.search(toHostRegex(args[0], name, node))
+        result = value.search(yield* toHostRegex(args[0], name, node))
         break
       }
       case "repeat": {
@@ -651,14 +651,14 @@ const invokeStringMethod = (
       default:
         return yield* new InterpreterRuntimeError(`String method '${name}' is not available in CodeMode.`, node)
     }
-    return boundedData(result, `String.${name} result`)
+    return yield* Effect.fromResult(boundedData(result, `String.${name} result`))
   })
 
 const invokeArrayStatic = (
   name: string,
   args: Array<unknown>,
   node: AstNode,
-): Effect.Effect<unknown, InterpreterRuntimeError> =>
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> =>
   Effect.gen(function* () {
     switch (name) {
       case "isArray":
@@ -680,7 +680,7 @@ const invokeArrayStatic = (
         if (args[0] instanceof SandboxURLSearchParams) {
           return Array.from(args[0].params.entries(), ([key, value]) => [key, value])
         }
-        const source = boundedData(args[0], "Array.from input")
+        const source = yield* Effect.fromResult(boundedData(args[0], "Array.from input"))
         if (typeof source === "string") return Array.from(source)
         if (Array.isArray(source)) return [...source]
         if (isArrayLike(source)) return Array.from(source)
@@ -694,25 +694,25 @@ const invokeArrayStatic = (
     }
   })
 
-// The stdlib invokers still throw synchronously; Effect.sync runs them when the call runs, so a
-// throw surfaces as a defect exactly as it did when the caller invoked them inline.
+// The stdlib invokers return Effects: an invalid call fails with its typed error, and a host
+// method that throws (a RangeError from toFixed, say) stays a defect inside Effect.sync.
 const invokeGlobalMethod = (
   ref: GlobalMethodReference,
   args: Array<unknown>,
   node: AstNode,
-): Effect.Effect<unknown, InterpreterRuntimeError> => {
+): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> => {
   if (ref.namespace === "console")
     return Effect.fail(new InterpreterRuntimeError(`console.${ref.name} is not available in CodeMode.`, node))
-  if (ref.namespace === "Object") return Effect.sync(() => invokeObjectMethod(ref.name, args, node))
-  if (ref.namespace === "Math") return Effect.sync(() => invokeMathMethod(ref.name, args, node))
+  if (ref.namespace === "Object") return invokeObjectMethod(ref.name, args, node)
+  if (ref.namespace === "Math") return invokeMathMethod(ref.name, args, node)
   if (ref.namespace === "Array") return invokeArrayStatic(ref.name, args, node)
-  if (ref.namespace === "Number") return Effect.sync(() => invokeNumberStatic(ref.name, args, node))
-  if (ref.namespace === "String") return Effect.sync(() => invokeStringStatic(ref.name, args, node))
-  if (ref.namespace === "URL") return Effect.sync(() => invokeURLStatic(ref.name, args, node))
+  if (ref.namespace === "Number") return invokeNumberStatic(ref.name, args, node)
+  if (ref.namespace === "String") return invokeStringStatic(ref.name, args, node)
+  if (ref.namespace === "URL") return invokeURLStatic(ref.name, args, node)
   if (ref.namespace === "Date") {
     if (!dateStatics.has(ref.name))
       return Effect.fail(new InterpreterRuntimeError(`Date.${ref.name} is not available in CodeMode.`, node))
-    return Effect.sync(() => invokeDateStatic(ref.name, args, node))
+    return invokeDateStatic(ref.name, args, node)
   }
   if (
     ref.namespace === "RegExp" ||
@@ -722,7 +722,7 @@ const invokeGlobalMethod = (
   ) {
     return Effect.fail(new InterpreterRuntimeError(`${ref.namespace}.${ref.name} is not available in CodeMode.`, node))
   }
-  return Effect.sync(() => invokeJsonMethod(ref.name, args, node))
+  return invokeJsonMethod(ref.name, args, node)
 }
 
 // Every identifier a parameter pattern binds, used to seed TDZ slots before defaults run.
@@ -764,7 +764,7 @@ class Interpreter<R> {
   private readonly invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   // Enumerable namespace/tool names at a node of the host tool tree, threaded from
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
-  private readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
+  private readonly toolKeys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>
   private readonly logs: Array<string>
   // The value of the most recent expression statement: a program without `return` completes
   // with it, as a script does.
@@ -778,7 +778,7 @@ class Interpreter<R> {
 
   constructor(
     invokeTool: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>,
-    toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>,
+    toolKeys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>,
     logs: Array<string> = [],
   ) {
     const globalScope = MutableHashMap.empty<string, Binding>()
@@ -1339,18 +1339,18 @@ class Interpreter<R> {
   // references: plain data objects enumerate their own keys, arrays their index strings (plus
   // any own non-index properties, e.g. match results' index/groups - exactly Object.keys in
   // JS), and a tool reference the namespace/tool names at its path in the host tool tree.
-  // Returns undefined for everything else so callers can raise a contextual error.
-  private enumerableKeys(value: unknown): Array<string> | undefined {
+  // Yields None for everything else so callers can raise a contextual error.
+  private enumerableKeys(value: unknown): Effect.Effect<Option.Option<ReadonlyArray<string>>, ToolRuntimeError> {
     if (value instanceof ToolReference) {
-      return [...this.toolKeys(value.path)]
+      return Effect.asSome(this.toolKeys(value.path))
     }
     if (Array.isArray(value)) {
-      return Object.keys(value)
+      return Effect.succeedSome(Object.keys(value))
     }
     if (Predicate.isObjectOrArray(value) && !isRuntimeReference(value)) {
-      return Object.keys(value)
+      return Effect.succeedSome(Object.keys(value))
     }
-    return undefined
+    return Effect.succeedNone
   }
 
   private evaluateForInStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
@@ -1365,8 +1365,8 @@ class Interpreter<R> {
       // Anything else (strings, Maps, Sets, numbers, null, ...) is a deliberate error rather
       // than real JS's surprising behavior (indices for strings, zero iterations for
       // Maps/Sets/null): the hint points at the constructs that do what the program means.
-      const keys = this.enumerableKeys(right)
-      if (keys === undefined) {
+      const enumerated = yield* this.enumerableKeys(right)
+      if (Option.isNone(enumerated)) {
         return yield* new InterpreterRuntimeError(
           "for...in requires a plain object, array, or tools reference in CodeMode. Use for...of for arrays/strings/Maps/Sets, or Object.keys(value) for a key list.",
           node,
@@ -1393,7 +1393,7 @@ class Interpreter<R> {
         return yield* new InterpreterRuntimeError("Unsupported for...in binding.", left)
       }
 
-      for (const key of keys) {
+      for (const key of enumerated.value) {
         if (declaration) {
           this.pushScope()
           yield* this.declarePattern(declaration.pattern, key, declaration.mutable, left)
@@ -1630,7 +1630,7 @@ class Interpreter<R> {
         if (isRecord(regex) && typeof regex.pattern === "string") {
           return this.constructRegExp([regex.pattern, typeof regex.flags === "string" ? regex.flags : ""], node)
         }
-        return Effect.sync(() => boundedData(node.value, "Literal"))
+        return Effect.fromResult(boundedData(node.value, "Literal"))
       }
       case "Identifier":
         return Effect.flatMap(getString(node, "name"), (name) => this.getIdentifierValue(name, node))
@@ -1819,7 +1819,10 @@ class Interpreter<R> {
     })
   }
 
-  private constructURL(args: Array<unknown>, node: AstNode): Effect.Effect<SandboxURL, InterpreterRuntimeError> {
+  private constructURL(
+    args: Array<unknown>,
+    node: AstNode,
+  ): Effect.Effect<SandboxURL, InterpreterRuntimeError | ToolRuntimeError> {
     return Effect.gen(function* () {
       if (args.length === 0) {
         return yield* new InterpreterRuntimeError(
@@ -1827,8 +1830,10 @@ class Interpreter<R> {
           node,
         ).as("TypeError")
       }
-      const input = urlArgument(args[0], "new URL input")
-      const base = Option.map(Option.fromUndefinedOr(args[1]), (value) => urlArgument(value, "new URL base"))
+      const input = yield* urlArgument(args[0], "new URL input")
+      const base = yield* Effect.transposeOption(
+        Option.map(Option.fromUndefinedOr(args[1]), (value) => urlArgument(value, "new URL base")),
+      )
       return yield* Effect.try({
         try: () => new SandboxURL(new URL(input, Option.getOrUndefined(base))),
         catch: () =>
@@ -1843,7 +1848,7 @@ class Interpreter<R> {
   private constructURLSearchParams(
     init: unknown,
     node: AstNode,
-  ): Effect.Effect<SandboxURLSearchParams, InterpreterRuntimeError> {
+  ): Effect.Effect<SandboxURLSearchParams, InterpreterRuntimeError | ToolRuntimeError> {
     return Effect.gen({ self: this }, function* () {
       if (init === undefined) return new SandboxURLSearchParams(new URLSearchParams())
       if (init instanceof SandboxURLSearchParams) {
@@ -1862,7 +1867,7 @@ class Interpreter<R> {
       if (Array.isArray(init)) {
         const entries = yield* Effect.forEach(
           init,
-          (pair): Effect.Effect<[string, string], InterpreterRuntimeError> =>
+          (pair): Effect.Effect<[string, string], InterpreterRuntimeError | ToolRuntimeError> =>
             !Array.isArray(pair) || pair.length !== 2
               ? Effect.fail(
                   new InterpreterRuntimeError(
@@ -1870,7 +1875,7 @@ class Interpreter<R> {
                     node,
                   ).as("TypeError"),
                 )
-              : Effect.sync(() => [
+              : Effect.all([
                   uriArgument(pair[0], "URLSearchParams name"),
                   uriArgument(pair[1], "URLSearchParams value"),
                 ]),
@@ -1878,7 +1883,7 @@ class Interpreter<R> {
         return new SandboxURLSearchParams(new URLSearchParams(entries))
       }
       if (isSandboxValue(init)) return new SandboxURLSearchParams(new URLSearchParams())
-      const data = boundedData(init, "new URLSearchParams input")
+      const data = yield* Effect.fromResult(boundedData(init, "new URLSearchParams input"))
       if (!Predicate.isObjectOrArray(data)) {
         return yield* new InterpreterRuntimeError(
           "new URLSearchParams(...) expects a query string, data object, array of pairs, or URLSearchParams.",
@@ -1902,7 +1907,9 @@ class Interpreter<R> {
       // function operand is a legitimate question, not an error), so it is handled before
       // the data-only operand check.
       if (operator === "instanceof") return yield* instanceofValue(lhs, rhs, node)
-      return boundedData(yield* this.applyBinaryOperator(operator, lhs, rhs, node), "Binary expression result")
+      return yield* Effect.fromResult(
+        boundedData(yield* this.applyBinaryOperator(operator, lhs, rhs, node), "Binary expression result"),
+      )
     })
   }
 
@@ -2054,7 +2061,7 @@ class Interpreter<R> {
         default:
           return yield* new InterpreterRuntimeError(`Unsupported unary operator '${operator}'.`, node)
       }
-      return boundedData(result, "Unary expression result")
+      return yield* Effect.fromResult(boundedData(result, "Unary expression result"))
     })
   }
 
@@ -2070,19 +2077,21 @@ class Interpreter<R> {
         const name = yield* getString(left, "name")
         if (operator === "=") return yield* this.setIdentifierValue(name, rightValue, left)
         const current = yield* this.getIdentifierValue(name, left)
-        const next = boundedData(
-          yield* this.applyCompoundAssignment(operator, current, rightValue, node),
-          "Assignment result",
+        const next = yield* Effect.fromResult(
+          boundedData(yield* this.applyCompoundAssignment(operator, current, rightValue, node), "Assignment result"),
         )
         return yield* this.setIdentifierValue(name, next, left)
       }
       if (left.type === "MemberExpression") {
         if (operator === "=") return yield* this.writeMember(left, rightValue)
         return yield* this.modifyMember(left, (current) =>
-          Effect.map(this.applyCompoundAssignment(operator, current, rightValue, node), (value) => {
-            const next = boundedData(value, "Assignment result")
-            return { write: true, next, result: next }
-          }),
+          Effect.flatMap(this.applyCompoundAssignment(operator, current, rightValue, node), (value) =>
+            Effect.map(Effect.fromResult(boundedData(value, "Assignment result")), (next) => ({
+              write: true,
+              next,
+              result: next,
+            })),
+          ),
         )
       }
       return yield* new InterpreterRuntimeError("Assignment target must be an Identifier or MemberExpression.", left)
@@ -2187,16 +2196,17 @@ class Interpreter<R> {
         if (callable.namespace === "Object" && args[0] instanceof ToolReference) {
           return yield* this.invokeObjectMethodOnTools(callable.name, args[0], node)
         }
-        return boundedData(
-          yield* invokeGlobalMethod(callable, args, node),
-          `${callable.namespace}.${callable.name} result`,
+        return yield* Effect.fromResult(
+          boundedData(yield* invokeGlobalMethod(callable, args, node), `${callable.namespace}.${callable.name} result`),
         )
       }
       if (callable instanceof CoercionFunction) {
-        return boundedData(invokeCoercion(callable, args, node), `${callable.name} result`)
+        return yield* Effect.fromResult(
+          boundedData(yield* invokeCoercion(callable, args, node), `${callable.name} result`),
+        )
       }
       if (callable instanceof UriFunction) {
-        return invokeUriFunction(callable, args, node)
+        return yield* invokeUriFunction(callable, args, node)
       }
       // `Error("msg")` without `new` constructs an error exactly like `new Error("msg")`, as in JS.
       if (callable instanceof ErrorConstructorReference) {
@@ -2214,9 +2224,11 @@ class Interpreter<R> {
     name: string,
     ref: ToolReference,
     node: AstNode,
-  ): Effect.Effect<unknown, InterpreterRuntimeError> {
+  ): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> {
     if (name === "keys") {
-      return Effect.sync(() => boundedData(this.enumerableKeys(ref)!, "Object.keys result"))
+      return Effect.flatMap(this.toolKeys(ref.path), (keys) =>
+        Effect.fromResult(boundedData(keys, "Object.keys result")),
+      )
     }
     return Effect.fail(
       new InterpreterRuntimeError(
@@ -2232,20 +2244,23 @@ class Interpreter<R> {
     name: string,
     args: Array<unknown>,
     node: AstNode,
-  ): Effect.Effect<void, InterpreterRuntimeError> {
+  ): Effect.Effect<void, InterpreterRuntimeError | ToolRuntimeError> {
     if (!consoleMethods.has(name)) {
       return Effect.fail(new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node))
     }
-    return Effect.sync(() => {
-      this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args)))
-    })
+    return Effect.suspend(() =>
+      Effect.map(Effect.fromResult(this.formatConsoleMessage(name, args)), (message) => {
+        this.logs.push(publicErrorMessage(message))
+      }),
+    )
   }
 
-  private formatConsoleMessage(name: string, args: Array<unknown>): string {
-    if (name === "dir") return args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0])
+  // Only console.table can fail: its data goes through the data checkpoint.
+  private formatConsoleMessage(name: string, args: Array<unknown>): Result.Result<string, ToolRuntimeError> {
+    if (name === "dir") return Result.succeed(args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0]))
     if (name === "table") return this.formatConsoleTable(args[0], args[1])
     const prefix = name === "warn" ? "[warn] " : name === "error" ? "[error] " : name === "debug" ? "[debug] " : ""
-    return `${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`
+    return Result.succeed(`${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`)
   }
 
   // Console arguments format deeply and totally: values render as a debugger would show them
@@ -2310,27 +2325,33 @@ class Interpreter<R> {
     )
   }
 
-  private formatConsoleTable(value: unknown, columnsArgument: unknown): string {
-    if (value === undefined) return "undefined"
+  private formatConsoleTable(value: unknown, columnsArgument: unknown): Result.Result<string, ToolRuntimeError> {
+    if (value === undefined) return Result.succeed("undefined")
     // Sandbox values are legitimate table data (cells render their friendly forms); only
     // truly opaque references (functions, tools, promises) collapse to the marker.
-    if (containsOpaqueReference(value)) return "[CodeMode reference]"
-    const data = boundedData(value, "console.table argument")
-    const columns = this.consoleTableColumns(columnsArgument)
-    const rows = this.consoleTableRows(data, columns)
-    const keys = Option.getOrElse(columns, () => Arr.dedupe(rows.flatMap((row) => Object.keys(row.values))))
-    const header = ["(index)", ...keys].join("\t")
-    return [
-      header,
-      ...rows.map((row) => [row.index, ...keys.map((key) => this.formatConsoleTableCell(row.values[key]))].join("\t")),
-    ].join("\n")
+    if (containsOpaqueReference(value)) return Result.succeed("[CodeMode reference]")
+    return Result.flatMap(boundedData(value, "console.table argument"), (data) =>
+      Result.map(this.consoleTableColumns(columnsArgument), (columns) => {
+        const rows = this.consoleTableRows(data, columns)
+        const keys = Option.getOrElse(columns, () => Arr.dedupe(rows.flatMap((row) => Object.keys(row.values))))
+        const header = ["(index)", ...keys].join("\t")
+        return [
+          header,
+          ...rows.map((row) =>
+            [row.index, ...keys.map((key) => this.formatConsoleTableCell(row.values[key]))].join("\t"),
+          ),
+        ].join("\n")
+      }),
+    )
   }
 
   // The explicit column list of console.table(data, columns); None shows every column.
-  private consoleTableColumns(value: unknown): Option.Option<ReadonlyArray<string>> {
-    if (value === undefined || containsRuntimeReference(value)) return Option.none()
-    const columns = copyOut(copyIn(value, "console.table columns"), true)
-    return Array.isArray(columns) ? Option.some(columns.map((column) => String(column))) : Option.none()
+  private consoleTableColumns(value: unknown): Result.Result<Option.Option<ReadonlyArray<string>>, ToolRuntimeError> {
+    if (value === undefined || containsRuntimeReference(value)) return Result.succeedNone
+    return Result.map(copyIn(value, "console.table columns"), (copied) => {
+      const columns = copyOut(copied, true)
+      return Array.isArray(columns) ? Option.some(columns.map((column) => String(column))) : Option.none()
+    })
   }
 
   private consoleTableRows(
@@ -2550,16 +2571,16 @@ class Interpreter<R> {
       return invokeStringMethod(ref.receiver, ref.name, args, node)
     }
     if (typeof ref.receiver === "number") {
-      return Effect.succeed(invokeNumberMethod(ref.receiver, ref.name, args, node))
+      return invokeNumberMethod(ref.receiver, ref.name, args, node)
     }
     if (Array.isArray(ref.receiver)) {
       return this.invokeArrayMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxDate) {
-      return Effect.succeed(invokeDateMethod(ref.receiver, ref.name, node))
+      return invokeDateMethod(ref.receiver, ref.name, node)
     }
     if (ref.receiver instanceof SandboxRegExp) {
-      return Effect.succeed(invokeRegExpMethod(ref.receiver, ref.name, args, node))
+      return invokeRegExpMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxMap) {
       return this.invokeMapMethod(ref.receiver, ref.name, args, node)
@@ -2568,7 +2589,7 @@ class Interpreter<R> {
       return this.invokeSetMethod(ref.receiver, ref.name, args, node)
     }
     if (ref.receiver instanceof SandboxURL) {
-      return Effect.succeed(invokeURLMethod(ref.receiver, ref.name, node))
+      return invokeURLMethod(ref.receiver, ref.name, node)
     }
     if (ref.receiver instanceof SandboxURLSearchParams) {
       return this.invokeURLSearchParamsMethod(ref.receiver, ref.name, args, node)
@@ -2634,12 +2655,14 @@ class Interpreter<R> {
       for (const match of matches) {
         output.push(
           value.slice(end, match.offset),
-          coerceToString(boundedData(yield* apply(match.args), `String.${name} replacer result`)),
+          coerceToString(
+            yield* Effect.fromResult(boundedData(yield* apply(match.args), `String.${name} replacer result`)),
+          ),
         )
         end = match.offset + match.match.length
       }
       output.push(value.slice(end))
-      return boundedData(output.join(""), `String.${name} result`)
+      return yield* Effect.fromResult(boundedData(output.join(""), `String.${name} result`))
     })
   }
 
@@ -2659,9 +2682,9 @@ class Interpreter<R> {
     }
     return Effect.succeed((callbackArgs: Array<unknown>) =>
       callback instanceof CoercionFunction
-        ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
+        ? invokeCoercion(callback, callbackArgs, node)
         : callback instanceof UriFunction
-          ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
+          ? invokeUriFunction(callback, callbackArgs, node)
           : this.invokeFunction(callback, callbackArgs),
     )
   }
@@ -2750,7 +2773,8 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<unknown, unknown, R> {
-    const arg = (index: number): string => uriArgument(args[index], `URLSearchParams.${name} argument ${index + 1}`)
+    const arg = (index: number): Effect.Effect<string, ToolRuntimeError> =>
+      uriArgument(args[index], `URLSearchParams.${name} argument ${index + 1}`)
     const requireArgs = (count: number): Effect.Effect<void, InterpreterRuntimeError> =>
       args.length < count
         ? Effect.fail(
@@ -2762,44 +2786,34 @@ class Interpreter<R> {
         : Effect.void
     switch (name) {
       case "append":
-        return Effect.andThen(
-          requireArgs(2),
-          Effect.sync(() => {
-            target.params.append(arg(0), arg(1))
-            return undefined
-          }),
+        return Effect.andThen(requireArgs(2), () =>
+          Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+            Effect.sync(() => target.params.append(key, item)),
+          ),
         )
       case "delete":
-        return Effect.andThen(
-          requireArgs(1),
-          Effect.sync(() => {
-            if (args[1] !== undefined) target.params.delete(arg(0), arg(1))
-            else target.params.delete(arg(0))
-            return undefined
-          }),
+        return Effect.andThen(requireArgs(1), () =>
+          args[1] !== undefined
+            ? Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+                Effect.sync(() => target.params.delete(key, item)),
+              )
+            : Effect.flatMap(arg(0), (key) => Effect.sync(() => target.params.delete(key))),
         )
       case "get":
-        return Effect.andThen(
-          requireArgs(1),
-          Effect.sync(() => target.params.get(arg(0))),
-        )
+        return Effect.andThen(requireArgs(1), () => Effect.map(arg(0), (key) => target.params.get(key)))
       case "getAll":
-        return Effect.andThen(
-          requireArgs(1),
-          Effect.sync(() => target.params.getAll(arg(0))),
-        )
+        return Effect.andThen(requireArgs(1), () => Effect.map(arg(0), (key) => target.params.getAll(key)))
       case "has":
-        return Effect.andThen(
-          requireArgs(1),
-          Effect.sync(() => (args[1] !== undefined ? target.params.has(arg(0), arg(1)) : target.params.has(arg(0)))),
+        return Effect.andThen(requireArgs(1), () =>
+          args[1] !== undefined
+            ? Effect.map(Effect.all([arg(0), arg(1)]), ([key, item]) => target.params.has(key, item))
+            : Effect.map(arg(0), (key) => target.params.has(key)),
         )
       case "set":
-        return Effect.andThen(
-          requireArgs(2),
-          Effect.sync(() => {
-            target.params.set(arg(0), arg(1))
-            return undefined
-          }),
+        return Effect.andThen(requireArgs(2), () =>
+          Effect.flatMap(Effect.all([arg(0), arg(1)]), ([key, item]) =>
+            Effect.sync(() => target.params.set(key, item)),
+          ),
         )
       case "sort":
         return Effect.sync(() => {
@@ -2850,7 +2864,7 @@ class Interpreter<R> {
             )
           }
           // The data checkpoint rejects opaque elements; the elements themselves render unchanged.
-          boundedData(target, "Array.join input")
+          yield* Effect.fromResult(boundedData(target, "Array.join input"))
           return target.map((item) => coerceToString(item ?? "")).join(separator)
         }
         case "includes":
@@ -2948,9 +2962,9 @@ class Interpreter<R> {
       // are synchronous; only CodeModeFunctions can await tool calls.
       const apply = (callbackArgs: Array<unknown>): Effect.Effect<unknown, unknown, R> =>
         callback instanceof CoercionFunction
-          ? Effect.succeed(invokeCoercion(callback, callbackArgs, node))
+          ? invokeCoercion(callback, callbackArgs, node)
           : callback instanceof UriFunction
-            ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
+            ? invokeUriFunction(callback, callbackArgs, node)
             : this.invokeFunction(callback, callbackArgs)
       // Iterate a snapshot taken at call time so a callback that mutates the array can't
       // self-extend the loop - matching JS, where elements appended during iteration are not visited.
@@ -3195,7 +3209,7 @@ class Interpreter<R> {
           const raw = yield* this.evaluateExpression(yield* asNode(expressions[index], "expressions"))
           // The preserving checkpoint keeps sandbox values intact, so coerceToString renders
           // them directly (ISO date, /regex/ literal form) instead of a JSON-serialized husk.
-          output += coerceToString(boundedData(raw, "Template interpolation"))
+          output += coerceToString(yield* Effect.fromResult(boundedData(raw, "Template interpolation")))
         }
       }
 
@@ -3511,16 +3525,14 @@ class Interpreter<R> {
           return yield* new InterpreterRuntimeError(`URL.${property} is read-only.`, node).as("TypeError")
         }
         const url = reference.target.url
-        // An invalid value makes the host URL setter throw; an interpreter or tool-runtime error
-        // raised while reading the value keeps its own diagnostic.
+        // A value that fails the data checkpoint keeps its own diagnostic; an invalid value makes
+        // the host URL setter throw.
+        const text = yield* uriArgument(next, `URL.${property} value`)
         return yield* Effect.try({
           try: () => {
-            url[property] = uriArgument(next, `URL.${property} value`)
+            url[property] = text
           },
-          catch: (error) =>
-            error instanceof InterpreterRuntimeError || error instanceof ToolRuntimeError
-              ? error
-              : new InterpreterRuntimeError(`URL.${property} received an invalid value.`, node).as("TypeError"),
+          catch: () => new InterpreterRuntimeError(`URL.${property} received an invalid value.`, node).as("TypeError"),
         })
       }
       const target = reference.target
@@ -3670,7 +3682,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     const program = yield* parseProgram(options.code)
     const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, logs)
     const value = yield* interpreter.run(program)
-    const copied = copyOut(copyIn(value, "Execution result"), true)
+    const copied = copyOut(yield* Effect.fromResult(copyIn(value, "Execution result")), true)
     // copyOut produces JSON data; only a sparse array (holes are not JSON) needs JSON's reading.
     const result: DataValue = isJson(copied) ? copied : Option.getOrNull(toJsonValue(copied))
     return {

@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Predicate, Result, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -171,9 +171,17 @@ export const isBlockedMember = (name: string): boolean => HashSet.has(blockedMem
  *
  * Both modes reject un-awaited promises with an await-hinting diagnostic.
  */
-export const copyIn = (value: unknown, label: string, preserveSandboxValues = false): unknown =>
-  copyBounded(value, label, 0, new WeakSet(), preserveSandboxValues)
+export const copyIn = (
+  value: unknown,
+  label: string,
+  preserveSandboxValues = false,
+): Result.Result<unknown, ToolRuntimeError> => copyBounded(value, label, 0, new WeakSet(), preserveSandboxValues)
 
+const invalidData = (message: string): Result.Result<never, ToolRuntimeError> =>
+  Result.fail(new ToolRuntimeError("InvalidDataValue", message))
+
+// The walk is synchronous and stops at the first failure: it runs on every binary expression
+// result, so it must not pay for an Effect step per node.
 const copyBounded = (
   value: unknown,
   label: string,
@@ -181,9 +189,9 @@ const copyBounded = (
   /** Identity guard over the objects on the current path; entries leave again on the way out. */
   seen: WeakSet<object>,
   preserveSandboxValues: boolean,
-): unknown => {
+): Result.Result<unknown, ToolRuntimeError> => {
   if (depth > MAX_VALUE_DEPTH) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`)
+    return invalidData(`${label} exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`)
   }
   if (
     Predicate.isNullish(value) ||
@@ -195,18 +203,17 @@ const copyBounded = (
     // JSON.stringify already does at any tool boundary.
     typeof value === "number"
   ) {
-    return value
+    return Result.succeed(value)
   }
 
   if (typeof value !== "object") {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} must contain data only.`)
+    return invalidData(`${label} must contain data only.`)
   }
 
   // An un-awaited promise never crosses a data checkpoint as `{}`; the diagnostic tells the
   // model exactly how to fix the program instead.
   if (value instanceof SandboxPromise) {
-    throw new ToolRuntimeError(
-      "InvalidDataValue",
+    return invalidData(
       `${label} contains an un-awaited Promise; await tool calls (e.g. \`const result = await tools.ns.tool(...)\`) before using their results.`,
     )
   }
@@ -223,26 +230,36 @@ const copyBounded = (
       value instanceof SandboxURL ||
       value instanceof SandboxURLSearchParams
     ) {
-      return value
+      return Result.succeed(value)
     }
     // Host instances cannot normally reach an intra-sandbox checkpoint (tool results cross
     // the boundary first), but wrap them defensively rather than degrading to JSON forms.
-    if (value instanceof Date) return new SandboxDate(value.getTime())
-    if (value instanceof RegExp) return new SandboxRegExp(value.source, value.flags)
+    if (value instanceof Date) return Result.succeed(new SandboxDate(value.getTime()))
+    if (value instanceof RegExp) return Result.succeed(new SandboxRegExp(value.source, value.flags))
     if (value instanceof Map) {
       const wrapped = new SandboxMap()
       for (const [key, item] of value.entries()) {
-        wrapped.map.set(copyBounded(key, label, depth + 1, seen, true), copyBounded(item, label, depth + 1, seen, true))
+        const copiedKey = copyBounded(key, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedKey)) return copiedKey
+        const copiedItem = copyBounded(item, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedItem)) return copiedItem
+        wrapped.map.set(copiedKey.success, copiedItem.success)
       }
-      return wrapped
+      return Result.succeed(wrapped)
     }
     if (value instanceof Set) {
       const wrapped = new SandboxSet()
-      for (const item of value.values()) wrapped.set.add(copyBounded(item, label, depth + 1, seen, true))
-      return wrapped
+      for (const item of value.values()) {
+        const copiedItem = copyBounded(item, label, depth + 1, seen, true)
+        if (Result.isFailure(copiedItem)) return copiedItem
+        wrapped.set.add(copiedItem.success)
+      }
+      return Result.succeed(wrapped)
     }
-    if (value instanceof URL) return new SandboxURL(new URL(value.href))
-    if (value instanceof URLSearchParams) return new SandboxURLSearchParams(new URLSearchParams(value))
+    if (value instanceof URL) return Result.succeed(new SandboxURL(new URL(value.href)))
+    if (value instanceof URLSearchParams) {
+      return Result.succeed(new SandboxURLSearchParams(new URLSearchParams(value)))
+    }
   }
 
   // Sandbox value types (and their host counterparts, which a host tool may legitimately
@@ -250,13 +267,13 @@ const copyBounded = (
   // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}. An invalid
   // date has no ISO form: DateTime.make yields None and the JSON value is null, as in toJSON().
   if (value instanceof SandboxDate) {
-    return Option.getOrNull(Option.map(DateTime.make(value.time), DateTime.formatIso))
+    return Result.succeed(Option.getOrNull(Option.map(DateTime.make(value.time), DateTime.formatIso)))
   }
   if (value instanceof Date) {
-    return Option.getOrNull(Option.map(DateTime.make(value), DateTime.formatIso))
+    return Result.succeed(Option.getOrNull(Option.map(DateTime.make(value), DateTime.formatIso)))
   }
-  if (value instanceof SandboxURL) return value.url.href
-  if (value instanceof URL) return value.href
+  if (value instanceof SandboxURL) return Result.succeed(value.url.href)
+  if (value instanceof URL) return Result.succeed(value.href)
   if (
     value instanceof SandboxRegExp ||
     value instanceof SandboxMap ||
@@ -267,35 +284,46 @@ const copyBounded = (
     value instanceof Set ||
     value instanceof URLSearchParams
   ) {
-    return makeSafeObject()
+    return Result.succeed(makeSafeObject())
   }
 
   if (seen.has(value)) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} contains a circular value.`)
+    return invalidData(`${label} contains a circular value.`)
   }
 
   seen.add(value)
 
   if (Array.isArray(value)) {
-    const copied = value.map((item) => copyBounded(item, label, depth + 1, seen, preserveSandboxValues))
+    // Array.prototype.map keeps holes as holes. After the first failure the rest is not walked.
+    let failure = Option.none<ToolRuntimeError>()
+    const copied = value.map((item) => {
+      if (Option.isSome(failure)) return item
+      const next = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+      if (Result.isSuccess(next)) return next.success
+      failure = Option.some(next.failure)
+      return item
+    })
+    if (Option.isSome(failure)) return Result.fail(failure.value)
     seen.delete(value)
-    return copied
+    return Result.succeed(copied)
   }
 
   const prototype = Object.getPrototypeOf(value)
   if (prototype !== Object.prototype && Predicate.isNotNull(prototype)) {
-    throw new ToolRuntimeError("InvalidDataValue", `${label} must contain plain objects only.`)
+    return invalidData(`${label} must contain plain objects only.`)
   }
 
   const copied = makeSafeObject()
   for (const [key, item] of Object.entries(value)) {
     if (isBlockedMember(key)) {
-      throw new ToolRuntimeError("InvalidDataValue", `${label} contains blocked property '${key}'.`)
+      return invalidData(`${label} contains blocked property '${key}'.`)
     }
-    copied[key] = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+    const copiedItem = copyBounded(item, label, depth + 1, seen, preserveSandboxValues)
+    if (Result.isFailure(copiedItem)) return copiedItem
+    copied[key] = copiedItem.success
   }
   seen.delete(value)
-  return copied
+  return Result.succeed(copied)
 }
 
 export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
@@ -653,7 +681,10 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
  * function in JS). An unknown path is an `UnknownTool` error pointing at the working
  * discovery idioms, mirroring how calling an unknown tool fails.
  */
-const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): ReadonlyArray<string> => {
+const namespaceKeys = <R>(
+  tools: HostTools<R>,
+  path: ReadonlyArray<string>,
+): Effect.Effect<ReadonlyArray<string>, ToolRuntimeError> => {
   let value: HostTool<R> | Definition<R> | HostTools<R> = tools
   for (const segment of path) {
     if (
@@ -662,14 +693,16 @@ const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): Rea
       isDefinition(value) ||
       !Object.hasOwn(value, segment)
     ) {
-      throw new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
-        "Object.keys(tools) lists the available namespaces; tools.$codemode.search({ query }) finds described tools.",
-      ])
+      return Effect.fail(
+        new ToolRuntimeError("UnknownTool", `Unknown tool namespace '${path.join(".")}'.`, [
+          "Object.keys(tools) lists the available namespaces; tools.$codemode.search({ query }) finds described tools.",
+        ]),
+      )
     }
     value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
   }
-  if (typeof value === "function" || isDefinition(value)) return []
-  return Object.keys(value)
+  if (typeof value === "function" || isDefinition(value)) return Effect.succeed([])
+  return Effect.succeed(Object.keys(value))
 }
 
 const resolve = <R>(
@@ -705,7 +738,7 @@ export type ToolRuntime<R = never> = {
   readonly calls: Array<ToolCall>
   readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
-  readonly keys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
+  readonly keys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>
 }
 
 export const make = <R>(
@@ -747,11 +780,15 @@ export const make = <R>(
     })
   }
 
-  const decodeOutput = (value: unknown, name: string) =>
-    Effect.try({
-      try: () => copyIn(value, `Result from tool '${name}'`),
-      catch: () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`),
-    })
+  // Any failure to copy a tool result is an invalid output. A hostile host value can also throw
+  // while the walk reads it (a Proxy trap, a getter), so the walk runs inside Effect.try.
+  const decodeOutput = (value: unknown, name: string): Effect.Effect<unknown, ToolRuntimeError> => {
+    const invalidOutput = () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`)
+    return Effect.try({ try: () => copyIn(value, `Result from tool '${name}'`), catch: invalidOutput }).pipe(
+      Effect.flatMap(Effect.fromResult),
+      Effect.mapError(invalidOutput),
+    )
+  }
 
   const recordCall = (call: ToolCall): Effect.Effect<number, ToolRuntimeError> =>
     Effect.gen(function* () {
@@ -772,7 +809,9 @@ export const make = <R>(
     invoke: (path, args) =>
       Effect.gen(function* () {
         const name = path.join(".")
-        const externalArgs = args.map((arg) => copyOut(copyIn(arg, `Arguments for tool '${name}'`)))
+        const externalArgs = yield* Effect.forEach(args, (arg) =>
+          Effect.map(Effect.fromResult(copyIn(arg, `Arguments for tool '${name}'`)), (copied) => copyOut(copied)),
+        )
         const call = { name }
         const recordAndObserve = (input: unknown) =>
           recordCall(call).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
