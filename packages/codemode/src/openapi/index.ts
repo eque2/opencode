@@ -1,6 +1,6 @@
 import { HashSet } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { make, type Definition } from "../tool.js"
+import { isDefinition, make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
 import {
   componentDefinitions,
@@ -12,6 +12,7 @@ import {
   operationOutput,
   operationPath,
   operationSecurityRequirements,
+  own,
   securityRequirements,
   securitySchemes,
   specServerUrl,
@@ -46,7 +47,7 @@ export const fromSpec = (options: Options): Result => {
   let used = HashSet.empty<string>()
   let namespaces = HashSet.empty<string>()
   const skipped: Array<Skipped> = []
-  const tools = Object.create(null) as Tools
+  const tools = emptyTools()
 
   for (const [path, pathValue] of Object.entries(paths)) {
     if (!isRecord(pathValue)) continue
@@ -118,6 +119,11 @@ export const fromSpec = (options: Options): Result => {
   return { tools, skipped }
 }
 
+// Tool names come from the spec, so the tree is prototype-free: a segment such as
+// `constructor` never reads an inherited member.
+// eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
+const emptyTools = (): Tools => Object.create(null)
+
 const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definition<HttpClient.HttpClient>): void => {
   const [head, ...rest] = path
   if (head === undefined) return
@@ -125,9 +131,12 @@ const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definiti
     tools[head] = definition
     return
   }
-  const child = tools[head]
-  if (child === undefined || !isRecord(child) || child._tag === "CodeModeTool") {
-    tools[head] = Object.create(null) as Tools
+  const child = own(tools, head)
+  if (child !== undefined && !isDefinition<HttpClient.HttpClient>(child)) {
+    setTool(child, rest, definition)
+    return
   }
-  setTool(tools[head] as Tools, rest, definition)
+  const namespace = emptyTools()
+  tools[head] = namespace
+  setTool(namespace, rest, definition)
 }

@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Schema, Stream } from "effect"
+import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
 import { isRecord, own } from "./spec.js"
@@ -31,10 +31,13 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
     const text = yield* readResponseBody(response, plan)
     const mediaType = response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase()
     const json = mediaType === "application/json" || mediaType?.endsWith("+json") === true
-    const decoded = text === "" ? Option.some(null) : json ? decodeJson(text) : Option.none()
-    const parsed = json ? Option.getOrElse(decoded, () => text) : text === "" ? null : text
+    // An empty body is absent; the program receives it as JSON null.
+    const body: Option.Option<unknown> = text === "" ? Option.none() : json ? decodeJson(text) : Option.some(text)
     if (response.status < 200 || response.status >= 300) {
-      const rendered = typeof parsed === "string" ? parsed : (JSON.stringify(parsed) ?? "")
+      const rendered = Option.match(body, {
+        onNone: () => text,
+        onSome: (value) => (typeof value === "string" ? value : (JSON.stringify(value) ?? "")),
+      })
       const summary =
         rendered === "" || rendered === "null"
           ? "no response body"
@@ -45,10 +48,10 @@ export const invoke = (plan: Plan, input: unknown): Effect.Effect<unknown, unkno
         toolError(`${plan.operation.method} ${plan.operation.path} failed with HTTP ${response.status}: ${summary}`),
       )
     }
-    if (json && Option.isNone(decoded)) {
+    if (json && text !== "" && Option.isNone(body)) {
       return yield* Effect.fail(toolError(`${plan.operation.method} ${plan.operation.path} returned malformed JSON.`))
     }
-    return parsed
+    return Option.getOrNull(body)
   })
 
 const buildRequest = (
@@ -236,9 +239,13 @@ const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string 
     url = url.replaceAll(`{${field.name}}`, fieldValue)
   }
   const unresolved = url.match(/\{[^{}]+\}/)
-  if (unresolved !== null) return toolError(`Unresolved path parameter ${unresolved[0]}.`)
+  if (Predicate.isNotNull(unresolved)) return toolError(`Unresolved path parameter ${unresolved[0]}.`)
   return url
 }
+
+/** A value with one unambiguous string form in a path, query, or header. */
+const isScalar = (item: unknown): item is string | number | boolean | null =>
+  Predicate.isNull(item) || Predicate.isString(item) || Predicate.isNumber(item) || Predicate.isBoolean(item)
 
 const serializeSimple = (
   field: Plan["fields"][number],
@@ -246,9 +253,9 @@ const serializeSimple = (
   encode: (value: string) => string,
 ): string | ToolError => {
   const scalar = (item: unknown): string | ToolError =>
-    item !== null && typeof item !== "string" && typeof item !== "number" && typeof item !== "boolean"
-      ? toolError(`Parameter '${field.inputName}' contains an unsupported nested value.`)
-      : encode(String(item))
+    isScalar(item)
+      ? encode(String(item))
+      : toolError(`Parameter '${field.inputName}' contains an unsupported nested value.`)
   if (Array.isArray(value)) {
     const items = value.map(scalar)
     const invalid = items.find((item): item is ToolError => item instanceof ToolError)
@@ -273,7 +280,7 @@ const serializeQuery = (
     if (!isRecord(value)) return toolError(`Deep-object parameter '${field.inputName}' must be an object.`)
     return Object.entries(value).reduce<HttpClientRequest.HttpClientRequest | ToolError>((current, [name, item]) => {
       if (current instanceof ToolError) return current
-      if (item === undefined || (item !== null && typeof item === "object")) {
+      if (!isScalar(item)) {
         return toolError(`Deep-object parameter '${field.inputName}' contains an unsupported nested value.`)
       }
       return HttpClientRequest.appendUrlParam(current, `${field.name}[${name}]`, String(item))
@@ -283,7 +290,7 @@ const serializeQuery = (
     const rendered = serializeSimple(field, value, String)
     if (rendered instanceof ToolError) return rendered
     if (!field.explode) return HttpClientRequest.appendUrlParam(request, field.name, rendered)
-    if (value.some((item) => item === undefined || (item !== null && typeof item === "object"))) {
+    if (!value.every(isScalar)) {
       return toolError(`Query parameter '${field.inputName}' contains an unsupported nested value.`)
     }
     return value.reduce((current, item) => HttpClientRequest.appendUrlParam(current, field.name, String(item)), request)
@@ -291,7 +298,7 @@ const serializeQuery = (
   if (isRecord(value) && field.explode) {
     return Object.entries(value).reduce<HttpClientRequest.HttpClientRequest | ToolError>((current, [name, item]) => {
       if (current instanceof ToolError) return current
-      if (item === undefined || (item !== null && typeof item === "object")) {
+      if (!isScalar(item)) {
         return toolError(`Query parameter '${field.inputName}' contains an unsupported nested value.`)
       }
       return HttpClientRequest.appendUrlParam(current, name, String(item))

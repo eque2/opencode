@@ -1,4 +1,4 @@
-import { Array as Arr, HashSet } from "effect"
+import { Array as Arr, HashSet, Option, Predicate } from "effect"
 import { fromSchemaOpenApi3_0, fromSchemaOpenApi3_1 } from "effect/JsonSchema"
 import type { JsonSchema } from "../tool.js"
 import { isBlockedMember } from "../tool-runtime.js"
@@ -16,8 +16,7 @@ export const methods = HashSet.make("get", "put", "post", "delete", "options", "
 const parameterLocations = ["path", "query", "header"] as const
 const ignoredHeaderParameters = HashSet.make("accept", "content-type", "authorization")
 
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
+export const isRecord = (value: unknown): value is Record<string, unknown> => Predicate.isObject(value)
 
 const asArray = (value: unknown): ReadonlyArray<unknown> => (Array.isArray(value) ? value : [])
 
@@ -441,7 +440,7 @@ export const specServerUrl = (source: Record<string, unknown>): Parsed<string> =
 export const validateBaseUrl = (value: string): Parsed<string> => {
   if (!/^https?:\/\//i.test(value)) return { ok: false, reason: `server URL '${value}' is not an absolute HTTP(S) URL` }
   const url = URL.parse(value)
-  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
+  if (Predicate.isNull(url) || (url.protocol !== "http:" && url.protocol !== "https:")) {
     return { ok: false, reason: `server URL '${value}' is not an absolute HTTP(S) URL` }
   }
   if (url.search !== "" || url.hash !== "") {
@@ -450,22 +449,24 @@ export const validateBaseUrl = (value: string): Parsed<string> => {
   return { ok: true, value }
 }
 
+const scopeList = (scopes: unknown): Option.Option<ReadonlyArray<string>> => {
+  if (!Array.isArray(scopes)) return Option.none()
+  const parsed = scopes.filter(Predicate.isString)
+  return parsed.length === scopes.length ? Option.some(parsed) : Option.none()
+}
+
 export const securityRequirements = (value: unknown): Parsed<ReadonlyArray<SecurityRequirement>> => {
   if (value === undefined) return { ok: true, value: [] }
   if (!Array.isArray(value)) return { ok: false, reason: "security declaration is not an array" }
   const requirements: Array<SecurityRequirement> = []
   for (const item of value) {
     if (!isRecord(item)) return { ok: false, reason: "security requirement is not an object" }
-    const requirement = Object.create(null) as Record<string, ReadonlyArray<string>>
-    for (const [name, scopes] of Object.entries(item)) {
-      if (!Array.isArray(scopes)) return { ok: false, reason: "security requirement scopes are not string arrays" }
-      const parsed = scopes.filter((scope): scope is string => typeof scope === "string")
-      if (parsed.length !== scopes.length) {
-        return { ok: false, reason: "security requirement scopes are not string arrays" }
-      }
-      requirement[name] = parsed
-    }
-    requirements.push(requirement)
+    const scopes = Option.all(
+      Object.entries(item).map(([name, declared]) => Option.map(scopeList(declared), (parsed) => [name, parsed] as const)),
+    )
+    if (Option.isNone(scopes)) return { ok: false, reason: "security requirement scopes are not string arrays" }
+    // Object.fromEntries defines own data properties, so a scheme named `__proto__` stays a plain key.
+    requirements.push(Object.fromEntries(scopes.value))
   }
   return { ok: true, value: requirements }
 }
