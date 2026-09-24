@@ -47,10 +47,7 @@ export type AtLeastOne<T> = {
 export const bearer = (options: ProviderAuthOption<"optional">, envVar: string | ReadonlyArray<string>): Auth => {
   if ("auth" in options && options.auth) return options.auth
   return (Array.isArray(envVar) ? envVar : [envVar])
-    .reduce(
-      (auth, name) => auth.orElse(Auth.config(name)),
-      Auth.optional(options.apiKey, "apiKey"),
-    )
+    .reduce((auth, name) => auth.orElse(Auth.config(name)), Auth.optional(options.apiKey, "apiKey"))
     .bearer()
 }
 

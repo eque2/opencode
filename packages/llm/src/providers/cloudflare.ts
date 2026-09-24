@@ -39,11 +39,7 @@ const nonEmpty = (value: string | undefined) =>
 
 // `AtLeastOne` rejects a missing pair at compile time; an empty string still
 // type-checks, so the configure call fails with a typed `LLMError` for it.
-const accountBaseURL = (
-  facade: string,
-  input: WorkersAIURL,
-  fromAccount: (accountId: string) => string,
-): string =>
+const accountBaseURL = (facade: string, input: WorkersAIURL, fromAccount: (accountId: string) => string): string =>
   nonEmpty(input.baseURL).pipe(
     Option.orElse(() => Option.map(nonEmpty(input.accountId), fromAccount)),
     Option.getOrThrowWith(() =>
