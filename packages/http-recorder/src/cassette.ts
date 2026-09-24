@@ -15,8 +15,15 @@ import {
 } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { encodeJson } from "./matching.js"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
-import { CassetteSchema, type Cassette, type CassetteMetadata, type Interaction } from "./schema.js"
+import {
+  CassetteMetadataSchema,
+  CassetteSchema,
+  type Cassette,
+  type CassetteMetadata,
+  type Interaction,
+} from "./schema.js"
 
 const DEFAULT_RECORDINGS_DIR = path.resolve(process.cwd(), "test", "fixtures", "recordings")
 
@@ -75,6 +82,10 @@ const cassettePath = (directory: string, name: string): Result.Result<string, In
 export const hasCassetteSync = (name: string, options: { readonly directory?: string } = {}) =>
   fs.existsSync(Result.getOrThrow(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name)))
 
+// Round-trip metadata through JSON so the stored value is exactly what the
+// cassette file holds: undefined fields drop and toJSON values serialize.
+const normalizeMetadata = Schema.decodeUnknownSync(Schema.fromJsonString(CassetteMetadataSchema))
+
 const buildCassette = (
   name: string,
   interactions: ReadonlyArray<Interaction>,
@@ -82,7 +93,7 @@ const buildCassette = (
   recordedAt: string,
 ): Cassette => ({
   version: 1,
-  metadata: { name, recordedAt, ...metadata },
+  metadata: normalizeMetadata(encodeJson({ name, recordedAt, ...metadata })),
   interactions,
 })
 

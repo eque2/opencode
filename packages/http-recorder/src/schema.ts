@@ -31,7 +31,7 @@ export const ResponseSnapshotSchema = Schema.Struct({
   bodyEncoding: Schema.optional(Schema.Literals(["text", "base64"])),
 }).annotate({ identifier: "ResponseSnapshot" })
 
-export const CassetteMetadataSchema = Schema.Record(Schema.String, Schema.Unknown)
+export const CassetteMetadataSchema = Schema.Record(Schema.String, Schema.Json)
 
 export const HttpInteractionSchema = Schema.Struct({
   transport: Schema.tag("http"),
