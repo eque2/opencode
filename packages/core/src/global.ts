@@ -15,9 +15,6 @@ const state = path.join(xdgState!, app)
 const tmp = path.join(os.tmpdir(), app)
 
 const paths = {
-  get home() {
-    return process.env.OPENCODE_TEST_HOME ?? os.homedir()
-  },
   data,
   bin: path.join(cache, "bin"),
   log: path.join(data, "log"),
@@ -61,7 +58,7 @@ export interface Interface {
 /** The default directories with the input on top. It reads no environment variable. */
 export function make(input: Partial<Interface> = {}): Interface {
   return {
-    home: Path.home,
+    home: os.homedir(),
     data: Path.data,
     cache: Path.cache,
     config: Path.config,
@@ -76,13 +73,14 @@ export function make(input: Partial<Interface> = {}): Interface {
 
 /**
  * The directories with the environment overrides, then the input, on top. The CLI and tests set
- * OPENCODE_CONFIG_DIR after start, so each build reads the live value. The variable is optional,
- * so a ConfigError is a defect.
+ * OPENCODE_TEST_HOME and OPENCODE_CONFIG_DIR after start, so each build reads the live values.
+ * The variables are optional, so a ConfigError is a defect.
  */
 const fromEnvironment = (input: Partial<Interface>) =>
   Effect.gen(function* () {
+    const home = Option.getOrElse(yield* FlagConfig.OPENCODE_TEST_HOME, () => os.homedir())
     const config = Option.getOrElse(yield* FlagConfig.OPENCODE_CONFIG_DIR, () => Path.config)
-    return Service.of(make({ config, ...input }))
+    return Service.of(make({ home, config, ...input }))
   }).pipe(Effect.orDie)
 
 const layer = Layer.effect(Service, fromEnvironment({}))
