@@ -1,4 +1,4 @@
-import { Formatter, Logger, type LogLevel } from "effect"
+import { Formatter, Logger, Predicate, type LogLevel } from "effect"
 import path from "path"
 import { Global } from "../global"
 import { runID } from "./shared"
@@ -36,9 +36,9 @@ function flatten(
 }
 
 function plain(input: unknown): input is Record<string, unknown> {
-  if (input === null || typeof input !== "object" || Array.isArray(input)) return false
+  if (!Predicate.isObject(input)) return false
   const prototype = Object.getPrototypeOf(input)
-  return prototype === Object.prototype || prototype === null
+  return prototype === Object.prototype || Predicate.isNull(prototype)
 }
 
 function format(input: unknown) {
