@@ -519,7 +519,7 @@ const mapUsage = (usage: OpenAIResponsesUsage | null | undefined) => {
 
 const mapFinishReason = (event: OpenAIResponsesEvent, hasFunctionCall: boolean): FinishReason => {
   const reason = event.response?.incomplete_details?.reason
-  if (reason === undefined || reason === null) return hasFunctionCall ? "tool-calls" : "stop"
+  if (Predicate.isNullish(reason)) return hasFunctionCall ? "tool-calls" : "stop"
   if (reason === "max_output_tokens") return "length"
   if (reason === "content_filter") return "content-filter"
   return hasFunctionCall ? "tool-calls" : "unknown"
@@ -580,7 +580,7 @@ const isReasoningItem = (
 // Round-trip the full item as the structured result so consumers can extract
 // outputs / sources / status without re-decoding.
 const hostedToolResult = (item: OpenAIResponsesStreamItem) => {
-  const isError = typeof item.error !== "undefined" && item.error !== null
+  const isError = Predicate.isNotNullish(item.error)
   return isError ? { type: "error" as const, value: item.error } : { type: "json" as const, value: item }
 }
 
@@ -643,8 +643,21 @@ const onReasoningDelta = (state: ParserState, event: OpenAIResponsesEvent): Step
 
 const onReasoningDone = (state: ParserState, _event: OpenAIResponsesEvent): StepResult => [state, NO_EVENTS]
 
-const reasoningMetadata = (item: OpenAIResponsesStreamItem & { id: string }) =>
-  openaiMetadata({ itemId: item.id, reasoningEncryptedContent: item.encrypted_content ?? null })
+// Reasoning metadata always carries `reasoningEncryptedContent`: the
+// provider's encrypted state, or JSON `null` while none has arrived. Code
+// holds it as an Option and the codec writes the `null`, which continuation
+// callers persist and send back.
+const OpenAIResponsesReasoningMetadata = Schema.Struct({
+  itemId: Schema.String,
+  reasoningEncryptedContent: Schema.OptionFromNullOr(Schema.String),
+}).annotate({ identifier: "OpenAIResponses.ReasoningMetadata" })
+const encodeReasoningMetadata = Schema.encodeSync(OpenAIResponsesReasoningMetadata)
+
+const reasoningMetadata = (itemId: string, encryptedContent: Option.Option<string>) =>
+  openaiMetadata(encodeReasoningMetadata({ itemId, reasoningEncryptedContent: encryptedContent }))
+
+const reasoningItemMetadata = (item: OpenAIResponsesStreamItem & { id: string }) =>
+  reasoningMetadata(item.id, Option.fromNullishOr(item.encrypted_content))
 
 // OpenAI Responses streams reasoning items in a stable order:
 //   `output_item.added` (reasoning) →
@@ -665,7 +678,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
     return [
       {
         ...state,
-        lifecycle: Lifecycle.reasoningStart(state.lifecycle, events, `${item.id}:0`, reasoningMetadata(item)),
+        lifecycle: Lifecycle.reasoningStart(state.lifecycle, events, `${item.id}:0`, reasoningItemMetadata(item)),
         reasoningItems: {
           ...state.reasoningItems,
           [item.id]: { encryptedContent: Option.fromNullishOr(item.encrypted_content), summaryParts: { 0: "active" } },
@@ -707,7 +720,7 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
           state.lifecycle,
           events,
           `${event.item_id}:0`,
-          openaiMetadata({ itemId: event.item_id, reasoningEncryptedContent: null }),
+          reasoningMetadata(event.item_id, Option.none()),
         ),
         reasoningItems: {
           ...state.reasoningItems,
@@ -733,7 +746,7 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
         closed,
         events,
         `${event.item_id}:${event.summary_index}`,
-        openaiMetadata({ itemId: event.item_id, reasoningEncryptedContent: Option.getOrNull(item.encryptedContent) }),
+        reasoningMetadata(event.item_id, item.encryptedContent),
       ),
       reasoningItems: {
         ...state.reasoningItems,
@@ -845,7 +858,7 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
 
   if (isReasoningItem(item)) {
     const events: LLMEvent[] = []
-    const providerMetadata = reasoningMetadata(item)
+    const providerMetadata = reasoningItemMetadata(item)
     const reasoningItem = state.reasoningItems[item.id]
     if (reasoningItem) {
       const lifecycle = Object.entries(reasoningItem.summaryParts)

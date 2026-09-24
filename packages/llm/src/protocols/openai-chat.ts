@@ -227,6 +227,10 @@ const lowerUserMessage = Effect.fn("OpenAIChat.lowerUserMessage")(function* (mes
   return { role: "user" as const, content }
 })
 
+// A tool-call-only assistant turn sends `content: null`. Code holds the
+// joined text as an Option and the codec writes the JSON `null`.
+const encodeAssistantContent = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))
+
 const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(function* (
   message: OpenAIChatRequestMessage,
 ) {
@@ -255,7 +259,9 @@ const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(func
       : openAICompatibleReasoningContent(message.native?.openaiCompatible)
   return {
     role: "assistant" as const,
-    content: content.length === 0 ? null : ProviderShared.joinText(content),
+    content: encodeAssistantContent(
+      content.length === 0 ? Option.none() : Option.some(ProviderShared.joinText(content)),
+    ),
     ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
     ...Option.match(reasoningContent, {
       onNone: () => ({}),
