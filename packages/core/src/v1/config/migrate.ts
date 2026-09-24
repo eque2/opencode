@@ -76,21 +76,18 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
 // Returns { permissions } for a spread, or {} when there is no rule, so an
 // empty V1 permission set leaves no V2 key.
 function permissions(info?: ConfigPermissionV1.Info, tools?: Readonly<Record<string, boolean>>) {
-  const rules: Array<{ action: string; resource: string; effect: ConfigPermissionV1.Action }> = Object.entries(
-    tools ?? {},
-  ).map(([action, enabled]) => ({
-    action: normalizeAction(action),
-    resource: "*",
-    effect: enabled ? ("allow" as const) : ("deny" as const),
-  }))
-  for (const [action, rule] of Object.entries(info ?? {})) {
-    if (!rule) continue
-    if (typeof rule === "string") {
-      rules.push({ action, resource: "*", effect: rule })
-      continue
-    }
-    rules.push(...Object.entries(rule).map(([resource, effect]) => ({ action, resource, effect })))
-  }
+  const rules: Array<{ action: string; resource: string; effect: ConfigPermissionV1.Action }> = [
+    ...Object.entries(tools ?? {}).map(([action, enabled]) => ({
+      action: normalizeAction(action),
+      resource: "*",
+      effect: enabled ? ("allow" as const) : ("deny" as const),
+    })),
+    ...Object.entries(info ?? {}).flatMap(([action, rule]) => {
+      if (!rule) return []
+      if (typeof rule === "string") return [{ action, resource: "*", effect: rule }]
+      return Object.entries(rule).map(([resource, effect]) => ({ action, resource, effect }))
+    }),
+  ]
   return rules.length ? { permissions: rules } : {}
 }
 
