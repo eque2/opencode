@@ -24,8 +24,11 @@ describe("scrollKey", () => {
 })
 
 describe("canScrollKey", () => {
-  const element = (scrollTop: number, clientHeight = 100, scrollHeight = 300) =>
-    ({ scrollTop, clientHeight, scrollHeight }) as HTMLElement
+  const element = (scrollTop: number, clientHeight = 100, scrollHeight = 300) => ({
+    scrollTop,
+    clientHeight,
+    scrollHeight,
+  })
 
   test("owns upward keys only above the top boundary", () => {
     expect(canScrollKey(element(50), "page-up")).toBe(true)

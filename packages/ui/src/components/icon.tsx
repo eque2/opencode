@@ -108,6 +108,7 @@ const icons = {
 
 const spriteID = "opencode-icon-sprite"
 const symbol = (name: keyof typeof icons) => `opencode-icon-${name}`
+const isIconName = (name: string): name is keyof typeof icons => Object.hasOwn(icons, name)
 let spriteInserted = false
 
 function viewBox(name: keyof typeof icons) {
@@ -131,11 +132,9 @@ function ensureSprite() {
   svg.setAttribute("height", "0")
   svg.style.position = "absolute"
   svg.style.overflow = "hidden"
-  svg.innerHTML = Object.entries(icons)
-    .map(([name, path]) => {
-      const key = name as keyof typeof icons
-      return `<symbol id="${symbol(key)}" viewBox="${viewBox(key)}">${path}</symbol>`
-    })
+  svg.innerHTML = Object.keys(icons)
+    .filter(isIconName)
+    .map((name) => `<symbol id="${symbol(name)}" viewBox="${viewBox(name)}">${icons[name]}</symbol>`)
     .join("")
   body.insertBefore(svg, body.firstChild)
   spriteInserted = true

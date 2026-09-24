@@ -32,7 +32,7 @@ function mix(style: ComponentProps<"div">["style"], value?: string) {
   if (!value) return style
   if (!style) return { "--card-accent": value }
   if (typeof style === "string") return `${style};--card-accent:${value};`
-  return { ...(style as Record<string, string | number>), "--card-accent": value }
+  return { ...style, "--card-accent": value }
 }
 
 export function Card(props: CardProps) {

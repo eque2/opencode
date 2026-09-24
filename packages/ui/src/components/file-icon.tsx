@@ -1,7 +1,7 @@
 import type { Component, JSX } from "solid-js"
 import { createMemo, createUniqueId, splitProps, Show } from "solid-js"
 import sprite from "./file-icons/sprite.svg"
-import type { IconName } from "./file-icons/types"
+import { iconNames, type IconName } from "./file-icons/types"
 
 export type FileIconProps = JSX.GSVGAttributes<SVGSVGElement> & {
   node: { path: string; type: "file" | "directory" }
@@ -540,11 +540,14 @@ const ICON_MAPS: IconMaps = {
   },
 }
 
+const fileIconNames: readonly string[] = iconNames
+const isIconName = (name: string): name is IconName => fileIconNames.includes(name)
+
 const toOpenVariant = (icon: IconName): IconName => {
   if (!icon.startsWith("Folder")) return icon
-  if (icon.endsWith("_light")) return icon.replace("_light", "Open_light") as IconName
-  if (!icon.endsWith("Open")) return (icon + "Open") as IconName
-  return icon
+  if (icon.endsWith("Open")) return icon
+  const open = icon.endsWith("_light") ? icon.replace("_light", "Open_light") : icon + "Open"
+  return isIconName(open) ? open : icon
 }
 
 const basenameOf = (p: string) => p.split("\\").join("/").split("/").filter(Boolean).pop() ?? ""

@@ -55,7 +55,10 @@ export const scrollKey = (event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey
   return undefined
 }
 
-export function canScrollKey(element: HTMLElement, key: NonNullable<ReturnType<typeof scrollKey>>) {
+export function canScrollKey(
+  element: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
+  key: NonNullable<ReturnType<typeof scrollKey>>,
+) {
   const up = key === "up" || key === "page-up" || key === "home"
   return up ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight
 }
@@ -207,10 +210,7 @@ export function ScrollView(props: ScrollViewProps) {
       local.viewportRef(viewportRef)
     }
 
-    createResizeObserver(
-      () => [viewportRef, viewportRef.firstElementChild, thumbMount()].filter(Boolean) as HTMLElement[],
-      updateThumb,
-    )
+    createResizeObserver(() => [viewportRef, viewportRef.firstElementChild, thumbMount()], updateThumb)
 
     updateThumb()
   })
@@ -353,26 +353,26 @@ export function ScrollView(props: ScrollViewProps) {
         onScroll={(e) => {
           updateThumb()
           markScrolling()
-          if (typeof events.onScroll === "function") events.onScroll(e as any)
+          if (typeof events.onScroll === "function") events.onScroll(e)
         }}
         onWheel={(e) => {
           markScrolling()
           const handler = events.onWheel
-          if (typeof handler === "function") handler(e as any)
-          if (Array.isArray(handler)) handler[0](handler[1], e as any)
+          if (typeof handler === "function") handler(e)
+          if (Array.isArray(handler)) handler[0](handler[1], e)
         }}
-        onTouchStart={events.onTouchStart as any}
-        onTouchMove={events.onTouchMove as any}
-        onTouchEnd={events.onTouchEnd as any}
-        onTouchCancel={events.onTouchCancel as any}
-        onPointerDown={events.onPointerDown as any}
-        onClick={events.onClick as any}
+        onTouchStart={events.onTouchStart}
+        onTouchMove={events.onTouchMove}
+        onTouchEnd={events.onTouchEnd}
+        onTouchCancel={events.onTouchCancel}
+        onPointerDown={events.onPointerDown}
+        onClick={events.onClick}
         tabIndex={0}
         role="region"
         aria-label={i18n.t("ui.scrollView.ariaLabel")}
         onKeyDown={(e) => {
           onKeyDown(e)
-          if (typeof events.onKeyDown === "function") events.onKeyDown(e as any)
+          if (typeof events.onKeyDown === "function") events.onKeyDown(e)
         }}
       >
         {local.children}
