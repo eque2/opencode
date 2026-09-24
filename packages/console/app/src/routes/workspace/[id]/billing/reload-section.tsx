@@ -9,10 +9,11 @@ import styles from "./reload-section.module.css"
 import { queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
 import { formError, formErrorReloadAmountMin, formErrorReloadTriggerMin, localizeError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const reload = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(await withActor(() => Billing.reload(), workspaceID), {
     revalidate: queryBillingInfo.key,
@@ -21,11 +22,11 @@ const reload = action(async (form: FormData) => {
 
 const setReload = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const reloadValue = (form.get("reload") as string | null) === "true"
-  const amountStr = form.get("reloadAmount") as string | null
-  const triggerStr = form.get("reloadTrigger") as string | null
+  const reloadValue = formText(form, "reload") === "true"
+  const amountStr = formText(form, "reloadAmount")
+  const triggerStr = formText(form, "reloadTrigger")
 
   const reloadAmount = amountStr && amountStr.trim() !== "" ? parseInt(amountStr) : null
   const reloadTrigger = triggerStr && triggerStr.trim() !== "" ? parseInt(triggerStr) : null

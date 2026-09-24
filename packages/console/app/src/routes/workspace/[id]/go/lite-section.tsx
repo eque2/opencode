@@ -28,6 +28,7 @@ import { checkCheckoutRateLimit } from "~/routes/zen/util/redis"
 
 import { IconAlipay, IconChevron, IconUpi } from "~/component/icon"
 import { buildLiteUsageBreakdown, getModelQuotaLimit, getUsagePercent } from "~/lib/lite-usage"
+import { formText } from "~/lib/form-data"
 
 type LiteUsageWindow = "rolling" | "weekly" | "monthly"
 
@@ -253,9 +254,9 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
 
 const setLiteUseBalance = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const useBalance = (form.get("useBalance") as string | null) === "true"
+  const useBalance = formText(form, "useBalance") === "true"
 
   return json(
     await withActor(async () => {
@@ -275,9 +276,9 @@ const setLiteUseBalance = action(async (form: FormData) => {
 
 const setGoProviderRouting = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const useChinaProviders = (form.get("useChinaProviders") as string | null) === "true"
+  const useChinaProviders = formText(form, "useChinaProviders") === "true"
 
   return json(
     await withActor(
@@ -293,9 +294,9 @@ const setGoProviderRouting = action(async (form: FormData) => {
 
 const setGoAllowTraining = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const allowTraining = (form.get("allowTraining") as string | null) === "true"
+  const allowTraining = formText(form, "allowTraining") === "true"
 
   return json(
     await withActor(

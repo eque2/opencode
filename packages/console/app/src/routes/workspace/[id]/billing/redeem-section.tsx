@@ -9,12 +9,13 @@ import styles from "./redeem-section.module.css"
 import { queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
 import { formError, localizeError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const redeem = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const code = (form.get("code") as string | null)?.trim().toUpperCase()
+  const code = formText(form, "code")?.trim().toUpperCase()
   if (!code) return { error: "Coupon code is required." }
   if (!(CouponType as readonly string[]).includes(code)) return { error: "Invalid coupon code." }
 

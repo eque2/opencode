@@ -6,6 +6,7 @@ import { createStore } from "solid-js/store"
 import styles from "./provider-section.module.css"
 import { useI18n } from "~/context/i18n"
 import { formError, localizeError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const PROVIDERS = [
   { name: "OpenAI", key: "openai", prefix: "sk-" },
@@ -21,9 +22,9 @@ function maskCredentials(credentials: string) {
 
 const removeProvider = action(async (form: FormData) => {
   "use server"
-  const provider = form.get("provider") as string | null
+  const provider = formText(form, "provider")
   if (!provider) return { error: formError.providerRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(await withActor(() => Provider.remove({ provider }), workspaceID), {
     revalidate: listProviders.key,
@@ -32,11 +33,11 @@ const removeProvider = action(async (form: FormData) => {
 
 const saveProvider = action(async (form: FormData) => {
   "use server"
-  const provider = form.get("provider") as string | null
-  const credentials = form.get("credentials") as string | null
+  const provider = formText(form, "provider")
+  const credentials = formText(form, "credentials")
   if (!provider) return { error: formError.providerRequired }
   if (!credentials) return { error: formError.apiKeyRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(
     await withActor(
@@ -61,11 +62,11 @@ function ProviderRow(props: { provider: Provider }) {
   const providers = createAsync(() => listProviders(params.id!))
   const saveSubmission = useSubmission(
     saveProvider,
-    ([fd]) => (fd.get("provider") as string | null) === props.provider.key,
+    ([fd]) => formText(fd, "provider") === props.provider.key,
   )
   const removeSubmission = useSubmission(
     removeProvider,
-    ([fd]) => (fd.get("provider") as string | null) === props.provider.key,
+    ([fd]) => formText(fd, "provider") === props.provider.key,
   )
   const [store, setStore] = createStore({ editing: false })
 

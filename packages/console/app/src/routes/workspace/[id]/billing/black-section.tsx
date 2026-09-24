@@ -14,6 +14,7 @@ import waitlistStyles from "./black-waitlist-section.module.css"
 import { useI18n } from "~/context/i18n"
 import { formError } from "~/lib/form-error"
 import { blackResetTimeKeys, formatResetTime } from "~/lib/format-reset-time"
+import { formText } from "~/lib/form-data"
 
 const querySubscription = query(async (workspaceID: string) => {
   "use server"
@@ -103,9 +104,9 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
 
 const setUseBalance = action(async (form: FormData) => {
   "use server"
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const useBalance = (form.get("useBalance") as string | null) === "true"
+  const useBalance = formText(form, "useBalance") === "true"
 
   return json(
     await withActor(async () => {

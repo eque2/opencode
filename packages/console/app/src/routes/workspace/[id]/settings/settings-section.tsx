@@ -8,6 +8,7 @@ import { Database, eq } from "@opencode-ai/console-core/drizzle/index.js"
 import { WorkspaceTable } from "@opencode-ai/console-core/schema/workspace.sql.js"
 import { useI18n } from "~/context/i18n"
 import { formError, localizeError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const getWorkspaceInfo = query(async (workspaceID: string) => {
   "use server"
@@ -30,10 +31,10 @@ const getWorkspaceInfo = query(async (workspaceID: string) => {
 
 const updateWorkspace = action(async (form: FormData) => {
   "use server"
-  const name = (form.get("name") as string | null)?.trim()
+  const name = formText(form, "name")?.trim()
   if (!name) return { error: formError.workspaceNameRequired }
   if (name.length > 255) return { error: formError.nameTooLong }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(
     await withActor(

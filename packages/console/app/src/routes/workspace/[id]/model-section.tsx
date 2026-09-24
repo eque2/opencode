@@ -23,6 +23,7 @@ import {
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
 import { formError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const getModelLab = (modelId: string) => {
   if (modelId.startsWith("claude")) return "Anthropic"
@@ -82,11 +83,11 @@ const getModelsInfo = query(async (workspaceID: string) => {
 
 const updateModel = action(async (form: FormData) => {
   "use server"
-  const model = form.get("model") as string | null
+  const model = formText(form, "model")
   if (!model) return { error: formError.modelRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const enabled = (form.get("enabled") as string | null) === "true"
+  const enabled = formText(form, "enabled") === "true"
   return json(
     await withActor(async () => {
       if (enabled) {

@@ -10,6 +10,7 @@ import { RoleDropdown } from "./role-dropdown"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
 import { formError, localizeError } from "~/lib/form-error"
+import { formText } from "~/lib/form-data"
 
 const listMembers = query(async (workspaceID: string) => {
   "use server"
@@ -24,13 +25,13 @@ const listMembers = query(async (workspaceID: string) => {
 
 const inviteMember = action(async (form: FormData) => {
   "use server"
-  const email = (form.get("email") as string | null)?.trim()
+  const email = formText(form, "email")?.trim()
   if (!email) return { error: formError.emailRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   const role = form.get("role") as (typeof UserRole)[number] | null
   if (!role) return { error: formError.roleRequired }
-  const limit = form.get("limit") as string | null
+  const limit = formText(form, "limit")
   const monthlyLimit = limit && limit.trim() !== "" ? parseInt(limit) : null
   if (monthlyLimit !== null && monthlyLimit < 0) return { error: formError.monthlyLimitInvalid }
   return json(
@@ -47,9 +48,9 @@ const inviteMember = action(async (form: FormData) => {
 
 const removeMember = action(async (form: FormData) => {
   "use server"
-  const id = form.get("id") as string | null
+  const id = formText(form, "id")
   if (!id) return { error: formError.idRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   return json(
     await withActor(
@@ -66,13 +67,13 @@ const removeMember = action(async (form: FormData) => {
 const updateMember = action(async (form: FormData) => {
   "use server"
 
-  const id = form.get("id") as string | null
+  const id = formText(form, "id")
   if (!id) return { error: formError.idRequired }
-  const workspaceID = form.get("workspaceID") as string | null
+  const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
   const role = form.get("role") as (typeof UserRole)[number] | null
   if (!role) return { error: formError.roleRequired }
-  const limit = form.get("limit") as string | null
+  const limit = formText(form, "limit")
   const monthlyLimit = limit && limit.trim() !== "" ? parseInt(limit) : null
   if (monthlyLimit !== null && monthlyLimit < 0) return { error: formError.monthlyLimitInvalid }
 
