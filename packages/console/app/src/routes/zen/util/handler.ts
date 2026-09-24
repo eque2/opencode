@@ -1021,8 +1021,7 @@ export async function handler(
   }
 
   function calculateCost(modelInfo: ModelInfo, usageInfo: UsageInfo) {
-    const { inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens } =
-      usageInfo
+    const { inputTokens, outputTokens, cacheReadTokens, cacheWrite5mTokens, cacheWrite1hTokens } = usageInfo
 
     const modelCost =
       modelInfo.costPeak && isPeakPricing(new Date())
