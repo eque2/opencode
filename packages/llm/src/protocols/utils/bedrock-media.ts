@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Record, Schema } from "effect"
 import type { MediaPart } from "../../schema"
 import { ProviderShared } from "../shared"
 
@@ -29,15 +29,15 @@ export const DocumentBlock = Schema.Struct({
 }).annotate({ identifier: "BedrockMedia.DocumentBlock" })
 export type DocumentBlock = Schema.Schema.Type<typeof DocumentBlock>
 
-const IMAGE_FORMATS = {
+const IMAGE_FORMATS: Record.ReadonlyRecord<string, ImageFormat> = {
   "image/png": "png",
   "image/jpeg": "jpeg",
   "image/jpg": "jpeg",
   "image/gif": "gif",
   "image/webp": "webp",
-} as const satisfies Record<string, ImageFormat>
+}
 
-const DOCUMENT_FORMATS = {
+const DOCUMENT_FORMATS: Record.ReadonlyRecord<string, DocumentFormat> = {
   "application/pdf": "pdf",
   "text/csv": "csv",
   "application/msword": "doc",
@@ -47,7 +47,7 @@ const DOCUMENT_FORMATS = {
   "text/html": "html",
   "text/plain": "txt",
   "text/markdown": "md",
-} as const satisfies Record<string, DocumentFormat>
+}
 
 const documentBlock = (part: MediaPart, format: DocumentFormat, bytes: string): DocumentBlock => ({
   document: {
@@ -64,17 +64,17 @@ const documentBlock = (part: MediaPart, format: DocumentFormat, bytes: string): 
 // not a kind-detection issue.
 export const lower = Effect.fn("BedrockMedia.lower")(function* (part: MediaPart) {
   const mime = part.mediaType.toLowerCase()
-  const imageFormat = IMAGE_FORMATS[mime as keyof typeof IMAGE_FORMATS]
-  if (imageFormat) {
-    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Object.keys(IMAGE_FORMATS))
-    return { image: { format: imageFormat, source: { bytes: media.base64 } } } satisfies ImageBlock
+  const imageFormat = Record.get(IMAGE_FORMATS, mime)
+  if (Option.isSome(imageFormat)) {
+    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Record.keys(IMAGE_FORMATS))
+    return { image: { format: imageFormat.value, source: { bytes: media.base64 } } } satisfies ImageBlock
   }
   if (mime.startsWith("image/"))
     return yield* ProviderShared.invalidRequest(`Bedrock Converse does not support image media type ${part.mediaType}`)
-  const documentFormat = DOCUMENT_FORMATS[mime as keyof typeof DOCUMENT_FORMATS]
-  if (documentFormat) {
-    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Object.keys(DOCUMENT_FORMATS))
-    return documentBlock(part, documentFormat, media.base64)
+  const documentFormat = Record.get(DOCUMENT_FORMATS, mime)
+  if (Option.isSome(documentFormat)) {
+    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Record.keys(DOCUMENT_FORMATS))
+    return documentBlock(part, documentFormat.value, media.base64)
   }
   return yield* ProviderShared.invalidRequest(`Bedrock Converse does not support media type ${part.mediaType}`)
 })
