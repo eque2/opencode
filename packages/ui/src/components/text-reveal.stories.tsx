@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TextReveal } from "./text-reveal"
@@ -21,17 +22,17 @@ Playground for the TextReveal text transition component.
   },
 }
 
-const TEXTS = [
-  "Refactor ToolStatusTitle DOM measurement",
-  "Remove inline measure nodes",
-  "Run typechecks and report changes",
-  "Verify reduced-motion behavior",
-  "Review diff for animation edge cases",
-  "Check keyboard semantics",
-  undefined,
-  "Planning key generation details",
-  "Analyzing error handling",
-  "Considering edge cases",
+const TEXTS: ReadonlyArray<Option.Option<string>> = [
+  Option.some("Refactor ToolStatusTitle DOM measurement"),
+  Option.some("Remove inline measure nodes"),
+  Option.some("Run typechecks and report changes"),
+  Option.some("Verify reduced-motion behavior"),
+  Option.some("Review diff for animation edge cases"),
+  Option.some("Check keyboard semantics"),
+  Option.none(),
+  Option.some("Planning key generation details"),
+  Option.some("Analyzing error handling"),
+  Option.some("Considering edge cases"),
 ]
 
 const btn = (accent?: boolean) =>
@@ -112,7 +113,7 @@ export const Playground = {
     const revealTravel = () => state.revealTravel
 
     let timer: number | undefined
-    const text = () => TEXTS[index()]
+    const text = () => Option.getOrUndefined(TEXTS[index()])
     const next = () => setState("index", (value) => (value + 1) % TEXTS.length)
     const prev = () => setState("index", (value) => (value - 1 + TEXTS.length) % TEXTS.length)
 
@@ -183,7 +184,7 @@ export const Playground = {
         <div style={{ display: "flex", gap: "6px", "flex-wrap": "wrap" }}>
           {TEXTS.map((t, i) => (
             <button onClick={() => setState("index", i)} style={btn(index() === i)}>
-              {t ?? "(none)"}
+              {Option.getOrElse(t, () => "(none)")}
             </button>
           ))}
         </div>
