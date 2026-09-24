@@ -475,7 +475,9 @@ export const securityRequirements = (value: unknown): Parsed<ReadonlyArray<Secur
   for (const item of value) {
     if (!isRecord(item)) return { ok: false, reason: "security requirement is not an object" }
     const scopes = Option.all(
-      Object.entries(item).map(([name, declared]) => Option.map(scopeList(declared), (parsed) => [name, parsed] as const)),
+      Object.entries(item).map(([name, declared]) =>
+        Option.map(scopeList(declared), (parsed) => [name, parsed] as const),
+      ),
     )
     if (Option.isNone(scopes)) return { ok: false, reason: "security requirement scopes are not string arrays" }
     // Object.fromEntries defines own data properties, so a scheme named `__proto__` stays a plain key.
