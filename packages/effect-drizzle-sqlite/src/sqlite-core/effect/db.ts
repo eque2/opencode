@@ -281,6 +281,7 @@ export const withReplicas = <
   const transaction: Q["transaction"] = (...args: [any]) => primary.transaction(...args)
 
   return {
+    // oxlint-disable-next-line typescript-eslint/no-misused-spread -- drizzle-orm withReplicas returns a plain object with the primary's own fields (session, dialect, $client, _); every prototype method is re-added below
     ...primary,
     update,
     insert,
