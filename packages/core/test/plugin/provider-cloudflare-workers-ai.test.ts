@@ -7,7 +7,6 @@ import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
 import { CloudflareWorkersAIPlugin } from "@opencode-ai/core/plugin/provider/cloudflare-workers-ai"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
@@ -48,7 +47,7 @@ function withEnv<A, E, R>(vars: Record<string, string | undefined>, effect: () =
 function fakeSelectorSdk(calls: string[]) {
   const make = (method: string) => (id: string) => {
     calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: method, specificationVersion: "v3" }
   }
   return {
     responses: make("responses"),
@@ -58,22 +57,23 @@ function fakeSelectorSdk(calls: string[]) {
   }
 }
 
-function cloudflareLanguage(sdk: unknown, modelID = "@cf/model") {
-  return (sdk as { languageModel: (id: string) => { config: CloudflareConfig; provider: string } }).languageModel(
-    modelID,
-  )
-}
-
 type CloudflareConfig = {
   url: (input: { path: string; modelId: string }) => string
   headers: () => Record<string, string> | Promise<Record<string, string>>
 }
 
-function cloudflareURL(sdk: unknown, modelID = "@cf/model") {
+// The part of the OpenAI-compatible SDK these tests inspect. AISDK types a built SDK as any.
+type CloudflareSDK = { languageModel: (id: string) => { config: CloudflareConfig; provider: string } }
+
+function cloudflareLanguage(sdk: CloudflareSDK, modelID = "@cf/model") {
+  return sdk.languageModel(modelID)
+}
+
+function cloudflareURL(sdk: CloudflareSDK, modelID = "@cf/model") {
   return cloudflareLanguage(sdk, modelID).config.url({ path: "/chat/completions", modelId: modelID })
 }
 
-function cloudflareHeaders(sdk: unknown, modelID = "@cf/model") {
+function cloudflareHeaders(sdk: CloudflareSDK, modelID = "@cf/model") {
   return cloudflareLanguage(sdk, modelID).config.headers()
 }
 

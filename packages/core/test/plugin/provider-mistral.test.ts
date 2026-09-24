@@ -1,5 +1,4 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
@@ -103,7 +102,7 @@ describe("MistralPlugin", () => {
       const sdk = {
         languageModel: (id: string) => {
           calls.push(`languageModel:${id}`)
-          return { modelId: id, provider: "languageModel", specificationVersion: "v3" } as unknown as LanguageModelV3
+          return { modelId: id, provider: "languageModel", specificationVersion: "v3" }
         },
       }
       yield* addPlugin()

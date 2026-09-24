@@ -7,7 +7,6 @@ import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
 import { GithubCopilotPlugin } from "@opencode-ai/core/plugin/provider/github-copilot"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { testEffect } from "../lib/effect"
 import { PluginTestLayer } from "./fixture"
 
@@ -27,7 +26,7 @@ function required<T>(value: T | undefined): T {
 function fakeSelectorSdk(calls: string[]) {
   const make = (method: string) => (id: string) => {
     calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: method, specificationVersion: "v3" }
   }
   return {
     responses: make("responses"),

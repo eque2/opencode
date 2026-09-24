@@ -1,6 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect, mock } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
 import { PluginHost } from "@opencode-ai/core/plugin/host"
@@ -43,21 +43,12 @@ const unifiedCalls: string[] = []
 const gatewayModelCalls: unknown[] = []
 
 function captureAiGatewayOptions(options: Record<string, unknown>) {
-  const nested =
-    options.options && typeof options.options === "object" ? (options.options as Record<string, unknown>) : undefined
+  const nested = options.options
+  if (!Predicate.isObject(nested)) return { ...options }
+  const headers = nested.headers
   return {
     ...options,
-    ...(nested
-      ? {
-          options: {
-            ...nested,
-            headers:
-              nested.headers && typeof nested.headers === "object"
-                ? { ...(nested.headers as Record<string, unknown>) }
-                : nested.headers,
-          },
-        }
-      : {}),
+    options: { ...nested, headers: Predicate.isObject(headers) ? { ...headers } : headers },
   }
 }
 

@@ -1,6 +1,5 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect } from "bun:test"
-import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { Effect } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
@@ -21,7 +20,7 @@ const addPlugin = Effect.fn(function* () {
 function fakeSelectorSdk(calls: string[]) {
   const make = (method: string) => (id: string) => {
     calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
+    return { modelId: id, provider: method, specificationVersion: "v3" }
   }
   return {
     responses: make("responses"),

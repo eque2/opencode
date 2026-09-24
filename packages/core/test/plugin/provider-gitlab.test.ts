@@ -1,5 +1,6 @@
 import { AISDK } from "@opencode-ai/core/aisdk"
 import { describe, expect, mock } from "bun:test"
+import type { GitLabAgenticOptions } from "gitlab-ai-provider"
 import { Effect } from "effect"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { PluginV2 } from "@opencode-ai/core/plugin"
@@ -78,9 +79,9 @@ describe("GitLabPlugin", () => {
           expect(gitlabSDKOptions[0].aiGatewayHeaders).toMatchObject({
             "anthropic-beta": "context-1m-2025-08-07",
           })
-          expect(String((gitlabSDKOptions[0].aiGatewayHeaders as Record<string, string>)["User-Agent"])).toContain(
-            "gitlab-ai-provider/test-version",
-          )
+          expect(gitlabSDKOptions[0].aiGatewayHeaders).toMatchObject({
+            "User-Agent": expect.stringContaining("gitlab-ai-provider/test-version"),
+          })
           expect(gitlabSDKOptions[0].featureFlags).toEqual({
             duo_agent_platform_agentic_chat: true,
             duo_agent_platform: true,
@@ -277,14 +278,10 @@ describe("GitLabPlugin", () => {
         }),
         sdk: {
           workflowChat: () => undefined,
-          agenticChat: (id: string, options: unknown) => {
-            const selected = options as {
-              aiGatewayHeaders?: Record<string, string>
-              featureFlags?: Record<string, boolean>
-            }
+          agenticChat: (id: string, options: GitLabAgenticOptions) => {
             calls.push([
               id,
-              { aiGatewayHeaders: { ...selected.aiGatewayHeaders }, featureFlags: { ...selected.featureFlags } },
+              { aiGatewayHeaders: { ...options.aiGatewayHeaders }, featureFlags: { ...options.featureFlags } },
             ])
           },
         },
