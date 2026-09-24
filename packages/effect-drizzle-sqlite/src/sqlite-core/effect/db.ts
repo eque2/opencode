@@ -1,4 +1,3 @@
-/* oxlint-disable */
 import { Effect } from "effect"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
