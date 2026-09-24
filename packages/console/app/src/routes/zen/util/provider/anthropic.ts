@@ -344,17 +344,17 @@ export function toAnthropicRequest(body: CommonRequest) {
   }
 
   for (const m of msgsIn) {
-    if (!m || !(m as any).role) continue
+    if (!m || !m.role) continue
 
-    if ((m as any).role === "user") {
-      if (typeof (m as any).content === "string") {
+    if (m.role === "user") {
+      if (typeof m.content === "string") {
         msgsOut.push({
           role: "user",
-          content: [{ type: "text", text: (m as any).content, ...cc() }],
+          content: [{ type: "text", text: m.content, ...cc() }],
         })
-      } else if (Array.isArray((m as any).content)) {
+      } else if (Array.isArray(m.content)) {
         const parts: any[] = []
-        for (const p of (m as any).content) {
+        for (const p of m.content) {
           if (!p || !p.type) continue
           if (p.type === "text" && typeof p.text === "string") parts.push({ type: "text", text: p.text, ...cc() })
           if (p.type === "image_url") {
@@ -367,13 +367,13 @@ export function toAnthropicRequest(body: CommonRequest) {
       continue
     }
 
-    if ((m as any).role === "assistant") {
-      const out: any = { role: "assistant", content: [] as any[] }
-      if (typeof (m as any).content === "string" && (m as any).content.length > 0) {
-        ;(out.content as any[]).push({ type: "text", text: (m as any).content, ...cc() })
+    if (m.role === "assistant") {
+      const content: any[] = []
+      if (typeof m.content === "string" && m.content.length > 0) {
+        content.push({ type: "text", text: m.content, ...cc() })
       }
-      if (Array.isArray((m as any).tool_calls)) {
-        for (const tc of (m as any).tool_calls) {
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls) {
           if (tc.type === "function" && tc.function) {
             let input: any
             const a = tc.function.arguments
@@ -385,7 +385,7 @@ export function toAnthropicRequest(body: CommonRequest) {
               }
             } else input = a
             const id = tc.id || `toolu_${Math.random().toString(36).slice(2)}`
-            ;(out.content as any[]).push({
+            content.push({
               type: "tool_use",
               id,
               name: tc.function.name,
@@ -395,18 +395,18 @@ export function toAnthropicRequest(body: CommonRequest) {
           }
         }
       }
-      if ((out.content as any[]).length > 0) msgsOut.push(out)
+      if (content.length > 0) msgsOut.push({ role: "assistant", content })
       continue
     }
 
-    if ((m as any).role === "tool") {
+    if (m.role === "tool") {
       msgsOut.push({
         role: "user",
         content: [
           {
             type: "tool_result",
-            tool_use_id: (m as any).tool_call_id,
-            content: (m as any).content,
+            tool_use_id: m.tool_call_id,
+            content: m.content,
             ...cc(),
           },
         ],
@@ -431,8 +431,7 @@ export function toAnthropicRequest(body: CommonRequest) {
     if (!tcIn) return undefined
     if (tcIn === "auto") return { type: "auto" }
     if (tcIn === "required") return { type: "any" }
-    if ((tcIn as any).type === "function" && (tcIn as any).function?.name)
-      return { type: "tool", name: (tcIn as any).function.name }
+    if (tcIn.type === "function" && tcIn.function?.name) return { type: "tool", name: tcIn.function.name }
     return undefined
   })()
 
@@ -502,7 +501,7 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
 
   const u = resp.usage
   const usage = (() => {
-    if (!u) return undefined as any
+    if (!u) return undefined
     const pt = typeof u.input_tokens === "number" ? u.input_tokens : undefined
     const ct = typeof u.output_tokens === "number" ? u.output_tokens : undefined
     const total = pt != null && ct != null ? pt + ct : undefined
@@ -539,9 +538,9 @@ export function fromAnthropicResponse(resp: any): CommonResponse {
 export function toAnthropicResponse(resp: CommonResponse) {
   if (!resp || typeof resp !== "object") return resp
 
-  if (!Array.isArray((resp as any).choices)) return resp
+  if (!Array.isArray(resp.choices)) return resp
 
-  const choice = (resp as any).choices[0]
+  const choice = resp.choices[0]
   if (!choice) return resp
 
   const message = choice.message
@@ -581,7 +580,7 @@ export function toAnthropicResponse(resp: CommonResponse) {
   })()
 
   const usage = (() => {
-    const u = (resp as any).usage
+    const u = resp.usage
     if (!u) return undefined
     return {
       input_tokens: u.prompt_tokens,
@@ -591,11 +590,11 @@ export function toAnthropicResponse(resp: CommonResponse) {
   })()
 
   return {
-    id: (resp as any).id,
+    id: resp.id,
     type: "message",
     role: "assistant",
     content: content.length > 0 ? content : [{ type: "text", text: "" }],
-    model: (resp as any).model,
+    model: resp.model,
     stop_reason,
     usage,
   }
