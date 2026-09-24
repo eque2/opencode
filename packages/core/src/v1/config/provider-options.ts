@@ -92,7 +92,10 @@ const anthropic: Lowerer = {
       delete result.task_budget
     }
     if (Predicate.isObject(options.metadata) && options.metadata.userId !== undefined) {
-      result.metadata = { ...(Predicate.isObject(result.metadata) ? result.metadata : {}), user_id: options.metadata.userId }
+      result.metadata = {
+        ...(Predicate.isObject(result.metadata) ? result.metadata : {}),
+        user_id: options.metadata.userId,
+      }
     }
     return result
   },
