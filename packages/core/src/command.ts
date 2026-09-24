@@ -1,7 +1,7 @@
 export * as CommandV2 from "./command"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Effect, Layer, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Types } from "effect"
 import { Command } from "@opencode-ai/schema/command"
 import { State } from "./state"
 
@@ -9,7 +9,8 @@ export const Info = Command.Info
 export type Info = Command.Info
 
 export type Data = {
-  commands: Map<string, Types.DeepMutable<Info>>
+  // MutableHashMap iterates in insertion order, so list() keeps the order commands were added.
+  commands: MutableHashMap.MutableHashMap<string, Types.DeepMutable<Info>>
 }
 
 export type Draft = {
@@ -30,18 +31,21 @@ const layer = Layer.effect(
   Service,
   Effect.sync(() => {
     const state = State.create<Data, Draft>({
-      initial: () => ({ commands: new Map() }),
+      initial: () => ({ commands: MutableHashMap.empty() }),
       draft: (draft) => ({
-        list: () => Array.from(draft.commands.values()) as Info[],
-        get: (name) => draft.commands.get(name),
+        list: () => Array.from(MutableHashMap.values(draft.commands)) as Info[],
+        get: (name) => Option.getOrUndefined(MutableHashMap.get(draft.commands, name)),
         update: (name, update) => {
-          const current = draft.commands.get(name) ?? ({ name, template: "" } as Types.DeepMutable<Info>)
-          if (!draft.commands.has(name)) draft.commands.set(name, current)
+          const current = Option.getOrElse(
+            MutableHashMap.get(draft.commands, name),
+            (): Types.DeepMutable<Info> => ({ name, template: "" }),
+          )
+          if (!MutableHashMap.has(draft.commands, name)) MutableHashMap.set(draft.commands, name, current)
           update(current)
           current.name = name
         },
         remove: (name) => {
-          draft.commands.delete(name)
+          MutableHashMap.remove(draft.commands, name)
         },
       }),
     })
@@ -50,10 +54,10 @@ const layer = Layer.effect(
       reload: state.reload,
       transform: state.transform,
       get: Effect.fn("CommandV2.get")(function* (name) {
-        return state.get().commands.get(name)
+        return Option.getOrUndefined(MutableHashMap.get(state.get().commands, name))
       }),
       list: Effect.fn("CommandV2.list")(function* () {
-        return Array.from(state.get().commands.values())
+        return Array.from(MutableHashMap.values(state.get().commands))
       }),
     })
   }),
