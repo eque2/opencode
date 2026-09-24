@@ -104,7 +104,7 @@ export class SQLiteEffectDatabase<
 
   $cache: { invalidate: EffectCacheShape["onMutate"] }
 
-  $count(source: SQLiteTable | SQLiteViewBase | SQL | SQLWrapper, filters?: SQL<unknown>) {
+  $count(source: SQLiteTable | SQLiteViewBase | SQL | SQLWrapper, filters?: SQL) {
     return new SQLiteEffectCountBuilder({ source, filters, session: this.session })
   }
 
