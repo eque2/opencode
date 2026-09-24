@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Clock, Context, DateTime, Effect, Layer, Option, Random } from "effect"
+import { Array as Arr, Cause, Clock, Context, DateTime, Effect, Layer, Option, Random, Redacted } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -57,11 +57,13 @@ const isSensitiveHeaderName = (name: string) => SENSITIVE_NAME.test(name)
 
 const isSensitiveQueryName = (name: string) => isSensitiveHeaderName(name) || SHORT_QUERY_NAME.test(name)
 
+// Headers.redact wraps each sensitive value in an unlabelled Redacted, which
+// renders as "<redacted>"; write that text directly.
 const redactHeaders = (headers: Headers.Headers, redactedNames: ReadonlyArray<string | RegExp>) =>
   Object.fromEntries(
     Object.entries(Headers.redact(headers, [...redactedNames, SENSITIVE_NAME])).map(([name, value]) => [
       name,
-      String(value),
+      Redacted.isRedacted(value) ? REDACTED : value,
     ]),
   )
 
