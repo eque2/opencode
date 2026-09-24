@@ -6,7 +6,7 @@ import * as AnthropicMessages from "@opencode-ai/llm/protocols/anthropic-message
 import * as OpenAICompatibleChat from "@opencode-ai/llm/protocols/openai-compatible-chat"
 import * as OpenAIResponses from "@opencode-ai/llm/protocols/openai-responses"
 import { Auth, type AnyRoute } from "@opencode-ai/llm/route"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { produce } from "immer"
 import { Catalog } from "../../catalog"
 import { Credential } from "../../credential"
@@ -80,11 +80,12 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/v2
 /** Test or embedding seam for supplying a model resolver directly. */
 export const layerWith = (resolve: Interface["resolve"]) => Layer.succeed(Service, Service.of({ resolve }))
 
-const apiKey = (model: ModelV2.Info, credential?: Credential.Value) => {
-  if (credential?.type === "key") return Auth.value(credential.key)
-  if (credential?.type === "oauth") return Auth.value(credential.access)
+/** The API key credential: from the connection first, then from the model request body or API settings. */
+const apiKey = (model: ModelV2.Info, credential?: Credential.Value): Option.Option<Auth.Credential> => {
+  if (credential?.type === "key") return Option.some(Auth.value(credential.key))
+  if (credential?.type === "oauth") return Option.some(Auth.value(credential.access))
   const value = model.request.body.apiKey ?? model.api.settings?.apiKey
-  if (typeof value === "string") return Auth.value(value)
+  return typeof value === "string" ? Option.some(Auth.value(value)) : Option.none()
 }
 
 const withDefaults = (model: ModelV2.Info, route: AnyRoute) => {
@@ -142,21 +143,23 @@ export const fromCatalogModel = (
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/openai") {
     return Effect.succeed(
       withDefaults(resolved, OpenAIResponses.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
+        .with({ auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.bearer(secret) }) })
         .model({ id: resolved.api.id }),
     )
   }
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/anthropic") {
     return Effect.succeed(
       withDefaults(resolved, AnthropicMessages.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.header("x-api-key", key) })
+        .with({
+          auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.header("x-api-key", secret) }),
+        })
         .model({ id: resolved.api.id }),
     )
   }
   if (resolved.api.type === "aisdk" && resolved.api.package === "@ai-sdk/openai-compatible" && resolved.api.url) {
     return Effect.succeed(
       withDefaults(resolved, OpenAICompatibleChat.route)
-        .with({ auth: key === undefined ? Auth.none : Auth.bearer(key) })
+        .with({ auth: Option.match(key, { onNone: () => Auth.none, onSome: (secret) => Auth.bearer(secret) }) })
         .model({ id: resolved.api.id }),
     )
   }
