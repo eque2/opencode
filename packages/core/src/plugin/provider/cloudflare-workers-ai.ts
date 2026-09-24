@@ -54,7 +54,8 @@ function workersEndpoint(accountId: string) {
   return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`
 }
 
-function hasWorkersEndpoint(api: ProviderV2.Api) {
+// Reads only the fields that both the catalog Api and the plugin SDK's ModelApi share.
+function hasWorkersEndpoint(api: { readonly type: string; readonly url?: string }) {
   return api.type === "aisdk" && Boolean(api.url)
 }
 
