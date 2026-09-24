@@ -66,7 +66,7 @@ const layer = Layer.effect(
                 )
                 yield* events.publish(Event.Added, { id })
                 MutableHashMap.set(active, id, child)
-                yield* Effect.forEach(waitersOf(id), (waiter) => Deferred.succeed(waiter, undefined), {
+                yield* Effect.forEach(waitersOf(id), (waiter) => Deferred.done(waiter, Exit.void), {
                   discard: true,
                 })
                 MutableHashMap.remove(waiters, id)

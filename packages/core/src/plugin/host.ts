@@ -1,7 +1,7 @@
 export * as PluginHost from "./host"
 
 import type { PluginContext as Interface } from "@opencode-ai/plugin/v2/effect"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { AgentV2 } from "../agent"
 import { AISDK } from "../aisdk"
 import { Catalog } from "../catalog"
@@ -35,7 +35,10 @@ export const make = Effect.fn("PluginHost.make")(function* (plugin: PluginV2.Int
           callback({
             list: () => mutable(draft.list()),
             get: (id) => mutable(draft.get(AgentV2.ID.make(id))),
-            default: (id) => draft.default(id === undefined ? undefined : AgentV2.ID.make(id)),
+            default: (id) =>
+              draft.default(
+                Option.getOrUndefined(Option.map(Option.fromUndefinedOr(id), (value) => AgentV2.ID.make(value))),
+              ),
             update: (id, update) => draft.update(AgentV2.ID.make(id), update),
             remove: (id) => draft.remove(AgentV2.ID.make(id)),
           }),

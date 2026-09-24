@@ -1,4 +1,16 @@
-import { Clock, Config, ConfigProvider, DateTime, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
+import {
+  Clock,
+  Config,
+  ConfigProvider,
+  DateTime,
+  Duration,
+  Effect,
+  Option,
+  Predicate,
+  Schema,
+  Semaphore,
+  Stream,
+} from "effect"
 import type { Scope } from "effect"
 import type { IntegrationOAuthMethodRegistration } from "@opencode-ai/plugin/v2/effect/integration"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
@@ -48,6 +60,9 @@ class DeviceAuthorizationError extends Schema.TaggedError<DeviceAuthorizationErr
 
 const isWebURL = (url: URL) => url.protocol === "http:" || url.protocol === "https:"
 
+// Credential metadata values are unknown in the SDK types; read one as a string or None.
+const metadataString = (value: unknown) => Option.liftPredicate(value, Predicate.isString)
+
 function oauth(http: HttpClient.HttpClient) {
   return {
     integrationID: Integration.ID.make("opencode"),
@@ -96,9 +111,7 @@ function oauth(http: HttpClient.HttpClient) {
           expires: now + token.expires_in * 1000,
         }
       }),
-    label: (credential) => {
-      return typeof credential.metadata?.orgName === "string" ? credential.metadata.orgName : undefined
-    },
+    label: (credential) => Option.getOrUndefined(metadataString(credential.metadata?.orgName)),
   } satisfies IntegrationOAuthMethodRegistration
 }
 
@@ -109,21 +122,24 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
     const http = yield* HttpClient.HttpClient
     const loading = Semaphore.makeUnsafe(1)
     let connected = false
-    let providers: typeof ConfigV1.Info.Type.provider | undefined
+    let providers = Option.none<RemoteProviders>()
 
     const load = Effect.fn("OpencodePlugin.load")(function* () {
-      const connection = yield* ctx.integration.connection.active("opencode")
-      const credential = connection
-        ? yield* ctx.integration.connection.resolve(connection).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        : undefined
-      connected = connection !== undefined
-      providers = credential
-        ? yield* fetchProviders(http, credential).pipe(
+      const connection = Option.fromUndefinedOr(yield* ctx.integration.connection.active("opencode"))
+      const credential = Option.isNone(connection)
+        ? Option.none()
+        : yield* ctx.integration.connection.resolve(connection.value).pipe(
+            Effect.map(Option.fromUndefinedOr),
+            Effect.catch(() => Effect.succeedNone),
+          )
+      connected = Option.isSome(connection)
+      providers = Option.isNone(credential)
+        ? Option.none()
+        : yield* fetchProviders(http, credential.value).pipe(
             Effect.catch((cause) =>
-              Effect.logWarning("failed to load OpenCode provider config", { cause }).pipe(Effect.as(undefined)),
+              Effect.logWarning("failed to load OpenCode provider config", { cause }).pipe(Effect.as(Option.none())),
             ),
           )
-        : undefined
     })
 
     yield* ctx.integration.transform((draft) => {
@@ -137,7 +153,7 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
     connected = (yield* ctx.integration.connection.active("opencode")) !== undefined
     yield* ctx.catalog.transform(
       Effect.fnUntraced(function* (catalog) {
-        for (const [providerID, item] of Object.entries(providers ?? {})) {
+        for (const [providerID, item] of Object.entries(Option.getOrElse(providers, () => ({})))) {
           catalog.provider.update(providerID, (provider) => {
             provider.integrationID = Integration.ID.make("opencode")
             if (item.name !== undefined) provider.name = item.name
@@ -220,25 +236,27 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
   }),
 })
 
+type RemoteProviders = NonNullable<typeof ConfigV1.Info.Type.provider>
+
 function fetchProviders(http: HttpClient.HttpClient, value: CredentialValue) {
   const metadata = value.metadata
   const server = typeof metadata?.server === "string" ? metadata.server : defaultServer
-  const orgID = typeof metadata?.orgID === "string" ? metadata.orgID : undefined
+  const orgID = metadataString(metadata?.orgID).pipe(Option.filter((id) => id !== ""))
   const token = value.type === "oauth" ? value.access : value.key
   return http
     .execute(
       HttpClientRequest.get(`${server}/api/config`).pipe(
         HttpClientRequest.acceptJson,
         HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders(orgID ? { "x-org-id": orgID } : {}),
+        HttpClientRequest.setHeaders(Option.match(orgID, { onNone: () => ({}), onSome: (id) => ({ "x-org-id": id }) })),
       ),
     )
     .pipe(
       Effect.flatMap((response) => {
-        if (response.status === 404) return Effect.succeed(undefined)
+        if (response.status === 404) return Effect.succeed(Option.none<RemoteProviders>())
         return HttpClientResponse.filterStatusOk(response).pipe(
           Effect.flatMap(HttpClientResponse.schemaBodyJson(RemoteResponse)),
-          Effect.map((remote) => remote.config.provider),
+          Effect.map((remote) => Option.fromUndefinedOr(remote.config.provider)),
         )
       }),
     )

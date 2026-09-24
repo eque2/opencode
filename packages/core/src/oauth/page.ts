@@ -28,7 +28,7 @@ export function success(options?: CallbackPageOptions) {
       message: provider ? `OpenCode is now connected to ${escapeHtml(provider)}.` : "OpenCode is now authorized.",
       footnote: "You can close this window.",
     }),
-    script: options?.autoClose === false ? undefined : AUTO_CLOSE_SCRIPT,
+    ...(options?.autoClose === false ? {} : { script: AUTO_CLOSE_SCRIPT }),
   })
 }
 
