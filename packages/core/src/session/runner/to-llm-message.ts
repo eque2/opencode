@@ -7,7 +7,7 @@ import {
   type Model,
   type ProviderMetadata,
 } from "@opencode-ai/llm"
-import { Option, Schema } from "effect"
+import { Option, Schema, absurd } from "effect"
 import { SessionMessage } from "../message"
 import type { FileAttachment } from "../prompt"
 
@@ -37,7 +37,11 @@ const toolCall = (tool: SessionMessage.AssistantTool, providerMetadata: Provider
     providerMetadata,
   })
 
-const toolResult = (tool: SessionMessage.AssistantTool, providerMetadata: ProviderMetadata | undefined) => {
+/** The settled result of a tool call; a pending or running call has none yet. */
+const toolResult = (
+  tool: SessionMessage.AssistantTool,
+  providerMetadata: ProviderMetadata | undefined,
+): Option.Option<ToolResultPart> => {
   if (tool.state.status === "completed") {
     // TODO: Materialize remote and managed URIs before provider-history lowering.
     // ToolOutput.toResultValue rejects unresolved URIs rather than treating them as media bytes.
@@ -45,27 +49,32 @@ const toolResult = (tool: SessionMessage.AssistantTool, providerMetadata: Provid
       tool.provider?.executed === true && tool.state.result !== undefined
         ? tool.state.result
         : ToolOutput.toResultValue({ structured: tool.state.structured, content: tool.state.content })
-    return ToolResultPart.make({
-      id: tool.id,
-      name: tool.name,
-      result,
-      providerExecuted: tool.provider?.executed,
-      providerMetadata,
-    })
+    return Option.some(
+      ToolResultPart.make({
+        id: tool.id,
+        name: tool.name,
+        result,
+        providerExecuted: tool.provider?.executed,
+        providerMetadata,
+      }),
+    )
   }
   if (tool.state.status === "error") {
-    return ToolResultPart.make({
-      id: tool.id,
-      name: tool.name,
-      result:
-        tool.provider?.executed === true && tool.state.result !== undefined
-          ? tool.state.result
-          : { error: tool.state.error, content: tool.state.content, structured: tool.state.structured },
-      resultType: "error",
-      providerExecuted: tool.provider?.executed,
-      providerMetadata,
-    })
+    return Option.some(
+      ToolResultPart.make({
+        id: tool.id,
+        name: tool.name,
+        result:
+          tool.provider?.executed === true && tool.state.result !== undefined
+            ? tool.state.result
+            : { error: tool.state.error, content: tool.state.content, structured: tool.state.structured },
+        resultType: "error",
+        providerExecuted: tool.provider?.executed,
+        providerMetadata,
+      }),
+    )
   }
+  return Option.none()
 }
 
 const assistant = (message: SessionMessage.Assistant, model: Model) => {
@@ -92,7 +101,7 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
       item,
       reuseProviderMetadata ? (item.provider.resultMetadata ?? item.provider.metadata) : undefined,
     )
-    return result ? [call, result] : [call]
+    return [call, ...Option.toArray(result)]
   })
   const meaningful = content.filter((part) => {
     if (part.type === "text") return part.text !== ""
@@ -101,10 +110,14 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
   })
   const results = message.content
     .filter((item): item is SessionMessage.AssistantTool => item.type === "tool" && item.provider?.executed !== true)
-    .map((item) =>
-      toolResult(item, reuseProviderMetadata ? (item.provider?.resultMetadata ?? item.provider?.metadata) : undefined),
+    .flatMap((item) =>
+      Option.toArray(
+        toolResult(
+          item,
+          reuseProviderMetadata ? (item.provider?.resultMetadata ?? item.provider?.metadata) : undefined,
+        ),
+      ),
     )
-    .filter((message) => message !== undefined)
     .map(Message.tool)
   if (meaningful.length === 0) return results
   return [
@@ -164,6 +177,8 @@ ${message.recent}
           metadata: message.metadata,
         }),
       ]
+    default:
+      return absurd(message)
   }
 }
 
