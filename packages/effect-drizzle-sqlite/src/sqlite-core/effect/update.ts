@@ -255,9 +255,7 @@ export class SQLiteEffectUpdateBase<
     return this as any
   }
 
-  private createJoin<TJoinType extends SQLiteSelectJoinConfig["joinType"]>(
-    joinType: TJoinType,
-  ): SQLiteEffectUpdateJoinFn<this> {
+  private createJoin(joinType: SQLiteSelectJoinConfig["joinType"]): SQLiteEffectUpdateJoinFn<this> {
     return ((
       table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
       on: ((updateTable: TTable, from: TFrom) => SQL | undefined) | SQL | undefined,
@@ -342,7 +340,7 @@ export class SQLiteEffectUpdateBase<
   returning(
     fields: SelectedFields = getTableColumnsRuntime(this.config.table),
   ): SQLiteEffectUpdateWithout<AnySQLiteEffectUpdate, TDynamic, "returning"> {
-    this.config.returning = orderSelectedFields<SQLiteColumn>(fields)
+    this.config.returning = orderSelectedFields(fields)
     return this as any
   }
 

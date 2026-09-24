@@ -13,7 +13,6 @@ import type {
 } from "drizzle-orm/query-builders/select.types"
 import { SQL } from "drizzle-orm/sql/sql"
 import type { ColumnsSelection, SQLWrapper } from "drizzle-orm/sql/sql"
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns"
 import type { SQLiteDialect } from "drizzle-orm/sqlite-core/dialect"
 import { SQLiteSelectQueryBuilderBase } from "drizzle-orm/sqlite-core/query-builders/select"
 import type {
@@ -204,7 +203,7 @@ export class SQLiteEffectSelectBase<
       this.dialect.sqlToQuery(this.getSQL()),
       "all",
       {
-        fields: orderSelectedFields<SQLiteColumn>(this.effectConfig.fields),
+        fields: orderSelectedFields(this.effectConfig.fields),
         queryMetadata: {
           type: "select",
           tables: [...this.usedTables],

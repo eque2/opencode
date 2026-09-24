@@ -40,7 +40,7 @@ export const jitCompatCheck = Effect.fn("jitCompatCheck")(function* (isEnabled: 
   }).pipe(Effect.orElseSucceed(() => false))
 })
 
-export function orderSelectedFields<TColumn extends Column>(
+export function orderSelectedFields(
   fields: Record<string, unknown>,
   pathPrefix?: string[],
 ): SelectedFieldsOrdered {

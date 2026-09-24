@@ -193,7 +193,7 @@ export class SQLiteEffectDeleteBase<
   returning(
     fields: SelectedFieldsFlat = getTableColumnsRuntime(this.table),
   ): SQLiteEffectDeleteReturning<this, TDynamic, any> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
-    this.config.returning = orderSelectedFields<SQLiteColumn>(fields)
+    this.config.returning = orderSelectedFields(fields)
     return this as any
   }
 
