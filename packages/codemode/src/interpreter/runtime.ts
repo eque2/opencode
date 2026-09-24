@@ -2167,36 +2167,36 @@ class Interpreter<R> {
           return outcomes
         })
       }
-      case "race": {
-        if (items.length === 0) {
-          throw new InterpreterRuntimeError(
-            "Promise.race([]) would never settle; provide at least one promise or value.",
-            node,
-          )
-        }
-        const observations = items.map((item, index) =>
-          item instanceof SandboxPromise
-            ? Effect.map(this.observePromise(item), (exit) => ({ index, exit }))
-            : Effect.succeed({ index, exit: Exit.succeed(item as unknown) }),
-        )
-        return Effect.gen({ self: this }, function* () {
-          // First settlement (fulfilled OR rejected) wins; the observations never fail, so
-          // racing them yields exactly that. Losing in-flight calls are then interrupted.
-          const winner = yield* Effect.raceAll(observations)
-          for (const [index, item] of items.entries()) {
-            if (index === winner.index || !(item instanceof SandboxPromise) || item.fiber === undefined) continue
-            item.interrupted = true
-            yield* Fiber.interrupt(item.fiber)
-          }
-          const winningItem = items[winner.index]
-          return yield* this.unwrapPromiseExit(
-            winningItem instanceof SandboxPromise ? winningItem : undefined,
-            winner.exit,
-            node,
-          )
-        })
-      }
     }
+
+    // The one method left is Promise.race.
+    if (items.length === 0) {
+      throw new InterpreterRuntimeError(
+        "Promise.race([]) would never settle; provide at least one promise or value.",
+        node,
+      )
+    }
+    const observations = items.map((item, index) =>
+      item instanceof SandboxPromise
+        ? Effect.map(this.observePromise(item), (exit) => ({ index, exit }))
+        : Effect.succeed({ index, exit: Exit.succeed(item as unknown) }),
+    )
+    return Effect.gen({ self: this }, function* () {
+      // First settlement (fulfilled OR rejected) wins; the observations never fail, so
+      // racing them yields exactly that. Losing in-flight calls are then interrupted.
+      const winner = yield* Effect.raceAll(observations)
+      for (const [index, item] of items.entries()) {
+        if (index === winner.index || !(item instanceof SandboxPromise) || item.fiber === undefined) continue
+        item.interrupted = true
+        yield* Fiber.interrupt(item.fiber)
+      }
+      const winningItem = items[winner.index]
+      return yield* this.unwrapPromiseExit(
+        winningItem instanceof SandboxPromise ? winningItem : undefined,
+        winner.exit,
+        node,
+      )
+    })
   }
 
   private invokeFunction(fn: CodeModeFunction, args: Array<unknown>): Effect.Effect<unknown, unknown, R> {
