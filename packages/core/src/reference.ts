@@ -1,7 +1,7 @@
 export * as Reference from "./reference"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Effect, Layer, MutableHashMap, Scope, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Result, Scope, Types } from "effect"
 import { Reference } from "@opencode-ai/schema/reference"
 import { Global } from "./global"
 import { EventV2 } from "./event"
@@ -58,6 +58,7 @@ const layer = Layer.effect(
       finalize: (draft) =>
         Effect.gen(function* () {
           MutableHashMap.clear(materialized)
+          const githubCloneBase = yield* Repository.githubCloneBase
           for (const [name, source] of draft.list()) {
             if (source.type === "local") {
               MutableHashMap.set(
@@ -73,27 +74,24 @@ const layer = Layer.effect(
               )
               continue
             }
-            const repository = Repository.parse(source.repository)
-            if (!repository || !Repository.isRemote(repository)) continue
-            if (source.branch) {
-              try {
-                Repository.validateBranch(source.branch)
-              } catch {
-                continue
-              }
-            }
+            const repository = Option.filter(
+              Repository.parse(source.repository, { githubCloneBase }),
+              Repository.isRemote,
+            )
+            if (Option.isNone(repository)) continue
+            if (source.branch && Result.isFailure(Repository.validateBranch(source.branch))) continue
             MutableHashMap.set(
               materialized,
               name,
               new Info({
                 name,
-                path: AbsolutePath.make(Repository.cachePath(global.repos, repository, source.branch)),
+                path: AbsolutePath.make(Repository.cachePath(global.repos, repository.value, source.branch)),
                 ...(source.description === undefined ? {} : { description: source.description }),
                 ...(source.hidden === undefined ? {} : { hidden: source.hidden }),
                 source,
               }),
             )
-            yield* cache.ensure({ reference: repository, branch: source.branch, refresh: true }).pipe(
+            yield* cache.ensure({ reference: repository.value, branch: source.branch, refresh: true }).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("failed to materialize reference", {
                   name,

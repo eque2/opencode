@@ -3,6 +3,7 @@ import fs from "fs/promises"
 import path from "path"
 import { promisify } from "util"
 import { pathToFileURL } from "url"
+import { Result } from "effect"
 import { Repository } from "@opencode-ai/core/repository"
 
 const exec = promisify(execFile)
@@ -25,7 +26,7 @@ export async function gitRemote(root: string) {
     root,
     source,
     remote: pathToFileURL(origin).href,
-    reference: { ...Repository.parseRemote("owner/repo"), remote: pathToFileURL(origin).href },
+    reference: { ...Result.getOrThrow(Repository.parseRemote("owner/repo")), remote: pathToFileURL(origin).href },
   }
 }
 

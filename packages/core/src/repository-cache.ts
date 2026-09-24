@@ -6,7 +6,7 @@
  * observe the checkout move underneath them.
  */
 import path from "path"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { FSUtil } from "./fs-util"
 import { Git } from "./git"
 import { Global } from "./global"
@@ -115,17 +115,16 @@ export function isError(error: unknown): error is Error {
 }
 
 export const parseRemote = Effect.fn("RepositoryCache.parseRemote")(function* (repository: string) {
-  return yield* Effect.try({
-    try: () => Repository.parseRemote(repository),
-    catch: (error) => new InvalidRepositoryError({ repository, message: errorMessage(error) }),
-  })
+  const githubCloneBase = yield* Repository.githubCloneBase
+  return yield* Effect.fromResult(Repository.parseRemote(repository, { githubCloneBase })).pipe(
+    Effect.mapError((error) => new InvalidRepositoryError({ repository, message: error.message })),
+  )
 })
 
 export const validateBranch = Effect.fn("RepositoryCache.validateBranch")(function* (branch: string) {
-  return yield* Effect.try({
-    try: () => Repository.validateBranch(branch),
-    catch: (error) => new InvalidBranchError({ branch, message: errorMessage(error) }),
-  })
+  return yield* Effect.fromResult(Repository.validateBranch(branch)).pipe(
+    Effect.mapError((error) => new InvalidBranchError({ branch, message: error.message })),
+  )
 })
 
 const layer: Layer.Layer<Service, never, FSUtil.Service | Git.Service | EffectFlock.Service | Global.Service> =
@@ -143,7 +142,25 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Git.Service | EffectFl
 
           const repository = input.reference.label
           const localPath = Repository.cachePath(global.repos, input.reference, input.branch)
-          const cloneTarget = Repository.parse(input.reference.remote) ?? input.reference
+          const githubCloneBase = yield* Repository.githubCloneBase
+          const cloneTarget = Option.getOrElse(
+            Repository.parse(input.reference.remote, { githubCloneBase }),
+            () => input.reference,
+          )
+
+          // Discovery walks upward, so an enclosing repository with a matching
+          // origin could masquerade as the cache entry; reuse requires the
+          // checkout to live exactly at the cache path.
+          const reusable = Effect.fnUntraced(function* (existing: Git.Repository) {
+            const origin = Option.flatMap(Option.fromUndefinedOr(yield* git.remote.get(existing)), (remote) =>
+              Repository.parse(remote, { githubCloneBase }),
+            )
+            const worktree = yield* fs.resolve(localPath)
+            return (
+              existing.worktree === worktree &&
+              Option.exists(origin, (reference) => Repository.same(reference, cloneTarget))
+            )
+          })
 
           return yield* flock
             .withLock(
@@ -151,18 +168,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Git.Service | EffectFl
                 yield* cacheOperation(fs.ensureDir(path.dirname(localPath)), "ensure cache directory", localPath)
 
                 const existing = yield* git.repo.discover(AbsolutePath.make(localPath))
-                const origin = existing ? yield* git.remote.get(existing) : undefined
-                const originReference = origin ? Repository.parse(origin) : undefined
-                // Discovery walks upward, so an enclosing repository with a
-                // matching origin could masquerade as the cache entry; reuse
-                // requires the checkout to live exactly at the cache path.
-                const worktree = existing ? yield* fs.resolve(localPath) : undefined
-                const reuse = Boolean(
-                  existing &&
-                    existing.worktree === worktree &&
-                    originReference &&
-                    Repository.same(originReference, cloneTarget),
-                )
+                const reuse = existing ? yield* reusable(existing) : false
                 if (!reuse && (yield* fs.existsSafe(localPath))) {
                   yield* cacheOperation(fs.remove(localPath, { recursive: true }), "remove stale cache", localPath)
                 }
@@ -217,6 +223,9 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Git.Service | EffectFl
                 }
 
                 const checkout = yield* git.repo.discover(AbsolutePath.make(localPath))
+                const revision = checkout
+                  ? { head: yield* git.history.head(checkout), branch: yield* git.history.branch(checkout) }
+                  : {}
 
                 return {
                   repository,
@@ -224,8 +233,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | Git.Service | EffectFl
                   remote: input.reference.remote,
                   localPath,
                   status,
-                  head: checkout ? yield* git.history.head(checkout) : undefined,
-                  branch: checkout ? yield* git.history.branch(checkout) : undefined,
+                  ...revision,
                 } satisfies Result
               }),
               `repository-cache:${localPath}`,

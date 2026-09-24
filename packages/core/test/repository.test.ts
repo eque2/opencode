@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { Option, Result } from "effect"
 import path from "path"
 import { pathToFileURL } from "url"
 import { Repository } from "@opencode-ai/core/repository"
 
 describe("Repository", () => {
   test("parses github shorthand and builds an explicit-root cache path", () => {
-    const reference = Repository.parseRemote("owner/repo")
+    const reference = Result.getOrThrow(Repository.parseRemote("owner/repo"))
 
     expect(reference).toMatchObject({
       host: "github.com",
@@ -27,13 +28,13 @@ describe("Repository", () => {
   })
 
   test("parses host path and scp remote references", () => {
-    expect(Repository.parseRemote("gitlab.com/group/repo")).toMatchObject({
+    expect(Result.getOrThrow(Repository.parseRemote("gitlab.com/group/repo"))).toMatchObject({
       host: "gitlab.com",
       path: "group/repo",
       remote: "https://gitlab.com/group/repo.git",
       label: "gitlab.com/group/repo",
     })
-    expect(Repository.parseRemote("git@github.com:owner/repo.git")).toMatchObject({
+    expect(Result.getOrThrow(Repository.parseRemote("git@github.com:owner/repo.git"))).toMatchObject({
       host: "github.com",
       path: "owner/repo",
       remote: "git@github.com:owner/repo.git",
@@ -45,27 +46,31 @@ describe("Repository", () => {
     const localPath = path.resolve("repo.git")
     const reference = Repository.parse(pathToFileURL(localPath).href)
 
-    expect(reference).toMatchObject({ host: "file", protocol: "file:", label: localPath })
-    expect(reference && Repository.isFile(reference)).toBe(true)
-    expect(reference && Repository.isRemote(reference)).toBe(false)
-    expect(() => Repository.parseRemote(pathToFileURL(localPath).href)).toThrow(
+    expect(Option.getOrThrow(reference)).toMatchObject({ host: "file", protocol: "file:", label: localPath })
+    expect(Option.exists(reference, Repository.isFile)).toBe(true)
+    expect(Option.exists(reference, Repository.isRemote)).toBe(false)
+    expect(() => Result.getOrThrow(Repository.parseRemote(pathToFileURL(localPath).href))).toThrow(
       Repository.UnsupportedLocalRepositoryError,
     )
   })
 
   test("rejects unsafe remote references and branches with typed errors", () => {
-    expect(() => Repository.parseRemote("not-a-repo")).toThrow(Repository.InvalidReferenceError)
-    expect(() => Repository.parseRemote("git@github.com:../../../etc/passwd")).toThrow(Repository.InvalidReferenceError)
-    expect(() => Repository.validateBranch("feature/docs.v1")).not.toThrow()
-    expect(() => Repository.validateBranch("-bad")).toThrow(Repository.InvalidBranchError)
-    expect(() => Repository.validateBranch("bad..branch")).toThrow(Repository.InvalidBranchError)
-    expect(() => Repository.validateBranch("bad branch")).toThrow(Repository.InvalidBranchError)
+    expect(() => Result.getOrThrow(Repository.parseRemote("not-a-repo"))).toThrow(Repository.InvalidReferenceError)
+    expect(() => Result.getOrThrow(Repository.parseRemote("git@github.com:../../../etc/passwd"))).toThrow(
+      Repository.InvalidReferenceError,
+    )
+    expect(() => Result.getOrThrow(Repository.validateBranch("feature/docs.v1"))).not.toThrow()
+    expect(() => Result.getOrThrow(Repository.validateBranch("-bad"))).toThrow(Repository.InvalidBranchError)
+    expect(() => Result.getOrThrow(Repository.validateBranch("bad..branch"))).toThrow(Repository.InvalidBranchError)
+    expect(() => Result.getOrThrow(Repository.validateBranch("bad branch"))).toThrow(Repository.InvalidBranchError)
   })
 
   test("compares cache identity independent of input spelling", () => {
-    const shorthand = Repository.parseRemote("owner/repo")
+    const shorthand = Result.getOrThrow(Repository.parseRemote("owner/repo"))
 
-    expect(Repository.same(shorthand, Repository.parseRemote("https://github.com/owner/repo.git"))).toBe(true)
-    expect(Repository.same(shorthand, Repository.parseRemote("github.com/owner/repo"))).toBe(true)
+    expect(
+      Repository.same(shorthand, Result.getOrThrow(Repository.parseRemote("https://github.com/owner/repo.git"))),
+    ).toBe(true)
+    expect(Repository.same(shorthand, Result.getOrThrow(Repository.parseRemote("github.com/owner/repo")))).toBe(true)
   })
 })
