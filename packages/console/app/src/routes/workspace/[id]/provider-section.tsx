@@ -60,14 +60,8 @@ function ProviderRow(props: { provider: Provider }) {
   const params = useParams()
   const i18n = useI18n()
   const providers = createAsync(() => listProviders(params.id!))
-  const saveSubmission = useSubmission(
-    saveProvider,
-    ([fd]) => formText(fd, "provider") === props.provider.key,
-  )
-  const removeSubmission = useSubmission(
-    removeProvider,
-    ([fd]) => formText(fd, "provider") === props.provider.key,
-  )
+  const saveSubmission = useSubmission(saveProvider, ([fd]) => formText(fd, "provider") === props.provider.key)
+  const removeSubmission = useSubmission(removeProvider, ([fd]) => formText(fd, "provider") === props.provider.key)
   const [store, setStore] = createStore({ editing: false })
 
   let input: HTMLInputElement
