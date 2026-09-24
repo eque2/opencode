@@ -81,7 +81,8 @@ function convertUserPart(
   part: UserContent[number],
 ): Effect.Effect<OpenAICompatibleContentPart, UnsupportedFunctionalityError> {
   const partMetadata = getOpenAIMetadata(part)
-  switch (part.type) {
+  const { type } = part
+  switch (type) {
     case "text": {
       return Effect.succeed({ type: "text", text: part.text, ...partMetadata })
     }
@@ -99,13 +100,18 @@ function convertUserPart(
           },
           ...partMetadata,
         })
-      } else {
-        return Effect.fail(
-          new UnsupportedFunctionalityError({
-            functionality: `file part media type ${part.mediaType}`,
-          }),
-        )
       }
+      return Effect.fail(
+        new UnsupportedFunctionalityError({
+          functionality: `file part media type ${part.mediaType}`,
+        }),
+      )
+    }
+    default: {
+      const _exhaustiveCheck: never = type
+      return Effect.fail(
+        new UnsupportedFunctionalityError({ functionality: `user content part type ${String(_exhaustiveCheck)}` }),
+      )
     }
   }
 }
@@ -180,8 +186,11 @@ function convertToolMessages(content: ToolContent) {
   )
 }
 
-function toolOutputText(output: LanguageModelV3ToolResultOutput): Effect.Effect<string, Schema.SchemaError> {
-  switch (output.type) {
+function toolOutputText(
+  output: LanguageModelV3ToolResultOutput,
+): Effect.Effect<string, Schema.SchemaError | UnsupportedFunctionalityError> {
+  const { type } = output
+  switch (type) {
     case "text":
     case "error-text":
       return Effect.succeed(output.value)
@@ -191,5 +200,11 @@ function toolOutputText(output: LanguageModelV3ToolResultOutput): Effect.Effect<
     case "json":
     case "error-json":
       return encodeJsonText(output.value)
+    default: {
+      const _exhaustiveCheck: never = type
+      return Effect.fail(
+        new UnsupportedFunctionalityError({ functionality: `tool output type ${String(_exhaustiveCheck)}` }),
+      )
+    }
   }
 }
