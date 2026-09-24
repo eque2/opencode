@@ -670,29 +670,33 @@ const namespaceKeys = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): Rea
   return Object.keys(value)
 }
 
-const resolve = <R>(tools: HostTools<R>, path: ReadonlyArray<string>): HostTool<R> | Definition<R> => {
-  let value: HostTool<R> | Definition<R> | HostTools<R> = tools
+const resolve = <R>(
+  tools: HostTools<R>,
+  path: ReadonlyArray<string>,
+): Effect.Effect<HostTool<R> | Definition<R>, ToolRuntimeError> =>
+  Effect.gen(function* () {
+    let value: HostTool<R> | Definition<R> | HostTools<R> = tools
 
-  for (const segment of path) {
-    if (
-      isBlockedMember(segment) ||
-      typeof value === "function" ||
-      isDefinition(value) ||
-      !Object.hasOwn(value, segment)
-    ) {
-      throw new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
-        "Use tools.$codemode.search({ query }) to find available described tools.",
-      ])
+    for (const segment of path) {
+      if (
+        isBlockedMember(segment) ||
+        typeof value === "function" ||
+        isDefinition(value) ||
+        !Object.hasOwn(value, segment)
+      ) {
+        return yield* new ToolRuntimeError("UnknownTool", `Unknown tool '${path.join(".")}'.`, [
+          "Use tools.$codemode.search({ query }) to find available described tools.",
+        ])
+      }
+      value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
     }
-    value = value[segment] as HostTool<R> | Definition<R> | HostTools<R>
-  }
 
-  if (typeof value !== "function" && !isDefinition(value)) {
-    throw new ToolRuntimeError("UnknownTool", `Tool '${path.join(".")}' is not callable.`)
-  }
+    if (typeof value !== "function" && !isDefinition(value)) {
+      return yield* new ToolRuntimeError("UnknownTool", `Tool '${path.join(".")}' is not callable.`)
+    }
 
-  return value
-}
+    return value
+  })
 
 export type ToolRuntime<R = never> = {
   readonly root: ToolReference
@@ -742,12 +746,17 @@ export const make = <R>(
       catch: () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`),
     })
 
-  const recordCall = (call: ToolCall): void => {
-    if (maxToolCalls !== undefined && calls.length >= maxToolCalls) {
-      throw new ToolRuntimeError("ToolCallLimitExceeded", `Execution exceeded its tool-call limit of ${maxToolCalls}.`)
-    }
-    calls.push(call)
-  }
+  const recordCall = (call: ToolCall): Effect.Effect<number, ToolRuntimeError> =>
+    Effect.gen(function* () {
+      if (maxToolCalls !== undefined && calls.length >= maxToolCalls) {
+        return yield* new ToolRuntimeError(
+          "ToolCallLimitExceeded",
+          `Execution exceeded its tool-call limit of ${maxToolCalls}.`,
+        )
+      }
+      calls.push(call)
+      return calls.length - 1
+    })
 
   return {
     root: new ToolReference([]),
@@ -759,15 +768,12 @@ export const make = <R>(
         const externalArgs = args.map((arg) => copyOut(copyIn(arg, `Arguments for tool '${name}'`)))
         const call = { name }
         const recordAndObserve = (input: unknown) =>
-          Effect.sync(() => {
-            recordCall(call)
-            return calls.length - 1
-          }).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
-        const tool = resolve(callableTools, path)
+          recordCall(call).pipe(Effect.tap((index) => hooks?.onToolCallStart?.({ index, name, input }) ?? Effect.void))
+        const tool = yield* resolve(callableTools, path)
         let describedInput: unknown
         if (isDefinition(tool)) {
           if (externalArgs.length !== 1)
-            throw new ToolRuntimeError("InvalidToolInput", `Tool '${name}' expects exactly one input object.`)
+            return yield* new ToolRuntimeError("InvalidToolInput", `Tool '${name}' expects exactly one input object.`)
           describedInput = yield* Effect.try({
             try: () => decodeToolInput(tool, externalArgs[0]),
             catch: (cause) =>
