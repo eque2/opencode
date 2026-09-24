@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause"
+import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import type { SqlError } from "effect/unstable/sql/SqlError"
@@ -482,10 +483,11 @@ export const migrate = Effect.fn("migrate")(function* <TEffectHKT extends QueryE
     const [migration] = migrations
     if (!migration) return
 
+    const appliedAt = DateTime.formatIso(yield* DateTime.now)
     yield* session.run(
       sql`insert into ${sql.identifier(
         migrationsTable,
-      )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${new Date().toISOString()})`,
+      )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${appliedAt})`,
     )
 
     return
@@ -500,10 +502,11 @@ export const migrate = Effect.fn("migrate")(function* <TEffectHKT extends QueryE
         for (const stmt of migration.sql) {
           yield* tx.run(sql.raw(stmt))
         }
+        const appliedAt = DateTime.formatIso(yield* DateTime.now)
         yield* tx.run(
           sql`insert into ${sql.identifier(
             migrationsTable,
-          )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${new Date().toISOString()})`,
+          )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${appliedAt})`,
         )
       }
     }),
