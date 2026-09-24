@@ -2,14 +2,13 @@ import {
   type LanguageModelV3FilePart,
   type LanguageModelV3Prompt,
   type LanguageModelV3TextPart,
-  type LanguageModelV3ToolCallPart,
   type SharedV3Warning,
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
-import { Effect, HashSet, Schema } from "effect"
+import { Chunk, Effect, HashMap, HashSet, Option, Schema } from "effect"
 import type {
-  OpenAIResponsesInput,
+  OpenAIResponsesInputItem,
   OpenAIResponsesReasoning,
   OpenAIResponsesUserMessage,
 } from "./openai-responses-api-types"
@@ -45,8 +44,8 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
   store: boolean
   hasLocalShellTool?: boolean
 }) {
-  const input: OpenAIResponsesInput = []
-  const warnings: Array<SharedV3Warning> = []
+  let input = Chunk.empty<OpenAIResponsesInputItem>()
+  let warnings = Chunk.empty<SharedV3Warning>()
   let processedApprovalIds = HashSet.empty<string>()
 
   for (const { role, content } of prompt) {
@@ -54,15 +53,15 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
       case "system": {
         switch (systemMessageMode) {
           case "system": {
-            input.push({ role: "system", content })
+            input = Chunk.append(input, { role: "system", content })
             break
           }
           case "developer": {
-            input.push({ role: "developer", content })
+            input = Chunk.append(input, { role: "developer", content })
             break
           }
           case "remove": {
-            warnings.push({
+            warnings = Chunk.append(warnings, {
               type: "other",
               message: "system messages are removed for this model",
             })
@@ -80,59 +79,67 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
         const userContent = yield* Effect.forEach(content, (part, index) =>
           toUserContentPart(part, index, fileIdPrefixes),
         )
-        input.push({ role: "user", content: userContent })
+        input = Chunk.append(input, { role: "user", content: userContent })
 
         break
       }
 
       case "assistant": {
-        const reasoningMessages: Record<string, OpenAIResponsesReasoning> = {}
-        const toolCallParts: Record<string, LanguageModelV3ToolCallPart> = {}
+        let messageInput: ReadonlyArray<OpenAIResponsesInputItem> = []
+        // Position in messageInput of the item for each reasoning id: later parts with the id extend that item.
+        let reasoningIndex = HashMap.empty<string, number>()
 
         for (const part of content) {
           switch (part.type) {
             case "text": {
-              input.push({
-                role: "assistant",
-                content: [{ type: "output_text", text: part.text }],
-                id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
-              })
+              messageInput = [
+                ...messageInput,
+                {
+                  role: "assistant",
+                  content: [{ type: "output_text", text: part.text }],
+                  id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                },
+              ]
               break
             }
             case "tool-call": {
-              toolCallParts[part.toolCallId] = part
-
               if (part.providerExecuted) {
                 break
               }
 
               if (hasLocalShellTool && part.toolName === "local_shell") {
                 const parsedInput = yield* decodeLocalShellInput(part.input)
-                input.push({
-                  type: "local_shell_call",
-                  call_id: part.toolCallId,
-                  id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
-                  action: {
-                    type: "exec",
-                    command: parsedInput.action.command,
-                    timeout_ms: parsedInput.action.timeoutMs,
-                    user: parsedInput.action.user,
-                    working_directory: parsedInput.action.workingDirectory,
-                    env: parsedInput.action.env,
+                messageInput = [
+                  ...messageInput,
+                  {
+                    type: "local_shell_call",
+                    call_id: part.toolCallId,
+                    id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                    action: {
+                      type: "exec",
+                      command: parsedInput.action.command,
+                      timeout_ms: parsedInput.action.timeoutMs,
+                      user: parsedInput.action.user,
+                      working_directory: parsedInput.action.workingDirectory,
+                      env: parsedInput.action.env,
+                    },
                   },
-                })
+                ]
 
                 break
               }
 
               const functionArguments = yield* encodeJsonText(part.input)
-              input.push({
-                type: "function_call",
-                call_id: part.toolCallId,
-                name: part.toolName,
-                arguments: functionArguments,
-                id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
-              })
+              messageInput = [
+                ...messageInput,
+                {
+                  type: "function_call",
+                  call_id: part.toolCallId,
+                  name: part.toolName,
+                  arguments: functionArguments,
+                  id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                },
+              ]
               break
             }
 
@@ -140,9 +147,9 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
             case "tool-result": {
               if (store) {
                 // use item references to refer to tool results from built-in tools
-                input.push({ type: "item_reference", id: part.toolCallId })
+                messageInput = [...messageInput, { type: "item_reference", id: part.toolCallId }]
               } else {
-                warnings.push({
+                warnings = Chunk.append(warnings, {
                   type: "other",
                   message: `Results for OpenAI tool ${part.toolName} are not sent to the API when store is false`,
                 })
@@ -165,54 +172,44 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
               const reasoningId = providerOptions?.itemId
 
               if (reasoningId != null) {
-                const reasoningMessage = reasoningMessages[reasoningId]
+                const reasoningAt = HashMap.get(reasoningIndex, reasoningId)
 
                 if (store) {
-                  if (reasoningMessage === undefined) {
+                  if (Option.isNone(reasoningAt)) {
                     // use item references to refer to reasoning (single reference)
-                    input.push({ type: "item_reference", id: reasoningId })
-
-                    // store unused reasoning message to mark id as used
-                    reasoningMessages[reasoningId] = {
-                      type: "reasoning",
-                      id: reasoningId,
-                      summary: [],
-                    }
+                    reasoningIndex = HashMap.set(reasoningIndex, reasoningId, messageInput.length)
+                    messageInput = [...messageInput, { type: "item_reference", id: reasoningId }]
                   }
                 } else {
-                  const summaryParts: Array<{
-                    type: "summary_text"
-                    text: string
-                  }> = []
+                  const summaryParts: OpenAIResponsesReasoning["summary"] =
+                    part.text.length > 0 ? [{ type: "summary_text", text: part.text }] : []
 
-                  if (part.text.length > 0) {
-                    summaryParts.push({
-                      type: "summary_text",
-                      text: part.text,
-                    })
-                  } else if (reasoningMessage !== undefined) {
+                  if (part.text.length === 0 && Option.isSome(reasoningAt)) {
                     const partJson = yield* encodeJsonText(part)
-                    warnings.push({
+                    warnings = Chunk.append(warnings, {
                       type: "other",
                       message: `Cannot append empty reasoning part to existing reasoning sequence. Skipping reasoning part: ${partJson}.`,
                     })
                   }
 
-                  if (reasoningMessage === undefined) {
-                    reasoningMessages[reasoningId] = {
-                      type: "reasoning",
-                      id: reasoningId,
-                      encrypted_content: providerOptions?.reasoningEncryptedContent,
-                      summary: summaryParts,
-                    }
-                    input.push(reasoningMessages[reasoningId])
+                  if (Option.isNone(reasoningAt)) {
+                    reasoningIndex = HashMap.set(reasoningIndex, reasoningId, messageInput.length)
+                    messageInput = [
+                      ...messageInput,
+                      {
+                        type: "reasoning",
+                        id: reasoningId,
+                        encrypted_content: providerOptions?.reasoningEncryptedContent,
+                        summary: summaryParts,
+                      },
+                    ]
                   } else {
-                    reasoningMessage.summary.push(...summaryParts)
+                    messageInput = appendReasoningSummary(messageInput, reasoningAt.value, summaryParts)
                   }
                 }
               } else {
                 const partJson = yield* encodeJsonText(part)
-                warnings.push({
+                warnings = Chunk.append(warnings, {
                   type: "other",
                   message: `Non-OpenAI reasoning parts are not supported. Skipping reasoning part: ${partJson}.`,
                 })
@@ -222,6 +219,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
           }
         }
 
+        input = Chunk.appendAll(input, Chunk.fromIterable(messageInput))
         break
       }
 
@@ -234,13 +232,13 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
             processedApprovalIds = HashSet.add(processedApprovalIds, part.approvalId)
 
             if (store) {
-              input.push({
+              input = Chunk.append(input, {
                 type: "item_reference",
                 id: part.approvalId,
               })
             }
 
-            input.push({
+            input = Chunk.append(input, {
               type: "mcp_approval_response",
               approval_request_id: part.approvalId,
               approve: part.approved,
@@ -259,7 +257,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 
           if (hasLocalShellTool && part.toolName === "local_shell" && output.type === "json") {
             const localShellOutput = yield* decodeLocalShellOutput(output.value)
-            input.push({
+            input = Chunk.append(input, {
               type: "local_shell_call_output",
               call_id: part.toolCallId,
               output: localShellOutput.output,
@@ -283,7 +281,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
               break
           }
 
-          input.push({
+          input = Chunk.append(input, {
             type: "function_call_output",
             call_id: part.toolCallId,
             output: contentValue,
@@ -300,8 +298,20 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
     }
   }
 
-  return { input, warnings }
+  return { input: Chunk.toArray(input), warnings: Chunk.toArray(warnings) }
 })
+
+// Extend the reasoning item at `index` with more summary parts.
+const appendReasoningSummary = (
+  items: ReadonlyArray<OpenAIResponsesInputItem>,
+  index: number,
+  summaryParts: OpenAIResponsesReasoning["summary"],
+): ReadonlyArray<OpenAIResponsesInputItem> =>
+  items.map((item, position) =>
+    position === index && "type" in item && item.type === "reasoning"
+      ? { ...item, summary: [...item.summary, ...summaryParts] }
+      : item,
+  )
 
 // An input that the Responses API cannot take fails the call with the AI SDK error for it.
 const unsupported = (functionality: string) =>

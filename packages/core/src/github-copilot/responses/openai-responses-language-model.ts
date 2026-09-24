@@ -19,7 +19,7 @@ import {
   type ParseResult,
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
-import { DateTime, Effect, Schema } from "effect"
+import { Chunk, DateTime, Effect, Schema } from "effect"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler, ResponsesCallError } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema, ContainerID } from "./tool/code-interpreter"
@@ -289,6 +289,10 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
 const runAtSdkBoundary = <A>(effect: Effect.Effect<A, ResponsesCallError>): Promise<A> =>
   Effect.runPromise(Effect.mapError(effect, (error) => error.cause))
 
+// A warning list with one entry when the condition holds.
+const warnIf = (condition: boolean, warning: SharedV3Warning): ReadonlyArray<SharedV3Warning> =>
+  condition ? [warning] : []
+
 const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
   modelId: OpenAIResponsesModelId,
   config: OpenAIConfig,
@@ -308,34 +312,15 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     responseFormat,
   }: LanguageModelV3CallOptions,
 ) {
-  const warnings: SharedV3Warning[] = []
   const modelConfig = getResponsesModelConfig(modelId)
 
-  if (topK != null) {
-    warnings.push({ type: "unsupported", feature: "topK" })
-  }
-
-  if (seed != null) {
-    warnings.push({ type: "unsupported", feature: "seed" })
-  }
-
-  if (presencePenalty != null) {
-    warnings.push({
-      type: "unsupported",
-      feature: "presencePenalty",
-    })
-  }
-
-  if (frequencyPenalty != null) {
-    warnings.push({
-      type: "unsupported",
-      feature: "frequencyPenalty",
-    })
-  }
-
-  if (stopSequences != null) {
-    warnings.push({ type: "unsupported", feature: "stopSequences" })
-  }
+  const callWarnings = [
+    ...warnIf(topK != null, { type: "unsupported", feature: "topK" }),
+    ...warnIf(seed != null, { type: "unsupported", feature: "seed" }),
+    ...warnIf(presencePenalty != null, { type: "unsupported", feature: "presencePenalty" }),
+    ...warnIf(frequencyPenalty != null, { type: "unsupported", feature: "frequencyPenalty" }),
+    ...warnIf(stopSequences != null, { type: "unsupported", feature: "stopSequences" }),
+  ]
 
   const openaiOptions = yield* Effect.tryPromise({
     try: () =>
@@ -354,8 +339,6 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     store: openaiOptions?.store ?? true,
     hasLocalShellTool: hasOpenAITool("openai.local_shell"),
   })
-
-  warnings.push(...inputWarnings)
 
   const strictJsonSchema = openaiOptions?.strictJsonSchema ?? false
 
@@ -398,11 +381,19 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     addInclude("code_interpreter_call.outputs")
   }
 
+  // remove unsupported settings for reasoning models
+  // see https://platform.openai.com/docs/guides/reasoning#limitations
+  const dropsTemperature = modelConfig.isReasoningModel && temperature != null
+  const dropsTopP = modelConfig.isReasoningModel && topP != null
+  // flex and priority processing need a model that supports them; the args leave out an unsupported service tier
+  const unsupportedFlex = openaiOptions?.serviceTier === "flex" && !modelConfig.supportsFlexProcessing
+  const unsupportedPriority = openaiOptions?.serviceTier === "priority" && !modelConfig.supportsPriorityProcessing
+
   const baseArgs = {
     model: modelId,
     input,
-    temperature,
-    top_p: topP,
+    ...(!dropsTemperature && { temperature }),
+    ...(!dropsTopP && { top_p: topP }),
     max_output_tokens: maxOutputTokens,
 
     ...((responseFormat?.type === "json" || openaiOptions?.textVerbosity) && {
@@ -433,7 +424,7 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     store: openaiOptions?.store,
     user: openaiOptions?.user,
     instructions: openaiOptions?.instructions,
-    service_tier: openaiOptions?.serviceTier,
+    ...(!unsupportedFlex && !unsupportedPriority && { service_tier: openaiOptions?.serviceTier }),
     include,
     prompt_cache_key: openaiOptions?.promptCacheKey,
     safety_identifier: openaiOptions?.safetyIdentifier,
@@ -456,66 +447,45 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     }),
   }
 
-  if (modelConfig.isReasoningModel) {
-    // remove unsupported settings for reasoning models
-    // see https://platform.openai.com/docs/guides/reasoning#limitations
-    if (baseArgs.temperature != null) {
-      baseArgs.temperature = undefined
-      warnings.push({
-        type: "unsupported",
-        feature: "temperature",
-        details: "temperature is not supported for reasoning models",
-      })
-    }
+  const settingWarnings = modelConfig.isReasoningModel
+    ? [
+        ...warnIf(dropsTemperature, {
+          type: "unsupported",
+          feature: "temperature",
+          details: "temperature is not supported for reasoning models",
+        }),
+        ...warnIf(dropsTopP, {
+          type: "unsupported",
+          feature: "topP",
+          details: "topP is not supported for reasoning models",
+        }),
+      ]
+    : [
+        ...warnIf(openaiOptions?.reasoningEffort != null, {
+          type: "unsupported",
+          feature: "reasoningEffort",
+          details: "reasoningEffort is not supported for non-reasoning models",
+        }),
+        ...warnIf(openaiOptions?.reasoningSummary != null, {
+          type: "unsupported",
+          feature: "reasoningSummary",
+          details: "reasoningSummary is not supported for non-reasoning models",
+        }),
+      ]
 
-    if (baseArgs.top_p != null) {
-      baseArgs.top_p = undefined
-      warnings.push({
-        type: "unsupported",
-        feature: "topP",
-        details: "topP is not supported for reasoning models",
-      })
-    }
-  } else {
-    if (openaiOptions?.reasoningEffort != null) {
-      warnings.push({
-        type: "unsupported",
-        feature: "reasoningEffort",
-        details: "reasoningEffort is not supported for non-reasoning models",
-      })
-    }
-
-    if (openaiOptions?.reasoningSummary != null) {
-      warnings.push({
-        type: "unsupported",
-        feature: "reasoningSummary",
-        details: "reasoningSummary is not supported for non-reasoning models",
-      })
-    }
-  }
-
-  // Validate flex processing support
-  if (openaiOptions?.serviceTier === "flex" && !modelConfig.supportsFlexProcessing) {
-    warnings.push({
+  const serviceTierWarnings = [
+    ...warnIf(unsupportedFlex, {
       type: "unsupported",
       feature: "serviceTier",
       details: "flex processing is only available for o3, o4-mini, and gpt-5 models",
-    })
-    // Remove from args if not supported
-    baseArgs.service_tier = undefined
-  }
-
-  // Validate priority processing support
-  if (openaiOptions?.serviceTier === "priority" && !modelConfig.supportsPriorityProcessing) {
-    warnings.push({
+    }),
+    ...warnIf(unsupportedPriority, {
       type: "unsupported",
       feature: "serviceTier",
       details:
         "priority processing is only available for supported models (gpt-4, gpt-5, gpt-5-mini, o3, o4-mini) and requires Enterprise access. gpt-5-nano is not supported",
-    })
-    // Remove from args if not supported
-    baseArgs.service_tier = undefined
-  }
+    }),
+  ]
 
   const {
     tools: openaiTools,
@@ -534,7 +504,7 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
       tools: openaiTools,
       tool_choice: openaiToolChoice,
     },
-    warnings: [...warnings, ...toolWarnings],
+    warnings: [...callWarnings, ...inputWarnings, ...settingWarnings, ...serviceTierWarnings, ...toolWarnings],
   }
 })
 
@@ -581,234 +551,232 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
     })
   }
 
-  const content: Array<LanguageModelV3Content> = []
-  const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
-
-  // flag that checks if there have been client-side tool calls (not executed by openai)
-  let hasFunctionCall = false
-
   // map response content to content array
-  for (const part of response.output) {
+  const content = response.output.flatMap((part): Array<LanguageModelV3Content> => {
     switch (part.type) {
       case "reasoning": {
         // when there are no summary parts, we need to add an empty reasoning part:
-        if (part.summary.length === 0) {
-          part.summary.push({ type: "summary_text", text: "" })
-        }
+        const summaryTexts = part.summary.length === 0 ? [""] : part.summary.map((summary) => summary.text)
 
-        for (const summary of part.summary) {
-          content.push({
-            type: "reasoning" as const,
-            text: summary.text,
-            providerMetadata: {
-              copilot: {
-                itemId: part.id,
-                reasoningEncryptedContent: part.encrypted_content ?? null,
-              },
+        return summaryTexts.map((text) => ({
+          type: "reasoning",
+          text,
+          providerMetadata: {
+            copilot: {
+              itemId: part.id,
+              reasoningEncryptedContent: part.encrypted_content ?? null,
             },
-          })
-        }
-        break
+          },
+        }))
       }
 
       case "image_generation_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.id,
-          toolName: "image_generation",
-          input: "{}",
-          providerExecuted: true,
-        })
-
-        content.push({
-          type: "tool-result",
-          toolCallId: part.id,
-          toolName: "image_generation",
-          result: {
-            result: part.result,
-          } satisfies typeof imageGenerationOutputSchema.Type,
-        })
-
-        break
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.id,
+            toolName: "image_generation",
+            input: "{}",
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: part.id,
+            toolName: "image_generation",
+            result: {
+              result: part.result,
+            } satisfies typeof imageGenerationOutputSchema.Type,
+          },
+        ]
       }
 
       case "local_shell_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.call_id,
-          toolName: "local_shell",
-          input: encodeLocalShellCallInput({ action: part.action }),
-          providerMetadata: {
-            copilot: {
-              itemId: part.id,
-            },
-          },
-        })
-
-        break
-      }
-
-      case "message": {
-        for (const contentPart of part.content) {
-          if (options.providerOptions?.copilot?.logprobs && contentPart.logprobs) {
-            logprobs.push(contentPart.logprobs)
-          }
-
-          content.push({
-            type: "text",
-            text: contentPart.text,
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.call_id,
+            toolName: "local_shell",
+            input: encodeLocalShellCallInput({ action: part.action }),
             providerMetadata: {
               copilot: {
                 itemId: part.id,
               },
             },
-          })
+          },
+        ]
+      }
 
-          for (const annotation of contentPart.annotations) {
-            if (annotation.type === "url_citation") {
-              content.push({
-                type: "source",
-                sourceType: "url",
-                id: config.generateId?.() ?? generateId(),
-                url: annotation.url,
-                title: annotation.title,
-              })
-            } else if (annotation.type === "file_citation") {
-              content.push({
-                type: "source",
-                sourceType: "document",
-                id: config.generateId?.() ?? generateId(),
-                mediaType: "text/plain",
-                title: annotation.quote ?? annotation.filename ?? "Document",
-                filename: annotation.filename ?? annotation.file_id,
-              })
-            }
-          }
-        }
-
-        break
+      case "message": {
+        return part.content.flatMap(
+          (contentPart): Array<LanguageModelV3Content> => [
+            {
+              type: "text",
+              text: contentPart.text,
+              providerMetadata: {
+                copilot: {
+                  itemId: part.id,
+                },
+              },
+            },
+            ...contentPart.annotations.flatMap((annotation): Array<LanguageModelV3Content> => {
+              if (annotation.type === "url_citation") {
+                return [
+                  {
+                    type: "source",
+                    sourceType: "url",
+                    id: config.generateId?.() ?? generateId(),
+                    url: annotation.url,
+                    title: annotation.title,
+                  },
+                ]
+              }
+              if (annotation.type === "file_citation") {
+                return [
+                  {
+                    type: "source",
+                    sourceType: "document",
+                    id: config.generateId?.() ?? generateId(),
+                    mediaType: "text/plain",
+                    title: annotation.quote ?? annotation.filename ?? "Document",
+                    filename: annotation.filename ?? annotation.file_id,
+                  },
+                ]
+              }
+              return []
+            }),
+          ],
+        )
       }
 
       case "function_call": {
-        hasFunctionCall = true
-
-        content.push({
-          type: "tool-call",
-          toolCallId: part.call_id,
-          toolName: part.name,
-          input: part.arguments,
-          providerMetadata: {
-            copilot: {
-              itemId: part.id,
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.call_id,
+            toolName: part.name,
+            input: part.arguments,
+            providerMetadata: {
+              copilot: {
+                itemId: part.id,
+              },
             },
           },
-        })
-        break
+        ]
       }
 
       case "web_search_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.id,
-          toolName: webSearchToolName ?? "web_search",
-          input: encodeWebSearchCallInput({ action: part.action }),
-          providerExecuted: true,
-        })
-
-        content.push({
-          type: "tool-result",
-          toolCallId: part.id,
-          toolName: webSearchToolName ?? "web_search",
-          result: { status: part.status },
-        })
-
-        break
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.id,
+            toolName: webSearchToolName ?? "web_search",
+            input: encodeWebSearchCallInput({ action: part.action }),
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: part.id,
+            toolName: webSearchToolName ?? "web_search",
+            result: { status: part.status },
+          },
+        ]
       }
 
       case "computer_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.id,
-          toolName: "computer_use",
-          input: "",
-          providerExecuted: true,
-        })
-
-        content.push({
-          type: "tool-result",
-          toolCallId: part.id,
-          toolName: "computer_use",
-          result: {
-            type: "computer_use_tool_result",
-            status: part.status || "completed",
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.id,
+            toolName: "computer_use",
+            input: "",
+            providerExecuted: true,
           },
-        })
-        break
+          {
+            type: "tool-result",
+            toolCallId: part.id,
+            toolName: "computer_use",
+            result: {
+              type: "computer_use_tool_result",
+              status: part.status || "completed",
+            },
+          },
+        ]
       }
 
       case "file_search_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.id,
-          toolName: "file_search",
-          input: "{}",
-          providerExecuted: true,
-        })
-
-        content.push({
-          type: "tool-result",
-          toolCallId: part.id,
-          toolName: "file_search",
-          result: {
-            queries: part.queries,
-            results:
-              part.results?.map((result) => ({
-                attributes: result.attributes,
-                fileId: result.file_id,
-                filename: result.filename,
-                score: result.score,
-                text: result.text,
-              })) ?? null,
-          } satisfies typeof fileSearchOutputSchema.Type,
-        })
-        break
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.id,
+            toolName: "file_search",
+            input: "{}",
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: part.id,
+            toolName: "file_search",
+            result: {
+              queries: part.queries,
+              results:
+                part.results?.map((result) => ({
+                  attributes: result.attributes,
+                  fileId: result.file_id,
+                  filename: result.filename,
+                  score: result.score,
+                  text: result.text,
+                })) ?? null,
+            } satisfies typeof fileSearchOutputSchema.Type,
+          },
+        ]
       }
 
       case "code_interpreter_call": {
-        content.push({
-          type: "tool-call",
-          toolCallId: part.id,
-          toolName: "code_interpreter",
-          input: encodeCodeInterpreterInput({
-            code: part.code,
-            containerId: part.container_id,
-          }),
-          providerExecuted: true,
-        })
-
-        content.push({
-          type: "tool-result",
-          toolCallId: part.id,
-          toolName: "code_interpreter",
-          result: {
-            outputs: part.outputs,
-          } satisfies typeof codeInterpreterOutputSchema.Type,
-        })
-        break
+        return [
+          {
+            type: "tool-call",
+            toolCallId: part.id,
+            toolName: "code_interpreter",
+            input: encodeCodeInterpreterInput({
+              code: part.code,
+              containerId: part.container_id,
+            }),
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: part.id,
+            toolName: "code_interpreter",
+            result: {
+              outputs: part.outputs,
+            } satisfies typeof codeInterpreterOutputSchema.Type,
+          },
+        ]
       }
+
+      // The response schema admits no other output item type.
+      default:
+        return []
     }
-  }
+  })
+
+  const logprobs = options.providerOptions?.copilot?.logprobs
+    ? response.output.flatMap((part) =>
+        part.type === "message"
+          ? part.content.flatMap((contentPart) => (contentPart.logprobs ? [contentPart.logprobs] : []))
+          : [],
+      )
+    : []
+
+  // flag that checks if there have been client-side tool calls (not executed by openai)
+  const hasFunctionCall = response.output.some((part) => part.type === "function_call")
 
   const providerMetadata: SharedV3ProviderMetadata = {
-    copilot: { responseId: response.id },
-  }
-
-  if (logprobs.length > 0) {
-    providerMetadata.copilot.logprobs = logprobs
-  }
-
-  if (typeof response.service_tier === "string") {
-    providerMetadata.copilot.serviceTier = response.service_tier
+    copilot: {
+      responseId: response.id,
+      ...(logprobs.length > 0 && { logprobs }),
+      ...(typeof response.service_tier === "string" && { serviceTier: response.service_tier }),
+    },
   }
 
   return {
@@ -899,7 +867,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
     reasoningTokens: undefined,
     cachedInputTokens: undefined,
   }
-  const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
+  let logprobs = Chunk.empty<typeof LOGPROBS_SCHEMA.Type>()
   let responseId: string | null = null
   const ongoingToolCalls: Record<
     number,
@@ -1304,7 +1272,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
             })
 
             if (options.providerOptions?.copilot?.logprobs && value.logprobs) {
-              logprobs.push(value.logprobs)
+              logprobs = Chunk.append(logprobs, value.logprobs)
             }
           } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
             const activeItem =
@@ -1391,15 +1359,9 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
           const providerMetadata: SharedV3ProviderMetadata = {
             copilot: {
               responseId,
+              ...(Chunk.isNonEmpty(logprobs) && { logprobs: Chunk.toArray(logprobs) }),
+              ...(serviceTier !== undefined && { serviceTier }),
             },
-          }
-
-          if (logprobs.length > 0) {
-            providerMetadata.copilot.logprobs = logprobs
-          }
-
-          if (serviceTier !== undefined) {
-            providerMetadata.copilot.serviceTier = serviceTier
           }
 
           controller.enqueue({
