@@ -175,7 +175,7 @@ const layer = Layer.effect(
       const selected = yield* getStrategy(input.strategy)
       const sourceDirectory = yield* source(input.sourceDirectory, input.projectID)
       yield* fs.makeDirectory(input.directory, { recursive: true }).pipe(Effect.orDie)
-      const name = input.name ?? Slug.create()
+      const name = input.name ?? (yield* Slug.make)
       let suffix = 1
       let copyDirectory = AbsolutePath.make(path.join(input.directory, name))
       while (yield* fs.existsSafe(copyDirectory)) {

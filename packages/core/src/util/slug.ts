@@ -73,11 +73,4 @@ export namespace Slug {
     const noun = yield* Random.choice(NOUNS)
     return `${adjective}-${noun}`
   })
-
-  export function create() {
-    return [
-      ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)],
-      NOUNS[Math.floor(Math.random() * NOUNS.length)],
-    ].join("-")
-  }
 }

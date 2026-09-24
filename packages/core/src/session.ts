@@ -220,7 +220,7 @@ const layer = Layer.effect(
         const created = DateTime.toEpochMillis(now)
         const info = SessionV1.SessionInfo.make({
           id: sessionID,
-          slug: Slug.create(),
+          slug: yield* Slug.make,
           version: InstallationVersion,
           projectID: project.id,
           directory: input.location.directory,
