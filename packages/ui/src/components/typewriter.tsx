@@ -14,7 +14,7 @@ export const Typewriter = (props: { text?: string; class?: string; as?: ValidCom
     if (!text) return
 
     let i = 0
-    const timeouts: ReturnType<typeof setTimeout>[] = []
+    let timer: ReturnType<typeof setTimeout>
     setStore("typing", true)
     setStore("displayed", "")
     setStore("cursor", true)
@@ -30,18 +30,16 @@ export const Typewriter = (props: { text?: string; class?: string; as?: ValidCom
       if (i < text.length) {
         setStore("displayed", text.slice(0, i + 1))
         i++
-        timeouts.push(setTimeout(type, getTypingDelay()))
+        timer = setTimeout(type, getTypingDelay())
       } else {
         setStore("typing", false)
-        timeouts.push(setTimeout(() => setStore("cursor", false), 2000))
+        timer = setTimeout(() => setStore("cursor", false), 2000)
       }
     }
 
-    timeouts.push(setTimeout(type, 200))
+    timer = setTimeout(type, 200)
 
-    onCleanup(() => {
-      for (const timeout of timeouts) clearTimeout(timeout)
-    })
+    onCleanup(() => clearTimeout(timer))
   })
 
   return (
