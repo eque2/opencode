@@ -38,6 +38,9 @@ const RawMatch = Schema.Struct({
 
 type RawMatchData = (typeof RawMatch.Type)["data"]
 
+// Each --json line is one ripgrep record; only "match" records decode as RawMatch.
+const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
 export class Error extends Schema.TaggedError<Error>()("Ripgrep.Error", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -232,10 +235,7 @@ const layer = Layer.effect(
           parse: (line) =>
             (Buffer.byteLength(line, "utf8") > MAX_RECORD_BYTES
               ? Effect.fail(failure(`Ripgrep JSON record exceeded ${MAX_RECORD_BYTES} bytes`))
-              : Effect.try({
-                  try: () => JSON.parse(line) as unknown,
-                  catch: (cause) => failure("Invalid ripgrep JSON output", cause),
-                })
+              : decodeRecord(line).pipe(Effect.mapError((cause) => failure("Invalid ripgrep JSON output", cause)))
             ).pipe(
               Effect.flatMap((json) => {
                 if (!json || typeof json !== "object" || !("type" in json) || json.type !== "match")

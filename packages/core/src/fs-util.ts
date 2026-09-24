@@ -22,6 +22,10 @@ export namespace FSUtil {
 
   export type Error = PlatformError | FileSystemError
 
+  // JSON files hold any JSON value; callers decode the shape they expect.
+  const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+  const encodeJsonText = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
   export interface DirEntry {
     readonly name: string
     readonly type: "file" | "directory" | "symlink" | "other"
@@ -100,14 +104,15 @@ export namespace FSUtil {
 
       const readJson = Effect.fn("FileSystem.readJson")(function* (path: string) {
         const text = yield* fs.readFileString(path)
-        return yield* Effect.try({
-          try: () => JSON.parse(text),
-          catch: (cause) => new FileSystemError({ method: "readJson", cause }),
-        })
+        return yield* decodeJsonText(text).pipe(
+          Effect.mapError((cause) => new FileSystemError({ method: "readJson", cause })),
+        )
       })
 
       const writeJson = Effect.fn("FileSystem.writeJson")(function* (path: string, data: unknown, mode?: number) {
-        const content = JSON.stringify(data, null, 2)
+        const content = yield* encodeJsonText(data).pipe(
+          Effect.mapError((cause) => new FileSystemError({ method: "writeJson", cause })),
+        )
         yield* fs.writeFileString(path, content)
         if (mode) yield* fs.chmod(path, mode)
       })
