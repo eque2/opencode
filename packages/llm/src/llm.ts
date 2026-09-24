@@ -1,5 +1,5 @@
 import { Effect, JsonSchema, Schema } from "effect"
-import { LLMClient } from "./route/client"
+import { LLMClient, type Service as LLMClientService } from "./route/client"
 import {
   GenerationOptions,
   HttpOptions,
@@ -157,10 +157,10 @@ const runGenerateObject = Effect.fn("LLM.generateObject")(function* (
  */
 export function generateObject<S extends ToolSchema<any>>(
   options: GenerateObjectOptions<S>,
-): Effect.Effect<GenerateObjectResponse<Schema.Schema.Type<S>>, LLMError>
+): Effect.Effect<GenerateObjectResponse<Schema.Schema.Type<S>>, LLMError, LLMClientService>
 export function generateObject(
   options: GenerateObjectDynamicOptions,
-): Effect.Effect<GenerateObjectResponse<unknown>, LLMError>
+): Effect.Effect<GenerateObjectResponse<unknown>, LLMError, LLMClientService>
 export function generateObject(options: GenerateObjectOptions<ToolSchema<any>> | GenerateObjectDynamicOptions) {
   if ("schema" in options) {
     const { schema, ...rest } = options
