@@ -59,7 +59,8 @@ export namespace Quota {
           }
         })
       }
-      throw new Error(`Unknown plan: ${input.plan}`)
+      const unknownPlan: never = input.plan
+      throw new Error(`Unknown plan: ${String(unknownPlan)}`)
     },
   )
 }
