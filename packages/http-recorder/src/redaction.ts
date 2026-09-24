@@ -100,7 +100,7 @@ export const redactHeaders = (
 export const SecretFindingSchema = Schema.Struct({
   path: Schema.String,
   reason: Schema.String,
-})
+}).annotate({ identifier: "SecretFinding" })
 export type SecretFinding = Schema.Schema.Type<typeof SecretFindingSchema>
 
 export const secretFindings = (value: unknown): ReadonlyArray<SecretFinding> => {
