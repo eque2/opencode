@@ -15,6 +15,18 @@ export const ID = Schema.String.check(Schema.isStartsWith("msg_")).pipe(
 )
 export type ID = typeof ID.Type
 
+/** Provider tool call id shared by an assistant tool part and its session.next.tool.* events. */
+export const ToolCallID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
+
+/** Provider text block id shared by an assistant text part and its session.next.text.* events. */
+export const TextID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.TextID"))
+export type TextID = typeof TextID.Type
+
+/** Provider reasoning block id shared by an assistant reasoning part and its session.next.reasoning.* events. */
+export const ReasoningID = Schema.String.pipe(Schema.brand("Session.Message.Assistant.ReasoningID"))
+export type ReasoningID = typeof ReasoningID.Type
+
 export interface UnknownError extends Schema.Schema.Type<typeof UnknownError> {}
 export const UnknownError = Schema.Struct({
   type: Schema.Literal("unknown"),
@@ -121,7 +133,7 @@ export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted
 export interface AssistantTool extends Schema.Schema.Type<typeof AssistantTool> {}
 export const AssistantTool = Schema.Struct({
   type: Schema.Literal("tool"),
-  id: Schema.String,
+  id: ToolCallID,
   name: Schema.String,
   provider: Schema.Struct({
     executed: Schema.Boolean,
@@ -140,14 +152,14 @@ export const AssistantTool = Schema.Struct({
 export interface AssistantText extends Schema.Schema.Type<typeof AssistantText> {}
 export const AssistantText = Schema.Struct({
   type: Schema.Literal("text"),
-  id: Schema.String,
+  id: TextID,
   text: Schema.String,
 }).annotate({ identifier: "Session.Message.Assistant.Text" })
 
 export interface AssistantReasoning extends Schema.Schema.Type<typeof AssistantReasoning> {}
 export const AssistantReasoning = Schema.Struct({
   type: Schema.Literal("reasoning"),
-  id: Schema.String,
+  id: ReasoningID,
   text: Schema.String,
   providerMetadata: ProviderMetadata.pipe(optional),
   time: Schema.Struct({

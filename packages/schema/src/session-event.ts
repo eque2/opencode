@@ -201,7 +201,7 @@ export namespace Text {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      textID: Schema.String,
+      textID: SessionMessage.TextID,
     },
   })
   export type Started = typeof Started.Type
@@ -212,7 +212,7 @@ export namespace Text {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      textID: Schema.String,
+      textID: SessionMessage.TextID,
       delta: Schema.String,
     },
   })
@@ -224,7 +224,7 @@ export namespace Text {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      textID: Schema.String,
+      textID: SessionMessage.TextID,
       text: Schema.String,
     },
   })
@@ -238,7 +238,7 @@ export namespace Reasoning {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      reasoningID: Schema.String,
+      reasoningID: SessionMessage.ReasoningID,
       providerMetadata: ProviderMetadata.pipe(optional),
     },
   })
@@ -250,7 +250,7 @@ export namespace Reasoning {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      reasoningID: Schema.String,
+      reasoningID: SessionMessage.ReasoningID,
       delta: Schema.String,
     },
   })
@@ -262,7 +262,7 @@ export namespace Reasoning {
     schema: {
       ...Base,
       assistantMessageID: SessionMessage.ID,
-      reasoningID: Schema.String,
+      reasoningID: SessionMessage.ReasoningID,
       text: Schema.String,
       providerMetadata: ProviderMetadata.pipe(optional),
     },
@@ -274,7 +274,7 @@ export namespace Tool {
   const ToolBase = {
     ...Base,
     assistantMessageID: SessionMessage.ID,
-    callID: Schema.String,
+    callID: SessionMessage.ToolCallID,
   }
 
   export namespace Input {
