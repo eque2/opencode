@@ -657,6 +657,59 @@ describe("doGenerate", () => {
   })
 })
 
+describe("stream finish", () => {
+  async function finishOf(chunks: string[]) {
+    const model = createModel(createMockFetch(chunks))
+    const { stream } = await model.doStream({ prompt: TEST_PROMPT, includeRawChunks: false })
+    return (await convertReadableStreamToArray(stream)).find((p) => p.type === "finish")
+  }
+
+  test("should report usage, cached input and reasoning metadata", async () => {
+    expect(await finishOf(FIXTURES.reasoningWithToolCalls)).toEqual({
+      type: "finish",
+      finishReason: { unified: "tool-calls", raw: "tool_calls" },
+      usage: {
+        inputTokens: { total: 19581, noCache: 2513, cacheRead: 17068, cacheWrite: undefined },
+        outputTokens: { total: 53, text: undefined, reasoning: undefined },
+        raw: { prompt_tokens: 19581, completion_tokens: 53, total_tokens: 19768 },
+      },
+      providerMetadata: { copilot: { reasoningOpaque: "4CUQ6696CwSXOdQ5rtvDimqA91tBzfmga4ieRbmZ5P67T2NLW3" } },
+    })
+  })
+
+  test("should send null raw counts when the stream has no usage", async () => {
+    expect(await finishOf(FIXTURES.basicText)).toEqual({
+      type: "finish",
+      finishReason: { unified: "stop", raw: "stop" },
+      usage: {
+        inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+        raw: { prompt_tokens: null, completion_tokens: null, total_tokens: null },
+      },
+      providerMetadata: { copilot: {} },
+    })
+  })
+
+  test("should replace top-level counts and keep earlier detail counts", async () => {
+    const finish = await finishOf([
+      `data: {"choices":[{"index":0,"delta":{"content":"a"}}],"usage":{"prompt_tokens":5,"completion_tokens":1,"total_tokens":6,"completion_tokens_details":{"reasoning_tokens":2,"accepted_prediction_tokens":3,"rejected_prediction_tokens":null}}}`,
+      `data: {"choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":7,"completion_tokens":null}}`,
+      `data: [DONE]`,
+    ])
+
+    expect(finish).toEqual({
+      type: "finish",
+      finishReason: { unified: "length", raw: "length" },
+      usage: {
+        inputTokens: { total: 7, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: undefined, text: undefined, reasoning: 2 },
+        raw: { prompt_tokens: 7, completion_tokens: null, total_tokens: null },
+      },
+      providerMetadata: { copilot: { acceptedPredictionTokens: 3 } },
+    })
+  })
+})
+
 describe("stream errors", () => {
   test("should emit error chunks and finish with an error reason", async () => {
     const model = createModel(createMockFetch([`data: {"error":{"message":"overloaded"}}`, `data: [DONE]`]))
