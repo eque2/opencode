@@ -56,6 +56,10 @@ export type OpenAICompatibleChatConfig = {
 
 const providerOptionsSchema = Schema.toStandardSchemaV1(openaiCompatibleProviderOptions)
 
+// The request args hold undefined-valued settings and JSON schemas typed outside Schema.Json.
+// The codec writes the same text as JSON.stringify, which drops the undefined members.
+const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
 /**
  * A failure from an AI SDK helper: provider option parsing, the HTTP request with its
  * response parsing, or the metadata extractor. The AI SDK reads the original error
@@ -224,7 +228,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
     return Effect.gen({ self: this }, function* () {
       const { args, warnings } = yield* this.getArgs({ ...options })
 
-      const body = JSON.stringify(args)
+      const body = yield* encodeJsonText(args)
 
       const {
         responseHeaders,

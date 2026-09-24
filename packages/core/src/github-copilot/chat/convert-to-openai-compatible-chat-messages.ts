@@ -12,6 +12,10 @@ export class UnsupportedRoleError extends Schema.TaggedError<UnsupportedRoleErro
   { message: Schema.String },
 ) {}
 
+// The AI SDK types tool-call input as unknown and tool output values as JSONValue, whose objects
+// may hold undefined members. The codec writes the same text as JSON.stringify, which drops them.
+const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
 function getOpenAIMetadata(message: { providerOptions?: SharedV3ProviderOptions }) {
   return message?.providerOptions?.copilot ?? {}
 }
@@ -116,7 +120,7 @@ export const convertToOpenAICompatibleChatMessages = Effect.fn("GithubCopilot.co
                   type: "function",
                   function: {
                     name: part.toolName,
-                    arguments: JSON.stringify(part.input),
+                    arguments: yield* encodeJsonText(part.input),
                   },
                   ...partMetadata,
                 })
@@ -156,7 +160,7 @@ export const convertToOpenAICompatibleChatMessages = Effect.fn("GithubCopilot.co
               case "content":
               case "json":
               case "error-json":
-                contentValue = JSON.stringify(output.value)
+                contentValue = yield* encodeJsonText(output.value)
                 break
             }
 
