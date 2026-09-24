@@ -1,5 +1,5 @@
 import { NodeFileSystem } from "@effect/platform-node"
-import { Deferred, Effect, Exit, Layer, Option, Ref } from "effect"
+import { Deferred, Effect, Exit, HashSet, Layer, Option, Ref } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -30,7 +30,7 @@ export interface RecordReplayOptions {
   readonly match?: RequestMatcher
 }
 
-const TEXT_CONTENT_TYPES = new Set([
+const TEXT_CONTENT_TYPES = HashSet.make(
   "application/graphql",
   "application/javascript",
   "application/json",
@@ -39,7 +39,7 @@ const TEXT_CONTENT_TYPES = new Set([
   "application/xml",
   "application/yaml",
   "image/svg+xml",
-])
+)
 
 const isTextContentType = (contentType: string | undefined) => {
   const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase()
@@ -48,7 +48,7 @@ const isTextContentType = (contentType: string | undefined) => {
     mediaType.startsWith("text/") ||
     mediaType.endsWith("+json") ||
     mediaType.endsWith("+xml") ||
-    TEXT_CONTENT_TYPES.has(mediaType)
+    HashSet.has(TEXT_CONTENT_TYPES, mediaType)
   )
 }
 

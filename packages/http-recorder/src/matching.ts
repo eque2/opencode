@@ -52,7 +52,7 @@ const jsonBody = (body: string) => Option.getOrUndefined(decodeJson(body))
 const valueDiffs = (expected: unknown, received: unknown, base = "$", limit = 8): ReadonlyArray<string> => {
   if (Object.is(expected, received)) return []
   if (isRecord(expected) && isRecord(received)) {
-    return [...new Set([...Object.keys(expected), ...Object.keys(received)])]
+    return Arr.dedupe([...Object.keys(expected), ...Object.keys(received)])
       .toSorted()
       .flatMap((key) => valueDiffs(expected[key], received[key], `${base}.${key}`, limit))
       .slice(0, limit)
@@ -66,12 +66,14 @@ const valueDiffs = (expected: unknown, received: unknown, base = "$", limit = 8)
 }
 
 const headerDiffs = (expected: Record<string, string>, received: Record<string, string>) =>
-  [...new Set([...Object.keys(expected), ...Object.keys(received)])].toSorted().flatMap((key) => {
-    if (expected[key] === received[key]) return []
-    if (expected[key] === undefined) return [`  ${key} unexpected ${safeText(received[key])}`]
-    if (received[key] === undefined) return [`  ${key} missing expected ${safeText(expected[key])}`]
-    return [`  ${key} expected ${safeText(expected[key])}, received ${safeText(received[key])}`]
-  })
+  Arr.dedupe([...Object.keys(expected), ...Object.keys(received)])
+    .toSorted()
+    .flatMap((key) => {
+      if (expected[key] === received[key]) return []
+      if (expected[key] === undefined) return [`  ${key} unexpected ${safeText(received[key])}`]
+      if (received[key] === undefined) return [`  ${key} missing expected ${safeText(expected[key])}`]
+      return [`  ${key} expected ${safeText(expected[key])}, received ${safeText(received[key])}`]
+    })
 
 export const requestDiff = (expected: RequestSnapshot, received: RequestSnapshot): ReadonlyArray<string> => {
   const lines: string[] = []
