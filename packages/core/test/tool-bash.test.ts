@@ -149,6 +149,13 @@ describe("BashTool", () => {
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.output")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.command")
             expect(definitions[0]?.outputSchema).not.toHaveProperty("properties.cwd")
+            // The structured output schema is a named definition; check the resolved fields as well.
+            const structuredOutput = ["$defs", "BashTool.StructuredOutput", "properties"]
+            expect(definitions[0]?.outputSchema).toMatchObject({ $ref: "#/$defs/BashTool.StructuredOutput" })
+            expect(definitions[0]?.outputSchema).toHaveProperty([...structuredOutput, "truncated"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "output"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "command"])
+            expect(definitions[0]?.outputSchema).not.toHaveProperty([...structuredOutput, "cwd"])
             expect(yield* toolDefinitions(registry, [{ action: "bash", resource: "*", effect: "deny" }])).toEqual([])
             expect(yield* settleTool(registry, call({ command: "pwd" }))).toEqual({
               result: {

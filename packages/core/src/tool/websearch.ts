@@ -137,7 +137,7 @@ const McpResult = Schema.Struct({
   result: Schema.Struct({
     content: Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.String })),
   }),
-})
+}).annotate({ identifier: "WebSearchTool.McpResult" })
 const decodeMcpResult = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
 /** Returns the first non-empty text item of a JSON-RPC payload, or none for a non-JSON frame. */
@@ -170,12 +170,12 @@ const ExaArgs = Schema.Struct({
   numResults: Schema.Number,
   livecrawl: Schema.String,
   contextMaxCharacters: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "WebSearchTool.ExaArgs" })
 const ParallelArgs = Schema.Struct({
   objective: Schema.String,
   search_queries: Schema.Array(Schema.String),
   session_id: SessionSchema.ID,
-})
+}).annotate({ identifier: "WebSearchTool.ParallelArgs" })
 const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
   Schema.Struct({
     jsonrpc: Schema.Literal("2.0"),
@@ -229,7 +229,7 @@ const callMcp = <F extends Schema.Struct.Fields>(
 const Output = Schema.Struct({
   provider: Provider,
   text: Schema.String,
-})
+}).annotate({ identifier: "WebSearchTool.Output" })
 
 const layer = Layer.effectDiscard(
   Effect.gen(function* () {

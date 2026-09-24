@@ -26,12 +26,12 @@ export const Applied = Schema.Struct({
   type: Schema.Literals(["add", "update", "delete"]),
   resource: Schema.String,
   target: Schema.String,
-})
+}).annotate({ identifier: "ApplyPatchTool.Applied" })
 
 export const Output = Schema.Struct({
   applied: Schema.Array(Applied),
   files: Schema.Array(FileDiff.Info),
-})
+}).annotate({ identifier: "ApplyPatchTool.Output" })
 export type Output = typeof Output.Type
 
 export const toModelOutput = (output: Output) =>

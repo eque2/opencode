@@ -36,13 +36,13 @@ const StructuredOutput = Schema.Struct({
   exit: Schema.Number.pipe(Schema.optional),
   truncated: Schema.Boolean,
   timeout: Schema.Boolean.pipe(Schema.optional),
-})
+}).annotate({ identifier: "BashTool.StructuredOutput" })
 
 const Output = Schema.Struct({
   ...StructuredOutput.fields,
   output: Schema.String,
   warnings: Schema.Array(Schema.String).pipe(Schema.optional),
-})
+}).annotate({ identifier: "BashTool.Output" })
 
 type Output = typeof Output.Type
 

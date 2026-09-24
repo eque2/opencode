@@ -39,7 +39,7 @@ const Output = Schema.Struct({
   contentType: Schema.String,
   format: Input.fields.format,
   output: Schema.String,
-})
+}).annotate({ identifier: "WebFetchTool.Output" })
 
 type Format = (typeof Input.Type)["format"]
 
