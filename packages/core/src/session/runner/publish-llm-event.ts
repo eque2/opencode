@@ -47,14 +47,9 @@ const record = (value: unknown): Schema.JsonObject =>
     onSome: (json) => (isJsonObject(json) ? json : { value: json }),
   })
 
-const message = (value: unknown) => {
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value) ?? String(value)
-  } catch {
-    return String(value)
-  }
-}
+/** Text for an error value: strings pass through, JSON-encodable values encode, anything else stringifies. */
+const message = (value: unknown) =>
+  typeof value === "string" ? value : Option.getOrElse(encodeJsonText(value), () => String(value))
 
 type SettledOutput =
   | { readonly structured: Schema.JsonObject; readonly content: ToolOutput["content"] }
