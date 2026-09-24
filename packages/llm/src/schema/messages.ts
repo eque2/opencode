@@ -1,6 +1,6 @@
 import { Option, Schema, SchemaParser } from "effect"
 import { ToolContent, ToolFileContent, ToolTextContent } from "@opencode-ai/schema/llm"
-import { JsonSchema, MessageRole, ProviderMetadata } from "./ids"
+import { JsonSchema, MessageRole, ProviderMetadata, ToolCallID } from "./ids"
 import { CacheHint, CachePolicy, GenerationOptions, HttpOptions, ModelSchema, ProviderOptions } from "./options"
 import { isRecord } from "../utils/record"
 
@@ -128,7 +128,7 @@ const toolResultText = (value: unknown) =>
 
 const toolCallPartSchema = Schema.Struct({
   type: Schema.Literal("tool-call"),
-  id: Schema.String,
+  id: ToolCallID,
   name: Schema.String,
   input: Schema.Json,
   providerExecuted: Schema.optional(Schema.Boolean),
@@ -139,15 +139,16 @@ export type ToolCallPart = Schema.Schema.Type<typeof toolCallPartSchema>
 const makeToolCallPart = SchemaParser.make(toolCallPartSchema)
 
 export const ToolCallPart = Object.assign(toolCallPartSchema, {
-  /** Build a tool-call part; the JSON fields accept any value and are validated here. */
-  make: (input: Omit<Schema.Struct.MakeIn<typeof toolCallPartSchema.fields>, "type">): ToolCallPart =>
-    makeToolCallPart({ type: "tool-call", ...input }),
+  /** Build a tool-call part from a plain string id; the JSON fields accept any value and are validated here. */
+  make: (
+    input: Omit<Schema.Struct.MakeIn<typeof toolCallPartSchema.fields>, "type" | "id"> & { readonly id: string },
+  ): ToolCallPart => makeToolCallPart({ type: "tool-call", ...input, id: ToolCallID.make(input.id) }),
 })
 
 export const ToolResultPart = Object.assign(
   Schema.Struct({
     type: Schema.Literal("tool-result"),
-    id: Schema.String,
+    id: ToolCallID,
     name: Schema.String,
     result: ToolResultValue,
     providerExecuted: Schema.optional(Schema.Boolean),
@@ -157,13 +158,14 @@ export const ToolResultPart = Object.assign(
   }).annotate({ identifier: "LLM.Content.ToolResult" }),
   {
     make: (
-      input: Omit<ToolResultPart, "type" | "result"> & {
+      input: Omit<ToolResultPart, "type" | "id" | "result"> & {
+        readonly id: string
         readonly result: unknown
         readonly resultType?: ToolResultValue["type"]
       },
     ): ToolResultPart => ({
       type: "tool-result",
-      id: input.id,
+      id: ToolCallID.make(input.id),
       name: input.name,
       result: ToolResultValue.make(input.result, input.resultType),
       providerExecuted: input.providerExecuted,

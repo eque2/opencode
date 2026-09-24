@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { LLMEvent, LLMResponse } from "../src"
+import { LLMEvent, LLMResponse, ToolCallID } from "../src"
 
 const reduce = (events: ReadonlyArray<LLMEvent>) => events.reduce(LLMResponse.reduce, LLMResponse.empty())
 const finishEvents = (events: ReadonlyArray<LLMEvent>) => events.filter(LLMEvent.is.finish)
@@ -92,7 +92,7 @@ describe("LLMResponse reducer", () => {
     ])
 
     expect(response?.message.content).toEqual([
-      { type: "tool-call", id: "call_1", name: "lookup", input: { query: "weather" } },
+      { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: { query: "weather" } },
     ])
   })
 })

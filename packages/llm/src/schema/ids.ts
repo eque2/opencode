@@ -23,8 +23,8 @@ export type ResponseID = Schema.Schema.Type<typeof ResponseID>
 export const ContentBlockID = Schema.String
 export type ContentBlockID = Schema.Schema.Type<typeof ContentBlockID>
 
-export const ToolCallID = Schema.String
-export type ToolCallID = Schema.Schema.Type<typeof ToolCallID>
+export const ToolCallID = Schema.String.pipe(Schema.brand("LLM.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
 
 export const ReasoningEfforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const
 export const ReasoningEffort = Schema.Literals(ReasoningEfforts)
