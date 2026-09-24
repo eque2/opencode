@@ -1,4 +1,4 @@
-import { Effect, HashSet, Schema } from "effect"
+import { Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -97,13 +97,11 @@ type OpenAIResponsesInputItem = Schema.Schema.Type<typeof OpenAIResponsesInputIt
 
 // Mutable counterpart of the schema reasoning item so `lowerMessages` can fold
 // multiple streamed summary parts into the same item before flushing.
-type OpenAIResponsesReasoningInput = {
+type OpenAIResponsesReasoningReplay = {
   type: "reasoning"
-  id: string
   summary: Array<{ type: "summary_text"; text: string }>
-  encrypted_content?: string | null
+  encrypted_content?: string
 }
-type OpenAIResponsesReasoningReplay = Omit<OpenAIResponsesReasoningInput, "id">
 
 const OpenAIResponsesTool = Schema.Struct({
   type: Schema.tag("function"),
@@ -244,7 +242,7 @@ interface ParserState {
 type ReasoningSummaryStatus = "active" | "can-conclude" | "concluded"
 
 interface ReasoningStreamItem {
-  readonly encryptedContent: string | null | undefined
+  readonly encryptedContent: Option.Option<string>
   // Keyed by OpenAI's numeric `summary_index`. JS object keys coerce to
   // strings, but typing the map as `Record<number, ...>` documents intent
   // and matches the wire field.
@@ -280,30 +278,30 @@ const lowerToolCall = (part: ToolCallPart): OpenAIResponsesInputItem => ({
   arguments: ProviderShared.encodeJson(part.input),
 })
 
-const lowerReasoning = (part: ReasoningPart): OpenAIResponsesReasoningInput | undefined => {
-  const openai = part.providerMetadata?.openai
-  if (!ProviderShared.isRecord(openai) || typeof openai.itemId !== "string" || openai.itemId.length === 0)
-    return undefined
-  const encryptedContent =
-    typeof openai.reasoningEncryptedContent === "string"
-      ? openai.reasoningEncryptedContent
-      : openai.reasoningEncryptedContent === null
-        ? null
-        : undefined
-  return {
-    type: "reasoning",
-    id: openai.itemId,
-    summary: part.text.length > 0 ? [{ type: "summary_text", text: part.text }] : [],
-    encrypted_content: encryptedContent,
-  }
+const openaiItemID = (metadata: ProviderMetadata | undefined): Option.Option<string> =>
+  Option.filter(Option.liftPredicate(metadata?.openai?.itemId, Predicate.isString), (id) => id.length > 0)
+
+// Reasoning state read back from a previous response's `providerMetadata`.
+// Only string encrypted state can be replayed: with `store: false`,
+// `lowerMessages` drops reasoning items without it, so a null and a missing
+// `reasoningEncryptedContent` both lower to `Option.none()`.
+interface ReasoningReplayPart {
+  readonly id: string
+  readonly summary: ReadonlyArray<{ readonly type: "summary_text"; readonly text: string }>
+  readonly encryptedContent: Option.Option<string>
 }
 
-const hostedToolItemID = (part: ToolResultPart) => {
-  const openai = part.providerMetadata?.openai
-  return ProviderShared.isRecord(openai) && typeof openai.itemId === "string" && openai.itemId.length > 0
-    ? openai.itemId
-    : undefined
-}
+const lowerReasoning = (part: ReasoningPart): Option.Option<ReasoningReplayPart> =>
+  Option.map(openaiItemID(part.providerMetadata), (id) => ({
+    id,
+    summary: part.text.length > 0 ? [{ type: "summary_text" as const, text: part.text }] : [],
+    encryptedContent: Option.liftPredicate(
+      part.providerMetadata?.openai?.reasoningEncryptedContent,
+      Predicate.isString,
+    ),
+  }))
+
+const hostedToolItemID = (part: ToolResultPart) => openaiItemID(part.providerMetadata)
 
 const lowerUserContent = Effect.fn("OpenAIResponses.lowerUserContent")(function* (
   part: LLMRequest["messages"][number]["content"][number],
@@ -376,8 +374,9 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
         }
         if (part.type === "reasoning") {
           flushText()
-          const reasoning = lowerReasoning(part)
-          if (!reasoning) continue
+          const lowered = lowerReasoning(part)
+          if (Option.isNone(lowered)) continue
+          const reasoning = lowered.value
           if (store !== false) {
             if (!HashSet.has(reasoningReferences, reasoning.id))
               input.push({ type: "item_reference", id: reasoning.id })
@@ -387,14 +386,16 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
           const existing = reasoningItems[reasoning.id]
           if (existing) {
             existing.summary.push(...reasoning.summary)
-            if (typeof reasoning.encrypted_content === "string")
-              existing.encrypted_content = reasoning.encrypted_content
+            if (Option.isSome(reasoning.encryptedContent)) existing.encrypted_content = reasoning.encryptedContent.value
             continue
           }
-          const replay = {
-            type: reasoning.type,
-            summary: reasoning.summary,
-            encrypted_content: reasoning.encrypted_content,
+          const replay: OpenAIResponsesReasoningReplay = {
+            type: "reasoning",
+            summary: [...reasoning.summary],
+            ...Option.match(reasoning.encryptedContent, {
+              onNone: () => ({}),
+              onSome: (encryptedContent) => ({ encrypted_content: encryptedContent }),
+            }),
           }
           reasoningItems[reasoning.id] = replay
           input.push(replay)
@@ -409,9 +410,11 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
         if (part.type === "tool-result" && part.providerExecuted === true) {
           flushText()
           const itemID = hostedToolItemID(part)
-          if (store !== false && itemID && !HashSet.has(hostedToolReferences, itemID))
-            input.push({ type: "item_reference", id: itemID })
-          if (itemID) hostedToolReferences = HashSet.add(hostedToolReferences, itemID)
+          if (Option.isSome(itemID)) {
+            if (store !== false && !HashSet.has(hostedToolReferences, itemID.value))
+              input.push({ type: "item_reference", id: itemID.value })
+            hostedToolReferences = HashSet.add(hostedToolReferences, itemID.value)
+          }
           continue
         }
         return yield* ProviderShared.unsupportedContent("OpenAI Responses", "assistant", [
@@ -475,13 +478,14 @@ const fromRequest = Effect.fn("OpenAIResponses.fromRequest")(function* (request:
   return {
     model: request.model.id,
     input: yield* lowerMessages(request),
-    tools:
-      request.tools.length === 0
-        ? undefined
-        : request.tools.map((tool) =>
+    ...(request.tools.length === 0
+      ? {}
+      : {
+          tools: request.tools.map((tool) =>
             lowerTool(tool, ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)),
           ),
-    tool_choice: request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
+        }),
+    ...(request.toolChoice ? { tool_choice: yield* lowerToolChoice(request.toolChoice) } : {}),
     stream: true as const,
     max_output_tokens: generation?.maxTokens,
     temperature: generation?.temperature,
@@ -664,7 +668,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
         lifecycle: Lifecycle.reasoningStart(state.lifecycle, events, `${item.id}:0`, reasoningMetadata(item)),
         reasoningItems: {
           ...state.reasoningItems,
-          [item.id]: { encryptedContent: item.encrypted_content, summaryParts: { 0: "active" } },
+          [item.id]: { encryptedContent: Option.fromNullishOr(item.encrypted_content), summaryParts: { 0: "active" } },
         },
       },
       events,
@@ -692,7 +696,7 @@ const onOutputItemAdded = (state: ParserState, event: OpenAIResponsesEvent): Ste
 
 const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesEvent): StepResult => {
   if (!event.item_id || event.summary_index === undefined) return [state, NO_EVENTS]
-  const item = state.reasoningItems[event.item_id] ?? { encryptedContent: undefined, summaryParts: {} }
+  const item = state.reasoningItems[event.item_id] ?? { encryptedContent: Option.none(), summaryParts: {} }
   if (event.summary_index === 0) {
     if (state.reasoningItems[event.item_id]) return [state, NO_EVENTS]
     const events: LLMEvent[] = []
@@ -729,7 +733,7 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
         closed,
         events,
         `${event.item_id}:${event.summary_index}`,
-        openaiMetadata({ itemId: event.item_id, reasoningEncryptedContent: item.encryptedContent ?? null }),
+        openaiMetadata({ itemId: event.item_id, reasoningEncryptedContent: Option.getOrNull(item.encryptedContent) }),
       ),
       reasoningItems: {
         ...state.reasoningItems,
@@ -885,20 +889,32 @@ const onResponseFinish = (state: ParserState, event: OpenAIResponsesEvent): Step
 // the failure mode (e.g. `rate_limit_exceeded: Slow down`) instead of just
 // the bare message — production rate limits and context-length failures used
 // to be indistinguishable from generic stream drops.
+//
+// A missing, null, or empty field counts as absent, and the top-level field
+// wins over the nested `response.error` field.
+const errorField = (value: string | null | undefined): Option.Option<string> =>
+  Option.filter(Option.fromNullishOr(value), (text) => text.length > 0)
+
+const providerErrorCode = (event: OpenAIResponsesEvent) =>
+  Option.orElse(errorField(event.code), () => errorField(event.response?.error?.code))
+
 const providerErrorMessage = (event: OpenAIResponsesEvent, fallback: string): string => {
-  const nested = event.response?.error ?? undefined
-  const message = event.message || nested?.message || undefined
-  const code = event.code || nested?.code || undefined
-  if (message && code) return `${code}: ${message}`
-  return message || code || fallback
+  const message = Option.orElse(errorField(event.message), () => errorField(event.response?.error?.message))
+  const code = providerErrorCode(event)
+  return Option.zipWith(code, message, (code, message) => `${code}: ${message}`).pipe(
+    Option.orElse(() => message),
+    Option.orElse(() => code),
+    Option.getOrElse(() => fallback),
+  )
 }
 
 const providerError = (event: OpenAIResponsesEvent, fallback: string) => {
-  const code = event.code || event.response?.error?.code || undefined
   const message = providerErrorMessage(event, fallback)
   return LLMEvent.providerError({
     message,
-    classification: code === "context_length_exceeded" || isContextOverflow(message) ? "context-overflow" : undefined,
+    ...(Option.contains(providerErrorCode(event), "context_length_exceeded") || isContextOverflow(message)
+      ? { classification: "context-overflow" as const }
+      : {}),
   })
 }
 

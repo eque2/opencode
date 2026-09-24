@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -206,8 +206,8 @@ const lowerMedia = Effect.fn("OpenAIChat.lowerMedia")(function* (part: MediaPart
   return { type: "image_url" as const, image_url: { url: media.dataUrl } }
 })
 
-const openAICompatibleReasoningContent = (native: unknown) =>
-  isRecord(native) && typeof native.reasoning_content === "string" ? native.reasoning_content : undefined
+const openAICompatibleReasoningContent = (native: unknown): Option.Option<string> =>
+  isRecord(native) ? Option.liftPredicate(native.reasoning_content, Predicate.isString) : Option.none()
 
 const lowerUserMessage = Effect.fn("OpenAIChat.lowerUserMessage")(function* (message: OpenAIChatRequestMessage) {
   const content: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
@@ -249,14 +249,18 @@ const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(func
       continue
     }
   }
+  const reasoningContent =
+    reasoning.length > 0
+      ? Option.some(reasoning.map((part) => part.text).join(""))
+      : openAICompatibleReasoningContent(message.native?.openaiCompatible)
   return {
     role: "assistant" as const,
     content: content.length === 0 ? null : ProviderShared.joinText(content),
-    tool_calls: toolCalls.length === 0 ? undefined : toolCalls,
-    reasoning_content:
-      reasoning.length > 0
-        ? reasoning.map((part) => part.text).join("")
-        : openAICompatibleReasoningContent(message.native?.openaiCompatible),
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls }),
+    ...Option.match(reasoningContent, {
+      onNone: () => ({}),
+      onSome: (text) => ({ reasoning_content: text }),
+    }),
   }
 })
 
@@ -348,13 +352,14 @@ const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (request: LLMR
   return {
     model: request.model.id,
     messages: yield* lowerMessages(request),
-    tools:
-      request.tools.length === 0
-        ? undefined
-        : request.tools.map((tool) =>
+    ...(request.tools.length === 0
+      ? {}
+      : {
+          tools: request.tools.map((tool) =>
             lowerTool(tool, ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)),
           ),
-    tool_choice: request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined,
+        }),
+    ...(request.toolChoice ? { tool_choice: yield* lowerToolChoice(request.toolChoice) } : {}),
     stream: true as const,
     stream_options: { include_usage: true },
     max_tokens: generation?.maxTokens,
@@ -430,7 +435,11 @@ const step = (state: ParserState, event: OpenAIChatEvent) =>
         ADAPTER,
         tools,
         tool.index,
-        { id: tool.id ?? undefined, name: tool.function?.name ?? undefined, text: tool.function?.arguments ?? "" },
+        {
+          id: Option.getOrUndefined(Option.fromNullishOr(tool.id)),
+          name: Option.getOrUndefined(Option.fromNullishOr(tool.function?.name)),
+          text: tool.function?.arguments ?? "",
+        },
         "OpenAI Chat tool call delta is missing id or name",
       )
       if (ToolStream.isError(result)) return yield* result
@@ -443,13 +452,14 @@ const step = (state: ParserState, event: OpenAIChatEvent) =>
     // JSON parse failures fail the stream at the boundary rather than at halt.
     const finished =
       finishReason !== undefined && state.finishReason === undefined && Object.keys(tools).length > 0
-        ? yield* ToolStream.finishAll(ADAPTER, tools)
-        : undefined
+        ? Option.some(yield* ToolStream.finishAll(ADAPTER, tools))
+        : Option.none()
+    const settled = Option.getOrElse(finished, () => ({ tools, events: state.toolCallEvents }))
 
     return [
       {
-        tools: finished?.tools ?? tools,
-        toolCallEvents: finished?.events ?? state.toolCallEvents,
+        tools: settled.tools,
+        toolCallEvents: settled.events,
         usage,
         finishReason,
         lifecycle,
