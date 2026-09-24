@@ -165,7 +165,7 @@ export function statPeriodKey(row: StatBaseRow) {
 }
 
 export function statRowScope(rows: StatBaseRow[]) {
-  if (rows.length === 0) return
+  if (rows.length === 0) return undefined
   return {
     grains: unique(rows.map((row) => row.grain)),
     periodKeys: unique(rows.map((row) => row.period_key)),

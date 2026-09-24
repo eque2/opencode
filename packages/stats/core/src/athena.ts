@@ -93,7 +93,7 @@ const poll: (
   })
   const status = result.QueryExecution?.Status
 
-  if (status?.State === "SUCCEEDED") return
+  if (status?.State === "SUCCEEDED") return yield* Effect.void
   if (status?.State === "FAILED" || status?.State === "CANCELLED")
     return yield* Effect.fail(
       new AthenaQueryError({

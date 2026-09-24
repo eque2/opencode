@@ -86,7 +86,7 @@ export const migrate = Effect.fn("Database.migrate")(function* () {
         message: `Failed to initialize database migrations: ${result.exitCode}`,
       }),
     )
-  yield* Effect.logInfo("database migrations complete").pipe(
+  return yield* Effect.logInfo("database migrations complete").pipe(
     Effect.annotateLogs({ migrationsDir: settings.migrationsDir }),
   )
 })

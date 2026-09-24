@@ -370,7 +370,7 @@ function classifyRows(file: string, rows: RawRow[]): ImportKey {
     ])
   )
     return `provider-${grain}`
-  fail(`Cannot classify export from columns in ${file}`)
+  return fail(`Cannot classify export from columns in ${file}`)
 }
 
 function hasMetricHeaders(headers: Set<string>) {
