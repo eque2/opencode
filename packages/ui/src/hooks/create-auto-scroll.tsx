@@ -115,9 +115,10 @@ export function createAutoScroll(options: AutoScrollOptions) {
     // code block, etc), don't treat it as leaving the "follow bottom" mode.
     // Those regions opt in via `data-scrollable`.
     const el = store.scrollRef
-    const target = e.target instanceof Element ? e.target : undefined
-    const nested = target?.closest("[data-scrollable]")
-    if (el && nested && nested !== el) return
+    if (el && e.target instanceof Element) {
+      const nested = e.target.closest("[data-scrollable]")
+      if (nested && nested !== el) return
+    }
     stop()
   }
 

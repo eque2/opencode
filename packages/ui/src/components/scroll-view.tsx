@@ -70,18 +70,17 @@ export function scrollKeyOwner(
   target: EventTarget | null,
   key: NonNullable<ReturnType<typeof scrollKey>>,
 ) {
-  const element = target instanceof Element ? target : undefined
-  const owner = element?.closest<HTMLElement>("[data-scrollable]")
+  if (!(target instanceof Element)) return root
+  const owner = target.closest<HTMLElement>("[data-scrollable]")
   if (!owner || owner === root) return root
   if (!root.contains(owner)) return owner
   return canScrollKey(owner, key) ? owner : root
 }
 
 export function isScrollKeyTarget(target: EventTarget | null, key: NonNullable<ReturnType<typeof scrollKey>>) {
-  const element = target instanceof HTMLElement ? target : undefined
-  if (!element) return true
-  if (["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName) || element.isContentEditable) return false
-  if ((key === "page-up" || key === "page-down") && element.closest('button, a[href], [role="button"]')) return false
+  if (!(target instanceof HTMLElement)) return true
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable) return false
+  if ((key === "page-up" || key === "page-down") && target.closest('button, a[href], [role="button"]')) return false
   return true
 }
 

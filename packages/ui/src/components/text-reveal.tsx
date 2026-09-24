@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { createEffect, on, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 
@@ -51,7 +52,7 @@ export function TextReveal(props: {
   let inRef: HTMLSpanElement | undefined
   let outRef: HTMLSpanElement | undefined
   let rootRef: HTMLSpanElement | undefined
-  let frame: number | undefined
+  let frame: Option.Option<number> = Option.none()
 
   const win = () => inRef?.scrollWidth ?? 0
   const wout = () => outRef?.scrollWidth ?? 0
@@ -85,37 +86,39 @@ export function TextReveal(props: {
           setState("swapping", false)
           return
         }
-        if (frame !== undefined && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame)
-        frame = requestAnimationFrame(() => {
-          widen(Math.max(win(), wout()))
-          rootRef?.offsetHeight
-          setState("swapping", false)
-          frame = undefined
-        })
+        if (Option.isSome(frame) && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame.value)
+        frame = Option.some(
+          requestAnimationFrame(() => {
+            widen(Math.max(win(), wout()))
+            rootRef?.offsetHeight
+            setState("swapping", false)
+            frame = Option.none()
+          }),
+        )
       },
     ),
   )
 
   onMount(() => {
     widen(win())
-    const fonts = typeof document !== "undefined" ? document.fonts : undefined
+    const fonts = typeof document === "undefined" ? Option.none() : Option.fromNullishOr(document.fonts)
     if (typeof requestAnimationFrame !== "function") {
       setState("ready", true)
       return
     }
-    if (!fonts) {
+    if (Option.isNone(fonts)) {
       requestAnimationFrame(() => setState("ready", true))
       return
     }
-    void fonts.ready.finally(() => {
+    void fonts.value.ready.finally(() => {
       widen(win())
       requestAnimationFrame(() => setState("ready", true))
     })
   })
 
   onCleanup(() => {
-    if (frame === undefined || typeof cancelAnimationFrame !== "function") return
-    cancelAnimationFrame(frame)
+    if (Option.isNone(frame) || typeof cancelAnimationFrame !== "function") return
+    cancelAnimationFrame(frame.value)
   })
 
   return (

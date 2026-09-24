@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import {
   createContext,
   createEffect,
@@ -25,7 +26,7 @@ type FieldContextValue = {
   unregisterPrefix: () => void
   registerSuffix: () => void
   unregisterSuffix: () => void
-  getDescribedBy: () => string | undefined
+  getDescribedBy: () => Option.Option<string>
 }
 
 const FieldContext = createContext<FieldContextValue>()
@@ -74,7 +75,7 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
     unregisterSuffix: () => setSuffixCount((n) => Math.max(0, n - 1)),
     getDescribedBy: () => {
       const ids = [...(prefixCount() > 0 ? [prefixId] : []), ...(suffixCount() > 0 ? [suffixId] : [])]
-      return ids.length > 0 ? ids.join(" ") : undefined
+      return ids.length > 0 ? Option.some(ids.join(" ")) : Option.none()
     },
   }
 
@@ -92,12 +93,10 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
     control.id = controlId
     control.setAttribute("aria-labelledby", labelId)
 
-    const describedBy = ctx.getDescribedBy()
-    if (describedBy) {
-      control.setAttribute("aria-describedby", describedBy)
-    } else {
-      control.removeAttribute("aria-describedby")
-    }
+    Option.match(ctx.getDescribedBy(), {
+      onNone: () => control.removeAttribute("aria-describedby"),
+      onSome: (describedBy) => control.setAttribute("aria-describedby", describedBy),
+    })
 
     if (ctx.invalid()) {
       control.setAttribute("aria-invalid", "true")
