@@ -294,7 +294,8 @@ function emitEffectResult(contract: Contract): Result.Result<Output, GenerationE
       `Effect schema requires authoritative import: ${endpoint.group}.${endpoint.endpoint.identifier}`,
     )
   }
-  return Result.map(renderEffectFiles(contract.groups), (files) => ({ operations: operations(contract.groups), files }))
+  const operationList = operations(contract.groups)
+  return Result.map(renderEffectFiles(contract.groups), (files) => ({ operations: operationList, files }))
 }
 
 export function emitEffectImported(
@@ -304,11 +305,9 @@ export function emitEffectImported(
     | { readonly module: string; readonly group: string }
     | { readonly module: string; readonly endpoints: Readonly<Record<string, string>> },
 ): Output {
+  const operationList = operations(contract.groups)
   return Result.getOrThrow(
-    Result.map(renderImportedEffectFiles(contract.groups, options), (files) => ({
-      operations: operations(contract.groups),
-      files,
-    })),
+    Result.map(renderImportedEffectFiles(contract.groups, options), (files) => ({ operations: operationList, files })),
   )
 }
 
