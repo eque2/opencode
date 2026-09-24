@@ -6,6 +6,7 @@ import { Framing } from "../route/framing"
 import { Protocol } from "../route/protocol"
 import {
   LLMEvent,
+  ToolResultValue,
   Usage,
   type CacheHint,
   type ContentPart,
@@ -685,7 +686,9 @@ const serverToolResultEvent = (block: NonNullable<AnthropicEvent["content_block"
   return LLMEvent.toolResult({
     id: block.tool_use_id ?? "",
     name: SERVER_TOOL_RESULT_NAMES[block.type],
-    result: isError ? { type: "error", value: block.content } : { type: "json", value: block.content },
+    // `content` is optional on the shared stream block schema; ToolResultValue.make
+    // validates it as the JSON result value.
+    result: isError ? { type: "error", value: block.content } : ToolResultValue.make(block.content),
     providerExecuted: true,
     providerMetadata: anthropicMetadata({ blockType: block.type }),
   })
