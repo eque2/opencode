@@ -208,27 +208,27 @@ const renderSchema = (
   return "unknown"
 }
 
-export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false): string => {
-  try {
-    const visible = decoded ? Schema.toType(schema) : schema
-    const document = Schema.toJsonSchemaDocument(visible) as {
-      readonly schema: JsonSchema
-      readonly definitions?: Readonly<Record<string, JsonSchema>>
-    }
-    return renderSchema(document.schema, { definitions: document.definitions ?? {}, pretty })
-  } catch {
-    return "unknown"
-  }
-}
+export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false): string =>
+  Result.getOrElse(
+    Result.try(() => {
+      const visible = decoded ? Schema.toType(schema) : schema
+      const document = Schema.toJsonSchemaDocument(visible) as {
+        readonly schema: JsonSchema
+        readonly definitions?: Readonly<Record<string, JsonSchema>>
+      }
+      return renderSchema(document.schema, { definitions: document.definitions ?? {}, pretty })
+    }),
+    () => "unknown",
+  )
 
 /** Renders a raw JSON Schema document as a TypeScript type string. */
-export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string => {
-  try {
-    return renderSchema(schema, { definitions: { ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) }, pretty })
-  } catch {
-    return "unknown"
-  }
-}
+export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string =>
+  Result.getOrElse(
+    Result.try(() =>
+      renderSchema(schema, { definitions: { ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) }, pretty }),
+    ),
+    () => "unknown",
+  )
 
 /** One input property of a tool, extracted best-effort from its input schema. */
 export type InputProperty = {
@@ -244,34 +244,34 @@ export type InputProperty = {
  * directly, resolving a trivial top-level `$ref` into `$defs`/`definitions` when present.
  * Anything unresolvable yields `[]` (search falls back to path + description).
  */
-export const inputProperties = <R>(definition: Definition<R>): Array<InputProperty> => {
-  try {
-    const document = isEffectSchema(definition.input)
-      ? (Schema.toJsonSchemaDocument(definition.input) as {
-          readonly schema: JsonSchema
-          readonly definitions?: Readonly<Record<string, JsonSchema>>
-        })
-      : {
-          schema: definition.input,
-          definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
-        }
-    const definitions = document.definitions ?? {}
-    const resolved =
-      document.schema.$ref === undefined
-        ? Option.some(document.schema)
-        : Option.flatMap(refName(document.schema.$ref), (name) => Option.fromNullishOr(definitions[name]))
-    if (Option.isNone(resolved)) return []
-    const schema = resolved.value
-    const required = HashSet.fromIterable(schema.required ?? [])
-    return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
-      name,
-      description: Option.getOrUndefined(Option.liftPredicate(value.description, Predicate.isString)),
-      required: HashSet.has(required, name),
-    }))
-  } catch {
-    return []
-  }
-}
+export const inputProperties = <R>(definition: Definition<R>): Array<InputProperty> =>
+  Result.getOrElse(
+    Result.try((): Array<InputProperty> => {
+      const document = isEffectSchema(definition.input)
+        ? (Schema.toJsonSchemaDocument(definition.input) as {
+            readonly schema: JsonSchema
+            readonly definitions?: Readonly<Record<string, JsonSchema>>
+          })
+        : {
+            schema: definition.input,
+            definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
+          }
+      const definitions = document.definitions ?? {}
+      const resolved =
+        document.schema.$ref === undefined
+          ? Option.some(document.schema)
+          : Option.flatMap(refName(document.schema.$ref), (name) => Option.fromNullishOr(definitions[name]))
+      if (Option.isNone(resolved)) return []
+      const schema = resolved.value
+      const required = HashSet.fromIterable(schema.required ?? [])
+      return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
+        name,
+        description: Option.getOrUndefined(Option.liftPredicate(value.description, Predicate.isString)),
+        required: HashSet.has(required, name),
+      }))
+    }),
+    () => [],
+  )
 
 /**
  * The model-visible TypeScript type of a tool's input. `pretty` renders an indented
