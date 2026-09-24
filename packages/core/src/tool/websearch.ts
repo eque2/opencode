@@ -16,7 +16,7 @@ import {
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
-import { truthy } from "../flag/flag"
+import { truthyConfig } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 import { PositiveInt } from "../schema"
 import { PermissionV2 } from "../permission"
@@ -89,8 +89,14 @@ export class SearchError extends Schema.TaggedError<SearchError>()("WebSearchToo
 
 export class ConfigService extends Context.Service<ConfigService, Config>()("@opencode/v2/WebSearchConfig") {}
 
+/** True when any of the variables is "true" or "1", in any case. */
+const anyTruthy = (keys: ReadonlyArray<string>) =>
+  EffectConfig.all(keys.map((key) => truthyConfig(key))).pipe(EffectConfig.map((flags) => flags.includes(true)))
+
 const environment = EffectConfig.all({
   provider: EffectConfig.String("OPENCODE_WEBSEARCH_PROVIDER").pipe(EffectConfig.option),
+  enableExa: anyTruthy(["OPENCODE_EXPERIMENTAL", "OPENCODE_ENABLE_EXA", "OPENCODE_EXPERIMENTAL_EXA"]),
+  enableParallel: anyTruthy(["OPENCODE_ENABLE_PARALLEL", "OPENCODE_EXPERIMENTAL_PARALLEL"]),
   exaApiKey: EffectConfig.String("EXA_API_KEY").pipe(EffectConfig.option),
   parallelApiKey: EffectConfig.String("PARALLEL_API_KEY").pipe(EffectConfig.option),
 })
@@ -111,9 +117,8 @@ export const defaultConfigLayer = Layer.effect(
     const provider = env.provider.pipe(Option.filter(Schema.is(Provider)))
     return ConfigService.of({
       ...(Option.isSome(provider) ? { provider: provider.value } : {}),
-      enableExa:
-        truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_ENABLE_EXA") || truthy("OPENCODE_EXPERIMENTAL_EXA"),
-      enableParallel: truthy("OPENCODE_ENABLE_PARALLEL") || truthy("OPENCODE_EXPERIMENTAL_PARALLEL"),
+      enableExa: env.enableExa,
+      enableParallel: env.enableParallel,
       ...(Option.isSome(env.exaApiKey) ? { exaApiKey: env.exaApiKey.value } : {}),
       ...(Option.isSome(env.parallelApiKey) ? { parallelApiKey: env.parallelApiKey.value } : {}),
     })
