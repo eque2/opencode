@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { ToolCallID } from "@opencode-ai/llm"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -50,7 +50,9 @@ describe("WebSearchTool provider selection", () => {
 
 describe("WebSearchTool MCP response parser", () => {
   test("parses plain JSON-RPC responses", async () => {
-    expect(await Effect.runPromise(WebSearchTool.parseResponse(payload("search results")))).toBe("search results")
+    expect(await Effect.runPromise(WebSearchTool.parseResponse(payload("search results")))).toEqual(
+      Option.some("search results"),
+    )
   })
 
   test("parses SSE JSON-RPC responses and ignores non-JSON frames", async () => {
@@ -58,7 +60,7 @@ describe("WebSearchTool MCP response parser", () => {
       await Effect.runPromise(
         WebSearchTool.parseResponse(`data: [DONE]\nevent: message\ndata: ${payload("search results")}\n\n`),
       ),
-    ).toBe("search results")
+    ).toEqual(Option.some("search results"))
   })
 })
 

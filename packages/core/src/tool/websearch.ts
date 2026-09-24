@@ -1,7 +1,7 @@
 export * as WebSearchTool from "./websearch"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect"
+import { Array as Arr, Context, DateTime, Duration, Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
@@ -111,23 +111,28 @@ const McpResult = Schema.Struct({
 })
 const decodeMcpResult = Schema.decodeUnknownEffect(Schema.fromJsonString(McpResult))
 
+/** Returns the first non-empty text item of a JSON-RPC payload, or none for a non-JSON frame. */
 const parsePayload = (payload: string) =>
   Effect.gen(function* () {
     const trimmed = payload.trim()
-    if (!trimmed.startsWith("{")) return undefined
-    return (yield* decodeMcpResult(trimmed)).result.content.find((item) => item.text)?.text
+    if (!trimmed.startsWith("{")) return Option.none<string>()
+    const content = (yield* decodeMcpResult(trimmed)).result.content
+    return Arr.findFirst(content, (item) => item.text !== "").pipe(Option.map((item) => item.text))
   })
 
+/** Returns the search text of a plain JSON-RPC or SSE body, or none when no payload holds text. */
 export const parseResponse = Effect.fn("WebSearchTool.parseResponse")(function* (body: string) {
   const trimmed = body.trim()
-  const direct = trimmed ? yield* parsePayload(trimmed) : undefined
-  if (direct) return direct
+  if (trimmed) {
+    const direct = yield* parsePayload(trimmed)
+    if (Option.isSome(direct)) return direct
+  }
   for (const line of body.split("\n")) {
     if (!line.startsWith("data: ")) continue
     const data = yield* parsePayload(line.substring(6))
-    if (data) return data
+    if (Option.isSome(data)) return data
   }
-  return undefined
+  return Option.none<string>()
 })
 
 const ExaArgs = Schema.Struct({
@@ -251,7 +256,7 @@ const layer = Layer.effectDiscard(
                     )
               return {
                 provider,
-                text: text ?? NO_RESULTS,
+                text: Option.getOrElse(text, () => NO_RESULTS),
               }
             }).pipe(Effect.mapError(() => new ToolFailure({ message: `Unable to search the web for ${input.query}` })))
           },
