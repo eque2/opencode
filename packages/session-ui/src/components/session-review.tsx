@@ -20,7 +20,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { type SelectedLineRange } from "@pierre/diffs"
 import { Dynamic } from "solid-js/web"
-import { HashSet, MutableHashMap, Option } from "effect"
+import { Array, HashSet, MutableHashMap, Option, Record } from "effect"
 import { mediaKindFromPath } from "../pierre/media"
 import { cloneSelectedLineRange, previewSelectedLines } from "../pierre/selection-bridge"
 import { createLineCommentController } from "./line-comment-annotations"
@@ -188,18 +188,7 @@ export const SessionReview = (props: SessionReviewProps) => {
     Object.fromEntries(list(props.diffs).map((diff) => [diff.file, { ...normalize(diff), preloaded: diff.preloaded }])),
   )
   const files = createMemo(() => props.diffs.map((diff) => diff.file!))
-  const grouped = createMemo(() => {
-    const next = new Map<string, SessionReviewComment[]>()
-    for (const comment of props.comments ?? []) {
-      const list = next.get(comment.file)
-      if (list) {
-        list.push(comment)
-        continue
-      }
-      next.set(comment.file, [comment])
-    }
-    return next
-  })
+  const grouped = createMemo(() => Array.groupBy(props.comments ?? [], (comment) => comment.file))
   const diffStyle = () => props.diffStyle ?? (props.split ? "split" : "unified")
   const hasDiffs = () => files().length > 0
 
@@ -403,7 +392,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const mounted = createMemo(() => expanded() && (!!store.visible[file] || pinned(file)))
                     const force = () => !!store.force[file]
 
-                    const comments = createMemo(() => grouped().get(file) ?? [])
+                    const comments = createMemo(() => Option.getOrElse(Record.get(grouped(), file), () => []))
                     const commentedLines = createMemo(() => comments().map((c) => c.selection))
 
                     const beforeText = () => text(diff(), "deletions")
