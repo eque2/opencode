@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, HashSet, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -94,6 +94,8 @@ const GeminiThinkingConfig = Schema.Struct({
   thinkingBudget: Schema.optional(Schema.Number),
   includeThoughts: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "Gemini.ThinkingConfig" })
+
+type GeminiThinkingConfig = Schema.Schema.Type<typeof GeminiThinkingConfig>
 
 const GeminiGenerationConfig = Schema.Struct({
   maxOutputTokens: Schema.optional(Schema.Number),
@@ -191,12 +193,18 @@ const lowerUserPart = Effect.fn("Gemini.lowerUserPart")(function* (part: Content
 
 const googleMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ google: metadata })
 
-const thoughtSignature = (providerMetadata: ProviderMetadata | undefined) => {
-  const google = providerMetadata?.google
-  return ProviderShared.isRecord(google) && typeof google.thoughtSignature === "string"
-    ? google.thoughtSignature
-    : undefined
-}
+const thoughtSignature = (providerMetadata: ProviderMetadata | undefined) =>
+  Option.fromNullishOr(providerMetadata?.google?.thoughtSignature).pipe(Option.filter(Predicate.isString))
+
+// Gemini attaches a thought signature to reasoning and function-call parts.
+// Carry a non-empty one forward as google provider metadata.
+const signatureMetadata = (signature: string | undefined) =>
+  Option.getOrUndefined(
+    Option.fromUndefinedOr(signature).pipe(
+      Option.filter((value) => value.length > 0),
+      Option.map((value) => googleMetadata({ thoughtSignature: value })),
+    ),
+  )
 
 // Function-call args are provider wire JSON. Narrow the common model's untyped
 // input here so a non-JSON value fails as an invalid request instead of being
@@ -208,7 +216,7 @@ const lowerToolCall = Effect.fn("Gemini.lowerToolCall")(function* (part: ToolCal
     return yield* ProviderShared.invalidRequest(`Gemini tool call ${part.name} input must be JSON`)
   return {
     functionCall: { name: part.name, args: part.input },
-    thoughtSignature: thoughtSignature(part.providerMetadata),
+    thoughtSignature: Option.getOrUndefined(thoughtSignature(part.providerMetadata)),
   }
 })
 
@@ -217,7 +225,11 @@ const lowerModelPart = Effect.fn("Gemini.lowerModelPart")(function* (part: Conte
     return yield* ProviderShared.unsupportedContent("Gemini", "assistant", ["text", "reasoning", "tool-call"])
   if (part.type === "text") return { text: part.text }
   if (part.type === "reasoning")
-    return { text: part.text, thought: true, thoughtSignature: thoughtSignature(part.providerMetadata) }
+    return {
+      text: part.text,
+      thought: true,
+      thoughtSignature: Option.getOrUndefined(thoughtSignature(part.providerMetadata)),
+    }
   return yield* lowerToolCall(part)
 })
 
@@ -299,14 +311,14 @@ const lowerMessages = Effect.fn("Gemini.lowerMessages")(function* (request: LLMR
 
 const geminiOptions = (request: LLMRequest) => request.providerOptions?.gemini
 
-const thinkingConfig = (request: LLMRequest) => {
+const thinkingConfig = (request: LLMRequest): Option.Option<GeminiThinkingConfig> => {
   const value = geminiOptions(request)?.thinkingConfig
-  if (!ProviderShared.isRecord(value)) return undefined
+  if (!ProviderShared.isRecord(value)) return Option.none()
   const result = {
-    thinkingBudget: typeof value.thinkingBudget === "number" ? value.thinkingBudget : undefined,
-    includeThoughts: typeof value.includeThoughts === "boolean" ? value.includeThoughts : undefined,
+    ...(Predicate.isNumber(value.thinkingBudget) ? { thinkingBudget: value.thinkingBudget } : {}),
+    ...(Predicate.isBoolean(value.includeThoughts) ? { includeThoughts: value.includeThoughts } : {}),
   }
-  return Object.values(result).some((item) => item !== undefined) ? result : undefined
+  return Object.keys(result).length > 0 ? Option.some(result) : Option.none()
 }
 
 const fromRequest = Effect.fn("Gemini.fromRequest")(function* (request: LLMRequest) {
@@ -319,26 +331,27 @@ const fromRequest = Effect.fn("Gemini.fromRequest")(function* (request: LLMReque
     topP: generation?.topP,
     topK: generation?.topK,
     stopSequences: generation?.stop,
-    thinkingConfig: thinkingConfig(request),
+    thinkingConfig: Option.getOrUndefined(thinkingConfig(request)),
   }
 
   return {
     contents: yield* lowerMessages(request),
-    systemInstruction:
-      request.system.length === 0 ? undefined : { parts: [{ text: ProviderShared.joinText(request.system) }] },
-    tools: toolsEnabled
-      ? [
-          {
-            functionDeclarations: request.tools.map((tool) =>
-              lowerTool(tool, ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)),
-            ),
-          },
-        ]
-      : undefined,
-    toolConfig: toolsEnabled && request.toolChoice ? yield* lowerToolConfig(request.toolChoice) : undefined,
-    generationConfig: Object.values(generationConfig).some((value) => value !== undefined)
-      ? generationConfig
-      : undefined,
+    ...(request.system.length === 0
+      ? {}
+      : { systemInstruction: { parts: [{ text: ProviderShared.joinText(request.system) }] } }),
+    ...(toolsEnabled
+      ? {
+          tools: [
+            {
+              functionDeclarations: request.tools.map((tool) =>
+                lowerTool(tool, ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility)),
+              ),
+            },
+          ],
+        }
+      : {}),
+    ...(toolsEnabled && request.toolChoice ? { toolConfig: yield* lowerToolConfig(request.toolChoice) } : {}),
+    ...(Object.values(generationConfig).some((value) => value !== undefined) ? { generationConfig } : {}),
   }
 })
 
@@ -357,8 +370,12 @@ const mapUsage = (usage: GeminiUsage | undefined) => {
   // inclusive `outputTokens` the contract expects. Only compute the total
   // when the visible component is reported — otherwise we'd fabricate an
   // inclusive number from a partial breakdown.
-  const outputTokens =
-    usage.candidatesTokenCount !== undefined ? usage.candidatesTokenCount + (usage.thoughtsTokenCount ?? 0) : undefined
+  const outputTokens = Option.getOrUndefined(
+    Option.map(
+      Option.fromUndefinedOr(usage.candidatesTokenCount),
+      (visible) => visible + (usage.thoughtsTokenCount ?? 0),
+    ),
+  )
   return new Usage({
     inputTokens: usage.promptTokenCount,
     outputTokens,
@@ -434,16 +451,11 @@ const step = (state: ParserState, event: GeminiEvent) => {
           events,
           "reasoning-0",
           part.text,
-          part.thoughtSignature ? googleMetadata({ thoughtSignature: part.thoughtSignature }) : undefined,
+          signatureMetadata(part.thoughtSignature),
         )
         continue
       }
-      lifecycle = Lifecycle.reasoningEnd(
-        lifecycle,
-        events,
-        "reasoning-0",
-        reasoningSignature ? googleMetadata({ thoughtSignature: reasoningSignature }) : undefined,
-      )
+      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0", signatureMetadata(reasoningSignature))
       lifecycle = Lifecycle.textDelta(lifecycle, events, "text-0", part.text)
       continue
     }
@@ -451,21 +463,14 @@ const step = (state: ParserState, event: GeminiEvent) => {
     if ("functionCall" in part) {
       const input = part.functionCall.args
       const id = `tool_${nextToolCallId++}`
-      lifecycle = Lifecycle.reasoningEnd(
-        lifecycle,
-        events,
-        "reasoning-0",
-        reasoningSignature ? googleMetadata({ thoughtSignature: reasoningSignature }) : undefined,
-      )
+      lifecycle = Lifecycle.reasoningEnd(lifecycle, events, "reasoning-0", signatureMetadata(reasoningSignature))
       lifecycle = Lifecycle.stepStart(lifecycle, events)
       events.push(
         LLMEvent.toolCall({
           id,
           name: part.functionCall.name,
           input,
-          providerMetadata: part.thoughtSignature
-            ? googleMetadata({ thoughtSignature: part.thoughtSignature })
-            : undefined,
+          providerMetadata: signatureMetadata(part.thoughtSignature),
         }),
       )
       hasToolCalls = true

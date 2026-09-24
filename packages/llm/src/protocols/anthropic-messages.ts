@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, HashSet, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -154,6 +154,7 @@ const AnthropicToolChoice = Schema.Union([
   Schema.Struct({ type: Schema.Literals(["auto", "any"]) }),
   Schema.Struct({ type: Schema.tag("tool"), name: Schema.String }),
 ])
+type AnthropicToolChoice = Schema.Schema.Type<typeof AnthropicToolChoice>
 
 const AnthropicThinking = Schema.Struct({
   type: Schema.tag("enabled"),
@@ -259,11 +260,8 @@ const cacheControl = (breakpoints: Cache.Breakpoints, cache: CacheHint | undefin
 
 const anthropicMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ anthropic: metadata })
 
-const signatureFromMetadata = (metadata: ProviderMetadata | undefined): string | undefined => {
-  const anthropic = metadata?.anthropic
-  if (!ProviderShared.isRecord(anthropic)) return undefined
-  return typeof anthropic.signature === "string" ? anthropic.signature : undefined
-}
+const signatureFromMetadata = (metadata: ProviderMetadata | undefined) =>
+  Option.fromNullishOr(metadata?.anthropic?.signature).pipe(Option.filter(Predicate.isString))
 
 const lowerTool = (breakpoints: Cache.Breakpoints, tool: ToolDefinition, inputSchema: JsonSchema): AnthropicTool => ({
   name: tool.name,
@@ -274,10 +272,10 @@ const lowerTool = (breakpoints: Cache.Breakpoints, tool: ToolDefinition, inputSc
 
 const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
   ProviderShared.matchToolChoice("Anthropic Messages", toolChoice, {
-    auto: () => ({ type: "auto" as const }),
-    none: () => undefined,
-    required: () => ({ type: "any" as const }),
-    tool: (name) => ({ type: "tool" as const, name }),
+    auto: () => Option.some({ type: "auto" as const }),
+    none: () => Option.none(),
+    required: () => Option.some({ type: "any" as const }),
+    tool: (name) => Option.some({ type: "tool" as const, name }),
   })
 
 // Tool-call input and server tool results are provider wire JSON. Narrow the
@@ -448,7 +446,9 @@ const lowerAssistantBlock = Effect.fn("AnthropicMessages.lowerAssistantBlock")(f
     return {
       type: "thinking" as const,
       thinking: part.text,
-      signature: part.encrypted ?? signatureFromMetadata(part.providerMetadata),
+      signature: Option.getOrUndefined(
+        Option.fromUndefinedOr(part.encrypted).pipe(Option.orElse(() => signatureFromMetadata(part.providerMetadata))),
+      ),
     } satisfies AnthropicAssistantBlock
   if (part.type === "tool-call") return yield* part.providerExecuted ? lowerServerToolCall(part) : lowerToolCall(part)
   if (part.type === "tool-result" && part.providerExecuted) return yield* lowerServerToolResult(part)
@@ -467,7 +467,7 @@ const lowerToolResultBlock = Effect.fn("AnthropicMessages.lowerToolResultBlock")
     type: "tool_result" as const,
     tool_use_id: AnthropicToolUseID.make(part.id),
     content: yield* lowerToolResultContent(part),
-    is_error: part.result.type === "error" ? true : undefined,
+    ...(part.result.type === "error" ? { is_error: true } : {}),
     cache_control: cacheControl(breakpoints, part.cache),
   } satisfies AnthropicToolResultBlock
 })
@@ -537,18 +537,17 @@ const anthropicOptions = (request: LLMRequest) => request.providerOptions?.anthr
 const lowerThinking = Effect.fn("AnthropicMessages.lowerThinking")(function* (request: LLMRequest) {
   const thinking = anthropicOptions(request)?.thinking
   if (!ProviderShared.isRecord(thinking) || thinking.type !== "enabled") return undefined
-  const budget =
-    typeof thinking.budgetTokens === "number"
-      ? thinking.budgetTokens
-      : typeof thinking.budget_tokens === "number"
-        ? thinking.budget_tokens
-        : undefined
-  if (budget === undefined) return yield* invalid("Anthropic thinking provider option requires budgetTokens")
-  return { type: "enabled" as const, budget_tokens: budget }
+  const budget = Option.liftPredicate(thinking.budgetTokens, Predicate.isNumber).pipe(
+    Option.orElse(() => Option.liftPredicate(thinking.budget_tokens, Predicate.isNumber)),
+  )
+  if (Option.isNone(budget)) return yield* invalid("Anthropic thinking provider option requires budgetTokens")
+  return { type: "enabled" as const, budget_tokens: budget.value }
 })
 
 const fromRequest = Effect.fn("AnthropicMessages.fromRequest")(function* (request: LLMRequest) {
-  const toolChoice = request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined
+  const toolChoice: Option.Option<AnthropicToolChoice> = request.toolChoice
+    ? yield* lowerToolChoice(request.toolChoice)
+    : Option.none()
   const generation = request.generation
   const toolSchemaCompatibility = request.model.compatibility?.toolSchema
   const outputLimit = request.model.defaults?.limits?.output ?? request.model.route.defaults.limits?.output ?? 4096
@@ -558,22 +557,26 @@ const fromRequest = Effect.fn("AnthropicMessages.fromRequest")(function* (reques
   const breakpoints = Cache.newBreakpoints(ANTHROPIC_BREAKPOINT_CAP)
   const tools =
     request.tools.length === 0 || request.toolChoice?.type === "none"
-      ? undefined
-      : request.tools.map((tool) =>
-          lowerTool(
-            breakpoints,
-            tool,
-            ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility),
+      ? Option.none()
+      : Option.some(
+          request.tools.map((tool) =>
+            lowerTool(
+              breakpoints,
+              tool,
+              ToolSchemaProjection.modelCompatibility(tool.inputSchema, toolSchemaCompatibility),
+            ),
           ),
         )
   const system =
     request.system.length === 0
-      ? undefined
-      : request.system.map((part) => ({
-          type: "text" as const,
-          text: part.text,
-          cache_control: cacheControl(breakpoints, part.cache),
-        }))
+      ? Option.none()
+      : Option.some(
+          request.system.map((part) => ({
+            type: "text" as const,
+            text: part.text,
+            cache_control: cacheControl(breakpoints, part.cache),
+          })),
+        )
   const messages = yield* lowerMessages(request, breakpoints)
   if (breakpoints.dropped > 0) {
     yield* Effect.logWarning(
@@ -582,10 +585,10 @@ const fromRequest = Effect.fn("AnthropicMessages.fromRequest")(function* (reques
   }
   return {
     model: request.model.id,
-    system,
+    system: Option.getOrUndefined(system),
     messages,
-    tools,
-    tool_choice: toolChoice,
+    tools: Option.getOrUndefined(tools),
+    tool_choice: Option.getOrUndefined(toolChoice),
     stream: true as const,
     max_tokens: generation?.maxTokens ?? outputLimit,
     temperature: generation?.temperature,
@@ -617,8 +620,8 @@ const mapFinishReason = (reason: string | null | undefined): FinishReason => {
 const mapUsage = (usage: AnthropicUsage | undefined): Usage | undefined => {
   if (!usage) return undefined
   const nonCached = usage.input_tokens
-  const cacheRead = usage.cache_read_input_tokens ?? undefined
-  const cacheWrite = usage.cache_creation_input_tokens ?? undefined
+  const cacheRead = Option.getOrUndefined(Option.fromNullishOr(usage.cache_read_input_tokens))
+  const cacheWrite = Option.getOrUndefined(Option.fromNullishOr(usage.cache_creation_input_tokens))
   const inputTokens = ProviderShared.sumTokens(nonCached, cacheRead, cacheWrite)
   return new Usage({
     inputTokens,
@@ -626,7 +629,7 @@ const mapUsage = (usage: AnthropicUsage | undefined): Usage | undefined => {
     nonCachedInputTokens: nonCached,
     cacheReadInputTokens: cacheRead,
     cacheWriteInputTokens: cacheWrite,
-    totalTokens: ProviderShared.totalTokens(inputTokens, usage.output_tokens, undefined),
+    totalTokens: ProviderShared.totalTokens(inputTokens, usage.output_tokens),
     providerMetadata: { anthropic: usage },
   })
 }
@@ -650,7 +653,7 @@ const mergeUsage = (left: Usage | undefined, right: Usage | undefined) => {
     nonCachedInputTokens,
     cacheReadInputTokens,
     cacheWriteInputTokens,
-    totalTokens: ProviderShared.totalTokens(inputTokens, outputTokens, undefined),
+    totalTokens: ProviderShared.totalTokens(inputTokens, outputTokens),
     providerMetadata: {
       anthropic: {
         ...left.providerMetadata?.["anthropic"],
@@ -828,9 +831,9 @@ const onMessageDelta = (state: ParserState, event: AnthropicEvent): StepResult =
   const lifecycle = Lifecycle.finish(state.lifecycle, events, {
     reason: mapFinishReason(event.delta?.stop_reason),
     usage,
-    providerMetadata: event.delta?.stop_sequence
-      ? anthropicMetadata({ stopSequence: event.delta.stop_sequence })
-      : undefined,
+    ...(event.delta?.stop_sequence
+      ? { providerMetadata: anthropicMetadata({ stopSequence: event.delta.stop_sequence }) }
+      : {}),
   })
   return [{ ...state, lifecycle, usage }, events]
 }
@@ -849,7 +852,7 @@ const onError = (state: ParserState, event: AnthropicEvent): StepResult => [
   [
     LLMEvent.providerError({
       message: providerErrorMessage(event),
-      classification: isContextOverflow(event.error?.message ?? "") ? "context-overflow" : undefined,
+      ...(isContextOverflow(event.error?.message ?? "") ? { classification: "context-overflow" as const } : {}),
     }),
   ],
 ]

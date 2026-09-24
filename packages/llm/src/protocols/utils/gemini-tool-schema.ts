@@ -1,3 +1,4 @@
+import { Array as Arr, Option } from "effect"
 import { isRecord } from "../../utils/record"
 
 // Gemini accepts a JSON Schema-like dialect for tool parameters, but rejects a
@@ -61,36 +62,39 @@ const emptyObjectSchema = (schema: Record<string, unknown>) =>
   (!isRecord(schema.properties) || Object.keys(schema.properties).length === 0) &&
   !schema.additionalProperties
 
+type Entry = readonly [string, unknown]
+
+// Gemini rejects explicit `undefined` keys, so a projected key is kept only
+// when its value is defined.
+const entry = (key: string, value: unknown): Option.Option<Entry> =>
+  Option.map(Option.fromUndefinedOr(value), (defined) => [key, defined] as const)
+
+const projectedList = (key: string, value: unknown): Option.Option<Entry> =>
+  Array.isArray(value) ? Option.some([key, value.map(projectNode)]) : Option.none()
+
 const projectNode = (schema: unknown): Record<string, unknown> | undefined => {
   if (!isRecord(schema)) return undefined
   if (emptyObjectSchema(schema)) return undefined
   return Object.fromEntries(
-    [
-      ["description", schema.description],
-      ["required", schema.required],
-      ["format", schema.format],
-      ["type", Array.isArray(schema.type) ? schema.type.filter((type) => type !== "null")[0] : schema.type],
-      ["nullable", Array.isArray(schema.type) && schema.type.includes("null") ? true : undefined],
-      ["enum", schema.const !== undefined ? [schema.const] : schema.enum],
-      [
-        "properties",
-        isRecord(schema.properties)
-          ? Object.fromEntries(Object.entries(schema.properties).map(([key, value]) => [key, projectNode(value)]))
-          : undefined,
-      ],
-      [
-        "items",
-        Array.isArray(schema.items)
-          ? schema.items.map(projectNode)
-          : schema.items === undefined
-            ? undefined
-            : projectNode(schema.items),
-      ],
-      ["allOf", Array.isArray(schema.allOf) ? schema.allOf.map(projectNode) : undefined],
-      ["anyOf", Array.isArray(schema.anyOf) ? schema.anyOf.map(projectNode) : undefined],
-      ["oneOf", Array.isArray(schema.oneOf) ? schema.oneOf.map(projectNode) : undefined],
-      ["minLength", schema.minLength],
-    ].filter((entry) => entry[1] !== undefined),
+    Arr.getSomes([
+      entry("description", schema.description),
+      entry("required", schema.required),
+      entry("format", schema.format),
+      entry("type", Array.isArray(schema.type) ? schema.type.filter((type) => type !== "null")[0] : schema.type),
+      Array.isArray(schema.type) && schema.type.includes("null") ? Option.some(["nullable", true]) : Option.none(),
+      entry("enum", schema.const !== undefined ? [schema.const] : schema.enum),
+      isRecord(schema.properties)
+        ? Option.some([
+            "properties",
+            Object.fromEntries(Object.entries(schema.properties).map(([key, value]) => [key, projectNode(value)])),
+          ])
+        : Option.none(),
+      Array.isArray(schema.items) ? projectedList("items", schema.items) : entry("items", projectNode(schema.items)),
+      projectedList("allOf", schema.allOf),
+      projectedList("anyOf", schema.anyOf),
+      projectedList("oneOf", schema.oneOf),
+      entry("minLength", schema.minLength),
+    ]),
   )
 }
 
