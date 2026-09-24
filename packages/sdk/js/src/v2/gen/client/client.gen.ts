@@ -95,6 +95,7 @@ export const createClient = (config: Config = {}): Client => {
 
       for (const fn of interceptors.error.fns) {
         if (fn) {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined
           finalError = (await fn(error, undefined as any, request, opts)) as unknown
         }
       }
@@ -111,7 +112,7 @@ export const createClient = (config: Config = {}): Client => {
         : {
             error: finalError,
             request,
-            response: undefined as any,
+            response: undefined,
           }
     }
 
@@ -209,15 +210,15 @@ export const createClient = (config: Config = {}): Client => {
     }
 
     const error = jsonError ?? textError
-    let finalError = error
+    let finalError: unknown = error
 
     for (const fn of interceptors.error.fns) {
       if (fn) {
-        finalError = (await fn(error, response, request, opts)) as string
+        finalError = await fn(error, response, request, opts)
       }
     }
 
-    finalError = finalError || ({} as string)
+    finalError = finalError || {}
 
     if (opts.throwOnError) {
       throw finalError
@@ -238,8 +239,9 @@ export const createClient = (config: Config = {}): Client => {
     const { opts, url } = await beforeRequest(options)
     return createSseClient({
       ...opts,
-      body: opts.body as BodyInit | null | undefined,
-      headers: opts.headers as unknown as Record<string, string>,
+      // createSseClient sends serializedBody and never reads the raw body.
+      body: undefined,
+      headers: opts.headers,
       method,
       onRequest: async (url, init) => {
         let request = new Request(url, init)
@@ -250,11 +252,13 @@ export const createClient = (config: Config = {}): Client => {
         }
         return request
       },
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- fetch() RequestInit.body (platform API) requires BodyInit, while the @hey-api/openapi-ts BodySerializer returns any and the raw body is unknown; a guard would change which bodies reach fetch
       serializedBody: getValidRequestBody(opts) as BodyInit | null | undefined,
       url,
     })
   }
 
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts Client declares generic MethodFn and SseFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail
   return {
     buildUrl,
     connect: makeMethodFn("CONNECT"),

@@ -3,8 +3,13 @@
 import { getAuthToken } from "../core/auth.gen.js"
 import type { QuerySerializerOptions } from "../core/bodySerializer.gen.js"
 import { jsonBodySerializer } from "../core/bodySerializer.gen.js"
-import { serializeArrayParam, serializeObjectParam, serializePrimitiveParam } from "../core/pathSerializer.gen.js"
-import { getUrl } from "../core/utils.gen.js"
+import {
+  serializeArrayParam,
+  serializeObjectParam,
+  serializePrimitiveParam,
+  toParamString,
+} from "../core/pathSerializer.gen.js"
+import { getUrl, isRecord } from "../core/utils.gen.js"
 import type { Client, ClientOptions, Config, RequestOptions } from "./types.gen.js"
 
 export const createQuerySerializer = <T = unknown>({ parameters = {}, ...args }: QuerySerializerOptions = {}) => {
@@ -30,13 +35,13 @@ export const createQuerySerializer = <T = unknown>({ parameters = {}, ...args }:
             ...options.array,
           })
           if (serializedArray) search.push(serializedArray)
-        } else if (typeof value === "object") {
+        } else if (isRecord(value)) {
           const serializedObject = serializeObjectParam({
             allowReserved: options.allowReserved,
             explode: true,
             name,
             style: "deepObject",
-            value: value as Record<string, unknown>,
+            value,
             ...options.object,
           })
           if (serializedObject) search.push(serializedObject)
@@ -44,7 +49,7 @@ export const createQuerySerializer = <T = unknown>({ parameters = {}, ...args }:
           const serializedPrimitive = serializePrimitiveParam({
             allowReserved: options.allowReserved,
             name,
-            value: value as string,
+            value,
           })
           if (serializedPrimitive) search.push(serializedPrimitive)
         }
@@ -145,7 +150,7 @@ export const setAuthParams = async ({
 
 export const buildUrl: Client["buildUrl"] = (options) =>
   getUrl({
-    baseUrl: options.baseUrl as string,
+    baseUrl: typeof options.baseUrl === "string" ? options.baseUrl : undefined,
     path: options.path,
     query: options.query,
     querySerializer:
@@ -186,12 +191,12 @@ export const mergeHeaders = (...headers: Array<Required<Config>["headers"] | und
         mergedHeaders.delete(key)
       } else if (Array.isArray(value)) {
         for (const v of value) {
-          mergedHeaders.append(key, v as string)
+          mergedHeaders.append(key, toParamString(v))
         }
       } else if (value !== undefined) {
         // assume object headers are meant to be JSON stringified, i.e. their
         // content value in OpenAPI specification is 'application/json'
-        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : (value as string))
+        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : toParamString(value))
       }
     }
   }
