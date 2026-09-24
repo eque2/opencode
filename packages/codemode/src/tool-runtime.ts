@@ -315,15 +315,13 @@ export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
 const definitions = <R>(
   tools: HostTools<R>,
   path: ReadonlyArray<string> = [],
-): Array<{ path: string; definition: Definition<R> }> => {
-  const entries: Array<{ path: string; definition: Definition<R> }> = []
-  for (const [name, value] of Object.entries(tools)) {
+): Array<{ path: string; definition: Definition<R> }> =>
+  Object.entries(tools).flatMap(([name, value]) => {
     const next = [...path, name]
-    if (isDefinition(value)) entries.push({ path: next.join("."), definition: value })
-    else if (typeof value !== "function") entries.push(...definitions(value, next))
-  }
-  return entries
-}
+    if (isDefinition(value)) return [{ path: next.join("."), definition: value }]
+    if (typeof value !== "function") return definitions(value, next)
+    return []
+  })
 
 const describeDefinition = <R>(path: string, definition: Definition<R>): ToolDescription => ({
   path,
@@ -375,12 +373,11 @@ const tokenize = (query: string): Array<string> =>
  * needed only on the query side; scoring weights are unchanged - each field check
  * passes when ANY form matches.
  */
-const termForms = (term: string): Array<string> => {
-  const forms = [term]
-  if (term.endsWith("es") && term.length > 3) forms.push(term.slice(0, -2))
-  if (term.endsWith("s") && term.length > 2) forms.push(term.slice(0, -1))
-  return forms
-}
+const termForms = (term: string): Array<string> => [
+  term,
+  ...(term.endsWith("es") && term.length > 3 ? [term.slice(0, -2)] : []),
+  ...(term.endsWith("s") && term.length > 2 ? [term.slice(0, -1)] : []),
+]
 
 const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition =>
   makeTool({
