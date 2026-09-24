@@ -102,16 +102,20 @@ const isFlattenableObjectBody = (
 
 type PlannedField = Omit<InputField, "inputName">
 
+type DeclaredParameter = {
+  readonly name: string
+  readonly location: string
+  readonly parameter: Record<string, unknown>
+}
+
 const operationParameters = (
   document: Document,
   pathItem: Record<string, unknown>,
   operation: Record<string, unknown>,
 ): Parsed<ReadonlyArray<PlannedField>> => {
-  // Operation-level parameters override path-level ones sharing (location, name).
-  const declared = new Map<
-    string,
-    { readonly name: string; readonly location: string; readonly parameter: Record<string, unknown> }
-  >()
+  // Operation-level parameters override path-level ones sharing (location, name)
+  // and take the position of the declaration they replace.
+  let declared: ReadonlyArray<DeclaredParameter> = []
   for (const raw of [...asArray(pathItem.parameters), ...asArray(operation.parameters)]) {
     const resolved = resolve(document, raw)
     if (!isRecord(resolved)) return { ok: false, reason: "parameter declaration is invalid or unresolved" }
@@ -119,10 +123,13 @@ const operationParameters = (
     const location = nonEmptyString(resolved.in)
     if (name === undefined || location === undefined)
       return { ok: false, reason: "parameter declaration is missing name or location" }
-    declared.set(`${location}:${name}`, { name, location, parameter: resolved })
+    const entry: DeclaredParameter = { name, location, parameter: resolved }
+    const index = declared.findIndex((item) => item.name === name && item.location === location)
+    declared =
+      index === -1 ? Arr.append(declared, entry) : declared.map((item, position) => (position === index ? entry : item))
   }
   const unordered: Array<PlannedField> = []
-  for (const item of declared.values()) {
+  for (const item of declared) {
     const name = item.name
     const location = item.location
     const resolved = item.parameter

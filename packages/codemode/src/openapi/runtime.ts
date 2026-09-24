@@ -152,49 +152,65 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
     )
   })
 
+/** Credential carriers in resolution order; request header and query order follow it. */
+type Carriers = {
+  readonly header: ReadonlyArray<readonly [string, string]>
+  readonly query: ReadonlyArray<readonly [string, string]>
+}
+
+const addCarrier = (
+  carriers: Carriers,
+  carrier: "header" | "query",
+  name: string,
+  value: string,
+): Carriers | ToolError => {
+  if (carriers[carrier].some(([existing]) => existing === name)) {
+    return toolError(`Authentication resolves multiple credentials for ${carrier} '${name}'.`)
+  }
+  const entry = [name, value] as const
+  return carrier === "header"
+    ? { ...carriers, header: Arr.append(carriers.header, entry) }
+    : { ...carriers, query: Arr.append(carriers.query, entry) }
+}
+
+const applyCredential = (
+  carriers: Carriers,
+  [name, definition, credential]: readonly [string, SecurityScheme, Credential],
+): Carriers | ToolError => {
+  if (credential.type === "bearer") return addCarrier(carriers, "header", "authorization", `Bearer ${credential.token}`)
+  if (credential.type === "basic") {
+    // Buffer instead of btoa: btoa throws on non-Latin-1 credentials.
+    return addCarrier(
+      carriers,
+      "header",
+      "authorization",
+      `Basic ${Buffer.from(`${credential.username}:${credential.password}`, "utf8").toString("base64")}`,
+    )
+  }
+  if (credential.type === "header") {
+    return addCarrier(carriers, "header", credential.name.toLowerCase(), credential.value)
+  }
+  // apiKey: the carrier comes from the scheme declaration.
+  if (definition.type !== "apiKey") {
+    return toolError(
+      `Security scheme '${name}' is not an apiKey scheme; resolve a bearer, basic, or header credential for it.`,
+    )
+  }
+  if (definition.in === "cookie") return toolError(`Cookie authentication '${name}' is not supported.`)
+  const parameter = definition.in === "header" ? definition.name.toLowerCase() : definition.name
+  return addCarrier(carriers, definition.in, parameter, credential.value)
+}
+
 const applyCredentials = (
   credentials: ReadonlyArray<readonly [string, SecurityScheme, Credential]>,
 ): AppliedAuth | ToolError => {
-  const headers = new Map<string, string>()
-  const query = new Map<string, string>()
-  const add = (carrier: "header" | "query", name: string, value: string): ToolError | undefined => {
-    const target = carrier === "header" ? headers : query
-    if (target.has(name)) return toolError(`Authentication resolves multiple credentials for ${carrier} '${name}'.`)
-    target.set(name, value)
+  let carriers: Carriers = { header: [], query: [] }
+  for (const credential of credentials) {
+    const next = applyCredential(carriers, credential)
+    if (next instanceof ToolError) return next
+    carriers = next
   }
-  for (const [name, definition, credential] of credentials) {
-    if (credential.type === "bearer") {
-      const duplicate = add("header", "authorization", `Bearer ${credential.token}`)
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    if (credential.type === "basic") {
-      // Buffer instead of btoa: btoa throws on non-Latin-1 credentials.
-      const duplicate = add(
-        "header",
-        "authorization",
-        `Basic ${Buffer.from(`${credential.username}:${credential.password}`, "utf8").toString("base64")}`,
-      )
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    if (credential.type === "header") {
-      const duplicate = add("header", credential.name.toLowerCase(), credential.value)
-      if (duplicate !== undefined) return duplicate
-      continue
-    }
-    // apiKey: the carrier comes from the scheme declaration.
-    if (definition.type !== "apiKey") {
-      return toolError(
-        `Security scheme '${name}' is not an apiKey scheme; resolve a bearer, basic, or header credential for it.`,
-      )
-    }
-    if (definition.in === "cookie") return toolError(`Cookie authentication '${name}' is not supported.`)
-    const parameter = definition.in === "header" ? definition.name.toLowerCase() : definition.name
-    const duplicate = add(definition.in, parameter, credential.value)
-    if (duplicate !== undefined) return duplicate
-  }
-  return { headers: Object.fromEntries(headers), query: Object.fromEntries(query) }
+  return { headers: Object.fromEntries(carriers.header), query: Object.fromEntries(carriers.query) }
 }
 
 const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string | ToolError => {
