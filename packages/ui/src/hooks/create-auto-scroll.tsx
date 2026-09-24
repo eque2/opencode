@@ -1,7 +1,9 @@
-import { createEffect, on, onCleanup } from "solid-js"
+import { Effect, Option } from "effect"
+import { createEffect, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
+import { createFiberSlot } from "./create-fiber-slot"
 
 export interface AutoScrollOptions {
   working: () => boolean
@@ -12,9 +14,10 @@ export interface AutoScrollOptions {
 
 export function createAutoScroll(options: AutoScrollOptions) {
   let settling = false
-  let settleTimer: ReturnType<typeof setTimeout> | undefined
-  let autoTimer: ReturnType<typeof setTimeout> | undefined
-  let auto: { top: number; time: number } | undefined
+  const settleDelay = createFiberSlot()
+  const autoWindow = createFiberSlot()
+  // The scroll position of our own last scroll. The autoWindow fiber clears it 1500 ms after markAuto.
+  let auto: Option.Option<number> = Option.none()
 
   const threshold = () => options.bottomThreshold ?? 10
 
@@ -41,29 +44,23 @@ export function createAutoScroll(options: AutoScrollOptions) {
   // the handler can see a non-zero `distanceFromBottom` and incorrectly assume
   // the user scrolled.
   const markAuto = (el: HTMLElement) => {
-    auto = {
-      top: Math.max(0, el.scrollHeight - el.clientHeight),
-      time: Date.now(),
-    }
-
-    if (autoTimer) clearTimeout(autoTimer)
-    autoTimer = setTimeout(() => {
-      auto = undefined
-      autoTimer = undefined
-    }, 1500)
+    auto = Option.some(Math.max(0, el.scrollHeight - el.clientHeight))
+    autoWindow.run(
+      Effect.sleep("1500 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            auto = Option.none()
+          }),
+        ),
+      ),
+    )
   }
 
-  const isAuto = (el: HTMLElement) => {
-    const a = auto
-    if (!a) return false
-
-    if (Date.now() - a.time > 1500) {
-      auto = undefined
-      return false
-    }
-
-    return Math.abs(el.scrollTop - a.top) < 2
-  }
+  const isAuto = (el: HTMLElement) =>
+    Option.match(auto, {
+      onNone: () => false,
+      onSome: (top) => Math.abs(el.scrollTop - top) < 2,
+    })
 
   const scrollToBottomNow = (behavior: ScrollBehavior) => {
     const el = store.scrollRef
@@ -191,8 +188,7 @@ export function createAutoScroll(options: AutoScrollOptions) {
   createEffect(
     on(options.working, (working: boolean) => {
       settling = false
-      if (settleTimer) clearTimeout(settleTimer)
-      settleTimer = undefined
+      settleDelay.interrupt()
 
       if (working) {
         if (!store.userScrolled) scrollToBottom(true)
@@ -200,9 +196,15 @@ export function createAutoScroll(options: AutoScrollOptions) {
       }
 
       settling = true
-      settleTimer = setTimeout(() => {
-        settling = false
-      }, 300)
+      settleDelay.run(
+        Effect.sleep("300 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              settling = false
+            }),
+          ),
+        ),
+      )
     }),
   )
 
@@ -216,11 +218,6 @@ export function createAutoScroll(options: AutoScrollOptions) {
   })
 
   createEventListener(() => store.scrollRef, "wheel", handleWheel, { passive: true })
-
-  onCleanup(() => {
-    if (settleTimer) clearTimeout(settleTimer)
-    if (autoTimer) clearTimeout(autoTimer)
-  })
 
   return {
     scrollRef: (el: HTMLElement | undefined) => setStore("scrollRef", el),
