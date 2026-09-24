@@ -7,9 +7,17 @@ import { isRecord } from "../utils/record"
 const nonEmptyRecord = <A extends object>(record: A): Option.Option<A> =>
   Option.liftPredicate(record, (value: A) => Object.keys(value).length > 0)
 
-export const mergeJsonRecords = (
+/**
+ * Deep-merge records, later values winning and undefined values skipped.
+ * Merging JSON objects yields a JSON object: every value comes from an input.
+ */
+export function mergeJsonRecords(...items: ReadonlyArray<Schema.JsonObject | undefined>): Schema.JsonObject | undefined
+export function mergeJsonRecords(
   ...items: ReadonlyArray<Record<string, unknown> | undefined>
-): Record<string, unknown> | undefined => {
+): Record<string, unknown> | undefined
+export function mergeJsonRecords(
+  ...items: ReadonlyArray<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
   const defined = items.filter((item): item is Record<string, unknown> => item !== undefined)
   if (defined.length === 0) return undefined
   if (defined.length === 1 && Object.values(defined[0]).every((value) => value !== undefined)) return defined[0]
@@ -37,13 +45,13 @@ const mergeStringRecords = (
   )
 }
 
-export const ProviderOptions = Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown))
+export const ProviderOptions = Schema.Record(Schema.String, Schema.JsonObject)
 export type ProviderOptions = Schema.Schema.Type<typeof ProviderOptions>
 
 export const mergeProviderOptions = (
   ...items: ReadonlyArray<ProviderOptions | undefined>
 ): ProviderOptions | undefined => {
-  const result: Record<string, Record<string, unknown>> = {}
+  const result: Record<string, Schema.JsonObject> = {}
   for (const item of items) {
     if (!item) continue
     for (const [provider, options] of Object.entries(item)) {
@@ -148,14 +156,15 @@ export class ModelDefaults extends Schema.Class<ModelDefaults>("LLM.ModelDefault
 }) {}
 
 export namespace ModelDefaults {
+  /** Constructor input of the class; `providerOptions` accepts its make-side JSON input type. */
+  type MakeInput = NonNullable<ConstructorParameters<typeof ModelDefaults>[0]>
   export type Input =
     | ModelDefaults
-    | {
+    | (Omit<MakeInput, "limits" | "generation" | "http"> & {
         readonly limits?: ModelLimits.Input
         readonly generation?: GenerationOptions.Input
-        readonly providerOptions?: ProviderOptions
         readonly http?: HttpOptions.Input
-      }
+      })
 
   /**
    * Normalize selected-model request defaults without applying precedence.
