@@ -1,7 +1,7 @@
 export * as SessionCompaction from "./compaction"
 
 import { LLM, LLMError, LLMEvent, Message, type LLMRequest, type Model } from "@opencode-ai/llm"
-import { DateTime, Effect, Option, Stream } from "effect"
+import { DateTime, Effect, Option, Schema, Stream } from "effect"
 import type { Config } from "../config"
 import type { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -80,7 +80,11 @@ type Input = {
   readonly request: LLMRequest
 }
 
-const estimate = (value: unknown) => Token.estimate(JSON.stringify(value))
+// The estimate counts the characters of the request parts as JSON text, so the encoder asserts no shape.
+const encodeRequestText = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+
+const estimate = (value: unknown) => Token.estimate(encodeRequestText(value))
 
 const truncate = (value: string) =>
   value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
@@ -102,7 +106,7 @@ const serialize = (message: SessionMessage.Message) => {
       .flatMap((part) => {
         if (part.type === "text") return [`[Assistant]: ${part.text}`]
         if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
-        const input = typeof part.state.input === "string" ? part.state.input : JSON.stringify(part.state.input)
+        const input = typeof part.state.input === "string" ? part.state.input : encodeJsonText(part.state.input)
         if (part.state.status === "completed")
           return [
             `[Assistant tool call]: ${part.name}(${input})`,

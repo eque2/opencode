@@ -17,6 +17,7 @@ export { Admitted, Delivery }
 
 const decodePrompt = Schema.decodeUnknownSync(Prompt)
 const encodePrompt = Schema.encodeSync(Prompt)
+const encodePromptText = Schema.encodeSync(Schema.fromJsonString(Prompt))
 
 const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted =>
   Admitted.make({
@@ -200,8 +201,7 @@ export const equivalent = (
 ) => input.delivery === expected.delivery && matchesPrompt(input, expected)
 
 const matchesPrompt = (input: Admitted, expected: { readonly sessionID: SessionSchema.ID; readonly prompt: Prompt }) =>
-  input.sessionID === expected.sessionID &&
-  JSON.stringify(encodePrompt(input.prompt)) === JSON.stringify(encodePrompt(expected.prompt))
+  input.sessionID === expected.sessionID && encodePromptText(input.prompt) === encodePromptText(expected.prompt)
 
 const matchesProjection = (
   input: Admitted,
