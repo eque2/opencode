@@ -369,7 +369,7 @@ function getSubscriptionStatus(row: {
 function printHeader(title: string) {
   console.log()
   console.log("─".repeat(title.length))
-  console.log(`${title}`)
+  console.log(title)
   console.log("─".repeat(title.length))
 }
 
