@@ -172,9 +172,11 @@ export function useDialog() {
   const owner = getOwner()
 
   if (!owner) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider; getOwner() must return the reactive owner that show and push run under
     throw new Error("useDialog must be used within a DialogProvider")
   }
   if (!ctx) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
     throw new Error("useDialog must be used within a DialogProvider")
   }
 

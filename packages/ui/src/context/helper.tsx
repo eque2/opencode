@@ -32,6 +32,7 @@ export function createSimpleContext<T, Props extends Record<string, any>>(
     },
     use: () => {
       const value = useContext(ctx)
+      // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
       if (!value) throw new Error(`${input.name} context must be used within a context provider`)
       return value
     },
