@@ -1,7 +1,7 @@
 export * as ProjectV2 from "./project"
 export * as Project from "./project"
 
-import { Context, Effect, Layer, Schema } from "effect"
+import { Array, Context, Effect, Layer, Option, Result, Schema } from "effect"
 import path from "path"
 import { AbsolutePath } from "./schema"
 import { FSUtil } from "./fs-util"
@@ -64,58 +64,54 @@ const layer = Layer.effect(
 
     const cached = Effect.fnUntraced(function* (dir: string) {
       return yield* fs.readFileString(path.join(dir, "opencode")).pipe(
-        Effect.map((value) => value.trim()),
-        Effect.map((value) => (value ? ID.make(value) : undefined)),
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.map((value) => Option.map(nonEmpty(value.trim()), (id) => ID.make(id))),
+        Effect.catch(() => Effect.succeedNone),
       )
     })
 
     const remote = Effect.fnUntraced(function* (repo: Git.Repository) {
-      const origin = yield* git.remote.get(repo)
-      if (!origin) return undefined
-      const normalized = url(origin)
-      if (!normalized) return undefined
-      return ID.make(Hash.fast(`git-remote:${normalized}`))
+      const origin = Option.fromUndefinedOr(yield* git.remote.get(repo))
+      return Option.map(Option.flatMap(origin, url), (normalized) => ID.make(Hash.fast(`git-remote:${normalized}`)))
     })
 
-    function url(input: string) {
+    // A URL remote keys on host and path; a file: URL has no remote identity; anything
+    // that is not a URL is tried as an scp-style `user@host:path` remote.
+    function url(input: string): Option.Option<string> {
       const value = input.trim()
-      if (!value) return undefined
-
-      try {
-        const parsed = new URL(value)
-        if (parsed.protocol === "file:") return undefined
-        return parts(parsed.hostname, parsed.pathname)
-      } catch {
-        const scp = value.match(/^([^@/:]+@)?([^/:]+):(.+)$/)
-        if (scp) return parts(scp[2], scp[3])
-        return undefined
-      }
+      if (!value) return Option.none()
+      return Option.match(Result.getSuccess(Result.try(() => new URL(value))), {
+        onSome: (parsed) => (parsed.protocol === "file:" ? Option.none() : parts(parsed.hostname, parsed.pathname)),
+        onNone: () => {
+          const scp = value.match(/^([^@/:]+@)?([^/:]+):(.+)$/)
+          return scp ? parts(scp[2], scp[3]) : Option.none()
+        },
+      })
     }
 
-    function parts(host: string, name: string) {
+    function parts(host: string, name: string): Option.Option<string> {
       const pathname = name
         .replace(/^\/+/, "")
         .replace(/\.git\/?$/, "")
         .replace(/\/+$/, "")
-      if (!host || !pathname) return undefined
-      return `${host.toLowerCase()}/${pathname}`
+      if (!host || !pathname) return Option.none()
+      return Option.some(`${host.toLowerCase()}/${pathname}`)
     }
 
     const root = Effect.fnUntraced(function* (repo: Git.Repository) {
-      const root = (yield* git.history.rootCommits(repo))[0]
-      return root ? ID.make(root) : undefined
+      return Option.map(Array.head(yield* git.history.rootCommits(repo)), (commit) => ID.make(commit))
     })
 
     const resolve = Effect.fn("Project.resolve")(function* (input: AbsolutePath) {
       const repo = yield* git.repo.discover(input)
-      if (!repo) return { id: ID.global, directory: AbsolutePath.make(path.parse(input).root), vcs: undefined }
+      if (!repo) return { id: ID.global, directory: AbsolutePath.make(path.parse(input).root) }
 
       const previous = yield* cached(repo.commonDirectory)
-      const id = (yield* remote(repo)) ?? previous ?? (yield* root(repo))
+      // The remote identity wins, then the cached id, then the first root commit.
+      const known = Option.orElse(yield* remote(repo), () => previous)
+      const id = Option.isSome(known) ? known.value : Option.getOrElse(yield* root(repo), () => ID.global)
       return {
-        previous,
-        id: id ?? ID.global,
+        ...(Option.isSome(previous) ? { previous: previous.value } : {}),
+        id,
         directory: repo.worktree,
         vcs: { type: "git" as const, store: repo.commonDirectory },
       }
@@ -128,6 +124,8 @@ const layer = Layer.effect(
     return Service.of({ directories, resolve, commit })
   }),
 )
+
+const nonEmpty = (value: string) => Option.liftPredicate(value, (text) => text.length > 0)
 
 export const node = makeGlobalNode({
   service: Service,
