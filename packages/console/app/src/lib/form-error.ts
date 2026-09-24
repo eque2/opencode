@@ -84,7 +84,10 @@ export function localizeError(t: (key: Key, params?: Record<string, string | num
   const trigger = error.match(/^Balance trigger must be at least \$(\d+)$/)
   if (trigger) return t("error.reloadTriggerMin", { amount: Number(trigger[1]) })
 
-  const key = map[error as keyof typeof map]
-  if (key) return t(key)
+  if (isMappedError(error)) return t(map[error])
   return error
+}
+
+function isMappedError(error: string): error is keyof typeof map {
+  return Object.hasOwn(map, error)
 }

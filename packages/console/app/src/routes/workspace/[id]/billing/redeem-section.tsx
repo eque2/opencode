@@ -17,14 +17,15 @@ const redeem = action(async (form: FormData) => {
   if (!workspaceID) return { error: formError.workspaceRequired }
   const code = formText(form, "code")?.trim().toUpperCase()
   if (!code) return { error: "Coupon code is required." }
-  if (!(CouponType as readonly string[]).includes(code)) return { error: "Invalid coupon code." }
+  const coupon = CouponType.find((type) => type === code)
+  if (!coupon) return { error: "Invalid coupon code." }
 
   return json(
     await withActor(async () => {
       const actor = Actor.assert("user")
       const email = await User.getAuthEmail(actor.properties.userID)
       if (!email) return { error: "No email on account." }
-      return Billing.redeemCoupon(email, code as (typeof CouponType)[number])
+      return Billing.redeemCoupon(email, coupon)
         .then(() => ({ error: undefined, data: true }))
         .catch((e: unknown) => ({ error: errorMessage(e) }))
     }, workspaceID),

@@ -29,7 +29,7 @@ const inviteMember = action(async (form: FormData) => {
   if (!email) return { error: formError.emailRequired }
   const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const role = form.get("role") as (typeof UserRole)[number] | null
+  const role = UserRole.find((value) => value === form.get("role"))
   if (!role) return { error: formError.roleRequired }
   const limit = formText(form, "limit")
   const monthlyLimit = limit && limit.trim() !== "" ? parseInt(limit) : null
@@ -71,7 +71,7 @@ const updateMember = action(async (form: FormData) => {
   if (!id) return { error: formError.idRequired }
   const workspaceID = formText(form, "workspaceID")
   if (!workspaceID) return { error: formError.workspaceRequired }
-  const role = form.get("role") as (typeof UserRole)[number] | null
+  const role = UserRole.find((value) => value === form.get("role"))
   if (!role) return { error: formError.roleRequired }
   const limit = formText(form, "limit")
   const monthlyLimit = limit && limit.trim() !== "" ? parseInt(limit) : null
@@ -162,7 +162,10 @@ function MemberRow(props: {
           <RoleDropdown
             value={store.selectedRole}
             options={props.roleOptions}
-            onChange={(value) => setStore("selectedRole", value as (typeof UserRole)[number])}
+            onChange={(value) => {
+              const role = UserRole.find((option) => option === value)
+              if (role) setStore("selectedRole", role)
+            }}
           />
         </Show>
       </td>
@@ -305,7 +308,10 @@ export function MemberSection() {
               <RoleDropdown
                 value={store.selectedRole}
                 options={roleOptions}
-                onChange={(value) => setStore("selectedRole", value as (typeof UserRole)[number])}
+                onChange={(value) => {
+                  const role = UserRole.find((option) => option === value)
+                  if (role) setStore("selectedRole", role)
+                }}
               />
             </div>
             <div data-slot="input-field">
