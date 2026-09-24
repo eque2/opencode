@@ -129,19 +129,23 @@ export const OptionalShortCircuit: unique symbol = Symbol("codemode.optional-sho
 export const supportedSyntaxMessage =
   "Supported orchestration syntax: tools.* calls (they return promises - resolve them with await), data literals, destructuring, optional chaining, template literals, conditionals, switch, loops (incl. for...of and for...in over object/array/tools keys), arrow functions, spread, try/catch, array methods (map/filter/find/findIndex/some/every/reduce/flatMap/forEach/sort/slice/concat/indexOf/lastIndexOf/at/flat/reverse/includes/join), string methods (incl. match/matchAll/replace/split with regular expressions), Date/RegExp/Map/Set/URL/URLSearchParams, URI encoding helpers, Object/Math/JSON helpers, captured console.log/warn/error/dir/table, and Promise.all/allSettled/race/resolve/reject over arrays mixing promises and plain values for parallel tool calls (promise chaining with .then/.catch is not supported - use await with try/catch)."
 
-export class InterpreterRuntimeError extends Error {
+export class InterpreterRuntimeError extends Data.TaggedError("InterpreterRuntimeError")<{
+  readonly message: string
   readonly node?: AstNode
+  readonly kind: DiagnosticKind
+  readonly suggestions?: ReadonlyArray<string>
+}> {
+  // The program-visible error type (Error, TypeError, ...) a catch block observes; see `as`.
   errorName: string = "Error"
 
+  // Positional form kept for the stdlib call sites: `new InterpreterRuntimeError(message, node)`.
   constructor(
     message: string,
     node?: AstNode,
-    readonly kind: DiagnosticKind = "ExecutionFailure",
-    readonly suggestions?: ReadonlyArray<string>,
+    kind: DiagnosticKind = "ExecutionFailure",
+    suggestions?: ReadonlyArray<string>,
   ) {
-    super(message)
-    this.name = "InterpreterRuntimeError"
-    if (node) this.node = node
+    super({ message, kind, ...(node ? { node } : {}), ...(suggestions ? { suggestions } : {}) })
   }
 
   as(errorName: string): this {
