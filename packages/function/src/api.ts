@@ -345,9 +345,7 @@ export default new Hono<{ Bindings: Env }>()
         const threadId = body.event?.message?.root_id || body.event?.message?.message_id
         if (threadId) message = `${message} [${threadId}]`
 
-        const discordBody = yield* Schema.encodeEffect(DiscordMessageJson)({
-          content: `${message}`,
-        })
+        const discordBody = yield* Schema.encodeEffect(DiscordMessageJson)({ content: message })
         const response = yield* Effect.tryPromise(() =>
           fetch(`https://discord.com/api/v10/channels/${Resource.DISCORD_SUPPORT_CHANNEL_ID.value}/messages`, {
             method: "POST",
