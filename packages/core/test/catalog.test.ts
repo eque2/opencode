@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Fiber, Layer, Stream } from "effect"
+import { Clock, Effect, Fiber, Layer, Stream } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { Integration } from "@opencode-ai/core/integration"
 import { Credential } from "@opencode-ai/core/credential"
@@ -314,19 +314,21 @@ describe("CatalogV2", () => {
     Effect.gen(function* () {
       const catalog = yield* Catalog.Service
       const providerID = ProviderV2.ID.make("test")
+      // Catalog.model.small measures model age with Clock, so the fixtures are released at the current clock time.
+      const now = yield* Clock.currentTimeMillis
       yield* catalog.transform((catalog) => {
         catalog.provider.update(providerID, () => {})
         catalog.model.update(providerID, ModelV2.ID.make("cheap-large"), (model) => {
           model.capabilities.input = ["text"]
           model.capabilities.output = ["text"]
           model.cost = [{ input: 1, output: 1, cache: { read: 0, write: 0 } }]
-          model.time.released = Date.now()
+          model.time.released = now
         })
         catalog.model.update(providerID, ModelV2.ID.make("expensive-mini"), (model) => {
           model.capabilities.input = ["text"]
           model.capabilities.output = ["text"]
           model.cost = [{ input: 10, output: 10, cache: { read: 0, write: 0 } }]
-          model.time.released = Date.now()
+          model.time.released = now
         })
       })
 

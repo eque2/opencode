@@ -1,7 +1,20 @@
 export * as Catalog from "./catalog"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Array, Context, Effect, HashMap, HashSet, Layer, MutableHashMap, Option, Order, pipe, Schema } from "effect"
+import {
+  Array,
+  Clock,
+  Context,
+  Effect,
+  HashMap,
+  HashSet,
+  Layer,
+  MutableHashMap,
+  Option,
+  Order,
+  pipe,
+  Schema,
+} from "effect"
 import { Catalog } from "@opencode-ai/schema/catalog"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
@@ -172,6 +185,55 @@ const layer = Layer.effect(
         yield* events.publish(Event.Updated, {})
       }),
     })
+    // A cheap, recent text model of the provider, for small tasks such as titles and summaries.
+    const smallModel = (
+      record: ProviderRecord,
+      providerID: ProviderV2.ID,
+      now: number,
+    ): Option.Option<ModelV2.Info> => {
+      const provider = record.provider
+
+      // TODO: Remove these provider-specific assumptions once model syncing reliably reports available deployments.
+      if (providerID === ProviderV2.ID.azure || providerID === ProviderV2.ID.make("azure-cognitive-services")) {
+        return Option.none()
+      }
+
+      if (providerID === ProviderV2.ID.opencode) {
+        const gpt5Nano = record.models.get(ModelV2.ID.make("gpt-5-nano"))
+        if (gpt5Nano?.enabled && gpt5Nano.status === "active") return Option.some(projectModel(gpt5Nano, provider))
+      }
+
+      const candidates = pipe(
+        Array.fromIterable(record.models.values()),
+        Array.filter(
+          (model) =>
+            model.providerID === providerID &&
+            model.enabled &&
+            model.status === "active" &&
+            model.capabilities.input.some((item) => item.startsWith("text")) &&
+            model.capabilities.output.some((item) => item.startsWith("text")),
+        ),
+        Array.map((model) => ({
+          model,
+          cost: model.cost[0] ? model.cost[0].input + model.cost[0].output : 999,
+          age: (now - model.time.released) / (1000 * 60 * 60 * 24 * 30),
+          small: SMALL_MODEL_RE.test(`${model.id} ${model.family ?? ""} ${model.name}`.toLowerCase()),
+        })),
+        Array.filter((item) => item.cost > 0 && item.age <= 18),
+      )
+
+      const pick = (items: typeof candidates) => {
+        const maxCost = Math.max(...items.map((item) => item.cost), 0.01)
+        const maxAge = Math.max(...items.map((item) => item.age), 0.01)
+        return Array.head(
+          Array.sortWith(items, (item) => (item.cost / maxCost) * 0.8 + (item.age / maxAge) * 0.2, Order.Number),
+        ).pipe(Option.map((item) => projectModel(item.model, provider)))
+      }
+
+      const small = candidates.filter((item) => item.small)
+      return pick(small.length > 0 ? small : candidates)
+    }
+
     const result: Interface = {
       transform: state.transform,
       reload: state.reload,
@@ -202,10 +264,15 @@ const layer = Layer.effect(
 
       model: {
         get: Effect.fn("CatalogV2.model.get")(function* (providerID, modelID) {
-          const record = Option.getOrUndefined(MutableHashMap.get(state.get().providers, providerID))
-          if (!record) return
-          const model = record.models.get(modelID)
-          return model && projectModel(model, record.provider)
+          return Option.getOrUndefined(
+            MutableHashMap.get(state.get().providers, providerID).pipe(
+              Option.flatMap((record) =>
+                Option.map(Option.fromUndefinedOr(record.models.get(modelID)), (model) =>
+                  projectModel(model, record.provider),
+                ),
+              ),
+            ),
+          )
         }),
 
         all: Effect.fn("CatalogV2.model.all")(function* () {
@@ -245,55 +312,10 @@ const layer = Layer.effect(
         }),
 
         small: Effect.fn("CatalogV2.model.small")(function* (providerID) {
-          const record = Option.getOrUndefined(MutableHashMap.get(state.get().providers, providerID))
-          if (!record) return
-          const provider = record.provider
-
-          // TODO: Remove these provider-specific assumptions once model syncing reliably reports available deployments.
-          if (providerID === ProviderV2.ID.azure || providerID === ProviderV2.ID.make("azure-cognitive-services")) {
-            return
-          }
-
-          if (providerID === ProviderV2.ID.opencode) {
-            const gpt5Nano = record.models.get(ModelV2.ID.make("gpt-5-nano"))
-            if (gpt5Nano?.enabled && gpt5Nano.status === "active") return projectModel(gpt5Nano, provider)
-          }
-
-          const candidates = pipe(
-            Array.fromIterable(record.models.values()),
-            Array.filter(
-              (model) =>
-                model.providerID === providerID &&
-                model.enabled &&
-                model.status === "active" &&
-                model.capabilities.input.some((item) => item.startsWith("text")) &&
-                model.capabilities.output.some((item) => item.startsWith("text")),
-            ),
-            Array.map((model) => ({
-              model,
-              cost: model.cost[0] ? model.cost[0].input + model.cost[0].output : 999,
-              age: (Date.now() - model.time.released) / (1000 * 60 * 60 * 24 * 30),
-              small: SMALL_MODEL_RE.test(`${model.id} ${model.family ?? ""} ${model.name}`.toLowerCase()),
-            })),
-            Array.filter((item) => item.cost > 0 && item.age <= 18),
-          )
-
-          const pick = (items: typeof candidates) => {
-            const maxCost = Math.max(...items.map((item) => item.cost), 0.01)
-            const maxAge = Math.max(...items.map((item) => item.age), 0.01)
-            return pipe(
-              items,
-              Array.sortWith((item) => (item.cost / maxCost) * 0.8 + (item.age / maxAge) * 0.2, Order.Number),
-              Array.map((item) => projectModel(item.model, provider)),
-              Array.head,
-            )
-          }
-
+          const now = yield* Clock.currentTimeMillis
           return Option.getOrUndefined(
-            pipe(
-              candidates,
-              Array.filter((item) => item.small),
-              (items) => (items.length > 0 ? pick(items) : pick(candidates)),
+            MutableHashMap.get(state.get().providers, providerID).pipe(
+              Option.flatMap((record) => smallModel(record, providerID, now)),
             ),
           )
         }),
