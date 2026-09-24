@@ -8,7 +8,7 @@ import {
   isContextOverflowFailure,
   type ProviderErrorEvent,
 } from "@opencode-ai/llm"
-import { Cause, DateTime, Effect, FiberSet, Layer, Option, Semaphore, Stream } from "effect"
+import { Cause, DateTime, Effect, FiberSet, Layer, Option, Schema, Semaphore, Stream } from "effect"
 import { AgentV2 } from "../../agent"
 import { Config } from "../../config"
 import { Database } from "../../database/database"
@@ -90,6 +90,17 @@ import { llmClient } from "../../effect/app-node-platform"
  * explicit loop starts the next provider turn after local settlement. Configured agent step limits bound the loop.
  */
 
+/** Automatic compaction completed; rebuild the request from compacted history. */
+class ContinueAfterCompaction extends Schema.TaggedError<ContinueAfterCompaction>()("ContinueAfterCompaction", {
+  step: Schema.Number,
+}) {}
+
+/** Overflow compaction completed; rebuild once through the path without overflow recovery. */
+class ContinueAfterOverflowCompaction extends Schema.TaggedError<ContinueAfterOverflowCompaction>()(
+  "ContinueAfterOverflowCompaction",
+  { step: Schema.Number },
+) {}
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -149,22 +160,6 @@ const layer = Layer.effect(
           (reason.defect instanceof PermissionV2.DeclinedError || reason.defect instanceof QuestionV2.RejectedError),
       )
 
-    type TurnTransition =
-      // Automatic compaction completed; rebuild the request from compacted history.
-      | { readonly _tag: "ContinueAfterCompaction"; readonly step: number }
-      // Overflow compaction completed; rebuild once through the path without overflow recovery.
-      | { readonly _tag: "ContinueAfterOverflowCompaction"; readonly step: number }
-
-    class TurnTransitionError extends Error {
-      constructor(readonly transition: TurnTransition) {
-        super()
-      }
-    }
-
-    const continueAfterCompaction = (step: number) => new TurnTransitionError({ _tag: "ContinueAfterCompaction", step })
-    const continueAfterOverflowCompaction = (step: number) =>
-      new TurnTransitionError({ _tag: "ContinueAfterOverflowCompaction", step })
-
     const loadSystemContext = (agent: AgentV2.Selection) =>
       Effect.all([systemContext.load(), skillGuidance.load(agent), referenceGuidance.load()], {
         concurrency: "unbounded",
@@ -220,7 +215,7 @@ const layer = Layer.effect(
         toolChoice: isLastStep ? "none" : undefined,
       })
       if (yield* compaction.compactIfNeeded({ sessionID: session.id, entries, model, request }))
-        return yield* Effect.die(continueAfterCompaction(currentStep))
+        return yield* new ContinueAfterCompaction({ step: currentStep })
       const startSnapshot = yield* snapshots.capture()
       const publisher = createLLMEventPublisher(events, {
         sessionID: session.id,
@@ -292,7 +287,7 @@ const layer = Layer.effect(
             isContextOverflowFailure(overflowFailure ?? failure) &&
             (yield* restore(recoverOverflow({ sessionID: session.id, entries, model, request })))
           )
-            return yield* Effect.die(continueAfterOverflowCompaction(currentStep))
+            return yield* new ContinueAfterOverflowCompaction({ step: currentStep })
           if (overflowFailure) yield* publish(overflowFailure)
           const llmFailure = failure instanceof LLMError ? failure : undefined
           if (llmFailure && !publisher.hasProviderError()) {
@@ -361,29 +356,29 @@ const layer = Layer.effect(
 
     const runAfterOverflowCompaction: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step) {
       return yield* runTurnAttempt(sessionID, promotion, step).pipe(
-        Effect.catchDefect(
-          Effect.fnUntraced(function* (defect) {
-            if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
-            if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* Effect.die("Post-compaction provider attempt cannot recover another overflow")
+        Effect.catchTags({
+          ContinueAfterCompaction: Effect.fnUntraced(function* (transition) {
             yield* Effect.yieldNow
-            return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step)
+            return yield* runAfterOverflowCompaction(sessionID, undefined, transition.step)
           }),
-        ),
+          ContinueAfterOverflowCompaction: () =>
+            Effect.die("Post-compaction provider attempt cannot recover another overflow"),
+        }),
       )
     })
 
     const runTurn: RunTurn = Effect.fnUntraced(function* (sessionID, promotion, step) {
       return yield* runTurnAttempt(sessionID, promotion, step, compaction.compactAfterOverflow).pipe(
-        Effect.catchDefect(
-          Effect.fnUntraced(function* (defect) {
-            if (!(defect instanceof TurnTransitionError)) return yield* Effect.die(defect)
+        Effect.catchTags({
+          ContinueAfterCompaction: Effect.fnUntraced(function* (transition) {
             yield* Effect.yieldNow
-            if (defect.transition._tag === "ContinueAfterOverflowCompaction")
-              return yield* runAfterOverflowCompaction(sessionID, undefined, defect.transition.step)
-            return yield* runTurn(sessionID, undefined, defect.transition.step)
+            return yield* runTurn(sessionID, undefined, transition.step)
           }),
-        ),
+          ContinueAfterOverflowCompaction: Effect.fnUntraced(function* (transition) {
+            yield* Effect.yieldNow
+            return yield* runAfterOverflowCompaction(sessionID, undefined, transition.step)
+          }),
+        }),
       )
     })
 
