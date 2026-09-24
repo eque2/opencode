@@ -25,8 +25,7 @@ import type { SQLiteAsyncDialect } from "drizzle-orm/sqlite-core/dialect"
 import type { SelectedFieldsOrdered } from "drizzle-orm/sqlite-core/query-builders/select.types"
 import type { PreparedQueryConfig, SQLiteExecuteMethod, SQLiteTransactionConfig } from "drizzle-orm/sqlite-core/session"
 import { upgradeIfNeeded } from "../../up-migrations/effect-sqlite"
-import { assertUnreachable, makeJitQueryMapper, type RowsMapper } from "drizzle-orm/utils"
-import { mapResultRow } from "../../internal/drizzle-utils"
+import { assertUnreachable, makeDefaultQueryMapper, makeJitQueryMapper, type RowsMapper } from "drizzle-orm/utils"
 import { SQLiteEffectDatabase } from "./db"
 
 type MigrationConfigWithInit = MigrationConfig & { init?: boolean }
@@ -193,7 +192,7 @@ export class SQLiteEffectPreparedQuery<
       ? (this.jitMapper =
           (this.jitMapper as RowsMapper<T["all"]>) ??
           makeJitQueryMapper<T["all"]>(this.fields!, this.joinsNotNullableMap))(rows as unknown[][])
-      : (rows as unknown[][]).map((row) => mapResultRow(this.fields!, row, this.joinsNotNullableMap))
+      : makeDefaultQueryMapper<T["all"]>(this.fields!, this.joinsNotNullableMap)(rows as unknown[][])
   }
 
   mapGetResult(rows: unknown, isFromBatch?: boolean): unknown {
@@ -225,7 +224,7 @@ export class SQLiteEffectPreparedQuery<
       ? (this.jitMapper =
           (this.jitMapper as RowsMapper<T["get"][]>) ??
           makeJitQueryMapper<T["get"][]>(this.fields!, this.joinsNotNullableMap))([row as unknown[]])[0]
-      : mapResultRow(this.fields!, row as unknown[], this.joinsNotNullableMap)
+      : makeDefaultQueryMapper<T["get"][]>(this.fields!, this.joinsNotNullableMap)([row as unknown[]])[0]
   }
 
   private allRqbV2(placeholderValues?: Record<string, unknown>) {

@@ -1,4 +1,4 @@
-import { Column, getColumnTable } from "drizzle-orm/column"
+import { Column } from "drizzle-orm/column"
 import { is } from "drizzle-orm/entity"
 import type { JoinNullability } from "drizzle-orm/query-builders/select.types"
 import { Param, SQL } from "drizzle-orm/sql/sql"
@@ -7,7 +7,7 @@ import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core/query-builde
 import type { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { SQLiteViewBase } from "drizzle-orm/sqlite-core/view-base"
 import { Subquery } from "drizzle-orm/subquery"
-import { Table, getTableName } from "drizzle-orm/table"
+import { Table } from "drizzle-orm/table"
 import type { UpdateSet } from "drizzle-orm/utils"
 import { ViewBaseConfig } from "drizzle-orm/view-common"
 
@@ -58,58 +58,6 @@ export function mapUpdateSet<TTable extends SQLiteTable>(table: TTable, values: 
       is(value, SQL) || is(value, Column) ? value : new Param(value, getTableColumnsRuntime(table)[key]),
     ]),
   ) as UpdateSet
-}
-
-export function mapResultRow(
-  columns: SelectedFieldsOrdered,
-  row: unknown[],
-  joinsNotNullableMap: Record<string, boolean> | undefined,
-) {
-  const nullifyMap: Record<string, string | false> = {}
-  const result: Record<string, unknown> = {}
-
-  columns.forEach((column, columnIndex) => {
-    const decoder = (
-      is(column.field, Column)
-        ? column.field
-        : is(column.field, SQL)
-          ? (column.field as unknown as { decoder: { mapFromDriverValue(value: unknown): unknown } }).decoder
-          : is(column.field, Subquery)
-            ? (column.field._.sql as unknown as { decoder: { mapFromDriverValue(value: unknown): unknown } }).decoder
-            : (column.field.sql as unknown as { decoder: { mapFromDriverValue(value: unknown): unknown } }).decoder
-    ) as {
-      mapFromDriverValue(value: unknown): unknown
-    }
-    const rawValue = row[columnIndex]
-    const value = rawValue === null ? null : decoder.mapFromDriverValue(rawValue)
-    const objectName = column.path[0]
-    let node = result
-
-    column.path.forEach((pathChunk, pathChunkIndex) => {
-      if (pathChunkIndex === column.path.length - 1) {
-        node[pathChunk] = value
-        return
-      }
-      node[pathChunk] = (node[pathChunk] ?? {}) as Record<string, unknown>
-      node = node[pathChunk] as Record<string, unknown>
-    })
-
-    if (joinsNotNullableMap && is(column.field, Column) && column.path.length === 2 && objectName) {
-      const tableName = getTableName(getColumnTable(column.field))
-      nullifyMap[objectName] =
-        !(objectName in nullifyMap) && value === null
-          ? tableName
-          : typeof nullifyMap[objectName] === "string" && nullifyMap[objectName] !== tableName
-            ? false
-            : nullifyMap[objectName]
-    }
-  })
-
-  Object.entries(nullifyMap).forEach(([objectName, tableName]) => {
-    if (typeof tableName === "string" && !joinsNotNullableMap?.[tableName]) result[objectName] = null
-  })
-
-  return result
 }
 
 export function getTableLikeName(table: SQLiteTable | Subquery | SQLiteViewBase | SQL) {
