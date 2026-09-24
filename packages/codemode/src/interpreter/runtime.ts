@@ -888,7 +888,7 @@ class Interpreter<R> {
         startImmediately: true,
       }),
       (fiber) => {
-        const promise = new SandboxPromise(fiber)
+        const promise = SandboxPromise.fromFiber(fiber)
         this.pendingSettlements = [...this.pendingSettlements, promise]
         return promise
       },
@@ -900,7 +900,10 @@ class Interpreter<R> {
   // Promise.all([p, p])) never re-runs the underlying call.
   private observePromise(promise: SandboxPromise): Effect.Effect<Exit.Exit<unknown, unknown>> {
     this.pendingSettlements = this.pendingSettlements.filter((pending) => pending !== promise)
-    return promise.fiber !== undefined ? Fiber.await(promise.fiber) : Effect.exit(promise.immediate ?? Effect.void)
+    return Option.match(promise.fiber, {
+      onNone: () => Effect.exit(promise.immediate),
+      onSome: (fiber) => Fiber.await(fiber),
+    })
   }
 
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
@@ -2394,12 +2397,10 @@ class Interpreter<R> {
       // Promise.resolve of a promise is that promise (JS flattens); anything else is a
       // promise already fulfilled with the value.
       const value = args[0]
-      return Effect.succeed(
-        value instanceof SandboxPromise ? value : new SandboxPromise(undefined, Effect.succeed(value)),
-      )
+      return Effect.succeed(value instanceof SandboxPromise ? value : SandboxPromise.settled(Effect.succeed(value)))
     }
     if (ref.name === "reject") {
-      return Effect.sync(() => new SandboxPromise(undefined, Effect.fail(new ProgramThrow(args[0]))))
+      return Effect.sync(() => SandboxPromise.settled(Effect.fail(new ProgramThrow(args[0]))))
     }
 
     const items = Array.isArray(args[0]) ? args[0] : spreadItems(args[0])
@@ -2475,9 +2476,9 @@ class Interpreter<R> {
       // racing them yields exactly that. Losing in-flight calls are then interrupted.
       const winner = yield* Effect.raceAll(observations)
       for (const [index, item] of items.entries()) {
-        if (index === winner.index || !(item instanceof SandboxPromise) || item.fiber === undefined) continue
+        if (index === winner.index || !(item instanceof SandboxPromise) || Option.isNone(item.fiber)) continue
         item.interrupted = true
-        yield* Fiber.interrupt(item.fiber)
+        yield* Fiber.interrupt(item.fiber.value)
       }
       const winningItem = items[winner.index]
       return yield* this.unwrapPromiseExit(

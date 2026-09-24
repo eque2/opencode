@@ -1,11 +1,22 @@
-import type { Effect, Fiber } from "effect"
+import { Effect, type Fiber, Option } from "effect"
 
+// A sandbox promise value: a tool call running on its own fiber, or a promise settled up front
+// (Promise.resolve / Promise.reject) that has no fiber.
 export class SandboxPromise {
   interrupted = false
-  constructor(
-    readonly fiber: Fiber.Fiber<unknown, unknown> | undefined,
-    readonly immediate?: Effect.Effect<unknown, unknown>,
+  private constructor(
+    readonly fiber: Option.Option<Fiber.Fiber<unknown, unknown>>,
+    // The settlement of a promise without a fiber; a fiber-backed promise settles through its fiber.
+    readonly immediate: Effect.Effect<unknown, unknown>,
   ) {}
+
+  static fromFiber(fiber: Fiber.Fiber<unknown, unknown>): SandboxPromise {
+    return new SandboxPromise(Option.some(fiber), Effect.void)
+  }
+
+  static settled(settlement: Effect.Effect<unknown, unknown>): SandboxPromise {
+    return new SandboxPromise(Option.none(), settlement)
+  }
 }
 
 export class SandboxDate {
