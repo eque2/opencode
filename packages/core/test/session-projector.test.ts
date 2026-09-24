@@ -531,7 +531,7 @@ describe("SessionProjector", () => {
         sessionID,
         assistantMessageID: SessionMessage.ID.make("msg_assistant_completed"),
         timestamp: DateTime.makeUnsafe(3),
-        textID: "text-stale",
+        textID: SessionMessage.TextID.make("text-stale"),
       })
 
       const rows = yield* db
@@ -550,7 +550,9 @@ describe("SessionProjector", () => {
           type: "assistant",
           agent: "build",
           model,
-          content: [SessionMessage.AssistantText.make({ type: "text", id: "text-stale", text: "" })],
+          content: [
+            SessionMessage.AssistantText.make({ type: "text", id: SessionMessage.TextID.make("text-stale"), text: "" }),
+          ],
           time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
         }),
         SessionMessage.Assistant.make({
