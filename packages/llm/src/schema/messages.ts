@@ -115,6 +115,7 @@ export interface ToolOutput {
 
 export const ToolOutput = Object.assign(
   Schema.Struct({
+    // eslint-disable-next-line effect/no-schema-any-unknown -- (b) structured holds each tool's own encoded output (Date, bigint, instances, undefined keys); toResultValue validates it as wire JSON when projected
     structured: Schema.Unknown,
     content: Schema.Array(ToolContent),
   }).annotate({ identifier: "LLM.ToolOutput" }),
