@@ -12,6 +12,7 @@
 //
 // Manual `cache: CacheHint` placements on individual parts are preserved —
 // this function only fills gaps the caller left empty.
+import { HashSet } from "effect"
 import { CacheHint, type CachePolicy, type CachePolicyObject } from "./schema/options"
 import { LLMRequest, Message, ToolDefinition, type ContentPart } from "./schema/messages"
 
@@ -39,7 +40,7 @@ const resolve = (policy: CachePolicy | undefined): CachePolicyObject => {
 // Protocols whose wire format ignores inline cache markers (OpenAI's implicit
 // prefix caching, Gemini's implicit + out-of-band CachedContent). Skip the
 // whole policy pass for these — emitting hints would be harmless but pointless.
-const RESPECTS_INLINE_HINTS = new Set(["anthropic-messages", "bedrock-converse"])
+const RESPECTS_INLINE_HINTS: HashSet.HashSet<string> = HashSet.make("anthropic-messages", "bedrock-converse")
 
 const makeHint = (ttlSeconds: number | undefined): CacheHint =>
   ttlSeconds !== undefined ? new CacheHint({ type: "ephemeral", ttlSeconds }) : new CacheHint({ type: "ephemeral" })
@@ -97,7 +98,7 @@ const markMessages = (
 }
 
 export const applyCachePolicy = (request: LLMRequest): LLMRequest => {
-  if (!RESPECTS_INLINE_HINTS.has(request.model.route.id)) return request
+  if (!HashSet.has(RESPECTS_INLINE_HINTS, request.model.route.id)) return request
   const policy = resolve(request.cache)
   if (!policy.tools && !policy.system && !policy.messages) return request
 

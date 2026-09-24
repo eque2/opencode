@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Random } from "effect"
+import { Array as Arr, Cause, Context, Effect, Layer, Random } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -163,33 +163,35 @@ const responseDetails = (
     headers: redactHeaders(response.headers, redactedNames),
   })
 
-const secretValues = (request: HttpClientRequest.HttpClientRequest) => {
-  const values = new Set<string>()
-  const add = (value: string) => {
-    if (value.length < 4) return
-    values.add(value)
-    values.add(encodeURIComponent(value))
-  }
+const secretForms = (value: string) => (value.length < 4 ? [] : [value, encodeURIComponent(value)])
 
-  Object.entries(request.headers).forEach(([name, value]) => {
-    if (!isSensitiveHeaderName(name)) return
-    add(value)
-    const bearer = /^Bearer\s+(.+)$/i.exec(value)?.[1]
-    if (bearer) add(bearer)
-  })
-
-  if (!URL.canParse(request.url)) return values
-  new URL(request.url).searchParams.forEach((value, key) => {
-    if (isSensitiveQueryName(key)) add(value)
-  })
-  return values
+const headerSecrets = (name: string, value: string) => {
+  if (!isSensitiveHeaderName(name)) return []
+  const bearer = /^Bearer\s+(.+)$/i.exec(value)?.[1]
+  return [...secretForms(value), ...(bearer ? secretForms(bearer) : [])]
 }
+
+const querySecrets = (url: string) => {
+  if (!URL.canParse(url)) return []
+  return Array.from(new URL(url).searchParams).flatMap(([key, value]) =>
+    isSensitiveQueryName(key) ? secretForms(value) : [],
+  )
+}
+
+// Distinct secrets in first-seen order, as the old insertion-ordered Set kept
+// them. redactBody replaces them in sequence, and a header value must go before
+// the bearer token it contains.
+const secretValues = (request: HttpClientRequest.HttpClientRequest) =>
+  Arr.dedupe([
+    ...Object.entries(request.headers).flatMap(([name, value]) => headerSecrets(name, value)),
+    ...querySecrets(request.url),
+  ])
 
 // Two passes: structural (redact `"name": "value"` and `name=value` patterns
 // for any field name that looks sensitive) plus literal (replace any actual
 // secret values we sent in the request, in case the response echoes one back).
 const redactBody = (body: string, request: HttpClientRequest.HttpClientRequest) =>
-  Array.from(secretValues(request)).reduce(
+  secretValues(request).reduce(
     (text, secret) => text.split(secret).join(REDACTED),
     body.replace(REDACT_JSON_FIELD, `$1"${REDACTED}"`).replace(REDACT_QUERY_FIELD, `$1${REDACTED}`),
   )

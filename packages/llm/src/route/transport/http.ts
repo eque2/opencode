@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, HashSet, Stream } from "effect"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import { Auth } from "../auth"
 import { render as renderEndpoint } from "../endpoint"
@@ -28,7 +28,7 @@ const applyQuery = (url: string, query: Record<string, string> | undefined) => {
   return next.toString()
 }
 
-const PROTOCOL_BODY_OVERLAY_DENYLIST = new Set([
+const PROTOCOL_BODY_OVERLAY_DENYLIST: HashSet.HashSet<string> = HashSet.fromIterable([
   "content",
   "contents",
   "frequencyPenalty",
@@ -68,7 +68,7 @@ const PROTOCOL_BODY_OVERLAY_DENYLIST = new Set([
 ])
 
 const forbiddenBodyOverlayKeys = (body: Record<string, unknown>) =>
-  Object.keys(body).filter((key) => PROTOCOL_BODY_OVERLAY_DENYLIST.has(key))
+  Object.keys(body).filter((key) => HashSet.has(PROTOCOL_BODY_OVERLAY_DENYLIST, key))
 
 const bodyWithOverlay = <Body>(body: Body, request: LLMRequest, encodeBody: (body: Body) => string) =>
   Effect.gen(function* () {
