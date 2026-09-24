@@ -478,6 +478,54 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     search: lines('    return "text"', "  }", "", "  return", "}"),
     replace: lines('    return "text"', "  }", "", "  return undefined", "}"),
   },
+
+  // typescript/no-unnecessary-type-parameters
+  {
+    file: "core/bodySerializer.gen.ts",
+    rule: "typescript/no-unnecessary-type-parameters",
+    search:
+      "  bodySerializer: <T extends Record<string, any> | Array<Record<string, any>>>(body: T): FormData => {\n",
+    replace: "  bodySerializer: (body: Record<string, any> | Array<Record<string, any>>): FormData => {\n",
+  },
+  {
+    file: "core/bodySerializer.gen.ts",
+    rule: "typescript/no-unnecessary-type-parameters",
+    search: "  bodySerializer: <T>(body: T): string =>\n",
+    replace: "  bodySerializer: (body: unknown): string =>\n",
+  },
+  {
+    file: "core/bodySerializer.gen.ts",
+    rule: "typescript/no-unnecessary-type-parameters",
+    search: "  bodySerializer: <T extends Record<string, any> | Array<Record<string, any>>>(body: T): string => {\n",
+    replace: "  bodySerializer: (body: Record<string, any> | Array<Record<string, any>>): string => {\n",
+  },
+  {
+    file: "client/utils.gen.ts",
+    rule: "typescript/no-unnecessary-type-parameters",
+    search: lines(
+      "export const createQuerySerializer = <T = unknown>({ parameters = {}, ...args }: QuerySerializerOptions = {}) => {",
+      "  const querySerializer = (queryParams: T) => {",
+      "    const search: string[] = []",
+      '    if (queryParams && typeof queryParams === "object") {',
+    ),
+    replace: lines(
+      "export const createQuerySerializer = ({ parameters = {}, ...args }: QuerySerializerOptions = {}) => {",
+      "  const querySerializer = (queryParams: unknown) => {",
+      "    const search: string[] = []",
+      "    if (isRecord(queryParams)) {",
+    ),
+  },
+  {
+    file: "client/types.gen.ts",
+    rule: "typescript/no-unnecessary-type-parameters",
+    search: lines("type SseFn = <", "  TData = unknown,", "  TError = unknown,"),
+    replace: lines(
+      "type SseFn = <",
+      "  TData = unknown,",
+      "  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- positional type parameter required by the @hey-api/openapi-ts generated sdk.gen.ts calls sse.get<Responses, Errors, ThrowOnError> and the public Client['sse'] signature; the SseFn patch in build.ts removed its only use",
+      "  TError = unknown,",
+    ),
+  },
 ]
 
 /**
