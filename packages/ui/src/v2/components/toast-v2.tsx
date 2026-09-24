@@ -1,4 +1,4 @@
-import { MutableHashMap, Option } from "effect"
+import { MutableHashMap, Option, Schema } from "effect"
 import { Toaster, toast, type ToasterProps } from "solid-sonner"
 import { isRTL } from "@kobalte/core/i18n"
 import type { ComponentProps, JSX } from "solid-js"
@@ -186,12 +186,25 @@ interface ActiveToastV2 {
   actions?: JSX.Element
 }
 
+// Dedupe key for showToastV2. The encoder drops undefined fields, as JSON.stringify does.
+const ToastV2Key = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  variant: Schema.optional(Schema.Literals(["default", "success", "error", "loading"])),
+  duration: Schema.optional(Schema.Number),
+  persistent: Schema.optional(Schema.Boolean),
+  actions: Schema.optional(
+    Schema.Array(Schema.Tuple([Schema.String, Schema.UndefinedOr(Schema.Literals(["primary", "secondary"]))])),
+  ),
+}).annotate({ identifier: "ToastV2Key" })
+const encodeToastV2Key = Schema.encodeSync(Schema.fromJsonString(ToastV2Key))
+
 const activeToastV2ByKey = MutableHashMap.empty<string, ActiveToastV2>()
 const activeToastV2ById = MutableHashMap.empty<number, ActiveToastV2>()
 
 export function showToastV2(options: ToastV2Options | string) {
   const opts: ToastV2Options = typeof options === "string" ? { description: options } : options
-  const key = JSON.stringify({
+  const key = encodeToastV2Key({
     title: opts.title,
     description: opts.description,
     variant: opts.variant,
