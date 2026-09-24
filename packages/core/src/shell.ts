@@ -4,8 +4,7 @@ import path from "path"
 import { spawn, type ChildProcess } from "child_process"
 import { readFile } from "fs/promises"
 import { statSync } from "fs"
-import { setTimeout as sleep } from "node:timers/promises"
-import { Array, Schema } from "effect"
+import { Array, Effect, Schema } from "effect"
 import { Flag } from "./flag/flag"
 import { FSUtil } from "./fs-util"
 import { which } from "./util/which"
@@ -32,36 +31,41 @@ export type Item = {
 // The command as a JSON string literal, which the POSIX shells below eval as double-quoted text.
 const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String))
 
-export async function killTree(proc: ChildProcess, opts?: { exited?: () => boolean }): Promise<void> {
+export const killTree = Effect.fn("Shell.killTree")(function* (proc: ChildProcess, opts?: { exited?: () => boolean }) {
   const pid = proc.pid
   if (!pid || opts?.exited?.()) return
 
   if (process.platform === "win32") {
-    await new Promise<void>((resolve) => {
+    yield* Effect.callback<void>((resume) => {
       const killer = spawn("taskkill", ["/pid", String(pid), "/f", "/t"], {
         stdio: "ignore",
         windowsHide: true,
       })
-      killer.once("exit", () => resolve())
-      killer.once("error", () => resolve())
+      killer.once("exit", () => resume(Effect.void))
+      killer.once("error", () => resume(Effect.void))
     })
     return
   }
 
-  try {
-    process.kill(-pid, "SIGTERM")
-    await sleep(SIGKILL_TIMEOUT_MS)
-    if (!opts?.exited?.()) {
-      process.kill(-pid, "SIGKILL")
-    }
-  } catch {
-    proc.kill("SIGTERM")
-    await sleep(SIGKILL_TIMEOUT_MS)
-    if (!opts?.exited?.()) {
-      proc.kill("SIGKILL")
-    }
-  }
-}
+  // Kill the process group; when that fails, kill the process itself.
+  const killGroup = Effect.try(() => process.kill(-pid, "SIGTERM")).pipe(
+    Effect.andThen(Effect.sleep(SIGKILL_TIMEOUT_MS)),
+    Effect.andThen(
+      Effect.try(() => {
+        if (!opts?.exited?.()) process.kill(-pid, "SIGKILL")
+      }),
+    ),
+  )
+  const killProcess = Effect.sync(() => proc.kill("SIGTERM")).pipe(
+    Effect.andThen(Effect.sleep(SIGKILL_TIMEOUT_MS)),
+    Effect.andThen(
+      Effect.sync(() => {
+        if (!opts?.exited?.()) proc.kill("SIGKILL")
+      }),
+    ),
+  )
+  yield* killGroup.pipe(Effect.catch(() => killProcess))
+})
 
 function stat(file: string) {
   return statSync(file, { throwIfNoEntry: false }) ?? undefined
