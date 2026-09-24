@@ -1,7 +1,18 @@
 export * as WebSearchTool from "./websearch"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Array as Arr, Context, DateTime, Duration, Effect, Layer, Option, Schema } from "effect"
+import {
+  Array as Arr,
+  Config as EffectConfig,
+  ConfigProvider,
+  Context,
+  DateTime,
+  Duration,
+  Effect,
+  Layer,
+  Option,
+  Schema,
+} from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
@@ -77,17 +88,34 @@ export class SearchError extends Schema.TaggedError<SearchError>()("WebSearchToo
 
 export class ConfigService extends Context.Service<ConfigService, Config>()("@opencode/v2/WebSearchConfig") {}
 
-/** Isolates the retained product environment contract from the generic tool implementation. */
-export const defaultConfigLayer = Layer.sync(ConfigService, () =>
-  ConfigService.of({
-    provider:
-      process.env.OPENCODE_WEBSEARCH_PROVIDER === "exa" || process.env.OPENCODE_WEBSEARCH_PROVIDER === "parallel"
-        ? process.env.OPENCODE_WEBSEARCH_PROVIDER
-        : undefined,
-    enableExa: truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_ENABLE_EXA") || truthy("OPENCODE_EXPERIMENTAL_EXA"),
-    enableParallel: truthy("OPENCODE_ENABLE_PARALLEL") || truthy("OPENCODE_EXPERIMENTAL_PARALLEL"),
-    exaApiKey: process.env.EXA_API_KEY,
-    parallelApiKey: process.env.PARALLEL_API_KEY,
+const environment = EffectConfig.all({
+  provider: EffectConfig.String("OPENCODE_WEBSEARCH_PROVIDER").pipe(EffectConfig.option),
+  exaApiKey: EffectConfig.String("EXA_API_KEY").pipe(EffectConfig.option),
+  parallelApiKey: EffectConfig.String("PARALLEL_API_KEY").pipe(EffectConfig.option),
+})
+
+/**
+ * Isolates the retained product environment contract from the generic tool implementation.
+ *
+ * The ambient ConfigProvider copies process.env once per process, so each layer build reads a
+ * fresh environment snapshot, as the former Layer.sync read of process.env did. Empty strings
+ * stay values. Optional configs cannot fail on a missing variable, so a ConfigError is a defect.
+ */
+export const defaultConfigLayer = Layer.effect(
+  ConfigService,
+  Effect.gen(function* () {
+    const env = yield* Effect.suspend(() =>
+      environment.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+    ).pipe(Effect.orDie)
+    const provider = env.provider.pipe(Option.filter(Schema.is(Provider)))
+    return ConfigService.of({
+      ...(Option.isSome(provider) ? { provider: provider.value } : {}),
+      enableExa:
+        truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_ENABLE_EXA") || truthy("OPENCODE_EXPERIMENTAL_EXA"),
+      enableParallel: truthy("OPENCODE_ENABLE_PARALLEL") || truthy("OPENCODE_EXPERIMENTAL_PARALLEL"),
+      ...(Option.isSome(env.exaApiKey) ? { exaApiKey: env.exaApiKey.value } : {}),
+      ...(Option.isSome(env.parallelApiKey) ? { parallelApiKey: env.parallelApiKey.value } : {}),
+    })
   }),
 )
 
