@@ -166,6 +166,12 @@ export class InitError extends Schema.TaggedError<InitError>()("AISDK.InitError"
   cause: Schema.Defect(),
 }) {}
 
+/** The cause of an InitError when a model has no AI SDK language model to build. */
+export class LanguageUnavailableError extends Schema.TaggedError<LanguageUnavailableError>()(
+  "AISDK.LanguageUnavailableError",
+  { message: Schema.String },
+) {}
+
 function initError(providerID: ProviderV2.ID) {
   return Effect.catchCause((cause) => Effect.fail(new InitError({ providerID, cause: Cause.squash(cause) })))
 }
@@ -242,7 +248,7 @@ export const locationLayer = Layer.effect(
         if (model.api.type !== "aisdk")
           return yield* new InitError({
             providerID: model.providerID,
-            cause: new Error(`Unsupported api ${model.api.type}`),
+            cause: new LanguageUnavailableError({ message: `Unsupported api ${model.api.type}` }),
           })
 
         const options = prepareOptions(model, model.api.package)
@@ -259,7 +265,7 @@ export const locationLayer = Layer.effect(
         if (!sdk)
           return yield* new InitError({
             providerID: model.providerID,
-            cause: new Error("No AISDK provider plugin returned an SDK"),
+            cause: new LanguageUnavailableError({ message: "No AISDK provider plugin returned an SDK" }),
           })
         MutableHashMap.set(sdks, sdkKey, sdk)
         const result = yield* service.runLanguage({ model, sdk, options }).pipe(initError(model.providerID))
