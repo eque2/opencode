@@ -81,7 +81,7 @@ export function prepareTools({
       const _exhaustiveCheck: never = type
       return Effect.fail(
         new UnsupportedFunctionalityError({
-          functionality: `tool choice type: ${_exhaustiveCheck}`,
+          functionality: `tool choice type: ${String(_exhaustiveCheck)}`,
         }),
       )
     }

@@ -173,7 +173,7 @@ export const convertToOpenAICompatibleChatMessages = Effect.fn("GithubCopilot.co
 
         default: {
           const _exhaustiveCheck: never = role
-          return yield* new UnsupportedRoleError({ message: `Unsupported role: ${_exhaustiveCheck}` })
+          return yield* new UnsupportedRoleError({ message: `Unsupported role: ${String(_exhaustiveCheck)}` })
         }
       }
     }
