@@ -38,7 +38,7 @@ export const toHostRegex = (
       try: () => new RegExp(arg, extraFlags),
       catch: (error) =>
         new InterpreterRuntimeError(
-          `String.${method} received the string ${JSON.stringify(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
+          `String.${method} received the string ${quoteJsonString(arg)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`,
           node,
         ).as("SyntaxError"),
     })
@@ -93,5 +93,6 @@ export const invokeRegExpMethod = (
 import { Effect, HashSet, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, makeSafeObject, type SafeObject } from "../tool-runtime.js"
+import { quoteJsonString } from "../tool-schema.js"
 import { SandboxRegExp } from "../values.js"
 import { coerceToString } from "./value.js"

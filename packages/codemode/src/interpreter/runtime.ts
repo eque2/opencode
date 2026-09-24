@@ -30,6 +30,7 @@ import {
   type Services,
 } from "../tool-runtime.js"
 import { ToolError } from "../tool-error.js"
+import { quoteJsonString } from "../tool-schema.js"
 import type {
   DataValue,
   Diagnostic,
@@ -74,7 +75,7 @@ import {
 import { arrayMethods, mapMethods, setMethods, spreadItems } from "../stdlib/collections.js"
 import { consoleMethods, MAX_CONSOLE_DEPTH } from "../stdlib/console.js"
 import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic } from "../stdlib/date.js"
-import { invokeJsonMethod } from "../stdlib/json.js"
+import { encodeJsonText, invokeJsonMethod, toJsonValue } from "../stdlib/json.js"
 import { invokeMathMethod, isMathConstant } from "../stdlib/math.js"
 import {
   invokeNumberMethod,
@@ -175,30 +176,6 @@ const parseProgram = (code: string): Effect.Effect<ProgramNode, unknown> =>
 
     return parsed
   })
-
-// JSON text written into diagnostics and console output goes through Schema codecs.
-const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
-const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
-
-// The JSON value that JSON.stringify writes for copied-out sandbox data: undefined object
-// members are omitted, undefined array slots (holes included) become null, and a bare
-// undefined has no JSON form (None). Other non-JSON values also map to None, as JSON omits them.
-const toJsonValue = (value: unknown): Option.Option<Schema.Json> => {
-  if (Predicate.isNull(value) || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return Option.some(value)
-  }
-  if (Array.isArray(value)) return Option.some(Array.from(value, (item) => Option.getOrNull(toJsonValue(item))))
-  if (Predicate.isObject(value)) {
-    return Option.some(
-      Object.fromEntries(
-        Object.entries(value).flatMap(([key, item]) =>
-          Option.toArray(Option.map(toJsonValue(item), (json): readonly [string, Schema.Json] => [key, json])),
-        ),
-      ),
-    )
-  }
-  return Option.none()
-}
 
 const isJson = Schema.is(Schema.Json)
 

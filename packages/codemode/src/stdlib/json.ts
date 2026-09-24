@@ -1,4 +1,4 @@
-import { Effect, HashSet, Result, Schema } from "effect"
+import { Effect, HashSet, Option, Predicate, Result, Schema } from "effect"
 import {
   type AstNode,
   CodeModeFunction,
@@ -9,8 +9,35 @@ import { copyIn, copyOut, type ToolRuntimeError } from "../tool-runtime.js"
 
 export const jsonStatics = HashSet.make("stringify", "parse")
 
+// JSON text written into diagnostics, console output, and JSON.stringify goes through Schema codecs.
+export const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+
+// JSON.stringify's space argument passes to the codec unchanged, so it indents the same way.
+const encodeIndentedJsonText = (space: number | string) =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Json, { space }))
+
 // JSON text decodes without asserting a shape: copyIn validates the parsed value next.
 const decodeJsonText = Schema.decodeResult(Schema.fromJsonString(Schema.Unknown))
+
+// The JSON value that JSON.stringify writes for copied-out sandbox data: undefined object
+// members are omitted, undefined array slots (holes included) become null, and a bare
+// undefined has no JSON form (None). Other non-JSON values also map to None, as JSON omits them.
+export const toJsonValue = (value: unknown): Option.Option<Schema.Json> => {
+  if (Predicate.isNull(value) || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return Option.some(value)
+  }
+  if (Array.isArray(value)) return Option.some(Array.from(value, (item) => Option.getOrNull(toJsonValue(item))))
+  if (Predicate.isObject(value)) {
+    return Option.some(
+      Object.fromEntries(
+        Object.entries(value).flatMap(([key, item]) =>
+          Option.toArray(Option.map(toJsonValue(item), (json): readonly [string, Schema.Json] => [key, json])),
+        ),
+      ),
+    )
+  }
+  return Option.none()
+}
 
 export const invokeJsonMethod = (
   name: string,
@@ -34,9 +61,12 @@ export const invokeJsonMethod = (
         )
       }
       const space = args[2]
-      const indent = typeof space === "number" || typeof space === "string" ? space : undefined
+      // Only a number or string space indents, as in JSON.stringify.
+      const encode =
+        typeof space === "number" || typeof space === "string" ? encodeIndentedJsonText(space) : encodeJsonText
+      // A value with no JSON form (a bare undefined) stringifies to undefined, as in JSON.stringify.
       return Effect.map(Effect.fromResult(copyIn(args[0], "JSON.stringify value")), (value) =>
-        JSON.stringify(copyOut(value), null, indent),
+        Option.getOrUndefined(Option.map(toJsonValue(copyOut(value)), encode)),
       )
     }
     case "parse": {
