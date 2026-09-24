@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { ButtonV2 } from "./button-v2"
 
 const docs = `### Overview
@@ -138,7 +139,7 @@ export const AllStates = {
               {states.map((state) => (
                 <ButtonV2
                   variant={variant}
-                  data-state={state === "default" ? undefined : state}
+                  data-state={Option.getOrUndefined(Option.liftPredicate(state, (s) => s !== "default"))}
                   disabled={state === "disabled"}
                 >
                   {toTitleCase(state)}
