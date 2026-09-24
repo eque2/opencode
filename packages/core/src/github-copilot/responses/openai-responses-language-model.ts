@@ -132,6 +132,8 @@ const encodeLocalShellCallInput = Schema.encodeSync(Schema.fromJsonString(localS
 const encodeLocalShellInput = Schema.encodeSync(Schema.fromJsonString(localShellInputSchema))
 const encodeCodeInterpreterInput = Schema.encodeSync(Schema.fromJsonString(codeInterpreterInputSchema))
 const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+// The response body as JSON text; the JSON response handler returns it parsed, with no fixed shape.
+const encodeResponseBody = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
 // Provider metadata keeps the wire nulls that callers read: reasoningEncryptedContent is null until the
 // Responses API sends the encrypted content, and a stream without response.created has a null responseId.
@@ -413,11 +415,9 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
         : Option.none<number>()
 
   // when a web search tool is present, automatically include the sources:
-  const webSearchToolName = (
-    tools?.find(
-      (tool) =>
-        tool.type === "provider" && (tool.id === "openai.web_search" || tool.id === "openai.web_search_preview"),
-    ) as LanguageModelV3ProviderTool | undefined
+  const webSearchToolName = tools?.find(
+    (tool): tool is LanguageModelV3ProviderTool =>
+      tool.type === "provider" && (tool.id === "openai.web_search" || tool.id === "openai.web_search_preview"),
   )?.name
 
   // requested logprobs, web search sources and code interpreter outputs are included automatically:
@@ -586,6 +586,10 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
   })
 
   if (response.error) {
+    // APICallError.responseBody is text, and the handler returns the parsed body, so it is written back as JSON.
+    const responseBody = yield* encodeResponseBody(rawResponse).pipe(
+      Effect.mapError((cause) => new ResponsesCallError({ cause })),
+    )
     return yield* new ResponsesCallError({
       cause: new APICallError({
         message: response.error.message,
@@ -593,7 +597,7 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
         requestBodyValues: body,
         statusCode: 400,
         responseHeaders,
-        responseBody: rawResponse as string,
+        responseBody,
         isRetryable: false,
       }),
     })
