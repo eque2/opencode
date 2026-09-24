@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -79,6 +79,10 @@ export type ToolDescription = {
 }
 
 export type SafeObject = Record<string, unknown>
+
+/** A prototype-free record, so a copied key can never resolve through Object.prototype. */
+// eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
+const makeSafeObject = (): SafeObject => Object.create(null)
 
 const reservedNamespace = "$codemode"
 const defaultCatalogBudget = 2_000
@@ -182,8 +186,7 @@ const copyBounded = (
     throw new ToolRuntimeError("InvalidDataValue", `${label} exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`)
   }
   if (
-    value === null ||
-    value === undefined ||
+    Predicate.isNullish(value) ||
     typeof value === "string" ||
     typeof value === "boolean" ||
     // NaN/Infinity are allowed to exist as in-sandbox intermediates (matching real JS and a real
@@ -264,7 +267,7 @@ const copyBounded = (
     value instanceof Set ||
     value instanceof URLSearchParams
   ) {
-    return Object.create(null) as SafeObject
+    return makeSafeObject()
   }
 
   if (seen.has(value)) {
@@ -280,11 +283,11 @@ const copyBounded = (
   }
 
   const prototype = Object.getPrototypeOf(value)
-  if (prototype !== Object.prototype && prototype !== null) {
+  if (prototype !== Object.prototype && Predicate.isNotNull(prototype)) {
     throw new ToolRuntimeError("InvalidDataValue", `${label} must contain plain objects only.`)
   }
 
-  const copied: SafeObject = Object.create(null) as SafeObject
+  const copied = makeSafeObject()
   for (const [key, item] of Object.entries(value)) {
     if (isBlockedMember(key)) {
       throw new ToolRuntimeError("InvalidDataValue", `${label} contains blocked property '${key}'.`)
@@ -307,7 +310,7 @@ export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
     return value.map((item) => copyOut(item, undefinedAsNull))
   }
 
-  if (value !== null && typeof value === "object" && !(value instanceof ToolReference)) {
+  if (Predicate.isObjectOrArray(value) && !(value instanceof ToolReference)) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copyOut(item, undefinedAsNull)]))
   }
 
@@ -437,11 +440,9 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition =>
           path: toolExpression(description.path),
         }))
         const remaining = Math.max(0, ranked.length - offset - items.length)
-        return {
-          items,
-          remaining,
-          next: remaining > 0 ? { offset: offset + items.length } : null,
-        }
+        const next = remaining > 0 ? Option.some({ offset: offset + items.length }) : Option.none()
+        // The search result is the model-visible JSON boundary: no next page is `next: null`.
+        return { items, remaining, next: Option.getOrNull(next) }
       }),
   })
 
