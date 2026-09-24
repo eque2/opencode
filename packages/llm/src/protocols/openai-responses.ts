@@ -528,7 +528,15 @@ const mapFinishReason = (event: OpenAIResponsesEvent, hasFunctionCall: boolean):
   return hasFunctionCall ? "tool-calls" : "unknown"
 }
 
-const openaiMetadata = (metadata: Record<string, unknown>): ProviderMetadata => ({ openai: metadata })
+const openaiMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ openai: metadata })
+
+// `ProviderMetadata` values are JSON objects, which reject undefined-valued
+// keys, so only the response fields the provider actually sent are copied.
+const responseMetadata = (response: NonNullable<OpenAIResponsesEvent["response"]>) =>
+  openaiMetadata({
+    ...(response.id === undefined ? {} : { responseId: response.id }),
+    ...(response.service_tier === undefined ? {} : { serviceTier: response.service_tier }),
+  })
 
 // Hosted tool items (provider-executed) ship their typed input + status +
 // result fields all in one item. We expose them as a `tool-call` +
@@ -714,16 +722,11 @@ const onReasoningSummaryPartAdded = (state: ParserState, event: OpenAIResponsesE
   }
 
   const events: LLMEvent[] = []
+  const endMetadata = openaiMetadata({ itemId: event.item_id })
   const closed = Object.entries(item.summaryParts)
     .filter((entry) => entry[1] === "can-conclude")
     .reduce(
-      (lifecycle, entry) =>
-        Lifecycle.reasoningEnd(
-          lifecycle,
-          events,
-          `${event.item_id}:${entry[0]}`,
-          openaiMetadata({ itemId: event.item_id }),
-        ),
+      (lifecycle, entry) => Lifecycle.reasoningEnd(lifecycle, events, `${event.item_id}:${entry[0]}`, endMetadata),
       state.lifecycle,
     )
   return [
@@ -877,13 +880,9 @@ const onResponseFinish = (state: ParserState, event: OpenAIResponsesEvent): Step
   const lifecycle = Lifecycle.finish(state.lifecycle, events, {
     reason: mapFinishReason(event, state.hasFunctionCall),
     usage: mapUsage(event.response?.usage),
-    providerMetadata:
-      event.response?.id || event.response?.service_tier
-        ? openaiMetadata({
-            responseId: event.response.id,
-            serviceTier: event.response.service_tier,
-          })
-        : undefined,
+    ...(event.response?.id || event.response?.service_tier
+      ? { providerMetadata: responseMetadata(event.response) }
+      : {}),
   })
   return [{ ...state, lifecycle }, events]
 }
