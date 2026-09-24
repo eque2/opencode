@@ -5,6 +5,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose"
 import { createAppAuth } from "@octokit/auth-app"
 import { Octokit } from "@octokit/rest"
 import { Resource } from "sst"
+import { Schema } from "effect"
 import { parseRepositoryClaim } from "./github"
 
 type Env = {
@@ -12,6 +13,14 @@ type Env = {
   Bucket: R2Bucket
   WEB_DOMAIN: string
 }
+
+class InvalidSecretError extends Schema.TaggedError<InvalidSecretError>()("InvalidSecretError", {
+  message: Schema.String,
+}) {}
+
+class PatAuthorizationError extends Schema.TaggedError<PatAuthorizationError>()("PatAuthorizationError", {
+  message: Schema.String,
+}) {}
 
 export class SyncServer extends DurableObject<Env> {
   // oxlint-disable-next-line no-useless-constructor
@@ -85,7 +94,7 @@ export class SyncServer extends DurableObject<Env> {
   }
 
   public async assertSecret(secret: string) {
-    if (secret !== (await this.getSecret())) throw new Error("Invalid secret")
+    if (secret !== (await this.getSecret())) throw new InvalidSecretError({ message: "Invalid secret" })
   }
 
   private async getSecret() {
@@ -142,7 +151,7 @@ export default new Hono<{ Bindings: Env }>()
     const body = await c.req.json<{ sessionShortName: string; adminSecret: string }>()
     const sessionShortName = body.sessionShortName
     const adminSecret = body.adminSecret
-    if (adminSecret !== Resource.ADMIN_SECRET.value) throw new Error("Invalid admin secret")
+    if (adminSecret !== Resource.ADMIN_SECRET.value) throw new InvalidSecretError({ message: "Invalid admin secret" })
     const id = c.env.SYNC_SERVER.idFromName(sessionShortName)
     const stub = c.env.SYNC_SERVER.get(id)
     await stub.clear()
@@ -318,13 +327,13 @@ export default new Hono<{ Bindings: Env }>()
       // get Authorization header
       const authHeader = c.req.header("Authorization")
       const token = authHeader?.replace(/^Bearer /, "")
-      if (!token) throw new Error("Authorization header is required")
+      if (!token) throw new PatAuthorizationError({ message: "Authorization header is required" })
 
       // Verify permissions
       const userClient = new Octokit({ auth: token })
       const { data: repoData } = await userClient.repos.get({ owner, repo })
       if (!repoData.permissions.admin && !repoData.permissions.push && !repoData.permissions.maintain)
-        throw new Error("User does not have write permissions")
+        throw new PatAuthorizationError({ message: "User does not have write permissions" })
 
       // Get installation token
       const auth = createAppAuth({
