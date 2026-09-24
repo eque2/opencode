@@ -63,15 +63,15 @@ const ListInputBase = {
 const ListDirectoryInput = Schema.Struct({
   ...ListInputBase,
   directory: AbsolutePath,
-})
+}).annotate({ identifier: "SessionV2.ListDirectoryInput" })
 
 const ListProjectInput = Schema.Struct({
   ...ListInputBase,
   project: ProjectV2.ID,
   subpath: RelativePath.pipe(Schema.optional),
-})
+}).annotate({ identifier: "SessionV2.ListProjectInput" })
 
-const ListAllInput = Schema.Struct(ListInputBase)
+const ListAllInput = Schema.Struct(ListInputBase).annotate({ identifier: "SessionV2.ListAllInput" })
 
 export const ListInput = Schema.Union([ListDirectoryInput, ListProjectInput, ListAllInput])
 export type ListInput = typeof ListInput.Type
