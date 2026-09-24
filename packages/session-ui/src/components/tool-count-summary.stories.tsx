@@ -1,6 +1,7 @@
 // @ts-nocheck
-import { onCleanup } from "solid-js"
+import { Effect, Random } from "effect"
 import { createStore } from "solid-js/store"
+import { createFiberSlot } from "./fiber-slot"
 import { AnimatedCountList, type CountItem } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
 
@@ -26,10 +27,6 @@ const TEXT = {
   active: "Exploring",
   done: "Explored",
 } as const
-
-function rand(min: number, max: number) {
-  return Math.floor(Math.random() * (max - min + 1)) + min
-}
 
 const btn = (accent?: boolean) =>
   ({
@@ -68,42 +65,32 @@ export const Playground = {
     const active = () => state.active
     const reducedMotion = () => state.reducedMotion
 
-    let timeouts: ReturnType<typeof setTimeout>[] = []
-
-    const clearAll = () => {
-      for (const t of timeouts) clearTimeout(t)
-      timeouts = []
-    }
-
-    onCleanup(clearAll)
+    // One fiber runs the whole simulation. A new run or the story cleanup interrupts it.
+    const sim = createFiberSlot()
 
     const startSim = () => {
-      clearAll()
       setState("reads", 0)
       setState("searches", 0)
       setState("lists", 0)
       setState("active", true)
-      const steps = rand(3, 10)
-      let elapsed = 0
-
-      for (let i = 0; i < steps; i++) {
-        const delay = rand(300, 800)
-        elapsed += delay
-        const t = setTimeout(() => {
-          const pick = rand(0, 2)
-          if (pick === 0) setState("reads", (value) => value + 1)
-          else if (pick === 1) setState("searches", (value) => value + 1)
-          else setState("lists", (value) => value + 1)
-        }, elapsed)
-        timeouts.push(t)
-      }
-
-      const end = setTimeout(() => setState("active", false), elapsed + 100)
-      timeouts.push(end)
+      sim.run(
+        Effect.gen(function* () {
+          const steps = yield* Random.nextIntBetween(3, 10)
+          for (let i = 0; i < steps; i++) {
+            yield* Effect.sleep(yield* Random.nextIntBetween(300, 800))
+            const pick = yield* Random.nextIntBetween(0, 2)
+            if (pick === 0) setState("reads", (value) => value + 1)
+            else if (pick === 1) setState("searches", (value) => value + 1)
+            else setState("lists", (value) => value + 1)
+          }
+          yield* Effect.sleep("100 millis")
+          setState("active", false)
+        }),
+      )
     }
 
     const stopSim = () => {
-      clearAll()
+      sim.interrupt()
       setState("active", false)
     }
 
