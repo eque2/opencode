@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Endpoint } from "../route/endpoint"
 import { Protocol } from "../route/protocol"
@@ -120,6 +120,7 @@ const BedrockToolChoice = Schema.Union([
   Schema.Struct({ any: Schema.Struct({}) }),
   Schema.Struct({ tool: Schema.Struct({ name: Schema.String }) }),
 ])
+type BedrockToolChoice = Schema.Schema.Type<typeof BedrockToolChoice>
 
 const BedrockBodyFields = {
   modelId: Schema.String,
@@ -243,21 +244,27 @@ const textWithCache = (
 
 const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
   ProviderShared.matchToolChoice("Bedrock Converse", toolChoice, {
-    auto: () => ({ auto: {} }) as const,
-    none: () => undefined,
-    required: () => ({ any: {} }) as const,
-    tool: (name) => ({ tool: { name } }) as const,
+    auto: (): Option.Option<BedrockToolChoice> => Option.some({ auto: {} }),
+    none: (): Option.Option<BedrockToolChoice> => Option.none(),
+    required: (): Option.Option<BedrockToolChoice> => Option.some({ any: {} }),
+    tool: (name): Option.Option<BedrockToolChoice> => Option.some({ tool: { name } }),
   })
 
 const bedrockMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ bedrock: metadata })
 
-const reasoningSignature = (part: ReasoningPart) => {
+const metadataSignature = (part: ReasoningPart) => {
   const bedrock = part.providerMetadata?.bedrock
-  return (
-    part.encrypted ??
-    (ProviderShared.isRecord(bedrock) && typeof bedrock.signature === "string" ? bedrock.signature : undefined)
-  )
+  return ProviderShared.isRecord(bedrock) ? Option.liftPredicate(bedrock.signature, Predicate.isString) : Option.none()
 }
+
+const reasoningSignature = (part: ReasoningPart) =>
+  Option.orElse(Option.fromNullishOr(part.encrypted), () => metadataSignature(part))
+
+const reasoningText = (part: ReasoningPart) =>
+  Option.match(reasoningSignature(part), {
+    onNone: () => ({ text: part.text }),
+    onSome: (signature) => ({ text: part.text, signature }),
+  })
 
 const lowerToolCall = (part: ToolCallPart): BedrockToolUseBlock => ({
   toolUse: {
@@ -315,13 +322,7 @@ const lowerAssistantPart = Effect.fn("BedrockConverse.lowerAssistantPart")(funct
     return yield* ProviderShared.unsupportedContent("Bedrock Converse", "assistant", ["text", "reasoning", "tool-call"])
   if (part.type === "text") return textWithCache(breakpoints, part.text, part.cache)
   if (part.type === "reasoning")
-    return [
-      {
-        reasoningContent: {
-          reasoningText: { text: part.text, signature: reasoningSignature(part) },
-        },
-      },
-    ]
+    return [{ reasoningContent: { reasoningText: reasoningText(part) } }]
   return [lowerToolCall(part)]
 })
 
@@ -397,16 +398,16 @@ const lowerSystem = (
 ): BedrockSystemBlock[] => system.flatMap((part) => textWithCache(breakpoints, part.text, part.cache))
 
 const fromRequest = Effect.fn("BedrockConverse.fromRequest")(function* (request: LLMRequest) {
-  const toolChoice = request.toolChoice ? yield* lowerToolChoice(request.toolChoice) : undefined
+  const toolChoice: Option.Option<BedrockToolChoice> = request.toolChoice
+    ? yield* lowerToolChoice(request.toolChoice)
+    : Option.none()
   const generation = request.generation
   // Bedrock-Claude shares Anthropic's 4-breakpoint cap. Spend the budget in
   // tools → system → messages order to favour the highest-impact prefixes.
   const breakpoints = BedrockCache.breakpoints()
-  const toolConfig =
-    request.tools.length > 0 && request.toolChoice?.type !== "none"
-      ? { tools: lowerTools(request.model.compatibility?.toolSchema, breakpoints, request.tools), toolChoice }
-      : undefined
-  const system = request.system.length === 0 ? undefined : lowerSystem(breakpoints, request.system)
+  const toolsEnabled = request.tools.length > 0 && request.toolChoice?.type !== "none"
+  const tools = toolsEnabled ? lowerTools(request.model.compatibility?.toolSchema, breakpoints, request.tools) : []
+  const system = lowerSystem(breakpoints, request.system)
   const messages = yield* lowerMessages(request, breakpoints)
   if (breakpoints.dropped > 0) {
     yield* Effect.logWarning(
@@ -416,23 +417,34 @@ const fromRequest = Effect.fn("BedrockConverse.fromRequest")(function* (request:
   return {
     modelId: request.model.id,
     messages,
-    system,
-    inferenceConfig:
-      generation?.maxTokens === undefined &&
-      generation?.temperature === undefined &&
-      generation?.topP === undefined &&
-      (generation?.stop === undefined || generation.stop.length === 0)
-        ? undefined
-        : {
+    ...(system.length === 0 ? {} : { system }),
+    ...(generation?.maxTokens === undefined &&
+    generation?.temperature === undefined &&
+    generation?.topP === undefined &&
+    (generation?.stop === undefined || generation.stop.length === 0)
+      ? {}
+      : {
+          inferenceConfig: {
             maxTokens: generation?.maxTokens,
             temperature: generation?.temperature,
             topP: generation?.topP,
             stopSequences: generation?.stop,
           },
-    toolConfig,
+        }),
+    ...(toolsEnabled
+      ? {
+          toolConfig: {
+            tools,
+            ...Option.match(toolChoice, {
+              onNone: () => ({}),
+              onSome: (choice) => ({ toolChoice: choice }),
+            }),
+          },
+        }
+      : {}),
     // Converse's base inferenceConfig has no topK; Anthropic/Nova accept it
     // as a model-specific field, so it goes through additionalModelRequestFields.
-    additionalModelRequestFields: generation?.topK === undefined ? undefined : { top_k: generation.topK },
+    ...(generation?.topK === undefined ? {} : { additionalModelRequestFields: { top_k: generation.topK } }),
   }
 })
 
@@ -451,8 +463,7 @@ const mapFinishReason = (reason: string): FinishReason => {
 // `cacheReadInputTokens` and `cacheWriteInputTokens` as subsets. Pass
 // the total through and derive the non-cached breakdown. Bedrock does
 // not break reasoning out of `outputTokens` for any current model.
-const mapUsage = (usage: BedrockUsageSchema | undefined): Usage | undefined => {
-  if (!usage) return undefined
+const mapUsage = (usage: BedrockUsageSchema): Usage => {
   const cacheTotal = (usage.cacheReadInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0)
   const nonCached = ProviderShared.subtractTokens(usage.inputTokens, cacheTotal)
   return new Usage({
@@ -466,12 +477,17 @@ const mapUsage = (usage: BedrockUsageSchema | undefined): Usage | undefined => {
   })
 }
 
+interface PendingFinish {
+  readonly reason: FinishReason
+  readonly usage: Option.Option<Usage>
+}
+
 interface ParserState {
   readonly tools: ToolStream.State<number>
   // Bedrock splits the finish into `messageStop` (carries `stopReason`) and
   // `metadata` (carries usage). Hold the terminal event in state so `onHalt`
   // can emit exactly one finish after both chunks have had a chance to arrive.
-  readonly pendingFinish: { readonly reason: FinishReason; readonly usage?: Usage } | undefined
+  readonly pendingFinish: Option.Option<PendingFinish>
   readonly hasToolCalls: boolean
   readonly lifecycle: Lifecycle.State
   readonly reasoningSignatures: Readonly<Record<number, string>>
@@ -563,9 +579,11 @@ const step = (state: ParserState, event: BedrockEvent) =>
             Lifecycle.textEnd(state.lifecycle, events, `text-${index}`),
             events,
             `reasoning-${index}`,
-            state.reasoningSignatures[index]
-              ? bedrockMetadata({ signature: state.reasoningSignatures[index] })
-              : undefined,
+            Option.getOrUndefined(
+              Option.map(Option.fromNullishOr(state.reasoningSignatures[index]), (signature) =>
+                bedrockMetadata({ signature }),
+              ),
+            ),
           )
       events.push(...resultEvents)
       return [
@@ -586,15 +604,24 @@ const step = (state: ParserState, event: BedrockEvent) =>
       return [
         {
           ...state,
-          pendingFinish: { reason: mapFinishReason(event.messageStop.stopReason), usage: state.pendingFinish?.usage },
+          pendingFinish: Option.some({
+            reason: mapFinishReason(event.messageStop.stopReason),
+            usage: Option.flatMap(state.pendingFinish, (pending) => pending.usage),
+          }),
         },
         [],
       ] as const
     }
 
     if (event.metadata) {
-      const usage = mapUsage(event.metadata.usage)
-      return [{ ...state, pendingFinish: { reason: state.pendingFinish?.reason ?? "stop", usage } }, []] as const
+      const pendingFinish: PendingFinish = {
+        reason: Option.getOrElse(
+          Option.map(state.pendingFinish, (pending) => pending.reason),
+          (): FinishReason => "stop",
+        ),
+        usage: Option.map(Option.fromNullishOr(event.metadata.usage), mapUsage),
+      }
+      return [{ ...state, pendingFinish: Option.some(pendingFinish) }, []] as const
     }
 
     if (event.internalServerException || event.modelStreamErrorException || event.serviceUnavailableException) {
@@ -614,7 +641,9 @@ const step = (state: ParserState, event: BedrockEvent) =>
         [
           LLMEvent.providerError({
             message,
-            classification: event.validationException && isContextOverflow(message) ? "context-overflow" : undefined,
+            ...(event.validationException && isContextOverflow(message)
+              ? { classification: "context-overflow" as const }
+              : {}),
             retryable: event.throttlingException !== undefined,
           }),
         ],
@@ -627,17 +656,17 @@ const step = (state: ParserState, event: BedrockEvent) =>
 const framing = BedrockEventStream.framing(ADAPTER)
 
 const onHalt = (state: ParserState): ReadonlyArray<LLMEvent> =>
-  state.pendingFinish
-    ? (() => {
-        const events: LLMEvent[] = []
-        Lifecycle.finish(state.lifecycle, events, {
-          reason:
-            state.pendingFinish.reason === "stop" && state.hasToolCalls ? "tool-calls" : state.pendingFinish.reason,
-          usage: state.pendingFinish.usage,
-        })
-        return events
-      })()
-    : []
+  Option.match(state.pendingFinish, {
+    onNone: () => [],
+    onSome: (pending) => {
+      const events: LLMEvent[] = []
+      Lifecycle.finish(state.lifecycle, events, {
+        reason: pending.reason === "stop" && state.hasToolCalls ? "tool-calls" : pending.reason,
+        usage: Option.getOrUndefined(pending.usage),
+      })
+      return events
+    },
+  })
 
 // =============================================================================
 // Protocol And Bedrock Route
@@ -656,7 +685,7 @@ export const protocol = Protocol.make({
     event: BedrockEvent,
     initial: () => ({
       tools: ToolStream.empty<number>(),
-      pendingFinish: undefined,
+      pendingFinish: Option.none(),
       hasToolCalls: false,
       lifecycle: Lifecycle.initial(),
       reasoningSignatures: {},
