@@ -1,5 +1,5 @@
 import path from "path"
-import { Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
@@ -204,10 +204,11 @@ const layer = Layer.effect(
     const lockKey = `models-dev:${filepath}`
 
     const fresh = Effect.fnUntraced(function* () {
-      const stat = yield* fs.stat(filepath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (!stat) return false
-      const mtime = Option.getOrElse(stat.mtime, () => new Date(0)).getTime()
-      return Date.now() - mtime < Duration.toMillis(ttl)
+      const stat = yield* fs.stat(filepath).pipe(Effect.option)
+      if (Option.isNone(stat)) return false
+      // A file without an mtime counts as written at the epoch, so it is stale.
+      const mtime = Option.match(stat.value.mtime, { onNone: () => 0, onSome: (date) => date.getTime() })
+      return (yield* Clock.currentTimeMillis) - mtime < Duration.toMillis(ttl)
     })
 
     const fetchApi = Effect.fn("ModelsDev.fetchApi")(function* () {
@@ -243,7 +244,7 @@ const layer = Layer.effect(
 
     const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
       const text = yield* fetchApi()
-      const tempfile = `${filepath}.${process.pid}.${Date.now()}.tmp`
+      const tempfile = `${filepath}.${process.pid}.${yield* Clock.currentTimeMillis}.tmp`
       yield* fs.writeWithDirs(tempfile, text).pipe(
         Effect.andThen(fs.rename(tempfile, filepath)),
         Effect.catch((error) =>
