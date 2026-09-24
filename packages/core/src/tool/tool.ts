@@ -24,6 +24,14 @@ export interface Definition<Input extends SchemaType<any>, Output extends Schema
   }
 }
 
+/** The opaque value behind a Definition. It carries no data; `runtimes` holds its behaviour. */
+class ToolValue<Input extends SchemaType<any>, Output extends SchemaType<any>> implements Definition<Input, Output> {
+  declare readonly [TypeId]: {
+    readonly _Input: Input
+    readonly _Output: Output
+  }
+}
+
 export type AnyTool = Definition<any, any>
 export const Failure = ToolFailure
 export type Failure = ToolFailure
@@ -77,7 +85,7 @@ export function make<
   Output extends SchemaType<any>,
   Structured extends SchemaType<any> = Output,
 >(config: Config<Input, Output, Structured>): Definition<Input, Structured> {
-  const tool = Object.freeze({}) as Definition<Input, Structured>
+  const tool = Object.freeze(new ToolValue<Input, Structured>())
   const definitions = MutableHashMap.empty<string, ToolDefinition>()
   runtimes.set(tool, {
     definition: (name) =>
@@ -147,8 +155,8 @@ export const validateName = (name: string) =>
 export const withPermission = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
   tool: Definition<Input, Output>,
   permission: string,
-) => {
-  const decorated = Object.freeze({}) as Definition<Input, Output>
+): Definition<Input, Output> => {
+  const decorated = Object.freeze(new ToolValue<Input, Output>())
   const runtime = runtimes.get(tool)
   if (runtime) runtimes.set(decorated, { ...runtime, permission })
   return decorated
