@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect"
+import { Config, ConfigProvider, Effect, Layer, Option } from "effect"
 import { OtlpLogger } from "effect/unstable/observability"
 import { Flag } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -20,40 +20,58 @@ const headers = Option.fromUndefinedOr(Flag.OTEL_EXPORTER_OTLP_HEADERS).pipe(
   ),
 )
 
-function resourceAttributes() {
-  const value = process.env.OTEL_RESOURCE_ATTRIBUTES
-  if (!value) return {}
-  try {
-    return Object.fromEntries(
-      value.split(",").map((entry) => {
-        const index = entry.indexOf("=")
-        if (index < 1) throw new Error("Invalid OTEL_RESOURCE_ATTRIBUTES entry")
-        return [decodeURIComponent(entry.slice(0, index)), decodeURIComponent(entry.slice(index + 1))]
-      }),
-    )
-  } catch {
-    return {}
-  }
+// decodeURIComponent throws a URIError for a malformed escape.
+const decodeComponent = Option.liftThrowable(decodeURIComponent)
+
+/** Parses `key=value` pairs. One entry without a key or with a malformed escape drops every attribute. */
+function parseResourceAttributes(value: string): Record<string, string> {
+  return Option.all(
+    value.split(",").map((entry): Option.Option<readonly [string, string]> => {
+      const index = entry.indexOf("=")
+      if (index < 1) return Option.none()
+      return Option.all([decodeComponent(entry.slice(0, index)), decodeComponent(entry.slice(index + 1))])
+    }),
+  ).pipe(
+    Option.map((entries) => Object.fromEntries(entries)),
+    Option.getOrElse(() => ({})),
+  )
 }
 
-export function resource(): { serviceName: string; serviceVersion: string; attributes: Record<string, string> } {
-  return {
+const ResourceAttributes = Config.String("OTEL_RESOURCE_ATTRIBUTES").pipe(
+  Config.withDefault(""),
+  Config.map(parseResourceAttributes),
+)
+
+export interface Resource {
+  readonly serviceName: string
+  readonly serviceVersion: string
+  readonly attributes: Record<string, string>
+}
+
+/** The OTEL resource. The ambient ConfigProvider copies process.env once, so each run reads a fresh env provider. */
+export const resource: Effect.Effect<Resource> = Effect.suspend(() =>
+  ResourceAttributes.parse(ConfigProvider.fromEnv()),
+).pipe(
+  Effect.orDie,
+  Effect.map((attributes) => ({
     serviceName: "opencode",
     serviceVersion: InstallationVersion,
     attributes: {
-      ...resourceAttributes(),
+      ...attributes,
       "deployment.environment.name": InstallationChannel,
       "opencode.client": Flag.OPENCODE_CLIENT,
       "opencode.run": runID,
       "service.instance.id": runID,
     },
-  }
-}
+  })),
+)
 
 export function loggers() {
   if (!endpoint) return []
   return [
-    OtlpLogger.make({ url: `${endpoint}/v1/logs`, resource: resource(), headers: Option.getOrUndefined(headers) }),
+    Effect.flatMap(resource, (resource) =>
+      OtlpLogger.make({ url: `${endpoint}/v1/logs`, resource, headers: Option.getOrUndefined(headers) }),
+    ),
   ]
 }
 
@@ -70,15 +88,17 @@ const tracing = Effect.gen(function* () {
   manager.enable()
   context.setGlobalContextManager(manager)
 
-  return NodeSdk.layer(() => ({
-    resource: resource(),
-    spanProcessor: new SdkBase.BatchSpanProcessor(
-      new OTLP.OTLPTraceExporter({
-        url: `${endpoint}/v1/traces`,
-        headers: Option.getOrUndefined(headers),
-      }),
-    ),
-  }))
+  return NodeSdk.layer(
+    Effect.map(resource, (resource) => ({
+      resource,
+      spanProcessor: new SdkBase.BatchSpanProcessor(
+        new OTLP.OTLPTraceExporter({
+          url: `${endpoint}/v1/traces`,
+          headers: Option.getOrUndefined(headers),
+        }),
+      ),
+    })),
+  )
 })
 
 /** observability.ts awaits this through Effect.promise, so it keeps its Promise-returning signature. */
