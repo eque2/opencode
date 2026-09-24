@@ -125,11 +125,12 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                 break
               }
 
+              const functionArguments = yield* encodeJsonText(part.input)
               input.push({
                 type: "function_call",
                 call_id: part.toolCallId,
                 name: part.toolName,
-                arguments: JSON.stringify(part.input),
+                arguments: functionArguments,
                 id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
               })
               break
@@ -190,9 +191,10 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                       text: part.text,
                     })
                   } else if (reasoningMessage !== undefined) {
+                    const partJson = yield* encodeJsonText(part)
                     warnings.push({
                       type: "other",
-                      message: `Cannot append empty reasoning part to existing reasoning sequence. Skipping reasoning part: ${JSON.stringify(part)}.`,
+                      message: `Cannot append empty reasoning part to existing reasoning sequence. Skipping reasoning part: ${partJson}.`,
                     })
                   }
 
@@ -209,9 +211,10 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                   }
                 }
               } else {
+                const partJson = yield* encodeJsonText(part)
                 warnings.push({
                   type: "other",
-                  message: `Non-OpenAI reasoning parts are not supported. Skipping reasoning part: ${JSON.stringify(part)}.`,
+                  message: `Non-OpenAI reasoning parts are not supported. Skipping reasoning part: ${partJson}.`,
                 })
               }
               break
@@ -276,7 +279,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
             case "content":
             case "json":
             case "error-json":
-              contentValue = JSON.stringify(output.value)
+              contentValue = yield* encodeJsonText(output.value)
               break
           }
 
@@ -303,6 +306,12 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 // An input that the Responses API cannot take fails the call with the AI SDK error for it.
 const unsupported = (functionality: string) =>
   Effect.fail(new ResponsesCallError({ cause: new UnsupportedFunctionalityError({ functionality }) }))
+
+// JSON text for values that the AI SDK types as unknown or JSONValue: tool inputs, tool outputs and prompt parts.
+const encodeJsonText = (value: unknown) =>
+  Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(
+    Effect.mapError((cause) => new ResponsesCallError({ cause })),
+  )
 
 const decodeLocalShellInput = (input: unknown) =>
   Schema.decodeUnknownEffect(localShellInputSchema)(input).pipe(

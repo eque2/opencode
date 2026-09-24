@@ -117,6 +117,20 @@ const imageGenerationCallItem = Schema.Struct({
   result: Schema.String,
 }).annotate({ identifier: "CopilotResponses.ImageGenerationCallItem" })
 
+// Tool call inputs are JSON text. generate writes the local shell action as the Responses API names it
+// (snake_case keys); the stream maps it to the camelCase tool input first.
+const webSearchCallInputSchema = Schema.Struct({ action: webSearchCallItem.fields.action }).annotate({
+  identifier: "CopilotResponses.WebSearchCallInput",
+})
+const localShellCallInputSchema = Schema.Struct({ action: localShellCallItem.fields.action }).annotate({
+  identifier: "CopilotResponses.LocalShellCallInput",
+})
+const encodeWebSearchCallInput = Schema.encodeSync(Schema.fromJsonString(webSearchCallInputSchema))
+const encodeLocalShellCallInput = Schema.encodeSync(Schema.fromJsonString(localShellCallInputSchema))
+const encodeLocalShellInput = Schema.encodeSync(Schema.fromJsonString(localShellInputSchema))
+const encodeCodeInterpreterInput = Schema.encodeSync(Schema.fromJsonString(codeInterpreterInputSchema))
+const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
 /**
  * `top_logprobs` request body argument can be set to an integer between
  * 0 and 20 specifying the number of most likely tokens to return at each
@@ -623,7 +637,7 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
           type: "tool-call",
           toolCallId: part.call_id,
           toolName: "local_shell",
-          input: JSON.stringify({ action: part.action } satisfies typeof localShellInputSchema.Type),
+          input: encodeLocalShellCallInput({ action: part.action }),
           providerMetadata: {
             copilot: {
               itemId: part.id,
@@ -697,7 +711,7 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
           type: "tool-call",
           toolCallId: part.id,
           toolName: webSearchToolName ?? "web_search",
-          input: JSON.stringify({ action: part.action }),
+          input: encodeWebSearchCallInput({ action: part.action }),
           providerExecuted: true,
         })
 
@@ -765,10 +779,10 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
           type: "tool-call",
           toolCallId: part.id,
           toolName: "code_interpreter",
-          input: JSON.stringify({
+          input: encodeCodeInterpreterInput({
             code: part.code,
             containerId: part.container_id,
-          } satisfies typeof codeInterpreterInputSchema.Type),
+          }),
           providerExecuted: true,
         })
 
@@ -1080,7 +1094,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 type: "tool-call",
                 toolCallId: value.item.id,
                 toolName: "web_search",
-                input: JSON.stringify({ action: value.item.action }),
+                input: encodeWebSearchCallInput({ action: value.item.action }),
                 providerExecuted: true,
               })
 
@@ -1161,7 +1175,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 type: "tool-call",
                 toolCallId: value.item.call_id,
                 toolName: "local_shell",
-                input: JSON.stringify({
+                input: encodeLocalShellInput({
                   action: {
                     type: "exec",
                     command: value.item.action.command,
@@ -1170,7 +1184,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                     workingDirectory: value.item.action.working_directory,
                     env: value.item.action.env,
                   },
-                } satisfies typeof localShellInputSchema.Type),
+                }),
                 providerMetadata: {
                   copilot: { itemId: value.item.id },
                 },
@@ -1230,9 +1244,9 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
               controller.enqueue({
                 type: "tool-input-delta",
                 id: toolCall.toolCallId,
-                // The delta is code, which is embedding in a JSON string.
-                // To escape it, we use JSON.stringify and slice to remove the outer quotes.
-                delta: JSON.stringify(value.delta).slice(1, -1),
+                // The delta is code, which is embedded in a JSON string.
+                // To escape it, we quote it as a JSON string and slice off the outer quotes.
+                delta: quoteJsonString(value.delta).slice(1, -1),
               })
             }
           } else if (isResponseCodeInterpreterCallCodeDoneChunk(value)) {
@@ -1255,10 +1269,10 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 type: "tool-call",
                 toolCallId: toolCall.toolCallId,
                 toolName: "code_interpreter",
-                input: JSON.stringify({
+                input: encodeCodeInterpreterInput({
                   code: value.code,
                   containerId: toolCall.codeInterpreter!.containerId,
-                } satisfies typeof codeInterpreterInputSchema.Type),
+                }),
                 providerExecuted: true,
               })
             }
