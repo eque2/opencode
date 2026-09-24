@@ -4,7 +4,7 @@ import path from "path"
 import { createRequire } from "module"
 import { pathToFileURL } from "url"
 import npa from "npm-package-arg"
-import { Effect, Schema, Context, Layer, Option, FileSystem } from "effect"
+import { Effect, Schema, Context, Layer, Option, FileSystem, HashSet } from "effect"
 import { FSUtil } from "./fs-util"
 import { Global } from "./global"
 import { EffectFlock } from "./util/effect-flock"
@@ -41,11 +41,12 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Npm") {}
 
-const illegal = process.platform === "win32" ? new Set(["<", ">", ":", '"', "|", "?", "*"]) : undefined
+// Characters that Windows does not allow in a file name.
+const illegal = HashSet.make("<", ">", ":", '"', "|", "?", "*")
 
 export function sanitize(pkg: string) {
-  if (!illegal) return pkg
-  return Array.from(pkg, (char) => (illegal.has(char) || char.charCodeAt(0) < 32 ? "_" : char)).join("")
+  if (process.platform !== "win32") return pkg
+  return Array.from(pkg, (char) => (HashSet.has(illegal, char) || char.charCodeAt(0) < 32 ? "_" : char)).join("")
 }
 
 const resolveEntryPoint = (name: string, dir: string): EntryPoint => {
