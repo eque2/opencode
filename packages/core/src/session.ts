@@ -3,7 +3,7 @@ export * from "./session/schema"
 
 import { DateTime, Effect, Layer, Option, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, like, lt, or } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
 import { ModelV2 } from "./model"
@@ -273,24 +273,20 @@ const layer = Layer.effect(
         const requestedOrder = input.order ?? "desc"
         const order = direction === "previous" ? (requestedOrder === "asc" ? "desc" : "asc") : requestedOrder
         const sortColumn = SessionTable.time_created
-        const conditions: SQL[] = []
-        if ("directory" in input) conditions.push(eq(SessionTable.directory, input.directory))
-        if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
-        if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
-        if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
-        if (input.anchor) {
-          conditions.push(
-            order === "asc"
-              ? or(
-                  gt(sortColumn, input.anchor.time),
-                  and(eq(sortColumn, input.anchor.time), gt(SessionTable.id, input.anchor.id)),
-                )!
-              : or(
-                  lt(sortColumn, input.anchor.time),
-                  and(eq(sortColumn, input.anchor.time), lt(SessionTable.id, input.anchor.id)),
-                )!,
-          )
-        }
+        const anchor = input.anchor
+        const conditions = [
+          ...("directory" in input ? [eq(SessionTable.directory, input.directory)] : []),
+          ...(input.workspaceID ? [eq(SessionTable.workspace_id, input.workspaceID)] : []),
+          ...("project" in input ? [eq(SessionTable.project_id, input.project)] : []),
+          ...(input.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+          ...(anchor
+            ? [
+                order === "asc"
+                  ? or(gt(sortColumn, anchor.time), and(eq(sortColumn, anchor.time), gt(SessionTable.id, anchor.id)))
+                  : or(lt(sortColumn, anchor.time), and(eq(sortColumn, anchor.time), lt(SessionTable.id, anchor.id))),
+              ]
+            : []),
+        ]
         const query = db
           .select()
           .from(SessionTable)

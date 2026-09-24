@@ -198,8 +198,7 @@ export const make = (dependencies: Dependencies) => {
       reason: "auto",
     })
 
-    const chunks: string[] = []
-    let failed = false
+    // Fold the summary text and whether the provider reported an error; an LLM failure gives None.
     const summarized = yield* dependencies.llm
       .stream(
         LLM.request({
@@ -211,16 +210,18 @@ export const make = (dependencies: Dependencies) => {
         }),
       )
       .pipe(
-        Stream.runForEach((event) => {
-          if (LLMEvent.is.providerError(event)) failed = true
-          if (LLMEvent.is.textDelta(event)) chunks.push(event.text)
-          return Effect.void
-        }),
-        Effect.as(true),
-        Effect.catchTag("LLM.Error", () => Effect.succeed(false)),
+        Stream.runFold(
+          () => ({ failed: false, text: "" }),
+          (state, event) => ({
+            failed: state.failed || LLMEvent.is.providerError(event),
+            text: LLMEvent.is.textDelta(event) ? state.text + event.text : state.text,
+          }),
+        ),
+        Effect.map(Option.some),
+        Effect.catchTag("LLM.Error", () => Effect.succeedNone),
       )
-    const summary = chunks.join("")
-    if (!summarized || failed || !summary.trim()) return false
+    if (Option.isNone(summarized) || summarized.value.failed || !summarized.value.text.trim()) return false
+    const summary = summarized.value.text
     yield* dependencies.events.publish(SessionEvent.Compaction.Ended, {
       sessionID: input.sessionID,
       messageID,
