@@ -1,4 +1,5 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
+import { Schema } from "effect"
 import { codeInterpreterArgsSchema } from "./tool/code-interpreter"
 import { fileSearchArgsSchema } from "./tool/file-search"
 import { webSearchArgsSchema } from "./tool/web-search"
@@ -53,7 +54,7 @@ export function prepareResponsesTools({
       case "provider": {
         switch (tool.id) {
           case "openai.file_search": {
-            const args = fileSearchArgsSchema.parse(tool.args)
+            const args = Schema.decodeUnknownSync(fileSearchArgsSchema)(tool.args)
 
             openaiTools.push({
               type: "file_search",
@@ -77,7 +78,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.web_search_preview": {
-            const args = webSearchPreviewArgsSchema.parse(tool.args)
+            const args = Schema.decodeUnknownSync(webSearchPreviewArgsSchema)(tool.args)
             openaiTools.push({
               type: "web_search_preview",
               search_context_size: args.searchContextSize,
@@ -86,7 +87,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.web_search": {
-            const args = webSearchArgsSchema.parse(tool.args)
+            const args = Schema.decodeUnknownSync(webSearchArgsSchema)(tool.args)
             openaiTools.push({
               type: "web_search",
               filters: args.filters != null ? { allowed_domains: args.filters.allowedDomains } : undefined,
@@ -96,7 +97,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.code_interpreter": {
-            const args = codeInterpreterArgsSchema.parse(tool.args)
+            const args = Schema.decodeUnknownSync(codeInterpreterArgsSchema)(tool.args)
             openaiTools.push({
               type: "code_interpreter",
               container:
@@ -109,7 +110,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.image_generation": {
-            const args = imageGenerationArgsSchema.parse(tool.args)
+            const args = Schema.decodeUnknownSync(imageGenerationArgsSchema)(tool.args, { onExcessProperty: "error" })
             openaiTools.push({
               type: "image_generation",
               background: args.background,

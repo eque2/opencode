@@ -1,6 +1,5 @@
 import {
   APICallError,
-  type JSONValue,
   type LanguageModelV3,
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
@@ -18,11 +17,11 @@ import {
   type ParseResult,
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler } from "./openai-error"
-import { codeInterpreterInputSchema, codeInterpreterOutputSchema } from "./tool/code-interpreter"
-import { fileSearchOutputSchema } from "./tool/file-search"
+import { codeInterpreterInputSchema, codeInterpreterOutputSchema, ContainerID } from "./tool/code-interpreter"
+import { FileID, fileSearchOutputSchema } from "./tool/file-search"
 import { imageGenerationOutputSchema } from "./tool/image-generation"
 import { convertToOpenAIResponsesInput } from "./convert-to-openai-responses-input"
 import { mapOpenAIResponseFinishReason } from "./map-openai-responses-finish-reason"
@@ -31,80 +30,90 @@ import { prepareResponsesTools } from "./openai-responses-prepare-tools"
 import type { OpenAIResponsesModelId } from "./openai-responses-settings"
 import { localShellInputSchema } from "./tool/local-shell"
 
-const webSearchCallItem = z.object({
-  type: z.literal("web_search_call"),
-  id: z.string(),
-  status: z.string(),
-  action: z
-    .discriminatedUnion("type", [
-      z.object({
-        type: z.literal("search"),
-        query: z.string().nullish(),
-      }),
-      z.object({
-        type: z.literal("open_page"),
-        url: z.string(),
-      }),
-      z.object({
-        type: z.literal("find"),
-        url: z.string(),
-        pattern: z.string(),
-      }),
-    ])
-    .nullish(),
-})
+// Output item ids and function call ids from the Responses API.
+const ItemID = Schema.String.pipe(Schema.brand("CopilotResponses.ItemID"))
+const CallID = Schema.String.pipe(Schema.brand("CopilotResponses.CallID"))
 
-const fileSearchCallItem = z.object({
-  type: z.literal("file_search_call"),
-  id: z.string(),
-  queries: z.array(z.string()),
-  results: z
-    .array(
-      z.object({
-        attributes: z.record(z.string(), z.unknown()),
-        file_id: z.string(),
-        filename: z.string(),
-        score: z.number(),
-        text: z.string(),
-      }),
-    )
-    .nullish(),
-})
-
-const codeInterpreterCallItem = z.object({
-  type: z.literal("code_interpreter_call"),
-  id: z.string(),
-  code: z.string().nullable(),
-  container_id: z.string(),
-  outputs: z
-    .array(
-      z.discriminatedUnion("type", [
-        z.object({ type: z.literal("logs"), logs: z.string() }),
-        z.object({ type: z.literal("image"), url: z.string() }),
+const webSearchCallItem = Schema.Struct({
+  type: Schema.Literal("web_search_call"),
+  id: ItemID,
+  status: Schema.String,
+  action: Schema.optional(
+    Schema.NullOr(
+      Schema.Union([
+        Schema.Struct({
+          type: Schema.Literal("search"),
+          query: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+        Schema.Struct({
+          type: Schema.Literal("open_page"),
+          url: Schema.String,
+        }),
+        Schema.Struct({
+          type: Schema.Literal("find"),
+          url: Schema.String,
+          pattern: Schema.String,
+        }),
       ]),
-    )
-    .nullable(),
-})
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.WebSearchCallItem" })
 
-const localShellCallItem = z.object({
-  type: z.literal("local_shell_call"),
-  id: z.string(),
-  call_id: z.string(),
-  action: z.object({
-    type: z.literal("exec"),
-    command: z.array(z.string()),
-    timeout_ms: z.number().optional(),
-    user: z.string().optional(),
-    working_directory: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
+const fileSearchCallItem = Schema.Struct({
+  type: Schema.Literal("file_search_call"),
+  id: ItemID,
+  queries: Schema.mutable(Schema.Array(Schema.String)),
+  results: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          attributes: Schema.Record(Schema.String, Schema.MutableJson),
+          file_id: FileID,
+          filename: Schema.String,
+          score: Schema.Finite,
+          text: Schema.String,
+        }),
+      ),
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.FileSearchCallItem" })
+
+const codeInterpreterCallItem = Schema.Struct({
+  type: Schema.Literal("code_interpreter_call"),
+  id: ItemID,
+  code: Schema.NullOr(Schema.String),
+  container_id: ContainerID,
+  outputs: Schema.NullOr(
+    Schema.mutable(
+      Schema.Array(
+        Schema.Union([
+          Schema.Struct({ type: Schema.Literal("logs"), logs: Schema.String }),
+          Schema.Struct({ type: Schema.Literal("image"), url: Schema.String }),
+        ]),
+      ),
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterCallItem" })
+
+const localShellCallItem = Schema.Struct({
+  type: Schema.Literal("local_shell_call"),
+  id: ItemID,
+  call_id: CallID,
+  action: Schema.Struct({
+    type: Schema.Literal("exec"),
+    command: Schema.mutable(Schema.Array(Schema.String)),
+    timeout_ms: Schema.optional(Schema.Finite),
+    user: Schema.optional(Schema.String),
+    working_directory: Schema.optional(Schema.String),
+    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   }),
-})
+}).annotate({ identifier: "CopilotResponses.LocalShellCallItem" })
 
-const imageGenerationCallItem = z.object({
-  type: z.literal("image_generation_call"),
-  id: z.string(),
-  result: z.string(),
-})
+const imageGenerationCallItem = Schema.Struct({
+  type: Schema.Literal("image_generation_call"),
+  id: ItemID,
+  result: Schema.String,
+}).annotate({ identifier: "CopilotResponses.ImageGenerationCallItem" })
 
 /**
  * `top_logprobs` request body argument can be set to an integer between
@@ -115,18 +124,119 @@ const imageGenerationCallItem = z.object({
  */
 const TOP_LOGPROBS_MAX = 20
 
-const LOGPROBS_SCHEMA = z.array(
-  z.object({
-    token: z.string(),
-    logprob: z.number(),
-    top_logprobs: z.array(
-      z.object({
-        token: z.string(),
-        logprob: z.number(),
+const LOGPROBS_SCHEMA = Schema.mutable(
+  Schema.Array(
+    Schema.Struct({
+      token: Schema.String,
+      logprob: Schema.Finite,
+      top_logprobs: Schema.mutable(
+        Schema.Array(
+          Schema.Struct({
+            token: Schema.String,
+            logprob: Schema.Finite,
+          }),
+        ),
+      ),
+    }),
+  ),
+)
+
+const usageSchema = Schema.Struct({
+  input_tokens: Schema.Finite,
+  input_tokens_details: Schema.optional(
+    Schema.NullOr(Schema.Struct({ cached_tokens: Schema.optional(Schema.NullOr(Schema.Finite)) })),
+  ),
+  output_tokens: Schema.Finite,
+  output_tokens_details: Schema.optional(
+    Schema.NullOr(Schema.Struct({ reasoning_tokens: Schema.optional(Schema.NullOr(Schema.Finite)) })),
+  ),
+}).annotate({ identifier: "CopilotResponses.Usage" })
+
+const responsesResponseSchema = Schema.Struct({
+  id: ItemID,
+  created_at: Schema.Finite,
+  error: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        code: Schema.String,
+        message: Schema.String,
       }),
     ),
-  }),
-)
+  ),
+  model: Schema.String,
+  output: Schema.Array(
+    Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("message"),
+        role: Schema.Literal("assistant"),
+        id: ItemID,
+        content: Schema.Array(
+          Schema.Struct({
+            type: Schema.Literal("output_text"),
+            text: Schema.String,
+            logprobs: Schema.optional(Schema.NullOr(LOGPROBS_SCHEMA)),
+            annotations: Schema.Array(
+              Schema.Union([
+                Schema.Struct({
+                  type: Schema.Literal("url_citation"),
+                  start_index: Schema.Finite,
+                  end_index: Schema.Finite,
+                  url: Schema.String,
+                  title: Schema.String,
+                }),
+                Schema.Struct({
+                  type: Schema.Literal("file_citation"),
+                  file_id: FileID,
+                  filename: Schema.optional(Schema.NullOr(Schema.String)),
+                  index: Schema.optional(Schema.NullOr(Schema.Finite)),
+                  start_index: Schema.optional(Schema.NullOr(Schema.Finite)),
+                  end_index: Schema.optional(Schema.NullOr(Schema.Finite)),
+                  quote: Schema.optional(Schema.NullOr(Schema.String)),
+                }),
+                Schema.Struct({
+                  type: Schema.Literal("container_file_citation"),
+                }),
+              ]),
+            ),
+          }),
+        ),
+      }),
+      webSearchCallItem,
+      fileSearchCallItem,
+      codeInterpreterCallItem,
+      imageGenerationCallItem,
+      localShellCallItem,
+      Schema.Struct({
+        type: Schema.Literal("function_call"),
+        call_id: CallID,
+        name: Schema.String,
+        arguments: Schema.String,
+        id: ItemID,
+      }),
+      Schema.Struct({
+        type: Schema.Literal("computer_call"),
+        id: ItemID,
+        status: Schema.optional(Schema.String),
+      }),
+      Schema.Struct({
+        type: Schema.Literal("reasoning"),
+        id: ItemID,
+        encrypted_content: Schema.optional(Schema.NullOr(Schema.String)),
+        summary: Schema.mutable(
+          Schema.Array(
+            Schema.Struct({
+              type: Schema.Literal("summary_text"),
+              text: Schema.String,
+            }),
+          ),
+        ),
+      }),
+    ]),
+  ),
+  service_tier: Schema.optional(Schema.NullOr(Schema.String)),
+  incomplete_details: Schema.optional(Schema.NullOr(Schema.Struct({ reason: Schema.String }))),
+  usage: usageSchema,
+}).annotate({ identifier: "CopilotResponses.Response" })
 
 export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3"
@@ -196,7 +306,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     const openaiOptions = await parseProviderOptions({
       provider: "copilot",
       providerOptions,
-      schema: openaiResponsesProviderOptionsSchema,
+      schema: Schema.toStandardSchemaV1(openaiResponsesProviderOptionsSchema),
     })
 
     const { input, warnings: inputWarnings } = await convertToOpenAIResponsesInput({
@@ -406,89 +516,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       headers: combineHeaders(this.config.headers(), options.headers),
       body,
       failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createJsonResponseHandler(
-        z.object({
-          id: z.string(),
-          created_at: z.number(),
-          error: z
-            .object({
-              code: z.string(),
-              message: z.string(),
-            })
-            .nullish(),
-          model: z.string(),
-          output: z.array(
-            z.discriminatedUnion("type", [
-              z.object({
-                type: z.literal("message"),
-                role: z.literal("assistant"),
-                id: z.string(),
-                content: z.array(
-                  z.object({
-                    type: z.literal("output_text"),
-                    text: z.string(),
-                    logprobs: LOGPROBS_SCHEMA.nullish(),
-                    annotations: z.array(
-                      z.discriminatedUnion("type", [
-                        z.object({
-                          type: z.literal("url_citation"),
-                          start_index: z.number(),
-                          end_index: z.number(),
-                          url: z.string(),
-                          title: z.string(),
-                        }),
-                        z.object({
-                          type: z.literal("file_citation"),
-                          file_id: z.string(),
-                          filename: z.string().nullish(),
-                          index: z.number().nullish(),
-                          start_index: z.number().nullish(),
-                          end_index: z.number().nullish(),
-                          quote: z.string().nullish(),
-                        }),
-                        z.object({
-                          type: z.literal("container_file_citation"),
-                        }),
-                      ]),
-                    ),
-                  }),
-                ),
-              }),
-              webSearchCallItem,
-              fileSearchCallItem,
-              codeInterpreterCallItem,
-              imageGenerationCallItem,
-              localShellCallItem,
-              z.object({
-                type: z.literal("function_call"),
-                call_id: z.string(),
-                name: z.string(),
-                arguments: z.string(),
-                id: z.string(),
-              }),
-              z.object({
-                type: z.literal("computer_call"),
-                id: z.string(),
-                status: z.string().optional(),
-              }),
-              z.object({
-                type: z.literal("reasoning"),
-                id: z.string(),
-                encrypted_content: z.string().nullish(),
-                summary: z.array(
-                  z.object({
-                    type: z.literal("summary_text"),
-                    text: z.string(),
-                  }),
-                ),
-              }),
-            ]),
-          ),
-          service_tier: z.string().nullish(),
-          incomplete_details: z.object({ reason: z.string() }).nullish(),
-          usage: usageSchema,
-        }),
-      ),
+      successfulResponseHandler: createJsonResponseHandler(Schema.toStandardSchemaV1(responsesResponseSchema)),
       abortSignal: options.abortSignal,
       fetch: this.config.fetch,
     })
@@ -506,7 +534,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     }
 
     const content: Array<LanguageModelV3Content> = []
-    const logprobs: Array<z.infer<typeof LOGPROBS_SCHEMA>> = []
+    const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
 
     // flag that checks if there have been client-side tool calls (not executed by openai)
     let hasFunctionCall = false
@@ -550,7 +578,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             toolName: "image_generation",
             result: {
               result: part.result,
-            } satisfies z.infer<typeof imageGenerationOutputSchema>,
+            } satisfies typeof imageGenerationOutputSchema.Type,
           })
 
           break
@@ -561,7 +589,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             type: "tool-call",
             toolCallId: part.call_id,
             toolName: "local_shell",
-            input: JSON.stringify({ action: part.action } satisfies z.infer<typeof localShellInputSchema>),
+            input: JSON.stringify({ action: part.action } satisfies typeof localShellInputSchema.Type),
             providerMetadata: {
               copilot: {
                 itemId: part.id,
@@ -687,13 +715,13 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
               queries: part.queries,
               results:
                 part.results?.map((result) => ({
-                  attributes: result.attributes as Record<string, JSONValue>,
+                  attributes: result.attributes,
                   fileId: result.file_id,
                   filename: result.filename,
                   score: result.score,
                   text: result.text,
                 })) ?? null,
-            } satisfies z.infer<typeof fileSearchOutputSchema>,
+            } satisfies typeof fileSearchOutputSchema.Type,
           })
           break
         }
@@ -706,7 +734,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             input: JSON.stringify({
               code: part.code,
               containerId: part.container_id,
-            } satisfies z.infer<typeof codeInterpreterInputSchema>),
+            } satisfies typeof codeInterpreterInputSchema.Type),
             providerExecuted: true,
           })
 
@@ -716,7 +744,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
             toolName: "code_interpreter",
             result: {
               outputs: part.outputs,
-            } satisfies z.infer<typeof codeInterpreterOutputSchema>,
+            } satisfies typeof codeInterpreterOutputSchema.Type,
           })
           break
         }
@@ -788,7 +816,9 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
         stream: true,
       },
       failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createEventSourceResponseHandler(openaiResponsesChunkSchema),
+      successfulResponseHandler: createEventSourceResponseHandler(
+        Schema.toStandardSchemaV1(openaiResponsesChunkSchema),
+      ),
       abortSignal: options.abortSignal,
       fetch: this.config.fetch,
     })
@@ -816,7 +846,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
       reasoningTokens: undefined,
       cachedInputTokens: undefined,
     }
-    const logprobs: Array<z.infer<typeof LOGPROBS_SCHEMA>> = []
+    const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
     let responseId: string | null = null
     const ongoingToolCalls: Record<
       number,
@@ -824,7 +854,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
           toolName: string
           toolCallId: string
           codeInterpreter?: {
-            containerId: string
+            containerId: typeof ContainerID.Type
           }
         }
       | undefined
@@ -855,7 +885,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
 
     return {
       stream: response.pipeThrough(
-        new TransformStream<ParseResult<z.infer<typeof openaiResponsesChunkSchema>>, LanguageModelV3StreamPart>({
+        new TransformStream<ParseResult<OpenAIResponsesChunk>, LanguageModelV3StreamPart>({
           start(controller) {
             controller.enqueue({ type: "stream-start", warnings })
           },
@@ -1057,13 +1087,13 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                     queries: value.item.queries,
                     results:
                       value.item.results?.map((result) => ({
-                        attributes: result.attributes as Record<string, JSONValue>,
+                        attributes: result.attributes,
                         fileId: result.file_id,
                         filename: result.filename,
                         score: result.score,
                         text: result.text,
                       })) ?? null,
-                  } satisfies z.infer<typeof fileSearchOutputSchema>,
+                  } satisfies typeof fileSearchOutputSchema.Type,
                 })
               } else if (value.item.type === "code_interpreter_call") {
                 ongoingToolCalls[value.output_index] = undefined
@@ -1074,7 +1104,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   toolName: "code_interpreter",
                   result: {
                     outputs: value.item.outputs,
-                  } satisfies z.infer<typeof codeInterpreterOutputSchema>,
+                  } satisfies typeof codeInterpreterOutputSchema.Type,
                 })
               } else if (value.item.type === "image_generation_call") {
                 controller.enqueue({
@@ -1083,7 +1113,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   toolName: "image_generation",
                   result: {
                     result: value.item.result,
-                  } satisfies z.infer<typeof imageGenerationOutputSchema>,
+                  } satisfies typeof imageGenerationOutputSchema.Type,
                 })
               } else if (value.item.type === "local_shell_call") {
                 ongoingToolCalls[value.output_index] = undefined
@@ -1101,7 +1131,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                       workingDirectory: value.item.action.working_directory,
                       env: value.item.action.env,
                     },
-                  } satisfies z.infer<typeof localShellInputSchema>),
+                  } satisfies typeof localShellInputSchema.Type),
                   providerMetadata: {
                     copilot: { itemId: value.item.id },
                   },
@@ -1152,7 +1182,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                 toolName: "image_generation",
                 result: {
                   result: value.partial_image_b64,
-                } satisfies z.infer<typeof imageGenerationOutputSchema>,
+                } satisfies typeof imageGenerationOutputSchema.Type,
               })
             } else if (isResponseCodeInterpreterCallCodeDeltaChunk(value)) {
               const toolCall = ongoingToolCalls[value.output_index]
@@ -1189,7 +1219,7 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
                   input: JSON.stringify({
                     code: value.code,
                     containerId: toolCall.codeInterpreter!.containerId,
-                  } satisfies z.infer<typeof codeInterpreterInputSchema>),
+                  } satisfies typeof codeInterpreterInputSchema.Type),
                   providerExecuted: true,
                 })
               }
@@ -1354,205 +1384,205 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
   }
 }
 
-const usageSchema = z.object({
-  input_tokens: z.number(),
-  input_tokens_details: z.object({ cached_tokens: z.number().nullish() }).nullish(),
-  output_tokens: z.number(),
-  output_tokens_details: z.object({ reasoning_tokens: z.number().nullish() }).nullish(),
-})
+const textDeltaChunkSchema = Schema.Struct({
+  type: Schema.Literal("response.output_text.delta"),
+  item_id: ItemID,
+  delta: Schema.String,
+  logprobs: Schema.optional(Schema.NullOr(LOGPROBS_SCHEMA)),
+}).annotate({ identifier: "CopilotResponses.TextDeltaChunk" })
 
-const textDeltaChunkSchema = z.object({
-  type: z.literal("response.output_text.delta"),
-  item_id: z.string(),
-  delta: z.string(),
-  logprobs: LOGPROBS_SCHEMA.nullish(),
-})
+const errorChunkSchema = Schema.Struct({
+  type: Schema.Literal("error"),
+  code: Schema.String,
+  message: Schema.String,
+  param: Schema.optional(Schema.NullOr(Schema.String)),
+  sequence_number: Schema.Finite,
+}).annotate({ identifier: "CopilotResponses.ErrorChunk" })
 
-const errorChunkSchema = z.object({
-  type: z.literal("error"),
-  code: z.string(),
-  message: z.string(),
-  param: z.string().nullish(),
-  sequence_number: z.number(),
-})
-
-const responseFinishedChunkSchema = z.object({
-  type: z.enum(["response.completed", "response.incomplete"]),
-  response: z.object({
-    incomplete_details: z.object({ reason: z.string() }).nullish(),
+const responseFinishedChunkSchema = Schema.Struct({
+  type: Schema.Literals(["response.completed", "response.incomplete"]),
+  response: Schema.Struct({
+    incomplete_details: Schema.optional(Schema.NullOr(Schema.Struct({ reason: Schema.String }))),
     usage: usageSchema,
-    service_tier: z.string().nullish(),
+    service_tier: Schema.optional(Schema.NullOr(Schema.String)),
   }),
-})
+}).annotate({ identifier: "CopilotResponses.ResponseFinishedChunk" })
 
-const responseCreatedChunkSchema = z.object({
-  type: z.literal("response.created"),
-  response: z.object({
-    id: z.string(),
-    created_at: z.number(),
-    model: z.string(),
-    service_tier: z.string().nullish(),
+const responseCreatedChunkSchema = Schema.Struct({
+  type: Schema.Literal("response.created"),
+  response: Schema.Struct({
+    id: ItemID,
+    created_at: Schema.Finite,
+    model: Schema.String,
+    service_tier: Schema.optional(Schema.NullOr(Schema.String)),
   }),
-})
+}).annotate({ identifier: "CopilotResponses.ResponseCreatedChunk" })
 
-const responseOutputItemAddedSchema = z.object({
-  type: z.literal("response.output_item.added"),
-  output_index: z.number(),
-  item: z.discriminatedUnion("type", [
-    z.object({
-      type: z.literal("message"),
-      id: z.string(),
+const responseOutputItemAddedSchema = Schema.Struct({
+  type: Schema.Literal("response.output_item.added"),
+  output_index: Schema.Finite,
+  item: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("message"),
+      id: ItemID,
     }),
-    z.object({
-      type: z.literal("reasoning"),
-      id: z.string(),
-      encrypted_content: z.string().nullish(),
+    Schema.Struct({
+      type: Schema.Literal("reasoning"),
+      id: ItemID,
+      encrypted_content: Schema.optional(Schema.NullOr(Schema.String)),
     }),
-    z.object({
-      type: z.literal("function_call"),
-      id: z.string(),
-      call_id: z.string(),
-      name: z.string(),
-      arguments: z.string(),
+    Schema.Struct({
+      type: Schema.Literal("function_call"),
+      id: ItemID,
+      call_id: CallID,
+      name: Schema.String,
+      arguments: Schema.String,
     }),
-    z.object({
-      type: z.literal("web_search_call"),
-      id: z.string(),
-      status: z.string(),
-      action: z
-        .object({
-          type: z.literal("search"),
-          query: z.string().optional(),
-        })
-        .nullish(),
+    Schema.Struct({
+      type: Schema.Literal("web_search_call"),
+      id: ItemID,
+      status: Schema.String,
+      action: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            type: Schema.Literal("search"),
+            query: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
     }),
-    z.object({
-      type: z.literal("computer_call"),
-      id: z.string(),
-      status: z.string(),
+    Schema.Struct({
+      type: Schema.Literal("computer_call"),
+      id: ItemID,
+      status: Schema.String,
     }),
-    z.object({
-      type: z.literal("file_search_call"),
-      id: z.string(),
+    Schema.Struct({
+      type: Schema.Literal("file_search_call"),
+      id: ItemID,
     }),
-    z.object({
-      type: z.literal("image_generation_call"),
-      id: z.string(),
+    Schema.Struct({
+      type: Schema.Literal("image_generation_call"),
+      id: ItemID,
     }),
-    z.object({
-      type: z.literal("code_interpreter_call"),
-      id: z.string(),
-      container_id: z.string(),
-      code: z.string().nullable(),
-      outputs: z
-        .array(
-          z.discriminatedUnion("type", [
-            z.object({ type: z.literal("logs"), logs: z.string() }),
-            z.object({ type: z.literal("image"), url: z.string() }),
+    Schema.Struct({
+      type: Schema.Literal("code_interpreter_call"),
+      id: ItemID,
+      container_id: ContainerID,
+      code: Schema.NullOr(Schema.String),
+      outputs: Schema.NullOr(
+        Schema.Array(
+          Schema.Union([
+            Schema.Struct({ type: Schema.Literal("logs"), logs: Schema.String }),
+            Schema.Struct({ type: Schema.Literal("image"), url: Schema.String }),
           ]),
-        )
-        .nullable(),
-      status: z.string(),
+        ),
+      ),
+      status: Schema.String,
     }),
   ]),
-})
+}).annotate({ identifier: "CopilotResponses.OutputItemAddedChunk" })
 
-const responseOutputItemDoneSchema = z.object({
-  type: z.literal("response.output_item.done"),
-  output_index: z.number(),
-  item: z.discriminatedUnion("type", [
-    z.object({
-      type: z.literal("message"),
-      id: z.string(),
+const responseOutputItemDoneSchema = Schema.Struct({
+  type: Schema.Literal("response.output_item.done"),
+  output_index: Schema.Finite,
+  item: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("message"),
+      id: ItemID,
     }),
-    z.object({
-      type: z.literal("reasoning"),
-      id: z.string(),
-      encrypted_content: z.string().nullish(),
+    Schema.Struct({
+      type: Schema.Literal("reasoning"),
+      id: ItemID,
+      encrypted_content: Schema.optional(Schema.NullOr(Schema.String)),
     }),
-    z.object({
-      type: z.literal("function_call"),
-      id: z.string(),
-      call_id: z.string(),
-      name: z.string(),
-      arguments: z.string(),
-      status: z.literal("completed"),
+    Schema.Struct({
+      type: Schema.Literal("function_call"),
+      id: ItemID,
+      call_id: CallID,
+      name: Schema.String,
+      arguments: Schema.String,
+      status: Schema.Literal("completed"),
     }),
     codeInterpreterCallItem,
     imageGenerationCallItem,
     webSearchCallItem,
     fileSearchCallItem,
     localShellCallItem,
-    z.object({
-      type: z.literal("computer_call"),
-      id: z.string(),
-      status: z.literal("completed"),
+    Schema.Struct({
+      type: Schema.Literal("computer_call"),
+      id: ItemID,
+      status: Schema.Literal("completed"),
     }),
   ]),
-})
+}).annotate({ identifier: "CopilotResponses.OutputItemDoneChunk" })
 
-const responseFunctionCallArgumentsDeltaSchema = z.object({
-  type: z.literal("response.function_call_arguments.delta"),
-  item_id: z.string(),
-  output_index: z.number(),
-  delta: z.string(),
-})
+const responseFunctionCallArgumentsDeltaSchema = Schema.Struct({
+  type: Schema.Literal("response.function_call_arguments.delta"),
+  item_id: ItemID,
+  output_index: Schema.Finite,
+  delta: Schema.String,
+}).annotate({ identifier: "CopilotResponses.FunctionCallArgumentsDeltaChunk" })
 
-const responseImageGenerationCallPartialImageSchema = z.object({
-  type: z.literal("response.image_generation_call.partial_image"),
-  item_id: z.string(),
-  output_index: z.number(),
-  partial_image_b64: z.string(),
-})
+const responseImageGenerationCallPartialImageSchema = Schema.Struct({
+  type: Schema.Literal("response.image_generation_call.partial_image"),
+  item_id: ItemID,
+  output_index: Schema.Finite,
+  partial_image_b64: Schema.String,
+}).annotate({ identifier: "CopilotResponses.ImageGenerationCallPartialImageChunk" })
 
-const responseCodeInterpreterCallCodeDeltaSchema = z.object({
-  type: z.literal("response.code_interpreter_call_code.delta"),
-  item_id: z.string(),
-  output_index: z.number(),
-  delta: z.string(),
-})
+const responseCodeInterpreterCallCodeDeltaSchema = Schema.Struct({
+  type: Schema.Literal("response.code_interpreter_call_code.delta"),
+  item_id: ItemID,
+  output_index: Schema.Finite,
+  delta: Schema.String,
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterCallCodeDeltaChunk" })
 
-const responseCodeInterpreterCallCodeDoneSchema = z.object({
-  type: z.literal("response.code_interpreter_call_code.done"),
-  item_id: z.string(),
-  output_index: z.number(),
-  code: z.string(),
-})
+const responseCodeInterpreterCallCodeDoneSchema = Schema.Struct({
+  type: Schema.Literal("response.code_interpreter_call_code.done"),
+  item_id: ItemID,
+  output_index: Schema.Finite,
+  code: Schema.String,
+}).annotate({ identifier: "CopilotResponses.CodeInterpreterCallCodeDoneChunk" })
 
-const responseAnnotationAddedSchema = z.object({
-  type: z.literal("response.output_text.annotation.added"),
-  annotation: z.discriminatedUnion("type", [
-    z.object({
-      type: z.literal("url_citation"),
-      url: z.string(),
-      title: z.string(),
+const responseAnnotationAddedSchema = Schema.Struct({
+  type: Schema.Literal("response.output_text.annotation.added"),
+  annotation: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("url_citation"),
+      url: Schema.String,
+      title: Schema.String,
     }),
-    z.object({
-      type: z.literal("file_citation"),
-      file_id: z.string(),
-      filename: z.string().nullish(),
-      index: z.number().nullish(),
-      start_index: z.number().nullish(),
-      end_index: z.number().nullish(),
-      quote: z.string().nullish(),
+    Schema.Struct({
+      type: Schema.Literal("file_citation"),
+      file_id: FileID,
+      filename: Schema.optional(Schema.NullOr(Schema.String)),
+      index: Schema.optional(Schema.NullOr(Schema.Finite)),
+      start_index: Schema.optional(Schema.NullOr(Schema.Finite)),
+      end_index: Schema.optional(Schema.NullOr(Schema.Finite)),
+      quote: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ]),
-})
+}).annotate({ identifier: "CopilotResponses.AnnotationAddedChunk" })
 
-const responseReasoningSummaryPartAddedSchema = z.object({
-  type: z.literal("response.reasoning_summary_part.added"),
-  item_id: z.string(),
-  summary_index: z.number(),
-})
+const responseReasoningSummaryPartAddedSchema = Schema.Struct({
+  type: Schema.Literal("response.reasoning_summary_part.added"),
+  item_id: ItemID,
+  summary_index: Schema.Finite,
+}).annotate({ identifier: "CopilotResponses.ReasoningSummaryPartAddedChunk" })
 
-const responseReasoningSummaryTextDeltaSchema = z.object({
-  type: z.literal("response.reasoning_summary_text.delta"),
-  item_id: z.string(),
-  summary_index: z.number(),
-  delta: z.string(),
-})
+const responseReasoningSummaryTextDeltaSchema = Schema.Struct({
+  type: Schema.Literal("response.reasoning_summary_text.delta"),
+  item_id: ItemID,
+  summary_index: Schema.Finite,
+  delta: Schema.String,
+}).annotate({ identifier: "CopilotResponses.ReasoningSummaryTextDeltaChunk" })
 
-const openaiResponsesChunkSchema = z.union([
+// A chunk of another type keeps every key that the Responses API sent.
+const unknownChunkSchema = Schema.StructWithRest(Schema.Struct({ type: Schema.String }), [
+  Schema.Record(Schema.String, Schema.Json),
+]).annotate({ identifier: "CopilotResponses.UnknownChunk" })
+
+const openaiResponsesChunkSchema = Schema.Union([
   textDeltaChunkSchema,
   responseFinishedChunkSchema,
   responseCreatedChunkSchema,
@@ -1566,99 +1596,93 @@ const openaiResponsesChunkSchema = z.union([
   responseReasoningSummaryPartAddedSchema,
   responseReasoningSummaryTextDeltaSchema,
   errorChunkSchema,
-  z.object({ type: z.string() }).loose(), // fallback for unknown chunks
+  unknownChunkSchema, // fallback for unknown chunks
 ])
+
+type OpenAIResponsesChunk = typeof openaiResponsesChunkSchema.Type
 
 type ExtractByType<T, K extends T extends { type: infer U } ? U : never> = T extends { type: K } ? T : never
 
-function isTextDeltaChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof textDeltaChunkSchema> {
+function isTextDeltaChunk(chunk: OpenAIResponsesChunk): chunk is typeof textDeltaChunkSchema.Type {
   return chunk.type === "response.output_text.delta"
 }
 
-function isResponseOutputItemDoneChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseOutputItemDoneSchema> {
+function isResponseOutputItemDoneChunk(chunk: OpenAIResponsesChunk): chunk is typeof responseOutputItemDoneSchema.Type {
   return chunk.type === "response.output_item.done"
 }
 
-function isResponseOutputItemDoneReasoningChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<
-  typeof responseOutputItemDoneSchema
-> & {
-  item: ExtractByType<z.infer<typeof responseOutputItemDoneSchema>["item"], "reasoning">
+function isResponseOutputItemDoneReasoningChunk(
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseOutputItemDoneSchema.Type & {
+  item: ExtractByType<(typeof responseOutputItemDoneSchema.Type)["item"], "reasoning">
 } {
   return isResponseOutputItemDoneChunk(chunk) && chunk.item.type === "reasoning"
 }
 
-function isResponseFinishedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseFinishedChunkSchema> {
+function isResponseFinishedChunk(chunk: OpenAIResponsesChunk): chunk is typeof responseFinishedChunkSchema.Type {
   return chunk.type === "response.completed" || chunk.type === "response.incomplete"
 }
 
-function isResponseCreatedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseCreatedChunkSchema> {
+function isResponseCreatedChunk(chunk: OpenAIResponsesChunk): chunk is typeof responseCreatedChunkSchema.Type {
   return chunk.type === "response.created"
 }
 
 function isResponseFunctionCallArgumentsDeltaChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseFunctionCallArgumentsDeltaSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseFunctionCallArgumentsDeltaSchema.Type {
   return chunk.type === "response.function_call_arguments.delta"
 }
 function isResponseImageGenerationCallPartialImageChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseImageGenerationCallPartialImageSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseImageGenerationCallPartialImageSchema.Type {
   return chunk.type === "response.image_generation_call.partial_image"
 }
 
 function isResponseCodeInterpreterCallCodeDeltaChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseCodeInterpreterCallCodeDeltaSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseCodeInterpreterCallCodeDeltaSchema.Type {
   return chunk.type === "response.code_interpreter_call_code.delta"
 }
 
 function isResponseCodeInterpreterCallCodeDoneChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseCodeInterpreterCallCodeDoneSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseCodeInterpreterCallCodeDoneSchema.Type {
   return chunk.type === "response.code_interpreter_call_code.done"
 }
 
 function isResponseOutputItemAddedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseOutputItemAddedSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseOutputItemAddedSchema.Type {
   return chunk.type === "response.output_item.added"
 }
 
-function isResponseOutputItemAddedReasoningChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<
-  typeof responseOutputItemAddedSchema
-> & {
-  item: ExtractByType<z.infer<typeof responseOutputItemAddedSchema>["item"], "reasoning">
+function isResponseOutputItemAddedReasoningChunk(
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseOutputItemAddedSchema.Type & {
+  item: ExtractByType<(typeof responseOutputItemAddedSchema.Type)["item"], "reasoning">
 } {
   return isResponseOutputItemAddedChunk(chunk) && chunk.item.type === "reasoning"
 }
 
 function isResponseAnnotationAddedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseAnnotationAddedSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseAnnotationAddedSchema.Type {
   return chunk.type === "response.output_text.annotation.added"
 }
 
 function isResponseReasoningSummaryPartAddedChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseReasoningSummaryPartAddedSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseReasoningSummaryPartAddedSchema.Type {
   return chunk.type === "response.reasoning_summary_part.added"
 }
 
 function isResponseReasoningSummaryTextDeltaChunk(
-  chunk: z.infer<typeof openaiResponsesChunkSchema>,
-): chunk is z.infer<typeof responseReasoningSummaryTextDeltaSchema> {
+  chunk: OpenAIResponsesChunk,
+): chunk is typeof responseReasoningSummaryTextDeltaSchema.Type {
   return chunk.type === "response.reasoning_summary_text.delta"
 }
 
-function isErrorChunk(chunk: z.infer<typeof openaiResponsesChunkSchema>): chunk is z.infer<typeof errorChunkSchema> {
+function isErrorChunk(chunk: OpenAIResponsesChunk): chunk is typeof errorChunkSchema.Type {
   return chunk.type === "error"
 }
 
@@ -1726,11 +1750,17 @@ function getResponsesModelConfig(modelId: string): ResponsesModelConfig {
 }
 
 // TODO AI SDK 6: use optional here instead of nullish
-const openaiResponsesProviderOptionsSchema = z.object({
-  include: z
-    .array(z.enum(["reasoning.encrypted_content", "file_search_call.results", "message.output_text.logprobs"]))
-    .nullish(),
-  instructions: z.string().nullish(),
+const openaiResponsesProviderOptionsSchema = Schema.Struct({
+  include: Schema.optional(
+    Schema.NullOr(
+      Schema.mutable(
+        Schema.Array(
+          Schema.Literals(["reasoning.encrypted_content", "file_search_call.results", "message.output_text.logprobs"]),
+        ),
+      ),
+    ),
+  ),
+  instructions: Schema.optional(Schema.NullOr(Schema.String)),
 
   /**
    * Return the log probabilities of the tokens.
@@ -1744,27 +1774,29 @@ const openaiResponsesProviderOptionsSchema = z.object({
    * @see https://platform.openai.com/docs/api-reference/responses/create
    * @see https://cookbook.openai.com/examples/using_logprobs
    */
-  logprobs: z.union([z.boolean(), z.number().min(1).max(TOP_LOGPROBS_MAX)]).optional(),
+  logprobs: Schema.optional(
+    Schema.Union([Schema.Boolean, Schema.Finite.check(Schema.isBetween({ minimum: 1, maximum: TOP_LOGPROBS_MAX }))]),
+  ),
 
   /**
    * The maximum number of total calls to built-in tools that can be processed in a response.
    * This maximum number applies across all built-in tool calls, not per individual tool.
    * Any further attempts to call a tool by the model will be ignored.
    */
-  maxToolCalls: z.number().nullish(),
+  maxToolCalls: Schema.optional(Schema.NullOr(Schema.Finite)),
 
-  metadata: z.any().nullish(),
-  parallelToolCalls: z.boolean().nullish(),
-  previousResponseId: z.string().nullish(),
-  promptCacheKey: z.string().nullish(),
-  reasoningEffort: z.string().nullish(),
-  reasoningSummary: z.string().nullish(),
-  safetyIdentifier: z.string().nullish(),
-  serviceTier: z.enum(["auto", "flex", "priority"]).nullish(),
-  store: z.boolean().nullish(),
-  strictJsonSchema: z.boolean().nullish(),
-  textVerbosity: z.enum(["low", "medium", "high"]).nullish(),
-  user: z.string().nullish(),
-})
+  metadata: Schema.optional(Schema.NullOr(Schema.MutableJson)),
+  parallelToolCalls: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  previousResponseId: Schema.optional(Schema.NullOr(Schema.String)),
+  promptCacheKey: Schema.optional(Schema.NullOr(Schema.String)),
+  reasoningEffort: Schema.optional(Schema.NullOr(Schema.String)),
+  reasoningSummary: Schema.optional(Schema.NullOr(Schema.String)),
+  safetyIdentifier: Schema.optional(Schema.NullOr(Schema.String)),
+  serviceTier: Schema.optional(Schema.NullOr(Schema.Literals(["auto", "flex", "priority"]))),
+  store: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  strictJsonSchema: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  textVerbosity: Schema.optional(Schema.NullOr(Schema.Literals(["low", "medium", "high"]))),
+  user: Schema.optional(Schema.NullOr(Schema.String)),
+}).annotate({ identifier: "CopilotResponses.ProviderOptions" })
 
-export type OpenAIResponsesProviderOptions = z.infer<typeof openaiResponsesProviderOptionsSchema>
+export type OpenAIResponsesProviderOptions = typeof openaiResponsesProviderOptionsSchema.Type

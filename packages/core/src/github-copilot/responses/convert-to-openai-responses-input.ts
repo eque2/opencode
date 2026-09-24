@@ -5,9 +5,16 @@ import {
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
+
+const openaiResponsesReasoningProviderOptionsSchema = Schema.Struct({
+  itemId: Schema.optional(Schema.NullOr(Schema.String)),
+  reasoningEncryptedContent: Schema.optional(Schema.NullOr(Schema.String)),
+}).annotate({ identifier: "CopilotResponses.ReasoningProviderOptions" })
+
+export type OpenAIResponsesReasoningProviderOptions = typeof openaiResponsesReasoningProviderOptionsSchema.Type
 
 /**
  * Check if a string is a file ID based on the given prefixes
@@ -139,7 +146,7 @@ export async function convertToOpenAIResponsesInput({
               }
 
               if (hasLocalShellTool && part.toolName === "local_shell") {
-                const parsedInput = localShellInputSchema.parse(part.input)
+                const parsedInput = Schema.decodeUnknownSync(localShellInputSchema)(part.input)
                 input.push({
                   type: "local_shell_call",
                   call_id: part.toolCallId,
@@ -186,7 +193,7 @@ export async function convertToOpenAIResponsesInput({
               const providerOptions = await parseProviderOptions({
                 provider: "copilot",
                 providerOptions: part.providerOptions,
-                schema: openaiResponsesReasoningProviderOptionsSchema,
+                schema: Schema.toStandardSchemaV1(openaiResponsesReasoningProviderOptionsSchema),
               })
 
               const reasoningId = providerOptions?.itemId
@@ -286,7 +293,7 @@ export async function convertToOpenAIResponsesInput({
             input.push({
               type: "local_shell_call_output",
               call_id: part.toolCallId,
-              output: localShellOutputSchema.parse(output.value).output,
+              output: Schema.decodeUnknownSync(localShellOutputSchema)(output.value).output,
             })
             break
           }
@@ -326,10 +333,3 @@ export async function convertToOpenAIResponsesInput({
 
   return { input, warnings }
 }
-
-const openaiResponsesReasoningProviderOptionsSchema = z.object({
-  itemId: z.string().nullish(),
-  reasoningEncryptedContent: z.string().nullish(),
-})
-
-export type OpenAIResponsesReasoningProviderOptions = z.infer<typeof openaiResponsesReasoningProviderOptionsSchema>

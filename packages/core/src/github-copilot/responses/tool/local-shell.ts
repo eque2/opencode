@@ -1,20 +1,20 @@
 import { createProviderToolFactoryWithOutputSchema } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 
-export const localShellInputSchema = z.object({
-  action: z.object({
-    type: z.literal("exec"),
-    command: z.array(z.string()),
-    timeoutMs: z.number().optional(),
-    user: z.string().optional(),
-    workingDirectory: z.string().optional(),
-    env: z.record(z.string(), z.string()).optional(),
+export const localShellInputSchema = Schema.Struct({
+  action: Schema.Struct({
+    type: Schema.Literal("exec"),
+    command: Schema.mutable(Schema.Array(Schema.String)),
+    timeoutMs: Schema.optional(Schema.Finite),
+    user: Schema.optional(Schema.String),
+    workingDirectory: Schema.optional(Schema.String),
+    env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   }),
-})
+}).annotate({ identifier: "CopilotResponses.LocalShellInput" })
 
-export const localShellOutputSchema = z.object({
-  output: z.string(),
-})
+export const localShellOutputSchema = Schema.Struct({
+  output: Schema.String,
+}).annotate({ identifier: "CopilotResponses.LocalShellOutput" })
 
 export const localShell = createProviderToolFactoryWithOutputSchema<
   {
@@ -59,6 +59,6 @@ export const localShell = createProviderToolFactoryWithOutputSchema<
   {}
 >({
   id: "openai.local_shell",
-  inputSchema: localShellInputSchema,
-  outputSchema: localShellOutputSchema,
+  inputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(localShellInputSchema)),
+  outputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(localShellOutputSchema)),
 })

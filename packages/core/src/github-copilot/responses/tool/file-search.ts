@@ -3,45 +3,57 @@ import type {
   OpenAIResponsesFileSearchToolComparisonFilter,
   OpenAIResponsesFileSearchToolCompoundFilter,
 } from "../openai-responses-api-types"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 
-const comparisonFilterSchema = z.object({
-  key: z.string(),
-  type: z.enum(["eq", "ne", "gt", "gte", "lt", "lte"]),
-  value: z.union([z.string(), z.number(), z.boolean()]),
-})
+// The Responses API names an uploaded file with this id.
+export const FileID = Schema.String.pipe(Schema.brand("CopilotResponses.FileID"))
 
-const compoundFilterSchema: z.ZodType<any> = z.object({
-  type: z.enum(["and", "or"]),
-  filters: z.array(z.union([comparisonFilterSchema, z.lazy(() => compoundFilterSchema)])),
-})
+const comparisonFilterSchema = Schema.Struct({
+  key: Schema.String,
+  type: Schema.Literals(["eq", "ne", "gt", "gte", "lt", "lte"]),
+  value: Schema.Union([Schema.String, Schema.Finite, Schema.Boolean]),
+}).annotate({ identifier: "CopilotResponses.FileSearchComparisonFilter" })
 
-export const fileSearchArgsSchema = z.object({
-  vectorStoreIds: z.array(z.string()),
-  maxNumResults: z.number().optional(),
-  ranking: z
-    .object({
-      ranker: z.string().optional(),
-      scoreThreshold: z.number().optional(),
-    })
-    .optional(),
-  filters: z.union([comparisonFilterSchema, compoundFilterSchema]).optional(),
-})
+const compoundFilterSchema: Schema.Codec<OpenAIResponsesFileSearchToolCompoundFilter> = Schema.Struct({
+  type: Schema.Literals(["and", "or"]),
+  filters: Schema.mutable(
+    Schema.Array(
+      Schema.Union([
+        comparisonFilterSchema,
+        Schema.suspend((): Schema.Codec<OpenAIResponsesFileSearchToolCompoundFilter> => compoundFilterSchema),
+      ]),
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.FileSearchCompoundFilter" })
 
-export const fileSearchOutputSchema = z.object({
-  queries: z.array(z.string()),
-  results: z
-    .array(
-      z.object({
-        attributes: z.record(z.string(), z.unknown()),
-        fileId: z.string(),
-        filename: z.string(),
-        score: z.number(),
-        text: z.string(),
-      }),
-    )
-    .nullable(),
-})
+export const fileSearchArgsSchema = Schema.Struct({
+  vectorStoreIds: Schema.mutable(Schema.Array(Schema.String)),
+  maxNumResults: Schema.optional(Schema.Finite),
+  ranking: Schema.optional(
+    Schema.Struct({
+      ranker: Schema.optional(Schema.String),
+      scoreThreshold: Schema.optional(Schema.Finite),
+    }),
+  ),
+  filters: Schema.optional(Schema.Union([comparisonFilterSchema, compoundFilterSchema])),
+}).annotate({ identifier: "CopilotResponses.FileSearchArgs" })
+
+export const fileSearchOutputSchema = Schema.Struct({
+  queries: Schema.mutable(Schema.Array(Schema.String)),
+  results: Schema.NullOr(
+    Schema.mutable(
+      Schema.Array(
+        Schema.Struct({
+          attributes: Schema.Record(Schema.String, Schema.MutableJson),
+          fileId: FileID,
+          filename: Schema.String,
+          score: Schema.Finite,
+          text: Schema.String,
+        }),
+      ),
+    ),
+  ),
+}).annotate({ identifier: "CopilotResponses.FileSearchOutput" })
 
 export const fileSearch = createProviderToolFactoryWithOutputSchema<
   {},
@@ -122,6 +134,6 @@ export const fileSearch = createProviderToolFactoryWithOutputSchema<
   }
 >({
   id: "openai.file_search",
-  inputSchema: z.object({}),
-  outputSchema: fileSearchOutputSchema,
+  inputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(Schema.Struct({}))),
+  outputSchema: Schema.toStandardSchemaV1(Schema.toStandardJSONSchemaV1(fileSearchOutputSchema)),
 })

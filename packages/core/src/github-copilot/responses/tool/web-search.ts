@@ -1,25 +1,25 @@
 import { createProviderToolFactory } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 
-export const webSearchArgsSchema = z.object({
-  filters: z
-    .object({
-      allowedDomains: z.array(z.string()).optional(),
-    })
-    .optional(),
+export const webSearchArgsSchema = Schema.Struct({
+  filters: Schema.optional(
+    Schema.Struct({
+      allowedDomains: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+    }),
+  ),
 
-  searchContextSize: z.enum(["low", "medium", "high"]).optional(),
+  searchContextSize: Schema.optional(Schema.Literals(["low", "medium", "high"])),
 
-  userLocation: z
-    .object({
-      type: z.literal("approximate"),
-      country: z.string().optional(),
-      city: z.string().optional(),
-      region: z.string().optional(),
-      timezone: z.string().optional(),
-    })
-    .optional(),
-})
+  userLocation: Schema.optional(
+    Schema.Struct({
+      type: Schema.Literal("approximate"),
+      country: Schema.optional(Schema.String),
+      city: Schema.optional(Schema.String),
+      region: Schema.optional(Schema.String),
+      timezone: Schema.optional(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "CopilotResponses.WebSearchArgs" })
 
 export const webSearchToolFactory = createProviderToolFactory<
   {
@@ -74,25 +74,31 @@ export const webSearchToolFactory = createProviderToolFactory<
   }
 >({
   id: "openai.web_search",
-  inputSchema: z.object({
-    action: z
-      .discriminatedUnion("type", [
-        z.object({
-          type: z.literal("search"),
-          query: z.string().nullish(),
-        }),
-        z.object({
-          type: z.literal("open_page"),
-          url: z.string(),
-        }),
-        z.object({
-          type: z.literal("find"),
-          url: z.string(),
-          pattern: z.string(),
-        }),
-      ])
-      .nullish(),
-  }),
+  inputSchema: Schema.toStandardSchemaV1(
+    Schema.toStandardJSONSchemaV1(
+      Schema.Struct({
+        action: Schema.optional(
+          Schema.NullOr(
+            Schema.Union([
+              Schema.Struct({
+                type: Schema.Literal("search"),
+                query: Schema.optional(Schema.NullOr(Schema.String)),
+              }),
+              Schema.Struct({
+                type: Schema.Literal("open_page"),
+                url: Schema.String,
+              }),
+              Schema.Struct({
+                type: Schema.Literal("find"),
+                url: Schema.String,
+                pattern: Schema.String,
+              }),
+            ]),
+          ),
+        ),
+      }),
+    ),
+  ),
 })
 
 export const webSearch = (
