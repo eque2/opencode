@@ -41,6 +41,13 @@ const Org = Schema.Struct({ id: OrgID, name: Schema.String }).annotate({ identif
 // provider on each reload so a key set at run time still counts.
 const apiKeyFromEnv = Config.option(Config.Redacted("OPENCODE_API_KEY"))
 
+class DeviceAuthorizationError extends Schema.TaggedError<DeviceAuthorizationError>()(
+  "OpencodePlugin.DeviceAuthorizationError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
+const isWebURL = (url: URL) => url.protocol === "http:" || url.protocol === "https:"
+
 function oauth(http: HttpClient.HttpClient) {
   return {
     integrationID: Integration.ID.make("opencode"),
@@ -53,14 +60,18 @@ function oauth(http: HttpClient.HttpClient) {
       Effect.gen(function* () {
         const device = yield* post(http, `${defaultServer}/auth/device/code`, { client_id: clientID }, Device)
         const verification = yield* Effect.try({
-          try: () => {
-            const url = new URL(device.verification_uri_complete, `${defaultServer}/`)
-            if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("expected HTTP(S)")
-            return url
-          },
+          try: () => new URL(device.verification_uri_complete, `${defaultServer}/`),
           catch: (cause) =>
-            new Error(`Invalid device verification URL: ${cause instanceof Error ? cause.message : String(cause)}`),
-        })
+            new DeviceAuthorizationError({
+              message: `Invalid device verification URL: ${cause instanceof Error ? cause.message : String(cause)}`,
+              cause,
+            }),
+        }).pipe(
+          Effect.filterOrFail(
+            isWebURL,
+            () => new DeviceAuthorizationError({ message: "Invalid device verification URL: expected HTTP(S)" }),
+          ),
+        )
         return {
           mode: "auto" as const,
           url: verification.href,
@@ -275,7 +286,7 @@ function poll(http: HttpClient.HttpClient, server: string, deviceCode: string, i
       if (result.error === "slow_down") {
         return yield* loop(Duration.sum(wait, Duration.seconds(5)))
       }
-      return yield* Effect.fail(new Error(`Device authorization failed: ${result.error}`))
+      return yield* new DeviceAuthorizationError({ message: `Device authorization failed: ${result.error}` })
     })
   return loop(interval)
 }
