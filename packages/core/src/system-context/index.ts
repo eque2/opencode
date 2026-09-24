@@ -1,6 +1,6 @@
 export * as SystemContext from "./index"
 
-import { Data, Effect, Option, Schema } from "effect"
+import { Data, Effect, HashSet, MutableHashSet, Option, Schema } from "effect"
 
 /**
  * Models privileged system context as independently refreshable typed sources.
@@ -127,6 +127,13 @@ type Entry = Data.TaggedEnum<{
 }>
 const Entry = Data.taggedEnum<Entry>()
 
+/** One observed source's part of the next snapshot, planned before any update text is rendered. */
+type Step = Data.TaggedEnum<{
+  Keep: { readonly key: Key; readonly snapshot: SourceSnapshot }
+  Render: { readonly key: Key; readonly render: () => Rendered }
+}>
+const Step = Data.taggedEnum<Step>()
+
 /** The identity context. */
 export const empty = context([])
 
@@ -214,60 +221,52 @@ function initializeObservation(entries: ReadonlyArray<Entry>): Generation {
 
 /** Reconciles current source values with one active generation. */
 export function reconcile(value: SystemContext, previous: Snapshot): Effect.Effect<ReconcileResult> {
-  return observe(value).pipe(
-    Effect.map((entries) => reconcileObservation(entries, previous)),
-  )
+  return observe(value).pipe(Effect.map((entries) => reconcileObservation(entries, previous)))
 }
 
 function reconcileObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReconcileResult {
-  const keys = new Set(entries.map((entry) => entry.key))
-  const comparisons = new Map<Key, Compared>()
-  for (const entry of entries) {
-    if (entry._tag === "Unavailable") continue
-    const stored = getSnapshot(previous, entry.key)
-    if (!stored) continue
-    const compared = entry.compare(stored.value)
-    if (compared._tag === "Incompatible") return replaceObservation(entries, previous)
-    comparisons.set(entry.key, compared)
-  }
-  for (const key of Object.keys(previous).sort()) {
-    if (keys.has(Key.make(key))) continue
-    if (previous[key].removed === undefined) return replaceObservation(entries, previous)
-  }
-
-  const snapshot: Record<string, SourceSnapshot> = {}
-  const updates: string[] = []
-  for (const entry of entries) {
-    const stored = getSnapshot(previous, entry.key)
-    if (entry._tag === "Unavailable") {
-      if (stored) snapshot[entry.key] = stored
-      continue
-    }
-    if (!stored) {
-      const rendered = entry.baseline()
-      updates.push(rendered.text)
-      snapshot[entry.key] = rendered.snapshot
-      continue
-    }
-    const compared = comparisons.get(entry.key)
-    if (!compared || compared._tag === "Incompatible")
-      throw new Error(`Missing comparison for system context source ${entry.key}`)
-    if (compared._tag === "Unchanged") {
-      snapshot[entry.key] = stored
-      continue
-    }
-    const rendered = compared.render()
-    updates.push(rendered.text)
-    snapshot[entry.key] = rendered.snapshot
-  }
-  for (const key of Object.keys(previous).sort()) {
-    if (keys.has(Key.make(key))) continue
-    const removed = previous[key].removed
-    if (removed === undefined) throw new Error(`Missing removal rendering for system context source ${key}`)
-    updates.push(removed)
-  }
+  const plan = Option.all(entries.map((entry) => planEntry(entry, getSnapshot(previous, entry.key)))).pipe(
+    Option.flatMap((steps) => Option.map(removals(entries, previous), (removed) => ({ steps: steps.flat(), removed }))),
+  )
+  if (Option.isNone(plan)) return replaceObservation(entries, previous)
+  const resolved = plan.value.steps.map((step) =>
+    Step.$match(step, {
+      Keep: (kept) => ({ key: kept.key, snapshot: kept.snapshot, text: Option.none<string>() }),
+      Render: (pending) => {
+        const rendered = pending.render()
+        return { key: pending.key, snapshot: rendered.snapshot, text: Option.some(rendered.text) }
+      },
+    }),
+  )
+  const updates = [...resolved.flatMap((item) => Option.toArray(item.text)), ...plan.value.removed]
   if (updates.length === 0) return ReconcileResult.Unchanged()
-  return ReconcileResult.Updated({ text: render(updates), snapshot })
+  return ReconcileResult.Updated({
+    text: render(updates),
+    snapshot: Object.fromEntries(resolved.map((item) => [item.key, item.snapshot])),
+  })
+}
+
+/** Plans one observed source. `None` means its stored value no longer decodes, so the generation is replaced. */
+function planEntry(entry: Entry, stored: Option.Option<SourceSnapshot>): Option.Option<ReadonlyArray<Step>> {
+  if (entry._tag === "Unavailable")
+    return Option.some(Option.toArray(Option.map(stored, (snapshot) => Step.Keep({ key: entry.key, snapshot }))))
+  if (Option.isNone(stored)) return Option.some([Step.Render({ key: entry.key, render: entry.baseline })])
+  return Compared.$match(entry.compare(stored.value.value), {
+    Incompatible: () => Option.none(),
+    Unchanged: () => Option.some([Step.Keep({ key: entry.key, snapshot: stored.value })]),
+    Updated: (compared) => Option.some([Step.Render({ key: entry.key, render: compared.render })]),
+  })
+}
+
+/** Removal texts of admitted sources that left the context, in key order. `None` when one has no removal text. */
+function removals(entries: ReadonlyArray<Entry>, previous: Snapshot): Option.Option<ReadonlyArray<string>> {
+  const present = HashSet.fromIterable(entries.map((entry) => entry.key))
+  return Option.all(
+    Object.keys(previous)
+      .sort()
+      .filter((key) => !HashSet.has(present, Key.make(key)))
+      .map((key) => Option.fromUndefinedOr(previous[key].removed)),
+  )
 }
 
 /** Creates a complete replacement generation or blocks while admitted context is unavailable. */
@@ -276,7 +275,7 @@ export function replace(value: SystemContext, previous: Snapshot): Effect.Effect
 }
 
 function replaceObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReplacementResult {
-  if (entries.some((entry) => entry._tag === "Unavailable" && getSnapshot(previous, entry.key) !== undefined))
+  if (entries.some((entry) => entry._tag === "Unavailable" && Option.isSome(getSnapshot(previous, entry.key))))
     return ReconcileResult.ReplacementBlocked()
   return ReconcileResult.ReplacementReady({ generation: initializeObservation(entries) })
 }
@@ -289,8 +288,8 @@ function render(parts: ReadonlyArray<string>) {
   return parts.join("\n\n")
 }
 
-function getSnapshot(snapshot: Snapshot, key: Key) {
-  return Object.hasOwn(snapshot, key) ? snapshot[key] : undefined
+function getSnapshot(snapshot: Snapshot, key: Key): Option.Option<SourceSnapshot> {
+  return Object.hasOwn(snapshot, key) ? Option.some(snapshot[key]) : Option.none()
 }
 
 function isUnavailable(value: unknown): value is Unavailable {
@@ -303,9 +302,9 @@ function requireText(key: Key, kind: string, text: string) {
 }
 
 function assertUniqueKeys(sources: ReadonlyArray<PackedSource>) {
-  const keys = new Set<Key>()
+  const keys = MutableHashSet.empty<Key>()
   for (const source of sources) {
-    if (keys.has(source.key)) throw new DuplicateKeyError({ key: source.key })
-    keys.add(source.key)
+    if (MutableHashSet.has(keys, source.key)) throw new DuplicateKeyError({ key: source.key })
+    MutableHashSet.add(keys, source.key)
   }
 }
