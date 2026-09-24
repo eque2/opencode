@@ -1,7 +1,7 @@
 export * as PluginV2 from "./plugin"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect, Exit, Layer, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Layer, MutableHashMap, Option, Scope } from "effect"
 import type { Plugin as PluginRuntime } from "@opencode-ai/plugin/v2/effect"
 import { Plugin } from "@opencode-ai/schema/plugin"
 import { AgentV2 } from "./agent"
@@ -34,10 +34,11 @@ const layer = Layer.effect(
     const events = yield* EventV2.Service
     const locks = KeyedMutex.makeUnsafe<ID>()
     const scope = yield* Scope.make()
-    const active = new Map<ID, Scope.Closeable>()
+    const active = MutableHashMap.empty<ID, Scope.Closeable>()
     const loading = new Set<ID>()
-    const waiters = new Map<ID, Set<Deferred.Deferred<void>>>()
-    const failures = new Map<ID, Exit.Exit<void, never>>()
+    const waiters = MutableHashMap.empty<ID, Set<Deferred.Deferred<void>>>()
+    const failures = MutableHashMap.empty<ID, Exit.Exit<void, never>>()
+    const waitersOf = (id: ID) => Option.getOrElse(MutableHashMap.get(waiters, id), () => [])
     let host: Parameters<PluginRuntime["effect"]>[0]
 
     const add = Effect.fn("Plugin.add")(function* (id: ID, effect: PluginRuntime["effect"]) {
@@ -46,14 +47,14 @@ const layer = Layer.effect(
       yield* locks.withLock(id)(
         Effect.sync(() => {
           loading.add(id)
-          failures.delete(id)
+          MutableHashMap.remove(failures, id)
         }).pipe(
           Effect.andThen(
             State.batch(
               Effect.gen(function* () {
-                const existing = active.get(id)
-                active.delete(id)
-                if (existing) yield* Scope.close(existing, Exit.void).pipe(Effect.ignore)
+                const existing = MutableHashMap.get(active, id)
+                MutableHashMap.remove(active, id)
+                if (Option.isSome(existing)) yield* Scope.close(existing.value, Exit.void).pipe(Effect.ignore)
 
                 const child = yield* Scope.fork(scope)
                 yield* effect(host).pipe(
@@ -62,20 +63,20 @@ const layer = Layer.effect(
                   Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(child, exit) : Effect.void)),
                 )
                 yield* events.publish(Event.Added, { id })
-                active.set(id, child)
-                yield* Effect.forEach(waiters.get(id) ?? [], (waiter) => Deferred.succeed(waiter, undefined), {
+                MutableHashMap.set(active, id, child)
+                yield* Effect.forEach(waitersOf(id), (waiter) => Deferred.succeed(waiter, undefined), {
                   discard: true,
                 })
-                waiters.delete(id)
+                MutableHashMap.remove(waiters, id)
               }),
             ),
           ),
           Effect.onExit((exit) => {
             if (Exit.isSuccess(exit)) return Effect.void
-            failures.set(id, exit)
-            return Effect.forEach(waiters.get(id) ?? [], (waiter) => Deferred.done(waiter, exit), {
+            MutableHashMap.set(failures, id, exit)
+            return Effect.forEach(waitersOf(id), (waiter) => Deferred.done(waiter, exit), {
               discard: true,
-            }).pipe(Effect.ensuring(Effect.sync(() => waiters.delete(id))))
+            }).pipe(Effect.ensuring(Effect.sync(() => MutableHashMap.remove(waiters, id))))
           }),
           Effect.ensuring(Effect.sync(() => loading.delete(id))),
         ),
@@ -88,10 +89,10 @@ const layer = Layer.effect(
       yield* locks.withLock(id)(
         State.batch(
           Effect.gen(function* () {
-            const current = active.get(id)
-            active.delete(id)
-            failures.delete(id)
-            if (current) yield* Scope.close(current, Exit.void).pipe(Effect.ignore)
+            const current = MutableHashMap.get(active, id)
+            MutableHashMap.remove(active, id)
+            MutableHashMap.remove(failures, id)
+            if (Option.isSome(current)) yield* Scope.close(current.value, Exit.void).pipe(Effect.ignore)
           }),
         ),
       )
@@ -101,12 +102,12 @@ const layer = Layer.effect(
       const waiter = yield* Deferred.make<void>()
       const pending = yield* locks.withLock(id)(
         Effect.sync(() => {
-          if (active.has(id)) return false
-          const failure = failures.get(id)
-          if (failure) return failure
-          const current = waiters.get(id) ?? new Set()
+          if (MutableHashMap.has(active, id)) return false
+          const failure = MutableHashMap.get(failures, id)
+          if (Option.isSome(failure)) return failure.value
+          const current = Option.getOrElse(MutableHashMap.get(waiters, id), () => new Set<Deferred.Deferred<void>>())
           current.add(waiter)
-          waiters.set(id, current)
+          MutableHashMap.set(waiters, id, current)
           return true
         }),
       )
@@ -116,9 +117,10 @@ const layer = Layer.effect(
         Effect.ensuring(
           locks.withLock(id)(
             Effect.sync(() => {
-              const current = waiters.get(id)
-              current?.delete(waiter)
-              if (current?.size === 0) waiters.delete(id)
+              const current = MutableHashMap.get(waiters, id)
+              if (Option.isNone(current)) return
+              current.value.delete(waiter)
+              if (current.value.size === 0) MutableHashMap.remove(waiters, id)
             }),
           ),
         ),
@@ -127,7 +129,7 @@ const layer = Layer.effect(
 
     yield* Effect.addFinalizer((exit) =>
       Effect.gen(function* () {
-        active.clear()
+        MutableHashMap.clear(active)
         yield* State.batch(Scope.close(scope, exit))
       }),
     )

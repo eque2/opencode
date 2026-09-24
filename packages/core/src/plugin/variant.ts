@@ -1,7 +1,7 @@
 export * as VariantPlugin from "./variant"
 
 import type { ModelV2Info } from "@opencode-ai/sdk/v2/types"
-import { Effect } from "effect"
+import { Effect, HashMap, Option } from "effect"
 import { define } from "./internal"
 
 export const Plugin = define({
@@ -14,10 +14,10 @@ export const Plugin = define({
             const generated = generate(draft)
             if (generated.length === 0) return
 
-            const explicit = new Map(draft.variants.map((variant) => [variant.id, variant]))
+            const explicit = HashMap.fromIterable(draft.variants.map((variant) => [variant.id, variant] as const))
             const generatedIDs = new Set(generated.map((variant) => variant.id))
             draft.variants = [
-              ...generated.map((variant) => explicit.get(variant.id) ?? variant),
+              ...generated.map((variant) => Option.getOrElse(HashMap.get(explicit, variant.id), () => variant)),
               ...draft.variants.filter((variant) => !generatedIDs.has(variant.id)),
             ]
           })

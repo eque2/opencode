@@ -8,7 +8,10 @@ import {
   Duration,
   Effect,
   Exit,
+  HashMap,
   Layer,
+  MutableHashMap,
+  Option,
   Schedule,
   Schema,
   Scope,
@@ -118,11 +121,11 @@ export type Ref = Integration.Ref
 type Entry = {
   ref: Types.DeepMutable<Ref>
   methods: Types.DeepMutable<Method>[]
-  implementations: Map<MethodID, Types.DeepMutable<OAuthImplementation>>
+  implementations: MutableHashMap.MutableHashMap<MethodID, Types.DeepMutable<OAuthImplementation>>
 }
 
 type Data = {
-  integrations: Map<ID, Entry>
+  integrations: MutableHashMap.MutableHashMap<ID, Entry>
 }
 
 export type Draft = {
@@ -217,6 +220,17 @@ type TerminalAttempt = {
   time: AttemptTime
 }
 type AttemptEntry = PendingAttempt | TerminalAttempt
+type Attempts = HashMap.HashMap<AttemptID, AttemptEntry>
+
+const isPending = (attempt: AttemptEntry): attempt is PendingAttempt => attempt.status === "pending"
+
+// Returns the registry entry for an integration, creating an empty one on first use.
+const entryOf = (data: Data, id: ID): Entry =>
+  Option.getOrElse(MutableHashMap.get(data.integrations, id), () => {
+    const created: Entry = { ref: { id, name: id }, methods: [], implementations: MutableHashMap.empty() }
+    MutableHashMap.set(data.integrations, id, created)
+    return created
+  })
 
 export const locationLayer = Layer.effect(
   Service,
@@ -224,37 +238,29 @@ export const locationLayer = Layer.effect(
     const credentials = yield* Credential.Service
     const events = yield* EventV2.Service
     const scope = yield* Scope.Scope
-    const attempts = SynchronizedRef.makeUnsafe(new Map<AttemptID, AttemptEntry>())
+    const attempts = SynchronizedRef.makeUnsafe(HashMap.empty<AttemptID, AttemptEntry>())
     const state = State.create<Data, Draft>({
-      initial: () => ({ integrations: new Map<ID, Entry>() }),
+      initial: () => ({ integrations: MutableHashMap.empty<ID, Entry>() }),
       draft: (draft) => ({
-        list: () => Array.from(draft.integrations.values(), (entry) => entry.ref) as Ref[],
-        get: (id) => draft.integrations.get(id)?.ref as Ref | undefined,
+        list: () => Array.from(MutableHashMap.values(draft.integrations), (entry) => entry.ref),
+        get: (id) =>
+          Option.getOrUndefined(Option.map(MutableHashMap.get(draft.integrations, id), (entry) => entry.ref)),
         update: (id, update) => {
-          const current = draft.integrations.get(id) ?? {
-            ref: { id, name: id },
-            methods: [],
-            implementations: new Map(),
-          }
-          if (!draft.integrations.has(id)) draft.integrations.set(id, current)
+          const current = entryOf(draft, id)
           update(current.ref)
           current.ref.id = id
         },
-        remove: (id) => draft.integrations.delete(id),
+        remove: (id) => {
+          MutableHashMap.remove(draft.integrations, id)
+        },
         method: {
-          list: (integrationID) => (draft.integrations.get(integrationID)?.methods as Method[] | undefined) ?? [],
+          list: (integrationID) =>
+            Option.match(MutableHashMap.get(draft.integrations, integrationID), {
+              onNone: () => [],
+              onSome: (entry) => entry.methods,
+            }),
           update: (implementation) => {
-            const current = draft.integrations.get(implementation.integrationID) ?? {
-              ref: {
-                id: implementation.integrationID,
-                name: implementation.integrationID,
-              },
-              methods: [],
-              implementations: new Map<MethodID, Types.DeepMutable<OAuthImplementation>>(),
-            }
-            if (!draft.integrations.has(implementation.integrationID)) {
-              draft.integrations.set(implementation.integrationID, current)
-            }
+            const current = entryOf(draft, implementation.integrationID)
             const index = current.methods.findIndex((method) => {
               if (method.type !== implementation.method.type) return false
               if (method.type !== "oauth" || implementation.method.type !== "oauth") return true
@@ -263,29 +269,36 @@ export const locationLayer = Layer.effect(
             if (index === -1) current.methods.push(implementation.method as Types.DeepMutable<Method>)
             else current.methods[index] = implementation.method as Types.DeepMutable<Method>
             if (implementation.method.type === "oauth") {
-              current.implementations.set(
+              MutableHashMap.set(
+                current.implementations,
                 implementation.method.id,
                 implementation as Types.DeepMutable<OAuthImplementation>,
               )
             }
           },
           remove: (integrationID, method) => {
-            const current = draft.integrations.get(integrationID)
-            if (!current) return
+            const entry = MutableHashMap.get(draft.integrations, integrationID)
+            if (Option.isNone(entry)) return
+            const current = entry.value
             const index = current.methods.findIndex((candidate) => {
               if (candidate.type !== method.type) return false
               if (candidate.type !== "oauth" || method.type !== "oauth") return true
               return candidate.id === method.id
             })
             if (index !== -1) current.methods.splice(index, 1)
-            if (method.type === "oauth") current.implementations.delete(method.id)
+            if (method.type === "oauth") MutableHashMap.remove(current.implementations, method.id)
           },
         },
       }),
       finalize: () => events.publish(Event.Updated, {}).pipe(Effect.asVoid),
     })
 
-    const resolveConnections = (entry: Entry | undefined, saved: readonly Credential.Info[]) => {
+    const implementationOf = (integrationID: ID, methodID: MethodID) =>
+      MutableHashMap.get(state.get().integrations, integrationID).pipe(
+        Option.flatMap((entry) => MutableHashMap.get(entry.implementations, methodID)),
+      )
+
+    const resolveConnections = (methods: readonly Method[], saved: readonly Credential.Info[]) => {
       const credentials = saved
         .map((credential) => ({
           type: "credential" as const,
@@ -293,7 +306,7 @@ export const locationLayer = Layer.effect(
           label: credential.label,
         }))
         .toReversed()
-      const env = (entry?.methods ?? [])
+      const env = methods
         .filter((method) => method.type === "env")
         .flatMap((method) => method.names.filter((name) => process.env[name]))
         .map((name) => ({ type: "env" as const, name }))
@@ -321,20 +334,27 @@ export const locationLayer = Layer.effect(
 
     const settle = Effect.fnUntraced(function* (attemptID: AttemptID, exit: Exit.Exit<Credential.OAuth, unknown>) {
       const now = yield* Clock.currentTimeMillis
-      const result = yield* SynchronizedRef.modify(attempts, (current) => {
-        const attempt = current.get(attemptID)
-        if (!attempt || attempt.status !== "pending") return [undefined, current]
-        const terminal: TerminalAttempt = Exit.isSuccess(exit)
-          ? { status: "complete", time: attempt.time, removeAt: now + terminalRetention }
-          : { status: "failed", message: message(exit.cause), time: attempt.time, removeAt: now + terminalRetention }
-        return [attempt, new Map(current).set(attemptID, terminal)]
-      })
-      if (!result) return
+      const settled = yield* SynchronizedRef.modify(
+        attempts,
+        (current): readonly [Option.Option<PendingAttempt>, Attempts] => {
+          const attempt = HashMap.get(current, attemptID).pipe(Option.filter(isPending))
+          if (Option.isNone(attempt)) return [attempt, current]
+          const time = attempt.value.time
+          const terminal: TerminalAttempt = Exit.isSuccess(exit)
+            ? { status: "complete", time, removeAt: now + terminalRetention }
+            : { status: "failed", message: message(exit.cause), time, removeAt: now + terminalRetention }
+          return [attempt, HashMap.set(current, attemptID, terminal)]
+        },
+      )
+      if (Option.isNone(settled)) return
+      const result = settled.value
       if (Exit.isSuccess(exit)) {
-        const implementation = state.get().integrations.get(result.integrationID)?.implementations.get(result.methodID)
+        const implementation = implementationOf(result.integrationID, result.methodID)
         yield* credentials.create({
           integrationID: result.integrationID,
-          label: result.label ?? implementation?.label?.(exit.value),
+          label:
+            result.label ??
+            Option.getOrUndefined(Option.flatMapNullishOr(implementation, (item) => item.label?.(exit.value))),
           value: exit.value,
         })
         yield* events.publish(Event.ConnectionUpdated, { integrationID: result.integrationID })
@@ -346,16 +366,22 @@ export const locationLayer = Layer.effect(
     const scrub = Effect.fnUntraced(function* () {
       const now = yield* Clock.currentTimeMillis
       const expired = yield* SynchronizedRef.modify(attempts, (current) => {
-        const next = new Map(current)
-        const scopes: Scope.Closeable[] = []
-        for (const [id, attempt] of current) {
-          if (attempt.status === "pending" && attempt.time.expires <= now) {
-            scopes.push(attempt.scope)
-            next.set(id, { status: "expired", time: attempt.time, removeAt: now + terminalRetention })
-            continue
-          }
-          if (attempt.status !== "pending" && attempt.removeAt <= now) next.delete(id)
-        }
+        const isExpired = (attempt: AttemptEntry): attempt is PendingAttempt =>
+          isPending(attempt) && attempt.time.expires <= now
+        const scopes = Array.from(HashMap.values(current)).flatMap((attempt) =>
+          isExpired(attempt) ? [attempt.scope] : [],
+        )
+        // Expire pending attempts past their lifetime, then drop terminal attempts past retention.
+        const next = HashMap.filter(
+          HashMap.map(
+            current,
+            (attempt): AttemptEntry =>
+              isExpired(attempt)
+                ? { status: "expired", time: attempt.time, removeAt: now + terminalRetention }
+                : attempt,
+          ),
+          (attempt) => isPending(attempt) || attempt.removeAt > now,
+        )
         return [scopes, next]
       })
       yield* Effect.forEach(expired, close, { discard: true })
@@ -367,20 +393,23 @@ export const locationLayer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       get: Effect.fn("Integration.get")(function* (id) {
-        const entry = state.get().integrations.get(id)
-        if (!entry) return undefined
-        return project(entry, resolveConnections(entry, yield* credentials.list(id)))
+        const entry = MutableHashMap.get(state.get().integrations, id)
+        if (Option.isNone(entry)) return undefined
+        return project(entry.value, resolveConnections(entry.value.methods, yield* credentials.list(id)))
       }),
       list: Effect.fn("Integration.list")(function* () {
         const saved = Map.groupBy(yield* credentials.all(), (credential) => credential.integrationID)
-        return Array.from(state.get().integrations.values(), (entry) =>
-          project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
+        return Array.from(MutableHashMap.values(state.get().integrations), (entry) =>
+          project(entry, resolveConnections(entry.methods, saved.get(entry.ref.id) ?? [])),
         ).toSorted((a, b) => a.name.localeCompare(b.name))
       }),
       connection: {
         active: Effect.fn("Integration.connection.active")(function* (id) {
-          const entry = state.get().integrations.get(id)
-          return resolveConnections(entry, yield* credentials.list(id))[0]
+          const methods = Option.match(MutableHashMap.get(state.get().integrations, id), {
+            onNone: () => [],
+            onSome: (entry) => entry.methods,
+          })
+          return resolveConnections(methods, yield* credentials.list(id))[0]
         }),
         resolve: Effect.fn("Integration.connection.resolve")(function* (connection) {
           if (connection.type === "env") {
@@ -390,22 +419,21 @@ export const locationLayer = Layer.effect(
           const credential = yield* credentials.get(connection.id)
           if (!credential) return undefined
           if (credential.value.type === "key") return credential.value
-          const implementation = state
-            .get()
-            .integrations.get(credential.integrationID)
-            ?.implementations.get(credential.value.methodID)
-          if (!implementation?.refresh) return credential.value
+          const refresh = Option.flatMapNullishOr(
+            implementationOf(credential.integrationID, credential.value.methodID),
+            (implementation) => implementation.refresh,
+          )
+          if (Option.isNone(refresh)) return credential.value
           const now = yield* Clock.currentTimeMillis
           if (credential.value.expires > now + Duration.toMillis(Duration.minutes(5))) return credential.value
-          const value = yield* authorize(implementation.refresh(credential.value))
+          const value = yield* authorize(refresh.value(credential.value))
           yield* credentials.update(credential.id, { value })
           return value
         }),
         key: Effect.fn("Integration.connection.key")(function* (input) {
-          const method = state
-            .get()
-            .integrations.get(input.integrationID)
-            ?.methods.some((method) => method.type === "key")
+          const method = Option.exists(MutableHashMap.get(state.get().integrations, input.integrationID), (entry) =>
+            entry.methods.some((method) => method.type === "key"),
+          )
           if (!method) return yield* Effect.die(`Key method not found: ${input.integrationID}`)
           yield* credentials.create({
             integrationID: input.integrationID,
@@ -416,12 +444,12 @@ export const locationLayer = Layer.effect(
           yield* events.publish(Event.Updated, {})
         }),
         oauth: Effect.fn("Integration.connection.oauth")(function* (input) {
-          const method = state.get().integrations.get(input.integrationID)?.implementations.get(input.methodID)
-          if (!method) {
+          const method = implementationOf(input.integrationID, input.methodID)
+          if (Option.isNone(method)) {
             return yield* Effect.die(`OAuth method not found: ${input.integrationID}/${input.methodID}`)
           }
           const attemptScope = yield* Scope.fork(scope)
-          const authorization = yield* authorize(method.authorize(input.inputs)).pipe(
+          const authorization = yield* authorize(method.value.authorize(input.inputs)).pipe(
             Scope.provide(attemptScope),
             Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(attemptScope, exit) : Effect.void)),
           )
@@ -429,7 +457,7 @@ export const locationLayer = Layer.effect(
           const created = yield* Clock.currentTimeMillis
           const time = { created, expires: created + attemptLifetime }
           yield* SynchronizedRef.update(attempts, (current) =>
-            new Map(current).set(id, {
+            HashMap.set(current, id, {
               status: "pending",
               completing: authorization.mode === "auto",
               authorization,
@@ -474,21 +502,28 @@ export const locationLayer = Layer.effect(
       },
       attempt: {
         status: Effect.fn("Integration.attempt.status")(function* (attemptID) {
-          const attempt = (yield* SynchronizedRef.get(attempts)).get(attemptID)
-          if (!attempt) return yield* Effect.die(`OAuth attempt not found: ${attemptID}`)
+          const found = HashMap.get(yield* SynchronizedRef.get(attempts), attemptID)
+          if (Option.isNone(found)) return yield* Effect.die(`OAuth attempt not found: ${attemptID}`)
+          const attempt = found.value
           if (attempt.status === "failed") {
             return { status: attempt.status, message: attempt.message ?? "Authorization failed", time: attempt.time }
           }
           return { status: attempt.status, time: attempt.time }
         }),
         complete: Effect.fn("Integration.attempt.complete")(function* (input) {
-          const attempt = yield* SynchronizedRef.modify(attempts, (current) => {
-            const match = current.get(input.attemptID)
-            if (!match || match.status !== "pending" || match.completing) return [match, current]
-            if (match.authorization.mode === "code" && input.code === undefined) return [match, current]
-            return [match, new Map(current).set(input.attemptID, { ...match, completing: true })]
-          })
-          if (!attempt) return yield* Effect.die(`OAuth attempt not found: ${input.attemptID}`)
+          const found = yield* SynchronizedRef.modify(
+            attempts,
+            (current): readonly [Option.Option<AttemptEntry>, Attempts] => {
+              const match = HashMap.get(current, input.attemptID)
+              if (Option.isNone(match)) return [match, current]
+              const pending = match.value
+              if (pending.status !== "pending" || pending.completing) return [match, current]
+              if (pending.authorization.mode === "code" && input.code === undefined) return [match, current]
+              return [match, HashMap.set(current, input.attemptID, { ...pending, completing: true })]
+            },
+          )
+          if (Option.isNone(found)) return yield* Effect.die(`OAuth attempt not found: ${input.attemptID}`)
+          const attempt = found.value
           if (attempt.status !== "pending") return
           if (attempt.authorization.mode === "code" && input.code === undefined) {
             return yield* new CodeRequiredError({ attemptID: input.attemptID })
@@ -504,13 +539,10 @@ export const locationLayer = Layer.effect(
         }),
         cancel: Effect.fn("Integration.attempt.cancel")(function* (attemptID) {
           const attempt = yield* SynchronizedRef.modify(attempts, (current) => {
-            const match = current.get(attemptID)
-            if (!match || match.status !== "pending") return [undefined, current]
-            const next = new Map(current)
-            next.delete(attemptID)
-            return [match, next]
+            const match = HashMap.get(current, attemptID).pipe(Option.filter(isPending))
+            return [match, Option.isSome(match) ? HashMap.remove(current, attemptID) : current]
           })
-          if (attempt) yield* Scope.close(attempt.scope, Exit.void)
+          if (Option.isSome(attempt)) yield* Scope.close(attempt.value.scope, Exit.void)
         }),
       },
     })
