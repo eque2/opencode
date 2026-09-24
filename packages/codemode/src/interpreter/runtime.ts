@@ -698,7 +698,7 @@ class Interpreter<R> {
   // their work completes before the execution ends - mirroring a JS runtime waiting on
   // in-flight I/O at exit. A failure nobody could have handled becomes an unhandled-rejection
   // diagnostic (interrupted calls, e.g. Promise.race losers, are ignored).
-  private drainPendingSettlements(): Effect.Effect<void, unknown, never> {
+  private drainPendingSettlements(): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
       for (const promise of [...this.pendingSettlements]) {
         const exit = yield* this.observePromise(promise)
@@ -744,7 +744,7 @@ class Interpreter<R> {
 
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
   // observes it exactly like a synchronous throw at the await site.
-  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown, never> {
+  private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown> {
     return Effect.flatMap(this.observePromise(promise), (exit) => this.unwrapPromiseExit(promise, exit, node))
   }
 
