@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { createSignal } from "solid-js"
 import { Field as FieldV2 } from "./field-v2"
 import { SelectV2 } from "./select-v2"
@@ -75,7 +76,7 @@ export const Playground = {
         appearance={args.appearance}
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -92,7 +93,7 @@ export const Large = {
         appearance="large"
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -109,7 +110,7 @@ export const Grouped = {
         appearance={args.appearance}
         options={cities}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
         value={(x) => x.city}
         label={(x) => x.city}
         groupBy={(x) => x.region}
@@ -129,7 +130,7 @@ export const Invalid = {
         appearance={args.appearance}
         options={fruits}
         current={current()}
-        onSelect={(v) => setCurrent(v === null ? undefined : v)}
+        onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
       />
     )
   },
@@ -165,7 +166,7 @@ export const Field = {
             appearance={args.appearance}
             options={fruits}
             current={current()}
-            onSelect={(v) => setCurrent(v === null ? undefined : v)}
+            onSelect={(v) => setCurrent(Option.getOrUndefined(Option.fromNullishOr(v)))}
           />
           <FieldV2.Suffix>After selection</FieldV2.Suffix>
         </FieldV2>
