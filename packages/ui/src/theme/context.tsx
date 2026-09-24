@@ -1,6 +1,6 @@
 // @refresh reload
 
-import { HashSet, Option, Result } from "effect"
+import { Effect, Fiber, HashSet, MutableHashMap, Option, Result } from "effect"
 import { createEffect, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
@@ -9,7 +9,7 @@ import oc2ThemeJson from "./themes/oc-2.json"
 import { resolveThemeVariant, themeToCss } from "./resolve"
 import { resolveThemeVariantV2, themeV2ToCss } from "./v2/resolve"
 import type { DesktopTheme } from "./types"
-import { parseDesktopTheme } from "./validate"
+import { isDesktopTheme, parseDesktopTheme } from "./validate"
 
 export type ColorScheme = "light" | "dark" | "system"
 
@@ -21,13 +21,13 @@ const STORAGE_KEYS = {
 } as const
 
 const THEME_STYLE_ID = "oc-theme"
-let files: Record<string, () => Promise<{ default: DesktopTheme }>> | undefined
+let files: Record<string, () => Promise<{ default: unknown }>> | undefined
 let ids: string[] | undefined
 let known: HashSet.HashSet<string> | undefined
 
 function getFiles() {
   if (files) return files
-  files = import.meta.glob<{ default: DesktopTheme }>("./themes/*.json")
+  files = import.meta.glob<{ default: unknown }>("./themes/*.json")
   return files
 }
 
@@ -205,29 +205,47 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       previewScheme: null as ColorScheme | null,
     })
 
-    const loads = new Map<string, Promise<DesktopTheme | undefined>>()
+    // In-flight theme imports, so concurrent loads of one id share a single import.
+    const loads = MutableHashMap.empty<string, Fiber.Fiber<Option.Option<DesktopTheme>>>()
 
-    const load = (id: string) => {
-      const next = normalize(id)
-      if (!next) return Promise.resolve(undefined)
-      const hit = store.themes[next]
-      if (hit) return Promise.resolve(hit)
-      const pending = loads.get(next)
-      if (pending) return pending
-      const file = getFiles()[`./themes/${next}.json`]
-      if (!file) return Promise.resolve(undefined)
-      const task = file()
-        .then((mod) => {
-          const theme = mod.default
-          setStore("themes", next, theme)
-          return theme
-        })
-        .finally(() => {
-          loads.delete(next)
-        })
-      loads.set(next, task)
-      return task
-    }
+    const load = (id: string) =>
+      Effect.gen(function* () {
+        const next = normalize(id)
+        if (!next) return Option.none<DesktopTheme>()
+        const hit = store.themes[next]
+        if (hit) return Option.some(hit)
+        const pending = MutableHashMap.get(loads, next)
+        if (Option.isSome(pending)) return yield* Fiber.join(pending.value)
+        const file = getFiles()[`./themes/${next}.json`]
+        if (!file) return Option.none<DesktopTheme>()
+        // Detached, so an interrupted caller does not cancel the import that other callers share.
+        const task = yield* Effect.forkDetach(
+          Effect.promise(() => file()).pipe(
+            Effect.map((mod) => Option.liftPredicate(mod.default, isDesktopTheme)),
+            Effect.tap((theme) =>
+              Effect.sync(() => {
+                if (Option.isSome(theme)) setStore("themes", next, theme.value)
+              }),
+            ),
+            Effect.ensuring(Effect.sync(() => MutableHashMap.remove(loads, next))),
+          ),
+        )
+        MutableHashMap.set(loads, next, task)
+        return yield* Fiber.join(task)
+      })
+
+    // Runs `apply` with the theme once it is loaded. The cached path runs synchronously.
+    const whenLoaded = (id: string, apply: (theme: DesktopTheme) => void) =>
+      Effect.runFork(
+        load(id).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (theme) => Effect.sync(() => apply(theme)),
+            }),
+          ),
+        ),
+      )
 
     const applyTheme = (theme: DesktopTheme, themeId: string, mode: "light" | "dark", scheme: ColorScheme) => {
       applyThemeCss(theme, themeId, mode)
@@ -243,7 +261,12 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       return [...all, ...extra]
     }
 
-    const loadThemes = () => Promise.all(themeIDs().map(load)).then(() => store.themes)
+    const loadThemes = () =>
+      Effect.runPromise(
+        Effect.forEach(themeIDs(), (id) => load(id), { concurrency: "unbounded", discard: true }).pipe(
+          Effect.map(() => store.themes),
+        ),
+      )
 
     const onStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEYS.THEME_ID && e.newValue) {
@@ -255,8 +278,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
           clear()
           return
         }
-        void load(next).then((theme) => {
-          if (!theme || store.themeId !== next) return
+        whenLoaded(next, (theme) => {
+          if (store.themeId !== next) return
           cacheThemeVariants(theme, next)
         })
       }
@@ -286,8 +309,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       if (savedTheme !== store.themeId) setStore("themeId", savedTheme)
       if (savedScheme !== store.colorScheme) setStore("colorScheme", savedScheme)
       setStore("mode", savedScheme === "system" ? getSystemMode() : savedScheme)
-      void load(savedTheme).then((theme) => {
-        if (!theme || store.themeId !== savedTheme) return
+      whenLoaded(savedTheme, (theme) => {
+        if (store.themeId !== savedTheme) return
         cacheThemeVariants(theme, savedTheme)
       })
     })
@@ -314,8 +337,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         clear()
         return
       }
-      void load(next).then((theme) => {
-        if (!theme || store.themeId !== next) return
+      whenLoaded(next, (theme) => {
+        if (store.themeId !== next) return
         cacheThemeVariants(theme, next)
         write(STORAGE_KEYS.THEME_ID, next)
       })
@@ -343,8 +366,8 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         if (!next) return
         if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) return
         setStore("previewThemeId", next)
-        void load(next).then((theme) => {
-          if (!theme || store.previewThemeId !== next) return
+        whenLoaded(next, (theme) => {
+          if (store.previewThemeId !== next) return
           const mode = store.previewScheme
             ? store.previewScheme === "system"
               ? getSystemMode()
@@ -357,8 +380,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         setStore("previewScheme", scheme)
         const mode = scheme === "system" ? getSystemMode() : scheme
         const id = store.previewThemeId ?? store.themeId
-        void load(id).then((theme) => {
-          if (!theme) return
+        whenLoaded(id, (theme) => {
           if ((store.previewThemeId ?? store.themeId) !== id) return
           if (store.previewScheme !== scheme) return
           applyTheme(theme, id, mode, scheme)
@@ -377,8 +399,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       cancelPreview: () => {
         setStore("previewThemeId", null)
         setStore("previewScheme", null)
-        void load(store.themeId).then((theme) => {
-          if (!theme) return
+        whenLoaded(store.themeId, (theme) => {
           applyTheme(theme, store.themeId, store.mode, store.colorScheme)
         })
       },
