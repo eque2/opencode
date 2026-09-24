@@ -293,7 +293,9 @@ export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.Prepared
   route: RouteID,
   protocol: ProtocolID,
   model: ModelSchema,
-  body: Schema.Unknown,
+  // Every route body is a decoded provider-native Struct; the route's own
+  // body schema has already validated its shape by the time it lands here.
+  body: Schema.ObjectKeyword,
   metadata: Schema.optional(Schema.JsonObject),
 }) {}
 
@@ -303,7 +305,7 @@ export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.Prepared
  * request will resolve to and wants its native shape statically exposed
  * (debug UIs, request previews, plan rendering).
  *
- * The runtime body is identical — the route still emits `body: unknown` — so
+ * The runtime body is identical — the route still emits `body: object` — so
  * this is a type-level assertion the caller makes about what they expect to
  * find. The prepare runtime does not validate the assertion.
  */
