@@ -94,8 +94,8 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
   {
     file: "core/pathSerializer.gen.ts",
     rule: "typescript/no-unsafe-type-assertion",
-    search: lines("        name: style === \"deepObject\" ? `${name}[${key}]` : key,", "        value: v as string,"),
-    replace: lines("        name: style === \"deepObject\" ? `${name}[${key}]` : key,", "        value: v,"),
+    search: lines('        name: style === "deepObject" ? `${name}[${key}]` : key,', "        value: v as string,"),
+    replace: lines('        name: style === "deepObject" ? `${name}[${key}]` : key,', "        value: v,"),
   },
   {
     file: "core/utils.gen.ts",
@@ -231,8 +231,14 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
   {
     file: "core/params.gen.ts",
     rule: "typescript/no-unsafe-type-assertion",
-    search: lines("              if (allowed) {", "                ;(params[slot as Slot] as Record<string, unknown>)[key] = value"),
-    replace: lines("              if (allowed && isSlot(slot)) {", "                slotFields(params, slot)[key] = value"),
+    search: lines(
+      "              if (allowed) {",
+      "                ;(params[slot as Slot] as Record<string, unknown>)[key] = value",
+    ),
+    replace: lines(
+      "              if (allowed && isSlot(slot)) {",
+      "                slotFields(params, slot)[key] = value",
+    ),
   },
   {
     file: "core/queryKeySerializer.gen.ts",
@@ -293,7 +299,8 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
       "          ? options.headers",
       "          : new Headers(options.headers as Record<string, string> | undefined)",
     ),
-    replace: "      const headers = options.headers instanceof Headers ? options.headers : new Headers(options.headers)",
+    replace:
+      "      const headers = options.headers instanceof Headers ? options.headers : new Headers(options.headers)",
   },
   {
     file: "core/serverSentEvents.gen.ts",
@@ -366,7 +373,8 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     file: "client/utils.gen.ts",
     rule: "typescript/no-unsafe-type-assertion",
     search: '        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : (value as string))\n',
-    replace: '        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : toParamString(value))\n',
+    replace:
+      '        mergedHeaders.set(key, typeof value === "object" ? JSON.stringify(value) : toParamString(value))\n',
   },
   {
     file: "client/client.gen.ts",
@@ -483,8 +491,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
   {
     file: "core/bodySerializer.gen.ts",
     rule: "typescript/no-unnecessary-type-parameters",
-    search:
-      "  bodySerializer: <T extends Record<string, any> | Array<Record<string, any>>>(body: T): FormData => {\n",
+    search: "  bodySerializer: <T extends Record<string, any> | Array<Record<string, any>>>(body: T): FormData => {\n",
     replace: "  bodySerializer: (body: Record<string, any> | Array<Record<string, any>>): FormData => {\n",
   },
   {
