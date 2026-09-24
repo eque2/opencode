@@ -2,7 +2,7 @@ export * as AISDK from "./aisdk"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Cause, Context, Duration, Effect, Layer, Schema, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Option, Predicate, Schema, Scope } from "effect"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
@@ -82,17 +82,21 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
   const customFetch = options.fetch
   const chunkTimeout = options.chunkTimeout
   delete options.chunkTimeout
-  options.fetch = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const opts = { ...(init ?? {}) }
-    const signals = [
-      opts.signal,
-      typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined,
-      options.timeout !== undefined && options.timeout !== null && options.timeout !== false
-        ? AbortSignal.timeout(options.timeout)
-        : undefined,
-    ].filter((item): item is AbortSignal | AbortController => Boolean(item))
-    const chunkAbortCtl = signals.find((item): item is AbortController => item instanceof AbortController)
-    const abortSignals = signals.map((item) => (item instanceof AbortController ? item.signal : item))
+  const chunkTimeoutMs =
+    typeof chunkTimeout === "number" && chunkTimeout > 0 ? Option.some(chunkTimeout) : Option.none<number>()
+
+  const request = Effect.fnUntraced(function* (input: Parameters<typeof fetch>[0], init: RequestInit | undefined) {
+    // Each request gets its own controller, so an SSE chunk timeout aborts only that request.
+    const chunk = Option.map(chunkTimeoutMs, (ms) => ({ ms, ctl: new AbortController() }))
+    // `options.timeout` is read per request: SDK hooks may change the options after this point.
+    const abortSignals = [
+      ...Option.toArray(Option.fromNullishOr(init?.signal)),
+      ...Option.toArray(Option.map(chunk, (item) => item.ctl.signal)),
+      ...(Predicate.isNotNullish(options.timeout) && options.timeout !== false
+        ? [AbortSignal.timeout(options.timeout)]
+        : []),
+    ]
+    const opts: RequestInit = { ...init }
     if (abortSignals.length === 1) opts.signal = abortSignals[0]
     if (abortSignals.length > 1) opts.signal = AbortSignal.any(abortSignals)
 
@@ -110,13 +114,19 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
       }
     }
 
-    const res = await (typeof customFetch === "function" ? customFetch : fetch)(input, {
-      ...opts,
-      timeout: false,
-    })
-    if (!chunkAbortCtl || typeof chunkTimeout !== "number") return res
-    return wrapSSE(res, chunkTimeout, chunkAbortCtl)
-  }
+    // A rejected fetch stays a defect, so the AI SDK gets the original error (an AbortError, a network
+    // TypeError) from Effect.runPromise.
+    const res = yield* Effect.promise<Response>(() =>
+      (typeof customFetch === "function" ? customFetch : fetch)(input, {
+        ...opts,
+        timeout: false,
+      }),
+    )
+    return Option.match(chunk, { onNone: () => res, onSome: (item) => wrapSSE(res, item.ms, item.ctl) })
+  })
+
+  // The AI SDK calls `fetch` and expects a Promise, so the Effect runs at this boundary.
+  options.fetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => Effect.runPromise(request(input, init))
 
   return options
 }
