@@ -115,7 +115,7 @@ async function generatedMigrations(directory: string) {
 async function generatedSql(directory: string) {
   const generated = await generatedMigrations(directory)
   if (generated.length !== 1) throw new Error(`Expected one full schema migration, found ${generated.length}.`)
-  return Bun.file(path.join(directory, generated[0]!, "migration.sql")).text()
+  return Bun.file(path.join(directory, generated[0], "migration.sql")).text()
 }
 
 async function typescriptMigrations() {
@@ -184,13 +184,14 @@ async function formatTypescript(input: string) {
   })
 }
 
+// Static imports keep the registry synchronous: no top-level await and no Promise.all at module load.
 function renderRegistry(names: string[]) {
+  const modules = names.map((name) => ({ name, binding: `migration_${name.replaceAll(/\W/g, "_")}` }))
   return `import type { DatabaseMigration } from "./migration"
+${modules.map((module) => `import ${module.binding} from "./migration/${module.name}"`).join("\n")}
 
-export const migrations = (
-  await Promise.all([
-${names.map((name) => `    import("./migration/${name}"),`).join("\n")}
-  ])
-).map((module) => module.default) satisfies DatabaseMigration.Migration[]
+export const migrations = [
+${modules.map((module) => `  ${module.binding},`).join("\n")}
+] satisfies DatabaseMigration.Migration[]
 `
 }
