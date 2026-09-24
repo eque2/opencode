@@ -2,6 +2,7 @@ import {
   type LanguageModelV3FilePart,
   type LanguageModelV3Prompt,
   type LanguageModelV3TextPart,
+  type SharedV3ProviderOptions,
   type SharedV3Warning,
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
@@ -9,6 +10,7 @@ import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { Chunk, Effect, HashMap, HashSet, Option, Predicate, Schema } from "effect"
 import type {
   OpenAIResponsesInputItem,
+  OpenAIResponsesLocalShellCall,
   OpenAIResponsesReasoning,
   OpenAIResponsesUserMessage,
 } from "./openai-responses-api-types"
@@ -44,7 +46,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
   store: boolean
   hasLocalShellTool?: boolean
 }) {
-  let input = Chunk.empty<OpenAIResponsesInputItem>()
+  let input = Chunk.empty<ResponsesInputItem>()
   let warnings = Chunk.empty<SharedV3Warning>()
   let processedApprovalIds = HashSet.empty<string>()
 
@@ -85,7 +87,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
       }
 
       case "assistant": {
-        let messageInput: ReadonlyArray<OpenAIResponsesInputItem> = []
+        let messageInput: ReadonlyArray<ResponsesInputItem> = []
         // Position in messageInput of the item for each reasoning id: later parts with the id extend that item.
         let reasoningIndex = HashMap.empty<string, number>()
 
@@ -97,7 +99,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                 {
                   role: "assistant",
                   content: [{ type: "output_text", text: part.text }],
-                  id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                  ...itemIdField(part.providerOptions),
                 },
               ]
               break
@@ -114,7 +116,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                   {
                     type: "local_shell_call",
                     call_id: part.toolCallId,
-                    id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                    ...itemIdField(part.providerOptions),
                     action: {
                       type: "exec",
                       command: parsedInput.action.command,
@@ -137,7 +139,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
                   call_id: part.toolCallId,
                   name: part.toolName,
                   arguments: functionArguments,
-                  id: (part.providerOptions?.copilot?.itemId as string) ?? undefined,
+                  ...itemIdField(part.providerOptions),
                 },
               ]
               break
@@ -303,15 +305,31 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 
 // Extend the reasoning item at `index` with more summary parts.
 const appendReasoningSummary = (
-  items: ReadonlyArray<OpenAIResponsesInputItem>,
+  items: ReadonlyArray<ResponsesInputItem>,
   index: number,
   summaryParts: OpenAIResponsesReasoning["summary"],
-): ReadonlyArray<OpenAIResponsesInputItem> =>
+): ReadonlyArray<ResponsesInputItem> =>
   items.map((item, position) =>
     position === index && "type" in item && item.type === "reasoning"
       ? { ...item, summary: [...item.summary, ...summaryParts] }
       : item,
   )
+
+// A replayed local shell call has no item id when the earlier response did not store one, although the
+// Responses input types require it.
+type ResponsesInputItem =
+  | Exclude<OpenAIResponsesInputItem, OpenAIResponsesLocalShellCall>
+  | (Omit<OpenAIResponsesLocalShellCall, "id"> & { id?: string })
+
+const decodeItemId = Schema.decodeUnknownOption(Schema.String)
+
+// The Responses item id that an earlier response stored in the part's copilot provider options, as an optional
+// `id` field.
+const itemIdField = (providerOptions: SharedV3ProviderOptions | undefined): { readonly id?: string } =>
+  Option.match(decodeItemId(providerOptions?.copilot?.itemId), {
+    onNone: () => ({}),
+    onSome: (id) => ({ id }),
+  })
 
 // An input that the Responses API cannot take fails the call with the AI SDK error for it.
 const unsupported = (functionality: string) =>

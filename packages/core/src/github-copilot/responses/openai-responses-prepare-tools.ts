@@ -32,11 +32,9 @@ export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponse
   toolChoice?: LanguageModelV3CallOptions["toolChoice"]
   strictJsonSchema: boolean
 }): Effect.fn.Return<PreparedResponsesTools, ResponsesCallError> {
-  // when the tools array is empty, change it to undefined to prevent errors:
-  tools = tools?.length ? tools : undefined
-
-  if (Predicate.isNullish(tools)) {
-    return { tools: undefined, toolChoice: undefined, toolWarnings: [] }
+  // an empty tools array counts as no tools, to prevent errors:
+  if (Predicate.isNullish(tools) || tools.length === 0) {
+    return { toolWarnings: [] }
   }
 
   let openaiTools = Chunk.empty<OpenAIResponsesTool>()
@@ -62,12 +60,12 @@ export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponse
               type: "file_search",
               vector_store_ids: args.vectorStoreIds,
               max_num_results: args.maxNumResults,
-              ranking_options: args.ranking
-                ? {
-                    ranker: args.ranking.ranker,
-                    score_threshold: args.ranking.scoreThreshold,
-                  }
-                : undefined,
+              ranking_options: Option.getOrUndefined(
+                Option.map(Option.fromUndefinedOr(args.ranking), (ranking) => ({
+                  ranker: ranking.ranker,
+                  score_threshold: ranking.scoreThreshold,
+                })),
+              ),
               filters: args.filters,
             })
 
@@ -106,11 +104,10 @@ export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponse
             const args = yield* decodeToolArgs(codeInterpreterArgsSchema, tool.args)
             openaiTools = Chunk.append(openaiTools, {
               type: "code_interpreter",
-              container: Predicate.isNullish(args.container)
-                ? { type: "auto", file_ids: undefined }
-                : typeof args.container === "string"
+              container:
+                typeof args.container === "string"
                   ? args.container
-                  : { type: "auto", file_ids: args.container.fileIds },
+                  : { type: "auto", file_ids: args.container?.fileIds },
             })
             break
           }
@@ -121,12 +118,12 @@ export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponse
               type: "image_generation",
               background: args.background,
               input_fidelity: args.inputFidelity,
-              input_image_mask: args.inputImageMask
-                ? {
-                    file_id: args.inputImageMask.fileId,
-                    image_url: args.inputImageMask.imageUrl,
-                  }
-                : undefined,
+              input_image_mask: Option.getOrUndefined(
+                Option.map(Option.fromUndefinedOr(args.inputImageMask), (inputImageMask) => ({
+                  file_id: inputImageMask.fileId,
+                  image_url: inputImageMask.imageUrl,
+                })),
+              ),
               model: args.model,
               moderation: args.moderation,
               partial_images: args.partialImages,
@@ -149,7 +146,7 @@ export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponse
   const prepared = { tools: Chunk.toArray(openaiTools), toolWarnings: Chunk.toArray(toolWarnings) }
 
   if (Predicate.isNullish(toolChoice)) {
-    return { ...prepared, toolChoice: undefined }
+    return prepared
   }
 
   const type = toolChoice.type

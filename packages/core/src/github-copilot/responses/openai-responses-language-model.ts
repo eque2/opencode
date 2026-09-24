@@ -1,5 +1,6 @@
 import {
   APICallError,
+  type JSONObject,
   type LanguageModelV3,
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
@@ -7,6 +8,7 @@ import {
   type LanguageModelV3ProviderTool,
   type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
+  type LanguageModelV3Usage,
   type SharedV3ProviderMetadata,
   type SharedV3Warning,
 } from "@ai-sdk/provider"
@@ -147,6 +149,30 @@ const toFileSearchResult = (result: NonNullable<(typeof fileSearchCallItem.Type)
   filename: result.filename,
   score: result.score,
   text: result.text,
+})
+
+// The token counts that the Responses API reports.
+type TokenUsage = {
+  readonly input: Option.Option<number>
+  readonly output: Option.Option<number>
+  readonly cachedInput: Option.Option<number>
+  readonly reasoning: Option.Option<number>
+}
+
+// AI SDK usage from Responses token counts. The Responses API reports no cache writes and no separate text tokens.
+const toUsage = (tokens: TokenUsage, raw: JSONObject): LanguageModelV3Usage => ({
+  inputTokens: {
+    total: Option.getOrUndefined(tokens.input),
+    noCache: Option.getOrUndefined(Option.zipWith(tokens.input, tokens.cachedInput, (input, cached) => input - cached)),
+    cacheRead: Option.getOrUndefined(tokens.cachedInput),
+    cacheWrite: Option.getOrUndefined(Option.none()),
+  },
+  outputTokens: {
+    total: Option.getOrUndefined(tokens.output),
+    text: Option.getOrUndefined(Option.none()),
+    reasoning: Option.getOrUndefined(tokens.reasoning),
+  },
+  raw,
 })
 
 // A streaming tool call whose input deltas are still arriving.
@@ -381,10 +407,10 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
   // when logprobs are requested, automatically include them:
   const topLogprobs =
     typeof openaiOptions?.logprobs === "number"
-      ? openaiOptions?.logprobs
+      ? Option.some(openaiOptions.logprobs)
       : openaiOptions?.logprobs === true
-        ? TOP_LOGPROBS_MAX
-        : undefined
+        ? Option.some(TOP_LOGPROBS_MAX)
+        : Option.none<number>()
 
   // when a web search tool is present, automatically include the sources:
   const webSearchToolName = (
@@ -396,7 +422,7 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
 
   // requested logprobs, web search sources and code interpreter outputs are included automatically:
   const autoInclude: ReadonlyArray<OpenAIResponsesIncludeValue> = [
-    ...(topLogprobs ? ["message.output_text.logprobs" as const] : []),
+    ...(Option.isSome(topLogprobs) ? ["message.output_text.logprobs" as const] : []),
     ...(webSearchToolName ? ["web_search_call.action.sources" as const] : []),
     ...(hasOpenAITool("openai.code_interpreter") ? ["code_interpreter_call.outputs" as const] : []),
   ]
@@ -449,7 +475,7 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     include,
     prompt_cache_key: openaiOptions?.promptCacheKey,
     safety_identifier: openaiOptions?.safetyIdentifier,
-    top_logprobs: topLogprobs,
+    ...(Option.isSome(topLogprobs) && { top_logprobs: topLogprobs.value }),
 
     // model-specific settings:
     ...(modelConfig.isReasoningModel &&
@@ -805,25 +831,15 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
       }),
       raw: response.incomplete_details?.reason,
     },
-    usage: {
-      inputTokens: {
-        total: response.usage.input_tokens,
-        noCache: Option.getOrUndefined(
-          Option.map(
-            Option.fromNullishOr(response.usage.input_tokens_details?.cached_tokens),
-            (cachedTokens) => response.usage.input_tokens - cachedTokens,
-          ),
-        ),
-        cacheRead: response.usage.input_tokens_details?.cached_tokens ?? undefined,
-        cacheWrite: undefined,
+    usage: toUsage(
+      {
+        input: Option.some(response.usage.input_tokens),
+        output: Option.some(response.usage.output_tokens),
+        cachedInput: Option.fromNullishOr(response.usage.input_tokens_details?.cached_tokens),
+        reasoning: Option.fromNullishOr(response.usage.output_tokens_details?.reasoning_tokens),
       },
-      outputTokens: {
-        total: response.usage.output_tokens,
-        text: undefined,
-        reasoning: response.usage.output_tokens_details?.reasoning_tokens ?? undefined,
-      },
-      raw: response.usage,
-    },
+      response.usage,
+    ),
     request: { body },
     response: {
       id: response.id,
@@ -867,24 +883,19 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
   })
 
   let finishReason: {
-    unified: ReturnType<typeof mapOpenAIResponseFinishReason>
-    raw: string | undefined
+    readonly unified: ReturnType<typeof mapOpenAIResponseFinishReason>
+    readonly raw: Option.Option<string>
   } = {
     unified: "other",
-    raw: undefined,
+    raw: Option.none(),
   }
-  const usage: {
-    inputTokens: number | undefined
-    outputTokens: number | undefined
-    totalTokens: number | undefined
-    reasoningTokens: number | undefined
-    cachedInputTokens: number | undefined
-  } = {
-    inputTokens: undefined,
-    outputTokens: undefined,
-    totalTokens: undefined,
-    reasoningTokens: undefined,
-    cachedInputTokens: undefined,
+  // Token counts arrive with the response.completed or response.incomplete chunk.
+  let usage: TokenUsage & { readonly total: Option.Option<number> } = {
+    input: Option.none(),
+    output: Option.none(),
+    total: Option.none(),
+    cachedInput: Option.none(),
+    reasoning: Option.none(),
   }
   let logprobs = Chunk.empty<typeof LOGPROBS_SCHEMA.Type>()
   let responseId = Option.none<string>()
@@ -905,7 +916,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
   // Copilot may change item_id across text deltas; normalize to one id.
   let currentTextId = Option.none<string>()
 
-  let serviceTier: string | undefined
+  let serviceTier = Option.none<string>()
 
   return {
     stream: response.pipeThrough(
@@ -923,7 +934,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
           if (!chunk.success) {
             finishReason = {
               unified: "error",
-              raw: undefined,
+              raw: Option.none(),
             }
             controller.enqueue({ type: "error", error: chunk.error })
             return
@@ -1318,15 +1329,17 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 finishReason: value.response.incomplete_details?.reason,
                 hasFunctionCall,
               }),
-              raw: value.response.incomplete_details?.reason ?? undefined,
+              raw: Option.fromNullishOr(value.response.incomplete_details?.reason),
             }
-            usage.inputTokens = value.response.usage.input_tokens
-            usage.outputTokens = value.response.usage.output_tokens
-            usage.totalTokens = value.response.usage.input_tokens + value.response.usage.output_tokens
-            usage.reasoningTokens = value.response.usage.output_tokens_details?.reasoning_tokens ?? undefined
-            usage.cachedInputTokens = value.response.usage.input_tokens_details?.cached_tokens ?? undefined
+            usage = {
+              input: Option.some(value.response.usage.input_tokens),
+              output: Option.some(value.response.usage.output_tokens),
+              total: Option.some(value.response.usage.input_tokens + value.response.usage.output_tokens),
+              cachedInput: Option.fromNullishOr(value.response.usage.input_tokens_details?.cached_tokens),
+              reasoning: Option.fromNullishOr(value.response.usage.output_tokens_details?.reasoning_tokens),
+            }
             if (typeof value.response.service_tier === "string") {
-              serviceTier = value.response.service_tier
+              serviceTier = Option.some(value.response.service_tier)
             }
           } else if (isResponseAnnotationAddedChunk(value)) {
             if (value.annotation.type === "url_citation") {
@@ -1363,34 +1376,18 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
             copilot: {
               responseId: encodeNullableString(responseId),
               ...(Chunk.isNonEmpty(logprobs) && { logprobs: Chunk.toArray(logprobs) }),
-              ...(serviceTier !== undefined && { serviceTier }),
+              ...(Option.isSome(serviceTier) && { serviceTier: serviceTier.value }),
             },
           }
 
           controller.enqueue({
             type: "finish",
-            finishReason,
-            usage: {
-              inputTokens: {
-                total: usage.inputTokens,
-                noCache:
-                  Predicate.isNotNullish(usage.inputTokens) && Predicate.isNotNullish(usage.cachedInputTokens)
-                    ? usage.inputTokens - usage.cachedInputTokens
-                    : undefined,
-                cacheRead: usage.cachedInputTokens,
-                cacheWrite: undefined,
-              },
-              outputTokens: {
-                total: usage.outputTokens,
-                text: undefined,
-                reasoning: usage.reasoningTokens,
-              },
-              raw: {
-                input_tokens: usage.inputTokens,
-                output_tokens: usage.outputTokens,
-                total_tokens: usage.totalTokens,
-              },
-            },
+            finishReason: { unified: finishReason.unified, raw: Option.getOrUndefined(finishReason.raw) },
+            usage: toUsage(usage, {
+              input_tokens: Option.getOrUndefined(usage.input),
+              output_tokens: Option.getOrUndefined(usage.output),
+              total_tokens: Option.getOrUndefined(usage.total),
+            }),
             providerMetadata,
           })
         },
