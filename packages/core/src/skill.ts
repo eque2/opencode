@@ -2,7 +2,7 @@ export * as SkillV2 from "./skill"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Schema, Types } from "effect"
 import { Skill } from "@opencode-ai/schema/skill"
 import { AgentV2 } from "./agent"
 import { ConfigMarkdown } from "./config/markdown"
@@ -106,16 +106,19 @@ const layer = Layer.effect(
 
     // QUESTION(Dax): Should local skill sources invalidate on filesystem watch
     // events, following the reload policy chosen for other context sources?
-    const cache = new Map<string, Info[]>()
+    const cache = MutableHashMap.empty<string, Info[]>()
     const list = Effect.fn("SkillV2.list")(function* () {
-      const skills = new Map<string, Info>()
+      // MutableHashMap iterates in insertion order, so a later skill with the same name
+      // replaces the value but keeps the position of the first one.
+      const skills = MutableHashMap.empty<string, Info>()
       for (const source of state.get().sources) {
         const key = Source.key(source)
-        const loaded = cache.get(key) ?? (yield* load(source))
-        cache.set(key, loaded)
-        for (const skill of loaded) skills.set(skill.name, skill)
+        const cached = MutableHashMap.get(cache, key)
+        const loaded = Option.isSome(cached) ? cached.value : yield* load(source)
+        MutableHashMap.set(cache, key, loaded)
+        for (const skill of loaded) MutableHashMap.set(skills, skill.name, skill)
       }
-      return Array.from(skills.values())
+      return Array.from(MutableHashMap.values(skills))
     })
 
     return Service.of({
