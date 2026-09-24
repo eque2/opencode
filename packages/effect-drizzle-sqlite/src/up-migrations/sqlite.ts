@@ -71,24 +71,34 @@ export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationB
   for (const dbRow of dbRows) {
     const stringified = String(dbRow.created_at)
     const millis = Number(stringified.substring(0, stringified.length - 3) + "000")
-    const candidates = Option.getOrUndefined(HashMap.get(byMillis, millis))
+    const candidates = HashMap.get(byMillis, millis)
 
-    const matchedByMillis = candidates?.length === 1 ? candidates[0] : undefined
-    const matchedByCandidateHash =
-      candidates && candidates.length > 1
-        ? candidates.find((candidate) => candidate.hash && dbRow.hash && candidate.hash === dbRow.hash)
-        : undefined
-    const matchedByHash =
-      matchedByMillis || matchedByCandidateHash ? undefined : Option.getOrUndefined(HashMap.get(byHash, dbRow.hash))
-    const matched = matchedByMillis ?? matchedByCandidateHash ?? matchedByHash
+    const matchedByMillis = candidates.pipe(
+      Option.filter((group) => group.length === 1),
+      Option.map((group) => group[0]),
+    )
+    const matchedByCandidateHash = candidates.pipe(
+      Option.filter((group) => group.length > 1),
+      Option.flatMap((group) =>
+        Arr.findFirst(
+          group,
+          (candidate) =>
+            Predicate.isTruthy(candidate.hash) && Predicate.isTruthy(dbRow.hash) && candidate.hash === dbRow.hash,
+        ),
+      ),
+    )
+    const matched = matchedByMillis.pipe(
+      Option.orElse(() => matchedByCandidateHash),
+      Option.orElse(() => HashMap.get(byHash, dbRow.hash)),
+    )
 
-    if (matched) {
+    if (Option.isSome(matched)) {
       toApply.push({
-        name: matched.name,
+        name: matched.value.name,
         selector:
           dbRow.id !== null
             ? { column: "id", value: dbRow.id }
-            : matchedByMillis
+            : Option.isSome(matchedByMillis)
               ? { column: "created_at", value: dbRow.created_at }
               : { column: "hash", value: dbRow.hash },
       })
