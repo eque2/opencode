@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Array as Arr, Option, Schema } from "effect"
 import { ContentBlockID, FinishReason, ProtocolID, ProviderMetadata, RouteID, ToolCallID } from "./ids"
 import { ModelSchema } from "./options"
 import { Message, ToolCallPart, ToolOutput, ToolResultPart, ToolResultValue, type ContentPart } from "./messages"
@@ -255,23 +255,17 @@ export const LLMEvent = Object.assign(llmEventTagged, {
     ToolInputDelta.make({ ...input, id: toolCallID(input.id) }),
   toolInputEnd: (input: WithID<ToolInputEnd, ToolCallID>) => ToolInputEnd.make({ ...input, id: toolCallID(input.id) }),
   toolCall: (input: WithID<ToolCall, ToolCallID>) => ToolCall.make({ ...input, id: toolCallID(input.id) }),
-  toolResult: (input: WithID<ToolResult, ToolCallID>) =>
+  toolResult: ({ output, ...input }: WithID<ToolResult, ToolCallID>) =>
     ToolResult.make({
       ...input,
       id: toolCallID(input.id),
-      output: input.output === undefined ? undefined : ToolOutput.make(input.output.structured, input.output.content),
+      ...(output === undefined ? {} : { output: ToolOutput.make(output.structured, output.content) }),
     }),
   toolError: (input: WithID<ToolError, ToolCallID>) => ToolError.make({ ...input, id: toolCallID(input.id) }),
-  stepFinish: (input: WithUsage<StepFinish>) =>
-    StepFinish.make({
-      ...input,
-      usage: input.usage === undefined ? undefined : Usage.from(input.usage),
-    }),
-  finish: (input: WithUsage<Finish>) =>
-    Finish.make({
-      ...input,
-      usage: input.usage === undefined ? undefined : Usage.from(input.usage),
-    }),
+  stepFinish: ({ usage, ...input }: WithUsage<StepFinish>) =>
+    StepFinish.make({ ...input, ...(usage === undefined ? {} : { usage: Usage.from(usage) }) }),
+  finish: ({ usage, ...input }: WithUsage<Finish>) =>
+    Finish.make({ ...input, ...(usage === undefined ? {} : { usage: Usage.from(usage) }) }),
   providerError: (input: Parameters<typeof ProviderErrorEvent.make>[0]) => ProviderErrorEvent.make(input),
   is: {
     stepStart: llmEventTagged.guards["step-start"],
@@ -329,11 +323,11 @@ const responseReasoning = (events: ReadonlyArray<LLMEvent>) =>
     .map((event) => event.text)
     .join("")
 
-const responseUsage = (events: ReadonlyArray<LLMEvent>) =>
-  events.reduce<Usage | undefined>(
-    (usage, event) => ("usage" in event && event.usage !== undefined ? event.usage : usage),
-    undefined,
-  )
+const eventUsage = (event: LLMEvent): Option.Option<Usage> =>
+  "usage" in event ? Option.fromUndefinedOr(event.usage) : Option.none()
+
+/** Usage of the latest usage-bearing event, if any. */
+const responseUsage = (events: ReadonlyArray<LLMEvent>) => Arr.findLast(events, eventUsage)
 
 interface ContentAssembly {
   readonly contentIndex: number
@@ -592,14 +586,18 @@ export namespace LLMResponse {
 
   /** Return a completed response only after a terminal finish or provider error. */
   export const complete = (state: State): LLMResponse | undefined =>
-    state.finishReason === undefined
-      ? undefined
-      : new LLMResponse({
-          message: state.message,
-          events: [...state.events],
-          usage: state.usage,
-          finishReason: state.finishReason,
-        })
+    Option.getOrUndefined(
+      Option.map(
+        Option.fromUndefinedOr(state.finishReason),
+        (finishReason) =>
+          new LLMResponse({
+            message: state.message,
+            events: [...state.events],
+            usage: state.usage,
+            finishReason,
+          }),
+      ),
+    )
 
   /** Convenience reducer for callers that already have a collected event list. */
   export const fromEvents = (events: ReadonlyArray<LLMEvent>) => complete(events.reduce(reduce, empty()))
@@ -608,7 +606,7 @@ export namespace LLMResponse {
   export const text = (response: Output) => responseText(response.events)
 
   /** Return response usage, falling back to the latest usage-bearing event. */
-  export const usage = (response: Output) => response.usage ?? responseUsage(response.events)
+  export const usage = (response: Output) => response.usage ?? Option.getOrUndefined(responseUsage(response.events))
 
   /** Return completed tool calls from a response or collected event list. */
   export const toolCalls = (response: Output) => response.events.filter(LLMEvent.is.toolCall)

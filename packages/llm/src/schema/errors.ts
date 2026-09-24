@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import { ModelID, ProviderID, ProviderMetadata, RouteID } from "./ids"
 
 export const ProviderFailureClassification = Schema.Literal("context-overflow")
@@ -179,6 +179,10 @@ export const LLMErrorReason = Schema.Union([
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type LLMErrorReason = Schema.Schema.Type<typeof LLMErrorReason>
 
+/** Provider-requested retry delay; only rate-limit and provider-internal reasons carry one. */
+const reasonRetryAfterMs = (reason: LLMErrorReason): Option.Option<number> =>
+  "retryAfterMs" in reason ? Option.fromUndefinedOr(reason.retryAfterMs) : Option.none()
+
 export class LLMError extends Schema.TaggedError<LLMError>()("LLM.Error", {
   module: Schema.String,
   method: Schema.String,
@@ -191,7 +195,7 @@ export class LLMError extends Schema.TaggedError<LLMError>()("LLM.Error", {
   }
 
   get retryAfterMs() {
-    return "retryAfterMs" in this.reason ? this.reason.retryAfterMs : undefined
+    return Option.getOrUndefined(reasonRetryAfterMs(this.reason))
   }
 
   override get message() {

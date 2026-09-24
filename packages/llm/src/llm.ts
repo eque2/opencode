@@ -67,10 +67,10 @@ export const request = (input: RequestInput) => {
     system: SystemPart.content(requestSystem),
     messages: [...(messages?.map(Message.make) ?? []), ...(prompt === undefined ? [] : [Message.user(prompt)])],
     tools: tools?.map(ToolDefinition.make) ?? [],
-    toolChoice: requestToolChoice ? ToolChoice.make(requestToolChoice) : undefined,
-    generation: requestGeneration === undefined ? undefined : GenerationOptions.make(requestGeneration),
+    ...(requestToolChoice ? { toolChoice: ToolChoice.make(requestToolChoice) } : {}),
+    ...(requestGeneration === undefined ? {} : { generation: GenerationOptions.make(requestGeneration) }),
     providerOptions: requestProviderOptions,
-    http: requestHttp === undefined ? undefined : HttpOptions.make(requestHttp),
+    ...(requestHttp === undefined ? {} : { http: HttpOptions.make(requestHttp) }),
   })
 }
 
