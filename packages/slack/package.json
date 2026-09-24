@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "workspace:*",
-    "@slack/bolt": "^3.17.1"
+    "@slack/bolt": "^3.17.1",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
