@@ -1,4 +1,4 @@
-import { Array as Arr, Option, Schema } from "effect"
+import { Array as Arr, Option, Predicate, Schema } from "effect"
 import { REDACTED, secretFindings } from "./redaction.js"
 import type { HttpInteraction, RequestMatcher, RequestSnapshot } from "./types.js"
 
@@ -7,12 +7,9 @@ export const decodeJson = Schema.decodeUnknownOption(JsonValue)
 export const encodeJson = Schema.encodeSync(JsonValue)
 const encodeJsonOption = Schema.encodeUnknownOption(JsonValue)
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value)
-
 export const canonicalizeJson = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalizeJson)
-  if (isRecord(value)) {
+  if (Predicate.isObject(value)) {
     return Object.fromEntries(
       Object.keys(value)
         .toSorted()
@@ -51,7 +48,7 @@ const jsonBody = (body: string) => Option.getOrUndefined(decodeJson(body))
 
 const valueDiffs = (expected: unknown, received: unknown, base = "$", limit = 8): ReadonlyArray<string> => {
   if (Object.is(expected, received)) return []
-  if (isRecord(expected) && isRecord(received)) {
+  if (Predicate.isObject(expected) && Predicate.isObject(received)) {
     return Arr.dedupe([...Object.keys(expected), ...Object.keys(received)])
       .toSorted()
       .flatMap((key) => valueDiffs(expected[key], received[key], `${base}.${key}`, limit))

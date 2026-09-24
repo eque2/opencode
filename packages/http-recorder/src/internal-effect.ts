@@ -64,16 +64,13 @@ const captureResponseBody = (response: HttpClientResponse.HttpClientResponse, co
 const decodeResponseBody = (snapshot: ResponseSnapshot) =>
   snapshot.bodyEncoding === "base64" ? Buffer.from(snapshot.body, "base64") : snapshot.body
 
-const responseFromSnapshot = (request: HttpClientRequest.HttpClientRequest, snapshot: ResponseSnapshot) =>
-  HttpClientResponse.fromWeb(
-    request,
-    new Response(
-      request.method === "HEAD" || snapshot.status === 204 || snapshot.status === 205 || snapshot.status === 304
-        ? null
-        : decodeResponseBody(snapshot),
-      snapshot,
-    ),
-  )
+const responseFromSnapshot = (request: HttpClientRequest.HttpClientRequest, snapshot: ResponseSnapshot) => {
+  const body =
+    request.method === "HEAD" || snapshot.status === 204 || snapshot.status === 205 || snapshot.status === 304
+      ? Option.none()
+      : Option.some(decodeResponseBody(snapshot))
+  return HttpClientResponse.fromWeb(request, new Response(Option.getOrUndefined(body), snapshot))
+}
 
 export const redactedErrorRequest = (request: HttpClientRequest.HttpClientRequest) =>
   HttpClientRequest.makeWith(
