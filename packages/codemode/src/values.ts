@@ -38,7 +38,11 @@ export class SandboxMap {
   readonly map = new Map<unknown, unknown>()
 }
 
+// The sandbox Set follows JS Set semantics: SameValueZero members (objects and arrays by identity)
+// and insertion order. Effect HashSet and MutableHashSet compare plain objects and arrays
+// structurally, so two distinct `[1]` arrays become one member; HashSet also has no insertion order.
 export class SandboxSet {
+  // eslint-disable-next-line effect/no-set-use-hashset -- (b) the sandbox Set holds program values under JS SameValueZero identity and insertion order, which Effect HashSet does not keep
   readonly set = new Set<unknown>()
 }
 
