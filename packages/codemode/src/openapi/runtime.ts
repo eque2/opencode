@@ -124,7 +124,7 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
     alternatives: for (const requirement of plan.security) {
       const names = Object.keys(requirement)
       if (names.length === 0) return none
-      const credentials: Array<readonly [string, SecurityScheme, Credential]> = []
+      let credentials: ReadonlyArray<readonly [string, SecurityScheme, Credential]> = []
       for (const name of names) {
         const scheme = own(plan.schemes, name)
         if (Option.isNone(scheme) || plan.auth === undefined) {
@@ -141,7 +141,7 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
           unavailable.push(name)
           continue alternatives
         }
-        credentials.push([name, scheme.value, credential])
+        credentials = Arr.append(credentials, [name, scheme.value, credential] as const)
       }
       const applied = applyCredentials(credentials)
       return applied instanceof ToolError ? yield* Effect.fail(applied) : applied

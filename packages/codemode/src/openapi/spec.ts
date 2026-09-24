@@ -311,13 +311,13 @@ const successfulResponses = (
     ...entries.filter(([status]) => /^2\d\d$/.test(status)).sort(([a], [b]) => a.localeCompare(b)),
     ...entries.filter(([status]) => status.toUpperCase() === "2XX"),
   ]
-  const responses: Array<Record<string, unknown>> = []
-  for (const [, value] of selected) {
-    const resolved = resolve(document, value)
-    if (!isRecord(resolved) || Option.isSome(nonEmptyString(resolved.$ref))) {
-      return { ok: false, reason: "successful response declaration is invalid or unresolved" }
-    }
-    responses.push(resolved)
+  const resolved = selected.map(([, value]) => resolve(document, value))
+  const responses = resolved.filter(
+    (response): response is Record<string, unknown> =>
+      isRecord(response) && Option.isNone(nonEmptyString(response.$ref)),
+  )
+  if (responses.length !== resolved.length) {
+    return { ok: false, reason: "successful response declaration is invalid or unresolved" }
   }
   return { ok: true, value: responses }
 }
@@ -345,28 +345,29 @@ export const operationOutput = (
   )
   if (binary) return { ok: false, reason: "binary responses are not supported" }
 
-  const outcomes: Array<JsonSchema> = []
-  for (const response of responses.value) {
-    if (response.content !== undefined && !isRecord(response.content)) return { ok: true, value: Option.none() }
-    const content = isRecord(response.content) ? response.content : {}
-    if (Object.keys(content).length === 0) {
-      outcomes.push({ type: "null" })
-      continue
-    }
-    for (const [mediaType, value] of Object.entries(content)) {
-      if (!isJsonMediaType(mediaType)) {
-        outcomes.push({ type: "string" })
-        continue
-      }
-      if (!isRecord(value) || value.schema === undefined) return { ok: true, value: Option.none() }
-      outcomes.push(projectSchema(document, value.schema))
-    }
-  }
-  if (outcomes.length === 0) return { ok: true, value: Option.none() }
+  // One success response without a usable schema makes the whole output unknown.
+  const outcomes = Option.all(
+    responses.value.map((response): Option.Option<ReadonlyArray<JsonSchema>> => {
+      if (response.content !== undefined && !isRecord(response.content)) return Option.none()
+      const content = isRecord(response.content) ? response.content : {}
+      if (Object.keys(content).length === 0) return Option.some([{ type: "null" }])
+      return Option.all(
+        Object.entries(content).map(([mediaType, value]): Option.Option<JsonSchema> => {
+          if (!isJsonMediaType(mediaType)) return Option.some({ type: "string" })
+          return isRecord(value) && value.schema !== undefined
+            ? Option.some(projectSchema(document, value.schema))
+            : Option.none()
+        }),
+      )
+    }),
+  ).pipe(
+    Option.map((groups) => groups.flat()),
+    Option.filter((schemas) => schemas.length > 0),
+  )
   return {
     ok: true,
-    value: Option.some(
-      withDefinitions(outcomes.length === 1 ? (outcomes[0] ?? {}) : { anyOf: outcomes }, definitions),
+    value: Option.map(outcomes, (schemas) =>
+      withDefinitions(schemas.length === 1 ? (schemas[0] ?? {}) : { anyOf: schemas }, definitions),
     ),
   }
 }
@@ -470,7 +471,7 @@ const scopeList = (scopes: unknown): Option.Option<ReadonlyArray<string>> => {
 export const securityRequirements = (value: unknown): Parsed<ReadonlyArray<SecurityRequirement>> => {
   if (value === undefined) return { ok: true, value: [] }
   if (!Array.isArray(value)) return { ok: false, reason: "security declaration is not an array" }
-  const requirements: Array<SecurityRequirement> = []
+  let requirements: ReadonlyArray<SecurityRequirement> = []
   for (const item of value) {
     if (!isRecord(item)) return { ok: false, reason: "security requirement is not an object" }
     const scopes = Option.all(
@@ -478,7 +479,7 @@ export const securityRequirements = (value: unknown): Parsed<ReadonlyArray<Secur
     )
     if (Option.isNone(scopes)) return { ok: false, reason: "security requirement scopes are not string arrays" }
     // Object.fromEntries defines own data properties, so a scheme named `__proto__` stays a plain key.
-    requirements.push(Object.fromEntries(scopes.value))
+    requirements = Arr.append(requirements, Object.fromEntries(scopes.value))
   }
   return { ok: true, value: requirements }
 }
