@@ -1,8 +1,7 @@
 import { dirname, isAbsolute, join, relative, resolve as pathResolve, sep } from "path"
 import { realpathSync } from "fs"
-import * as NFS from "fs/promises"
 import { lookup } from "mime-types"
-import { Context, Effect, FileSystem, Layer, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { Glob } from "./util/glob"
 import { serviceUse } from "./effect/service-use"
@@ -79,19 +78,26 @@ export namespace FSUtil {
         return info?.type === "File"
       })
 
+      // stat follows symlinks, so a link is detected with readLink first. An entry that
+      // cannot be stat'ed (removed while listing, or not accessible) is reported as "other".
+      const entryType = Effect.fnUntraced(function* (entryPath: string) {
+        if (Option.isSome(yield* Effect.option(fs.readLink(entryPath)))) return "symlink" as const
+        const info = yield* Effect.option(fs.stat(entryPath))
+        if (Option.isNone(info)) return "other" as const
+        if (info.value.type === "Directory") return "directory" as const
+        if (info.value.type === "File") return "file" as const
+        return "other" as const
+      })
+
       const readDirectoryEntries = Effect.fn("FileSystem.readDirectoryEntries")(function* (dirPath: string) {
-        return yield* Effect.tryPromise({
-          try: async () => {
-            const entries = await NFS.readdir(dirPath, { withFileTypes: true })
-            return entries.map(
-              (e): DirEntry => ({
-                name: e.name,
-                type: e.isDirectory() ? "directory" : e.isSymbolicLink() ? "symlink" : e.isFile() ? "file" : "other",
-              }),
-            )
-          },
-          catch: (cause) => new FileSystemError({ method: "readDirectoryEntries", cause }),
-        })
+        const names = yield* fs
+          .readDirectory(dirPath)
+          .pipe(Effect.mapError((cause) => new FileSystemError({ method: "readDirectoryEntries", cause })))
+        return yield* Effect.forEach(
+          names,
+          (name) => entryType(join(dirPath, name)).pipe(Effect.map((type): DirEntry => ({ name, type }))),
+          { concurrency: 16 },
+        )
       })
 
       const resolve = Effect.fn("FileSystem.resolve")(function* (path: string) {
