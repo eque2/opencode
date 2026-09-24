@@ -22,7 +22,19 @@ export type ObjectStyle = "form" | "deepObject"
 type ObjectSeparatorStyle = ObjectStyle | MatrixStyle
 
 interface SerializePrimitiveParam extends SerializePrimitiveOptions {
-  value: string
+  value: unknown
+}
+
+/**
+ * Converts a parameter value to a string. The result matches the implicit
+ * ToString coercion that `encodeURIComponent()` and template literals apply,
+ * including the TypeError for a symbol.
+ */
+export const toParamString = (value: unknown): string => {
+  if (typeof value === "symbol") {
+    throw new TypeError("Cannot convert a Symbol value to a string")
+  }
+  return String(value)
 }
 
 export const separatorArrayExplode = (style: ArraySeparatorStyle) => {
@@ -74,7 +86,7 @@ export const serializeArrayParam = ({
   value: unknown[]
 }) => {
   if (!explode) {
-    const joinedValues = (allowReserved ? value : value.map((v) => encodeURIComponent(v as string))).join(
+    const joinedValues = (allowReserved ? value : value.map((v) => encodeURIComponent(toParamString(v)))).join(
       separatorArrayNoExplode(style),
     )
     switch (style) {
@@ -93,13 +105,13 @@ export const serializeArrayParam = ({
   const joinedValues = value
     .map((v) => {
       if (style === "label" || style === "simple") {
-        return allowReserved ? v : encodeURIComponent(v as string)
+        return allowReserved ? v : encodeURIComponent(toParamString(v))
       }
 
       return serializePrimitiveParam({
         allowReserved,
         name,
-        value: v as string,
+        value: v,
       })
     })
     .join(separator)
@@ -117,7 +129,8 @@ export const serializePrimitiveParam = ({ allowReserved, name, value }: Serializ
     )
   }
 
-  return `${name}=${allowReserved ? value : encodeURIComponent(value)}`
+  const text = toParamString(value)
+  return `${name}=${allowReserved ? text : encodeURIComponent(text)}`
 }
 
 export const serializeObjectParam = ({
@@ -136,9 +149,9 @@ export const serializeObjectParam = ({
   }
 
   if (style !== "deepObject" && !explode) {
-    let values: string[] = []
+    let values: unknown[] = []
     Object.entries(value).forEach(([key, v]) => {
-      values = [...values, key, allowReserved ? (v as string) : encodeURIComponent(v as string)]
+      values = [...values, key, allowReserved ? v : encodeURIComponent(toParamString(v))]
     })
     const joinedValues = values.join(",")
     switch (style) {
@@ -159,7 +172,7 @@ export const serializeObjectParam = ({
       serializePrimitiveParam({
         allowReserved,
         name: style === "deepObject" ? `${name}[${key}]` : key,
-        value: v as string,
+        value: v,
       }),
     )
     .join(separator)

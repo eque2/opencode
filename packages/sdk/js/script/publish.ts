@@ -11,12 +11,22 @@ async function published(name: string, version: string) {
   return (await $`npm view ${name}@${version} version`.nothrow()).exitCode === 0
 }
 
-const originalText = await Bun.file("package.json").text()
-const pkg = JSON.parse(originalText) as {
-  name: string
-  version: string
-  exports: Record<string, unknown>
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
+
+function parsePackageJson(text: string) {
+  const parsed: unknown = JSON.parse(text)
+  if (!isRecord(parsed)) throw new Error("package.json is not a JSON object")
+  const { name, version, exports } = parsed
+  if (typeof name !== "string") throw new Error("package.json has no string name")
+  if (typeof version !== "string") throw new Error("package.json has no string version")
+  if (!isRecord(exports)) throw new Error("package.json has no exports object")
+  return { ...parsed, name, version, exports }
+}
+
+const originalText = await Bun.file("package.json").text()
+const pkg = parsePackageJson(originalText)
 function transformExports(exports: Record<string, unknown>) {
   return Object.fromEntries(
     Object.entries(exports).map(([key, value]) => {
