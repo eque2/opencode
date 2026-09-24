@@ -1,7 +1,7 @@
 export * as WebSearchTool from "./websearch"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Context, Duration, Effect, Layer, Schema } from "effect"
+import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { makeLocationNode } from "../effect/app-node"
 import { LayerNodePlatform } from "../effect/app-node-platform"
@@ -23,6 +23,9 @@ export const MAX_NUM_RESULTS = 20
 export const MAX_CONTEXT_CHARACTERS = 50_000
 export const MAX_RESPONSE_BYTES = 256 * 1024
 
+/** The local calendar year when the module loads. */
+const currentYear = DateTime.getPart(DateTime.setZone(DateTime.nowUnsafe(), DateTime.zoneMakeLocal()), "year")
+
 /**
  * Provider-independent local web search retained in V2 core for launch parity.
  * This invokes the legacy Exa/Parallel product backends itself. It is distinct
@@ -35,7 +38,7 @@ This is a provider-independent local tool backed by Exa or Parallel. Provider-ho
 
 Optional controls support result count, live crawling ('fallback' or 'preferred'), search type ('auto', 'fast', or 'deep'), and maximum context characters.
 
-The current year is ${new Date().getFullYear()}. Use this year when searching for recent information or current events.`
+The current year is ${currentYear}. Use this year when searching for recent information or current events.`
 
 export const Input = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
