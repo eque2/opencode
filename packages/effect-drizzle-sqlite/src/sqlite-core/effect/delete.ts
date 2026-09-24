@@ -31,6 +31,7 @@ export type SQLiteEffectDeleteWithout<
         T["_"]["returning"],
         TDynamic,
         T["_"]["excludedMethods"] | K,
+        // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
         T["_"]["effectHKT"]
       >,
       T["_"]["excludedMethods"] | K
@@ -46,6 +47,7 @@ export type SQLiteEffectDeleteReturningAll<
     T["_"]["table"]["$inferSelect"],
     T["_"]["dynamic"],
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -63,6 +65,7 @@ export type SQLiteEffectDeleteReturning<
     SelectResultFields<TSelectedFields>,
     T["_"]["dynamic"],
     T["_"]["excludedMethods"],
+    // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
     T["_"]["effectHKT"]
   >,
   TDynamic,
@@ -96,6 +99,7 @@ export type SQLiteEffectDeleteDynamic<T extends AnySQLiteEffectDelete> = SQLiteE
   T["_"]["table"],
   T["_"]["runResult"],
   T["_"]["returning"],
+  // oxlint-disable-next-line typescript-eslint/no-unnecessary-type-arguments -- (d) tsgolint resolves the generic T["_"]["effectHKT"] through the any-typed Any* constraint and equates it with the default; for a concrete T it is the builder's own HKT, which omission would erase
   T["_"]["effectHKT"]
 >
 
