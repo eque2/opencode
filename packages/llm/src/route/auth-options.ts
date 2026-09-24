@@ -49,7 +49,7 @@ export const bearer = (options: ProviderAuthOption<"optional">, envVar: string |
   return (Array.isArray(envVar) ? envVar : [envVar])
     .reduce(
       (auth, name) => auth.orElse(Auth.config(name)),
-      Auth.optional("apiKey" in options ? options.apiKey : undefined, "apiKey"),
+      Auth.optional(options.apiKey, "apiKey"),
     )
     .bearer()
 }

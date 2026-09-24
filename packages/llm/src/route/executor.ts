@@ -143,9 +143,9 @@ const rateLimitDetails = (headers: Record<string, string>, retryAfter: number | 
 
   return new HttpRateLimitDetails({
     retryAfterMs: retryAfter,
-    limit: Object.keys(limit).length === 0 ? undefined : limit,
-    remaining: Object.keys(remaining).length === 0 ? undefined : remaining,
-    reset: Object.keys(reset).length === 0 ? undefined : reset,
+    ...(Object.keys(limit).length === 0 ? {} : { limit }),
+    ...(Object.keys(remaining).length === 0 ? {} : { remaining }),
+    ...(Object.keys(reset).length === 0 ? {} : { reset }),
   })
 }
 
@@ -263,7 +263,7 @@ const statusReason = (input: {
   ) {
     return new InvalidRequestReason({
       message: input.message,
-      classification: isContextOverflow(body) ? "context-overflow" : undefined,
+      ...(isContextOverflow(body) ? { classification: "context-overflow" } : {}),
       http: input.http,
     })
   }
@@ -320,8 +320,12 @@ const toHttpError = (redactedNames: ReadonlyArray<string | RegExp>) => (error: u
       reason: new TransportReason({
         message: input.message,
         kind: input.kind,
-        url: input.request ? redactUrl(input.request.url) : undefined,
-        http: input.request ? new HttpContext({ request: requestDetails(input.request, redactedNames) }) : undefined,
+        ...(input.request
+          ? {
+              url: redactUrl(input.request.url),
+              http: new HttpContext({ request: requestDetails(input.request, redactedNames) }),
+            }
+          : {}),
       }),
     })
 
@@ -331,18 +335,18 @@ const toHttpError = (redactedNames: ReadonlyArray<string | RegExp>) => (error: u
   if (!HttpClientError.isHttpClientError(error)) {
     return transportError({ message: "HTTP transport failed" })
   }
-  const request = "request" in error ? error.request : undefined
+  const request = "request" in error ? { request: error.request } : {}
   if (error.reason._tag === "TransportError") {
     return transportError({
       message: error.reason.description ?? "HTTP transport failed",
       kind: error.reason._tag,
-      request,
+      ...request,
     })
   }
   return transportError({
     message: `HTTP transport failed: ${error.reason._tag}`,
     kind: error.reason._tag,
-    request,
+    ...request,
   })
 }
 

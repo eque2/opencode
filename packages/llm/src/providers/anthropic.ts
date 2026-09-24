@@ -12,7 +12,7 @@ export type Config = RouteDefaultsInput & ProviderAuthOption<"optional"> & { rea
 
 const auth = (options: ProviderAuthOption<"optional">) => {
   if ("auth" in options && options.auth) return options.auth
-  return Auth.optional("apiKey" in options ? options.apiKey : undefined, "apiKey")
+  return Auth.optional(options.apiKey, "apiKey")
     .orElse(Auth.config("ANTHROPIC_API_KEY"))
     .pipe(Auth.header("x-api-key"))
 }
