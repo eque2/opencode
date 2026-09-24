@@ -1,7 +1,6 @@
 import { Meta, Title } from "@solidjs/meta"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { scaleSqrt } from "d3-scale"
-import countryCodesSource from "i18n-iso-countries/codes.json?raw"
 import {
   getStatsModelData,
   type CountryEntry,
@@ -16,6 +15,7 @@ import { getRequestEvent } from "solid-js/web"
 import { LocaleLinks } from "../../component/locale-links"
 import { useI18n } from "../../context/i18n"
 import { useLanguage } from "../../context/language"
+import { countryNumericIds } from "../../lib/country-codes"
 import { localizedUrl } from "../../lib/language"
 import {
   findModelCatalogEntry,
@@ -51,7 +51,6 @@ const glmFlashCatalogId = "zhipuai/glm-5.3-flash"
 const glmFlashModel = "glm-5.3-flash"
 const shortMonths = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] as const
 
-type IsoCountryCode = readonly [string, string, string]
 type ModelCatalogOption = Pick<ModelCatalogEntry, "id" | "lab" | "slug" | "name">
 type ModelPageCatalog = {
   entry: ModelCatalogEntry | null
@@ -60,10 +59,6 @@ type ModelPageCatalog = {
 }
 type StatsModelPageData = StatsModelData
 type ModelPageData = { catalog: ModelPageCatalog; stats: StatsModelPageData | null }
-
-const countryNumericIds = new Map(
-  (JSON.parse(countryCodesSource) as IsoCountryCode[]).map((country) => [country[0], country[2]] as const),
-)
 
 const getModelPageData = query(async (labParam: string, modelParam: string) => {
   "use server"

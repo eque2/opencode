@@ -3,7 +3,7 @@ import { query } from "@solidjs/router"
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useI18n } from "../context/i18n"
 import { useLanguage } from "../context/language"
-import { route, type Locale } from "../lib/language"
+import { parseLocale, route } from "../lib/language"
 
 export type HeaderLink = { href: string; label: string }
 
@@ -310,7 +310,8 @@ function FooterLanguageSwitcher() {
         value={language.locale()}
         aria-label={i18n.t("footer.language")}
         onChange={(event) => {
-          const locale = event.currentTarget.value as Locale
+          const locale = parseLocale(event.currentTarget.value)
+          if (!locale) return
           const url = new URL(window.location.href)
           const current = `${url.pathname}${url.search}${url.hash}`
           const href = `${route(locale, url.pathname)}${url.search}${url.hash}`

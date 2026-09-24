@@ -1,7 +1,6 @@
 import { Meta, Title } from "@solidjs/meta"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { scaleSqrt } from "d3-scale"
-import countryCodesSource from "i18n-iso-countries/codes.json?raw"
 import {
   getStatsHomeData,
   type CacheRatioEntry,
@@ -20,6 +19,7 @@ import { runStatsEffect } from "../stats-runtime"
 import { LocaleLinks } from "../component/locale-links"
 import { useI18n } from "../context/i18n"
 import { useLanguage } from "../context/language"
+import { countryNumericIds } from "../lib/country-codes"
 import { localizedUrl } from "../lib/language"
 import { findModelCatalogEntry, isKnownCatalogLab, loadModelCatalog, type ModelCatalog } from "./model-catalog"
 import { SectionHeading } from "./section-heading"
@@ -59,7 +59,6 @@ const usageColors = [
 const marketColors = ["#ed6aff", "#a684ff", "#7c86ff", "#51a2ff", "#00d3f2", "#00d5be", "#00bc7d", "#9ae600", "#ffb900"]
 
 type UsageRange = "1D" | "1W" | "2W" | "1M" | "2M"
-type IsoCountryCode = readonly [string, string, string]
 
 type StatsHomePageData = {
   updatedAt: string | null
@@ -74,10 +73,6 @@ type StatsHomePageData = {
   country: CountryEntry[]
   catalogLabs: string[]
 }
-
-const countryNumericIds = new Map(
-  (JSON.parse(countryCodesSource) as IsoCountryCode[]).map((country) => [country[0], country[2]] as const),
-)
 
 const getData = query(async () => {
   "use server"
