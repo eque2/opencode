@@ -458,6 +458,26 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     search: "  const prototype = Object.getPrototypeOf(value as object)\n",
     replace: "  const prototype = Object.getPrototypeOf(value)\n",
   },
+
+  // typescript/consistent-return
+  {
+    file: "core/auth.gen.ts",
+    rule: "typescript/consistent-return",
+    search: lines("  if (!token) {", "    return", "  }"),
+    replace: lines("  if (!token) {", "    return undefined", "  }"),
+  },
+  {
+    file: "client/utils.gen.ts",
+    rule: "typescript/consistent-return",
+    search: lines("  if (!cleanContent) {", "    return", "  }"),
+    replace: lines("  if (!cleanContent) {", "    return undefined", "  }"),
+  },
+  {
+    file: "client/utils.gen.ts",
+    rule: "typescript/consistent-return",
+    search: lines('    return "text"', "  }", "", "  return", "}"),
+    replace: lines('    return "text"', "  }", "", "  return undefined", "}"),
+  },
 ]
 
 /**
