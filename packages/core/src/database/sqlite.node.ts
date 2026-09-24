@@ -177,7 +177,7 @@ const sqliteLayer = (config: Config) => Layer.effect(Client.SqlClient, make(conf
 const drizzleLayer = Layer.effect(
   Sqlite.Drizzle,
   Effect.gen(function* () {
-    return drizzle({ client: yield* nativeDatabase }) as unknown as Sqlite.DrizzleClient
+    return drizzle({ client: yield* nativeDatabase })
   }),
 )
 
