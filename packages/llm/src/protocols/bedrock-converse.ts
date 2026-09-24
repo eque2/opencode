@@ -4,6 +4,7 @@ import { Endpoint } from "../route/endpoint"
 import { Protocol } from "../route/protocol"
 import {
   LLMEvent,
+  ModelID,
   Usage,
   type CacheHint,
   type ContentPart,
@@ -35,6 +36,10 @@ export type { Credentials as BedrockCredentials } from "./utils/bedrock-auth"
 // =============================================================================
 // Request Body Schema
 // =============================================================================
+// Bedrock carries the tool call id as `toolUseId` in tool-use and tool-result
+// blocks and in the streamed `contentBlockStart` event.
+const ToolUseId = Schema.String.pipe(Schema.brand("BedrockConverse.ToolUseId"))
+
 const BedrockTextBlock = Schema.Struct({
   text: Schema.String,
 }).annotate({ identifier: "BedrockConverse.TextBlock" })
@@ -42,7 +47,7 @@ type BedrockTextBlock = Schema.Schema.Type<typeof BedrockTextBlock>
 
 const BedrockToolUseBlock = Schema.Struct({
   toolUse: Schema.Struct({
-    toolUseId: Schema.String,
+    toolUseId: ToolUseId,
     name: Schema.String,
     input: Schema.Unknown,
   }),
@@ -57,7 +62,7 @@ const BedrockToolResultContentItem = Schema.Union([
 
 const BedrockToolResultBlock = Schema.Struct({
   toolResult: Schema.Struct({
-    toolUseId: Schema.String,
+    toolUseId: ToolUseId,
     content: Schema.Array(BedrockToolResultContentItem),
     status: Schema.optional(Schema.Literals(["success", "error"])),
   }),
@@ -123,7 +128,7 @@ const BedrockToolChoice = Schema.Union([
 type BedrockToolChoice = Schema.Schema.Type<typeof BedrockToolChoice>
 
 const BedrockBodyFields = {
-  modelId: Schema.String,
+  modelId: ModelID,
   messages: Schema.Array(BedrockMessage),
   system: optionalArray(BedrockSystemBlock),
   inferenceConfig: Schema.optional(
@@ -165,7 +170,7 @@ const BedrockEvent = Schema.Struct({
       contentBlockIndex: Schema.Number,
       start: Schema.optional(
         Schema.Struct({
-          toolUse: Schema.optional(Schema.Struct({ toolUseId: Schema.String, name: Schema.String })),
+          toolUse: Schema.optional(Schema.Struct({ toolUseId: ToolUseId, name: Schema.String })),
         }),
       ),
     }),
@@ -268,7 +273,7 @@ const reasoningText = (part: ReasoningPart) =>
 
 const lowerToolCall = (part: ToolCallPart): BedrockToolUseBlock => ({
   toolUse: {
-    toolUseId: part.id,
+    toolUseId: ToolUseId.make(part.id),
     name: part.name,
     input: part.input,
   },
@@ -297,7 +302,7 @@ const lowerToolResultContent = Effect.fn("BedrockConverse.lowerToolResultContent
 const lowerToolResult = Effect.fn("BedrockConverse.lowerToolResult")(function* (part: ToolResultPart) {
   return {
     toolResult: {
-      toolUseId: part.id,
+      toolUseId: ToolUseId.make(part.id),
       content: yield* lowerToolResultContent(part),
       status: part.result.type === "error" ? "error" : "success",
     },
