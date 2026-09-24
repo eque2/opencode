@@ -95,13 +95,27 @@ export class DuplicateKeyError extends Schema.TaggedError<DuplicateKeyError>()("
   }
 }
 
+/** Model-visible text that a source renders. Each kind must not be empty. */
+export const RenderingKind = Schema.Literals(["baseline", "update", "removal"])
+export type RenderingKind = typeof RenderingKind.Type
+
+/** A source broke its contract and rendered empty model-visible text. It is raised as a defect. */
+export class EmptyRenderingError extends Schema.TaggedError<EmptyRenderingError>()(
+  "SystemContext.EmptyRenderingError",
+  { key: Key, kind: RenderingKind },
+) {
+  override get message() {
+    return `System context source ${this.key} rendered an empty ${this.kind}`
+  }
+}
+
 interface PackedSource {
   readonly key: Key
   readonly load: Effect.Effect<Loaded | Unavailable>
 }
 
 interface Loaded {
-  readonly baseline: () => Rendered
+  readonly baseline: Effect.Effect<Rendered>
   readonly compare: (previous: Schema.Json) => Compared
 }
 
@@ -113,14 +127,14 @@ interface Rendered {
 type Compared = Data.TaggedEnum<{
   Incompatible: {}
   Unchanged: {}
-  Updated: { readonly render: () => Rendered }
+  Updated: { readonly render: Effect.Effect<Rendered> }
 }>
 const Compared = Data.taggedEnum<Compared>()
 
 type Entry = Data.TaggedEnum<{
   Available: {
     readonly key: Key
-    readonly baseline: () => Rendered
+    readonly baseline: Effect.Effect<Rendered>
     readonly compare: (previous: Schema.Json) => Compared
   }
   Unavailable: { readonly key: Key }
@@ -130,7 +144,7 @@ const Entry = Data.taggedEnum<Entry>()
 /** One observed source's part of the next snapshot, planned before any update text is rendered. */
 type Step = Data.TaggedEnum<{
   Keep: { readonly key: Key; readonly snapshot: SourceSnapshot }
-  Render: { readonly key: Key; readonly render: () => Rendered }
+  Render: { readonly key: Key; readonly render: Effect.Effect<Rendered> }
 }>
 const Step = Data.taggedEnum<Step>()
 
@@ -148,27 +162,26 @@ export function make<A>(source: Source<A>): SystemContext {
       load: source.load.pipe(
         Effect.map((value) => {
           if (isUnavailable(value)) return value
-          const snapshot = (): SourceSnapshot => ({
-            value: encode(value),
-            ...(source.removed ? { removed: requireText(source.key, "removal", source.removed(value)) } : {}),
+          const snapshot = Effect.suspend((): Effect.Effect<SourceSnapshot> => {
+            const encoded = encode(value)
+            if (!source.removed) return Effect.succeed({ value: encoded })
+            return requireText(source.key, "removal", source.removed(value)).pipe(
+              Effect.map((removed) => ({ value: encoded, removed })),
+            )
           })
+          const rendered = (kind: RenderingKind, text: () => string): Effect.Effect<Rendered> =>
+            Effect.suspend(() => requireText(source.key, kind, text())).pipe(
+              Effect.flatMap((text) => Effect.map(snapshot, (snapshot) => ({ text, snapshot }))),
+            )
           return {
-            baseline: (): Rendered => ({
-              text: requireText(source.key, "baseline", source.baseline(value)),
-              snapshot: snapshot(),
-            }),
+            baseline: rendered("baseline", () => source.baseline(value)),
             compare: (previous): Compared =>
               Option.match(decode(previous), {
                 onNone: () => Compared.Incompatible(),
                 onSome: (decoded) =>
                   equivalent(decoded, value)
                     ? Compared.Unchanged()
-                    : Compared.Updated({
-                        render: () => ({
-                          text: requireText(source.key, "update", source.update(decoded, value)),
-                          snapshot: snapshot(),
-                        }),
-                      }),
+                    : Compared.Updated({ render: rendered("update", () => source.update(decoded, value)) }),
               }),
           }
         }),
@@ -205,45 +218,53 @@ export function initialize(value: SystemContext): Effect.Effect<Generation, Init
     Effect.flatMap((entries) => {
       const unavailable = entries.flatMap((entry) => (entry._tag === "Unavailable" ? [entry.key] : []))
       if (unavailable.length > 0) return new InitializationBlocked({ keys: unavailable })
-      return Effect.succeed(initializeObservation(entries))
+      return initializeObservation(entries)
     }),
   )
 }
 
-function initializeObservation(entries: ReadonlyArray<Entry>): Generation {
-  const available = entries.filter(Entry.$is("Available"))
-  const rendered = available.map((entry) => [entry.key, entry.baseline()] as const)
-  return {
-    baseline: render(rendered.map(([, result]) => result.text)),
-    snapshot: Object.fromEntries(rendered.map(([key, result]) => [key, result.snapshot])),
-  }
+function initializeObservation(entries: ReadonlyArray<Entry>): Effect.Effect<Generation> {
+  return Effect.forEach(entries.filter(Entry.$is("Available")), (entry) =>
+    Effect.map(entry.baseline, (rendered) => [entry.key, rendered] as const),
+  ).pipe(
+    Effect.map((rendered) => ({
+      baseline: render(rendered.map(([, result]) => result.text)),
+      snapshot: Object.fromEntries(rendered.map(([key, result]) => [key, result.snapshot])),
+    })),
+  )
 }
 
 /** Reconciles current source values with one active generation. */
 export function reconcile(value: SystemContext, previous: Snapshot): Effect.Effect<ReconcileResult> {
-  return observe(value).pipe(Effect.map((entries) => reconcileObservation(entries, previous)))
+  return observe(value).pipe(Effect.flatMap((entries) => reconcileObservation(entries, previous)))
 }
 
-function reconcileObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReconcileResult {
+function reconcileObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): Effect.Effect<ReconcileResult> {
   const plan = Option.all(entries.map((entry) => planEntry(entry, getSnapshot(previous, entry.key)))).pipe(
     Option.flatMap((steps) => Option.map(removals(entries, previous), (removed) => ({ steps: steps.flat(), removed }))),
   )
   if (Option.isNone(plan)) return replaceObservation(entries, previous)
-  const resolved = plan.value.steps.map((step) =>
+  const removed = plan.value.removed
+  return Effect.forEach(plan.value.steps, (step) =>
     Step.$match(step, {
-      Keep: (kept) => ({ key: kept.key, snapshot: kept.snapshot, text: Option.none<string>() }),
-      Render: (pending) => {
-        const rendered = pending.render()
-        return { key: pending.key, snapshot: rendered.snapshot, text: Option.some(rendered.text) }
-      },
+      Keep: (kept) => Effect.succeed({ key: kept.key, snapshot: kept.snapshot, text: Option.none<string>() }),
+      Render: (pending) =>
+        Effect.map(pending.render, (rendered) => ({
+          key: pending.key,
+          snapshot: rendered.snapshot,
+          text: Option.some(rendered.text),
+        })),
+    }),
+  ).pipe(
+    Effect.map((resolved): ReconcileResult => {
+      const updates = [...resolved.flatMap((item) => Option.toArray(item.text)), ...removed]
+      if (updates.length === 0) return ReconcileResult.Unchanged()
+      return ReconcileResult.Updated({
+        text: render(updates),
+        snapshot: Object.fromEntries(resolved.map((item) => [item.key, item.snapshot])),
+      })
     }),
   )
-  const updates = [...resolved.flatMap((item) => Option.toArray(item.text)), ...plan.value.removed]
-  if (updates.length === 0) return ReconcileResult.Unchanged()
-  return ReconcileResult.Updated({
-    text: render(updates),
-    snapshot: Object.fromEntries(resolved.map((item) => [item.key, item.snapshot])),
-  })
 }
 
 /** Plans one observed source. `None` means its stored value no longer decodes, so the generation is replaced. */
@@ -271,13 +292,15 @@ function removals(entries: ReadonlyArray<Entry>, previous: Snapshot): Option.Opt
 
 /** Creates a complete replacement generation or blocks while admitted context is unavailable. */
 export function replace(value: SystemContext, previous: Snapshot): Effect.Effect<ReplacementResult> {
-  return observe(value).pipe(Effect.map((entries) => replaceObservation(entries, previous)))
+  return observe(value).pipe(Effect.flatMap((entries) => replaceObservation(entries, previous)))
 }
 
-function replaceObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): ReplacementResult {
+function replaceObservation(entries: ReadonlyArray<Entry>, previous: Snapshot): Effect.Effect<ReplacementResult> {
   if (entries.some((entry) => entry._tag === "Unavailable" && Option.isSome(getSnapshot(previous, entry.key))))
-    return ReconcileResult.ReplacementBlocked()
-  return ReconcileResult.ReplacementReady({ generation: initializeObservation(entries) })
+    return Effect.succeed(ReconcileResult.ReplacementBlocked())
+  return initializeObservation(entries).pipe(
+    Effect.map((generation) => ReconcileResult.ReplacementReady({ generation })),
+  )
 }
 
 function context(sources: ReadonlyArray<PackedSource>): SystemContext {
@@ -296,9 +319,8 @@ function isUnavailable(value: unknown): value is Unavailable {
   return value === unavailable
 }
 
-function requireText(key: Key, kind: string, text: string) {
-  if (text.length === 0) throw new Error(`System context source ${key} rendered an empty ${kind}`)
-  return text
+function requireText(key: Key, kind: RenderingKind, text: string): Effect.Effect<string> {
+  return text.length === 0 ? Effect.die(new EmptyRenderingError({ key, kind })) : Effect.succeed(text)
 }
 
 function assertUniqueKeys(sources: ReadonlyArray<PackedSource>) {
