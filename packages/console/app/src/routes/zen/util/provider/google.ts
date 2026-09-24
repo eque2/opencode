@@ -17,7 +17,9 @@ import { ProviderHelper } from "./provider"
 }
 */
 
-const TokensDetails = z.object({ modality: z.string(), tokenCount: z.number() }).array()
+// Nothing reads these details. The Gemini API encodes responses as proto3 JSON, which omits zero and default
+// values, so both fields stay optional: a details entry must never make the usage chunk fail to parse.
+const TokensDetails = z.object({ modality: z.string().optional(), tokenCount: z.number().optional() }).array()
 
 const Usage = z.looseObject({
   promptTokenCount: z.number().optional(),
