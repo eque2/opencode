@@ -382,6 +382,7 @@ export async function POST(input: APIEvent) {
         }
       })
     }
+    return undefined
   })()
     .then((message) => {
       return Response.json({ message: message ?? "done" }, { status: 200 })
