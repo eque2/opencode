@@ -11,7 +11,6 @@ export const Resource = new Proxy(
   {
     get(_target, prop: keyof typeof ResourceBase) {
       const value = ResourceBase[prop]
-      const secrets = ResourceBase as unknown as Record<string, { value: string }>
       if ("type" in value) {
         // @ts-ignore
         if (value.type === "sst.cloudflare.Bucket") {
@@ -22,11 +21,11 @@ export const Resource = new Proxy(
         // @ts-ignore
         if (value.type === "sst.cloudflare.Kv") {
           const client = new Cloudflare({
-            apiToken: secrets.CLOUDFLARE_API_TOKEN.value,
+            apiToken: ResourceBase.CLOUDFLARE_API_TOKEN.value,
           })
           // @ts-ignore
           const namespaceId = value.namespaceId
-          const accountId = secrets.CLOUDFLARE_DEFAULT_ACCOUNT_ID.value
+          const accountId = ResourceBase.CLOUDFLARE_DEFAULT_ACCOUNT_ID.value
           return {
             get: (k: string | string[]) => {
               const isMulti = Array.isArray(k)
