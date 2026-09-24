@@ -98,9 +98,9 @@ const layer = Layer.effectDiscard(
                 const move = hunks.find((hunk) => hunk.type === "update" && hunk.movePath !== undefined)
                 if (move) return yield* new ToolFailure({ message: "apply_patch moves are not supported yet" })
 
-                const targets: Array<{ readonly hunk: Patch.Hunk; readonly target: LocationMutation.Target }> = []
-                for (const hunk of hunks)
-                  targets.push({ hunk, target: yield* mutation.resolve({ path: hunk.path, kind: "file" }) })
+                const targets = yield* Effect.forEach(hunks, (hunk) =>
+                  mutation.resolve({ path: hunk.path, kind: "file" }).pipe(Effect.map((target) => ({ hunk, target }))),
+                )
                 const externalDirectories = new Map<string, LocationMutation.ExternalDirectoryAuthorization>()
                 for (const { target } of targets) {
                   const external = target.externalDirectory
