@@ -94,9 +94,12 @@ export type ToolDescription = {
 
 export type SafeObject = Record<string, unknown>
 
-/** A prototype-free record, so a copied key can never resolve through Object.prototype. */
+/**
+ * A prototype-free record, so a key can never resolve through Object.prototype. The one factory
+ * for the package: copied data, program objects, and stdlib results all use it.
+ */
 // eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
-const makeSafeObject = (): SafeObject => Object.create(null)
+export const makeSafeObject = (): SafeObject => Object.create(null)
 
 const reservedNamespace = "$codemode"
 const defaultCatalogBudget = 2_000

@@ -21,6 +21,7 @@ import {
   copyIn,
   copyOut,
   isBlockedMember,
+  makeSafeObject,
   ToolReference,
   ToolRuntime,
   ToolRuntimeError,
@@ -200,10 +201,6 @@ const toJsonValue = (value: unknown): Option.Option<Schema.Json> => {
 }
 
 const isJson = Schema.is(Schema.Json)
-
-/** A prototype-free record, so a program-visible key can never resolve through Object.prototype. */
-// eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
-const makeSafeObject = (): SafeObject => Object.create(null)
 
 // A data object with a numeric `length` is array-like, as Array.from reads it.
 const isArrayLike = (value: unknown): value is ArrayLike<unknown> =>

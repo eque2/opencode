@@ -55,7 +55,7 @@ export const matchToValue = (match: RegExpMatchArray): Array<unknown> => {
   const result: Array<unknown> = Array.from(match, (group) => group)
   if (match.index !== undefined) (result as Record<string, unknown> & Array<unknown>).index = match.index
   if (match.groups) {
-    const groups: SafeObject = Object.create(null) as SafeObject
+    const groups = makeSafeObject()
     for (const [key, group] of Object.entries(match.groups)) {
       if (!isBlockedMember(key)) groups[key] = group
     }
@@ -87,6 +87,6 @@ export const invokeRegExpMethod = (
 }
 import { Effect, HashSet } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
-import { isBlockedMember, type SafeObject } from "../tool-runtime.js"
+import { isBlockedMember, makeSafeObject } from "../tool-runtime.js"
 import { SandboxRegExp } from "../values.js"
 import { coerceToString } from "./value.js"

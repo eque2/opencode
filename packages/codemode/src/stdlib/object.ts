@@ -1,6 +1,6 @@
 import { Effect, HashSet, Result } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
-import { isBlockedMember, type ToolRuntimeError } from "../tool-runtime.js"
+import { isBlockedMember, makeSafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from "../values.js"
 import { boundedData, coerceToString } from "./value.js"
 
@@ -58,7 +58,7 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
     case "hasOwn":
       return Result.map(requireObject(), (value) => Object.hasOwn(value, String(args[1])))
     case "assign": {
-      const out: Record<string, unknown> = Object.create(null)
+      const out = makeSafeObject()
       for (const source of args) {
         if (source === null || source === undefined) continue
         const copied = boundedData(source, "Object.assign input")
@@ -75,14 +75,14 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
     }
     case "fromEntries": {
       if (args[0] instanceof SandboxMap) {
-        const out: Record<string, unknown> = Object.create(null)
+        const out = makeSafeObject()
         return assignEntries(
           out,
           Array.from(args[0].map.entries(), ([key, item]): readonly [string, unknown] => [coerceToString(key), item]),
         )
       }
       if (args[0] instanceof SandboxURLSearchParams) {
-        const out: Record<string, unknown> = Object.create(null)
+        const out = makeSafeObject()
         return assignEntries(out, args[0].params.entries())
       }
       const input = boundedData(args[0], "Object.fromEntries input")
@@ -93,7 +93,7 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
           new InterpreterRuntimeError("Object.fromEntries expects an array of [key, value] pairs.", node),
         )
       }
-      const out: Record<string, unknown> = Object.create(null)
+      const out = makeSafeObject()
       for (const pair of pairs) {
         if (!Array.isArray(pair)) {
           return Result.fail(new InterpreterRuntimeError("Object.fromEntries expects [key, value] pairs.", node))

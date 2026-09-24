@@ -28,7 +28,7 @@ export const compoundOperators = HashSet.make(
 const ErrorBrand: unique symbol = Symbol("codemode.error")
 
 export const createErrorValue = (name: string, message: string): SafeObject => {
-  const value = Object.assign(Object.create(null) as SafeObject, { name, message })
+  const value = Object.assign(makeSafeObject(), { name, message })
   Object.defineProperty(value, ErrorBrand, { value: name })
   return value
 }
@@ -97,7 +97,7 @@ export const invokeCoercion = (
 }
 import { Effect, HashSet, type Result } from "effect"
 import { type AstNode, CoercionFunction, InterpreterRuntimeError } from "../interpreter/model.js"
-import { copyIn, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
+import { copyIn, makeSafeObject, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import {
   isSandboxValue,
   SandboxDate,
