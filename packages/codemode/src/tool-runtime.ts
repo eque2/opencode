@@ -8,7 +8,7 @@ import {
   inputTypeScript,
   outputTypeScript,
 } from "./tool-schema.js"
-import { isDefinition as isToolDefinition, type Definition } from "./tool.js"
+import { isDefinition as isToolDefinition, make as makeTool, type Definition } from "./tool.js"
 import {
   SandboxDate,
   SandboxMap,
@@ -33,10 +33,7 @@ type ServicesOf<Tools, Depth extends ReadonlyArray<unknown>> = Depth["length"] e
   ? never
   : Tools extends (...args: Array<unknown>) => Effect.Effect<unknown, unknown, infer R>
     ? R
-    : Tools extends {
-          readonly _tag: "CodeModeTool"
-          readonly run: (input: unknown) => Effect.Effect<unknown, unknown, infer R>
-        }
+    : Tools extends Definition<infer R>
       ? R
       : Tools extends object
         ? string extends keyof Tools
@@ -383,70 +380,69 @@ const termForms = (term: string): Array<string> => {
   return forms
 }
 
-const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition => ({
-  _tag: "CodeModeTool",
-  description: "Search available Code Mode tools",
-  input: SearchInput,
-  output: SearchOutput,
-  run: (input) =>
-    Effect.sync(() => {
-      const request = input as typeof SearchInput.Type
-      const query = request.query ?? ""
-      const offset = request.offset ?? 0
-      const scoped =
-        request.namespace === undefined
-          ? searchIndex
-          : searchIndex.filter((entry) => entry.namespace === request.namespace)
-      // A query that names one tool path exactly (canonical path or rendered JavaScript
-      // expression) is a lookup, not a search: return that tool alone.
-      const trimmed = query.trim()
-      const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
-      const exact =
-        pathQuery === ""
-          ? undefined
-          : scoped.find(
-              (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
-            )
-      const terms = tokenize(query).map(termForms)
-      // Additive field-weighted scoring, summed across terms: exact path or path segment
-      // (20) > path substring (8) > description substring (4) > any searchable text,
-      // including input parameter names and descriptions (2).
-      const ranked =
-        exact !== undefined
-          ? [exact]
-          : scoped
-              .map((entry) => {
-                const path = entry.description.path.toLowerCase()
-                const description = entry.description.description.toLowerCase()
-                const score = terms.reduce(
-                  (total, forms) =>
-                    total +
-                    (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
-                    (forms.some((form) => path.includes(form)) ? 8 : 0) +
-                    (forms.some((form) => description.includes(form)) ? 4 : 0) +
-                    (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
-                  0,
-                )
-                return { entry, score }
-              })
-              .filter(({ score }) => terms.length === 0 || score > 0)
-              .sort(
-                (left, right) =>
-                  right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
+const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition =>
+  makeTool({
+    description: "Search available Code Mode tools",
+    input: SearchInput,
+    output: SearchOutput,
+    run: (request) =>
+      Effect.sync(() => {
+        const query = request.query ?? ""
+        const offset = request.offset ?? 0
+        const scoped =
+          request.namespace === undefined
+            ? searchIndex
+            : searchIndex.filter((entry) => entry.namespace === request.namespace)
+        // A query that names one tool path exactly (canonical path or rendered JavaScript
+        // expression) is a lookup, not a search: return that tool alone.
+        const trimmed = query.trim()
+        const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
+        const exact =
+          pathQuery === ""
+            ? undefined
+            : scoped.find(
+                (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
               )
-              .map(({ entry }) => entry)
-      const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
-        ...description,
-        path: toolExpression(description.path),
-      }))
-      const remaining = Math.max(0, ranked.length - offset - items.length)
-      return {
-        items,
-        remaining,
-        next: remaining > 0 ? { offset: offset + items.length } : null,
-      }
-    }),
-})
+        const terms = tokenize(query).map(termForms)
+        // Additive field-weighted scoring, summed across terms: exact path or path segment
+        // (20) > path substring (8) > description substring (4) > any searchable text,
+        // including input parameter names and descriptions (2).
+        const ranked =
+          exact !== undefined
+            ? [exact]
+            : scoped
+                .map((entry) => {
+                  const path = entry.description.path.toLowerCase()
+                  const description = entry.description.description.toLowerCase()
+                  const score = terms.reduce(
+                    (total, forms) =>
+                      total +
+                      (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
+                      (forms.some((form) => path.includes(form)) ? 8 : 0) +
+                      (forms.some((form) => description.includes(form)) ? 4 : 0) +
+                      (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
+                    0,
+                  )
+                  return { entry, score }
+                })
+                .filter(({ score }) => terms.length === 0 || score > 0)
+                .sort(
+                  (left, right) =>
+                    right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
+                )
+                .map(({ entry }) => entry)
+        const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
+          ...description,
+          path: toolExpression(description.path),
+        }))
+        const remaining = Math.max(0, ranked.length - offset - items.length)
+        return {
+          items,
+          remaining,
+          next: remaining > 0 ? { offset: offset + items.length } : null,
+        }
+      }),
+  })
 
 const searchDescription = describeDefinition(`${reservedNamespace}.search`, makeSearchTool([]))
 

@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Data, Effect, Schema } from "effect"
 
 /**
  * JSON Schema subset accepted for render-only tool schemas.
@@ -32,14 +32,27 @@ export type JsonSchema = {
 /** Either a validating Effect Schema or a render-only JSON Schema document. */
 export type SchemaType = Schema.Decoder<unknown> | JsonSchema
 
-/** Schema-backed tool definition consumed by a CodeMode tool tree. */
-export type Definition<R = never> = {
-  readonly _tag: "CodeModeTool"
-  readonly description: string
-  readonly input: SchemaType
-  readonly output: SchemaType | undefined
-  readonly run: (input: unknown) => Effect.Effect<unknown, unknown, R>
+/**
+ * Schema-backed tool definition consumed by a CodeMode tool tree.
+ *
+ * `run` is declared with method syntax: the tool runtime passes it the value decoded from
+ * `input`, so a definition built by `make` keeps its precisely typed `run` and the stored
+ * definition erases only the input type.
+ */
+export type Definition<R = never> = Data.TaggedEnum<{
+  CodeModeTool: {
+    readonly description: string
+    readonly input: SchemaType
+    readonly output: SchemaType | undefined
+    run(input: unknown): Effect.Effect<unknown, unknown, R>
+  }
+}>
+
+interface DefinitionEnum extends Data.TaggedEnum.WithGenerics<1> {
+  readonly taggedEnum: Definition<this["A"]>
 }
+
+const { CodeModeTool } = Data.taggedEnum<DefinitionEnum>()
 
 /** The value `run` receives: the decoded type for Effect Schemas, `unknown` for JSON Schemas. */
 type InputType<S> = S extends Schema.Decoder<unknown> ? S["Type"] : unknown
@@ -87,10 +100,10 @@ export const isDefinition = <R = never>(value: unknown): value is Definition<R> 
  */
 export const make = <I extends SchemaType, const O extends SchemaType | undefined = undefined, R = never>(
   options: Options<I, O, R>,
-): Definition<R> => ({
-  _tag: "CodeModeTool",
-  description: options.description,
-  input: options.input,
-  output: options.output,
-  run: (input) => options.run(input as InputType<I>),
-})
+): Definition<R> =>
+  CodeModeTool<R>({
+    description: options.description,
+    input: options.input,
+    output: options.output,
+    run: options.run,
+  })
