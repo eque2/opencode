@@ -3,7 +3,7 @@ import { Cause, Effect, Exit, Schema } from "effect"
 import { SystemContext } from "@opencode-ai/core/system-context"
 import { it } from "../lib/effect"
 
-const key = SystemContext.Key.make
+const key = (value: string) => SystemContext.Key.make(value)
 const stringContext = (input: {
   key: string
   value: string | SystemContext.Unavailable
