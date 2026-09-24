@@ -96,25 +96,24 @@ export type SQLiteEffectInsertExecute<T extends AnySQLiteEffectInsert> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectInsertPrepareConfig<T extends AnySQLiteEffectInsert> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"]
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectInsertExecute<T>
+}
+
 export type SQLiteEffectInsertPrepare<
   T extends AnySQLiteEffectInsert,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"]
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectInsertExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectInsertPrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectInsert<
   TTable extends SQLiteTable = SQLiteTable,
@@ -229,14 +228,14 @@ export class SQLiteEffectInsertBase<
 
   constructor(
     private table: TTable,
-    values: SQLiteInsertConfig["values"],
+    values: SQLiteInsertConfig<TTable>["values"],
     private effectSession: SQLiteEffectSession<TEffectHKT, TRunResult, any>,
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
     select?: boolean,
   ) {
     super()
-    this.config = { table, values: values as any, withList, select }
+    this.config = { table, values, withList, select }
   }
 
   returning(): SQLiteEffectInsertReturningAll<this, TDynamic>
@@ -297,17 +296,15 @@ export class SQLiteEffectInsertBase<
 
   /** @internal */
   _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning ? "all" : "run",
-      {
-        fields: this.config.returning,
-        queryMetadata: {
-          type: "insert",
-          tables: extractUsedTable(this.config.table),
-        },
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectInsertPrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
+        type: "insert",
+        tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectInsertPrepare<this>
+    })
   }
 
   prepare(): SQLiteEffectInsertPrepare<this> {

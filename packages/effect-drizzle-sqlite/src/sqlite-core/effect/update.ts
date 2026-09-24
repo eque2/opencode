@@ -104,25 +104,24 @@ export type SQLiteEffectUpdateExecute<T extends AnySQLiteEffectUpdate> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectUpdatePrepareConfig<T extends AnySQLiteEffectUpdate> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"]
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectUpdateExecute<T>
+}
+
 export type SQLiteEffectUpdatePrepare<
   T extends AnySQLiteEffectUpdate,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"]
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectUpdateExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectUpdatePrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectUpdateDynamic<T extends AnySQLiteEffectUpdate> = SQLiteEffectUpdate<
   T["_"]["table"],
@@ -193,13 +192,13 @@ export class SQLiteEffectUpdateBuilder<
     false,
     "leftJoin" | "rightJoin" | "innerJoin" | "fullJoin"
   > {
-    return new SQLiteEffectUpdateBase(
+    return new SQLiteEffectUpdateBase<TTable, TRunResult, undefined, undefined, false, never, TEffectHKT>(
       this.table,
       mapUpdateSet(this.table, values),
       this.session,
       this.dialect,
       this.withList,
-    ) as any
+    )
   }
 }
 
@@ -256,10 +255,7 @@ export class SQLiteEffectUpdateBase<
   }
 
   private createJoin(joinType: SQLiteSelectJoinConfig["joinType"]): SQLiteEffectUpdateJoinFn<this> {
-    return ((
-      table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
-      on: ((updateTable: TTable, from: TFrom) => SQL | undefined) | SQL | undefined,
-    ) => {
+    return (table, on) => {
       const tableName = getTableLikeName(table)
 
       if (typeof tableName === "string" && this.config.joins.some((join) => join.alias === tableName)) {
@@ -269,25 +265,27 @@ export class SQLiteEffectUpdateBase<
 
       if (typeof on === "function") {
         const from = this.config.from ? joinedTableFields(table) : Option.none()
-        on = on(
-          new Proxy(
-            this.config.table._.columns,
-            new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" }),
-          ) as any,
-          from.pipe(
-            Option.map(
-              (fields) =>
-                new Proxy(fields, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })) as any,
-            ),
-            Option.getOrUndefined,
+        const updateTableProxy = new Proxy(
+          this.config.table._.columns,
+          new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" }),
+        )
+        const fromProxy = from.pipe(
+          Option.map(
+            (fields) => new Proxy(fields, new SelectionProxyHandler({ sqlAliasedBehavior: "sql", sqlBehavior: "sql" })),
           ),
+          Option.getOrUndefined,
+        )
+        on = on(
+          updateTableProxy,
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm update join callback API types this argument by a conditional on T["_"]["from"], which TypeScript cannot relate to the runtime selection proxy
+          fromProxy as Parameters<typeof on>[1],
         )
       }
 
       this.config.joins.push({ on, table, joinType, alias: tableName })
 
-      return this as any
-    }) as any
+      return this
+    }
   }
 
   leftJoin = this.createJoin("left")
@@ -324,7 +322,7 @@ export class SQLiteEffectUpdateBase<
       return this as any
     }
 
-    this.config.orderBy = columns as (SQLiteColumn | SQL | SQL.Aliased)[]
+    this.config.orderBy = columns.filter((column) => typeof column !== "function")
     return this as any
   }
 
@@ -355,17 +353,15 @@ export class SQLiteEffectUpdateBase<
 
   /** @internal */
   _prepare(isOneTimeQuery = true): SQLiteEffectUpdatePrepare<this> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning ? "all" : "run",
-      {
-        fields: this.config.returning,
-        queryMetadata: {
-          type: "update",
-          tables: extractUsedTable(this.config.table),
-        },
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectUpdatePrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
+        type: "update",
+        tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectUpdatePrepare<this>
+    })
   }
 
   prepare(): SQLiteEffectUpdatePrepare<this> {

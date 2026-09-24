@@ -73,25 +73,24 @@ export type SQLiteEffectDeleteExecute<T extends AnySQLiteEffectDelete> = T["_"][
   ? T["_"]["runResult"]
   : T["_"]["returning"][]
 
+export type SQLiteEffectDeletePrepareConfig<T extends AnySQLiteEffectDelete> = PreparedQueryConfig & {
+  run: T["_"]["runResult"]
+  all: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".all() cannot be used without .returning()">
+    : T["_"]["returning"][]
+  get: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".get() cannot be used without .returning()">
+    : T["_"]["returning"] | undefined
+  values: T["_"]["returning"] extends undefined
+    ? DrizzleTypeError<".values() cannot be used without .returning()">
+    : any[][]
+  execute: SQLiteEffectDeleteExecute<T>
+}
+
 export type SQLiteEffectDeletePrepare<
   T extends AnySQLiteEffectDelete,
   TEffectHKT extends QueryEffectHKTBase = T["_"]["effectHKT"],
-> = SQLiteEffectPreparedQuery<
-  PreparedQueryConfig & {
-    run: T["_"]["runResult"]
-    all: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".all() cannot be used without .returning()">
-      : T["_"]["returning"][]
-    get: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".get() cannot be used without .returning()">
-      : T["_"]["returning"] | undefined
-    values: T["_"]["returning"] extends undefined
-      ? DrizzleTypeError<".values() cannot be used without .returning()">
-      : any[][]
-    execute: SQLiteEffectDeleteExecute<T>
-  },
-  TEffectHKT
->
+> = SQLiteEffectPreparedQuery<SQLiteEffectDeletePrepareConfig<T>, TEffectHKT>
 
 export type SQLiteEffectDeleteDynamic<T extends AnySQLiteEffectDelete> = SQLiteEffectDelete<
   T["_"]["table"],
@@ -177,7 +176,7 @@ export class SQLiteEffectDeleteBase<
       return this as any
     }
 
-    this.config.orderBy = columns as (SQLiteColumn | SQL | SQL.Aliased)[]
+    this.config.orderBy = columns.filter((column) => typeof column !== "function")
     return this as any
   }
 
@@ -208,17 +207,15 @@ export class SQLiteEffectDeleteBase<
 
   /** @internal */
   _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this> {
-    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
-      this.effectDialect.sqlToQuery(this.getSQL()),
-      this.config.returning ? "all" : "run",
-      {
-        fields: this.config.returning,
-        queryMetadata: {
-          type: "delete",
-          tables: extractUsedTable(this.config.table),
-        },
+    return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"]<
+      SQLiteEffectDeletePrepareConfig<this>
+    >(this.effectDialect.sqlToQuery(this.getSQL()), this.config.returning ? "all" : "run", {
+      fields: this.config.returning,
+      queryMetadata: {
+        type: "delete",
+        tables: extractUsedTable(this.config.table),
       },
-    ) as SQLiteEffectDeletePrepare<this>
+    })
   }
 
   prepare(): SQLiteEffectDeletePrepare<this> {

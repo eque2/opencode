@@ -59,10 +59,7 @@ export const make = Effect.fn("SQLiteDrizzle.make")(function* <TRelations extend
     cache,
     useJitMappers: yield* jitCompatCheck(config.jit),
   })
-  const db = new EffectSQLiteDatabase(dialect, session, relations) as EffectSQLiteDatabase<TRelations> & {
-    $client: SqlClient
-  }
-  db.$client = client
+  const db = Object.assign(new EffectSQLiteDatabase(dialect, session, relations), { $client: client })
   db.$cache.invalidate = cache.onMutate
 
   return db
