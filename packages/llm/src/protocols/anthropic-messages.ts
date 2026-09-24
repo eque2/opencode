@@ -1,4 +1,4 @@
-import { Effect, Predicate, Schema } from "effect"
+import { Effect, HashSet, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -26,6 +26,7 @@ import { ToolSchemaProjection } from "./utils/tool-schema"
 import { ToolStream } from "./utils/tool-stream"
 
 const ADAPTER = "anthropic-messages"
+const IMAGE_MIMES = HashSet.fromIterable(ProviderShared.IMAGE_MIMES)
 export const DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 export const PATH = "/messages"
 
@@ -330,11 +331,7 @@ const lowerServerToolResult = Effect.fn("AnthropicMessages.lowerServerToolResult
 })
 
 const lowerImage = Effect.fn("AnthropicMessages.lowerImage")(function* (part: MediaPart) {
-  const media = yield* ProviderShared.validateMedia(
-    "Anthropic Messages",
-    part,
-    new Set<string>(ProviderShared.IMAGE_MIMES),
-  )
+  const media = yield* ProviderShared.validateMedia("Anthropic Messages", part, IMAGE_MIMES)
   return {
     type: "image" as const,
     source: {
@@ -351,11 +348,7 @@ const lowerToolResultContentItem = Effect.fn("AnthropicMessages.lowerToolResultC
   item: ToolContent,
 ) {
   if (item.type === "text") return { type: "text" as const, text: item.text } satisfies AnthropicTextBlock
-  const media = yield* ProviderShared.validateToolFile(
-    "Anthropic Messages",
-    item,
-    new Set<string>(ProviderShared.IMAGE_MIMES),
-  )
+  const media = yield* ProviderShared.validateToolFile("Anthropic Messages", item, IMAGE_MIMES)
   return {
     type: "image" as const,
     source: {
@@ -398,15 +391,17 @@ const canUseNativeSystemUpdate = (messages: LLMRequest["messages"], index: numbe
 }
 
 const splitsLocalToolResults = (messages: LLMRequest["messages"], index: number) => {
-  const pending = new Set<string>()
-  for (const message of messages.slice(0, index)) {
-    for (const part of message.content) {
-      if (message.role === "assistant" && part.type === "tool-call" && part.providerExecuted !== true)
-        pending.add(part.id)
-      if (message.role === "tool" && part.type === "tool-result") pending.delete(part.id)
-    }
-  }
-  return pending.size > 0
+  const pending = messages.slice(0, index).reduce(
+    (open, message) =>
+      message.content.reduce((ids, part) => {
+        if (message.role === "assistant" && part.type === "tool-call" && part.providerExecuted !== true)
+          return HashSet.add(ids, part.id)
+        if (message.role === "tool" && part.type === "tool-result") return HashSet.remove(ids, part.id)
+        return ids
+      }, open),
+    HashSet.empty<string>(),
+  )
+  return !HashSet.isEmpty(pending)
 }
 
 const lowerNativeSystemUpdate = Effect.fn("AnthropicMessages.lowerNativeSystemUpdate")(function* (

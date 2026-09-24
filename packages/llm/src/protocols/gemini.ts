@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, HashSet, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -23,7 +23,7 @@ import { Lifecycle } from "./utils/lifecycle"
 import { ToolSchemaProjection } from "./utils/tool-schema"
 
 const ADAPTER = "gemini"
-const MEDIA_MIMES = new Set<string>(ProviderShared.MEDIA_MIMES)
+const MEDIA_MIMES = HashSet.fromIterable(ProviderShared.MEDIA_MIMES)
 export const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // =============================================================================
