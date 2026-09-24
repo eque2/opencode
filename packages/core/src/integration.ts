@@ -120,8 +120,8 @@ export type Ref = Integration.Ref
 
 type Entry = {
   ref: Types.DeepMutable<Ref>
-  methods: Types.DeepMutable<Method>[]
-  implementations: MutableHashMap.MutableHashMap<MethodID, Types.DeepMutable<OAuthImplementation>>
+  methods: Method[]
+  implementations: MutableHashMap.MutableHashMap<MethodID, OAuthImplementation>
 }
 
 type Data = {
@@ -224,6 +224,9 @@ type Attempts = HashMap.HashMap<AttemptID, AttemptEntry>
 
 const isPending = (attempt: AttemptEntry): attempt is PendingAttempt => attempt.status === "pending"
 
+const isOAuthImplementation = (implementation: Implementation): implementation is OAuthImplementation =>
+  implementation.method.type === "oauth"
+
 // Returns the registry entry for an integration, creating an empty one on first use.
 const entryOf = (data: Data, id: ID): Entry =>
   Option.getOrElse(MutableHashMap.get(data.integrations, id), () => {
@@ -266,14 +269,10 @@ export const locationLayer = Layer.effect(
               if (method.type !== "oauth" || implementation.method.type !== "oauth") return true
               return method.id === implementation.method.id
             })
-            if (index === -1) current.methods.push(implementation.method as Types.DeepMutable<Method>)
-            else current.methods[index] = implementation.method as Types.DeepMutable<Method>
-            if (implementation.method.type === "oauth") {
-              MutableHashMap.set(
-                current.implementations,
-                implementation.method.id,
-                implementation as Types.DeepMutable<OAuthImplementation>,
-              )
+            if (index === -1) current.methods.push(implementation.method)
+            else current.methods[index] = implementation.method
+            if (isOAuthImplementation(implementation)) {
+              MutableHashMap.set(current.implementations, implementation.method.id, implementation)
             }
           },
           remove: (integrationID, method) => {
@@ -525,15 +524,17 @@ export const locationLayer = Layer.effect(
           if (Option.isNone(found)) return yield* Effect.die(`OAuth attempt not found: ${input.attemptID}`)
           const attempt = found.value
           if (attempt.status !== "pending") return yield* Effect.void
-          if (attempt.authorization.mode === "code" && input.code === undefined) {
-            return yield* new CodeRequiredError({ attemptID: input.attemptID })
-          }
-          if (attempt.completing) return yield* Effect.die(`OAuth attempt already completing: ${input.attemptID}`)
+          const authorization = attempt.authorization
+          // A code-mode callback needs the code; without it there is no callback to run.
           const callback =
-            attempt.authorization.mode === "auto"
-              ? attempt.authorization.callback
-              : attempt.authorization.callback(input.code as string)
-          const exit = yield* authorize(callback).pipe(Effect.exit)
+            authorization.mode === "auto"
+              ? Option.some(authorization.callback)
+              : Option.map(Option.fromUndefinedOr(input.code), (code) =>
+                  Effect.suspend(() => authorization.callback(code)),
+                )
+          if (Option.isNone(callback)) return yield* new CodeRequiredError({ attemptID: input.attemptID })
+          if (attempt.completing) return yield* Effect.die(`OAuth attempt already completing: ${input.attemptID}`)
+          const exit = yield* authorize(callback.value).pipe(Effect.exit)
           yield* settle(input.attemptID, exit)
           return yield* Exit.asVoid(exit)
         }),
