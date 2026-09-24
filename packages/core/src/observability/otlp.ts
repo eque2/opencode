@@ -1,4 +1,4 @@
-import { Layer, Option } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { OtlpLogger } from "effect/unstable/observability"
 import { Flag } from "../flag/flag"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -57,13 +57,13 @@ export function loggers() {
   ]
 }
 
-export async function tracingLayer() {
+const tracing = Effect.gen(function* () {
   if (!endpoint) return Layer.empty
-  const NodeSdk = await import("@effect/opentelemetry/NodeSdk")
-  const OTLP = await import("@opentelemetry/exporter-trace-otlp-http")
-  const SdkBase = await import("@opentelemetry/sdk-trace-base")
-  const { AsyncLocalStorageContextManager } = await import("@opentelemetry/context-async-hooks")
-  const { context } = await import("@opentelemetry/api")
+  const NodeSdk = yield* Effect.promise(() => import("@effect/opentelemetry/NodeSdk"))
+  const OTLP = yield* Effect.promise(() => import("@opentelemetry/exporter-trace-otlp-http"))
+  const SdkBase = yield* Effect.promise(() => import("@opentelemetry/sdk-trace-base"))
+  const { AsyncLocalStorageContextManager } = yield* Effect.promise(() => import("@opentelemetry/context-async-hooks"))
+  const { context } = yield* Effect.promise(() => import("@opentelemetry/api"))
 
   // The Effect Node SDK does not register a global context manager, but the AI SDK uses it to parent spans.
   const manager = new AsyncLocalStorageContextManager()
@@ -79,6 +79,11 @@ export async function tracingLayer() {
       }),
     ),
   }))
+})
+
+/** observability.ts awaits this through Effect.promise, so it keeps its Promise-returning signature. */
+export function tracingLayer() {
+  return Effect.runPromise(tracing)
 }
 
 export * as Otlp from "./otlp"
