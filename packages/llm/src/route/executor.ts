@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Context, Effect, Layer, Random } from "effect"
+import { Array as Arr, Cause, Clock, Context, DateTime, Effect, Layer, Option, Random } from "effect"
 import {
   FetchHttpClient,
   Headers,
@@ -90,7 +90,9 @@ const requestId = (headers: Record<string, string>) => {
 
 const retryableStatus = (status: number) => status === 429 || status === 503 || status === 504 || status === 529
 
-const retryAfterMs = (headers: Record<string, string>) => {
+// `now` is the current epoch time in milliseconds, read from `Clock` by the
+// calling Effect so an HTTP-date Retry-After follows the runtime clock.
+const retryAfterMs = (headers: Record<string, string>, now: number) => {
   const millis = Number(headers["retry-after-ms"])
   if (Number.isFinite(millis)) return Math.max(0, millis)
 
@@ -100,8 +102,8 @@ const retryAfterMs = (headers: Record<string, string>) => {
   const seconds = Number(value)
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
 
-  const date = Date.parse(value)
-  if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
+  const date = DateTime.make(value)
+  if (Option.isSome(date)) return Math.max(0, DateTime.toEpochMillis(date.value) - now)
   return undefined
 }
 
@@ -283,7 +285,7 @@ const statusError =
       if (response.status < 400) return response
       const body = yield* response.text.pipe(Effect.catch(() => Effect.void))
       const headers = normalizedHeaders(response.headers)
-      const retryAfter = retryAfterMs(headers)
+      const retryAfter = retryAfterMs(headers, yield* Clock.currentTimeMillis)
       const rateLimit = rateLimitDetails(headers, retryAfter)
       const details = responseBody(body, request)
       return yield* new LLMError({
