@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { HashSet, Option } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { isDefinition, make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
@@ -55,11 +55,11 @@ export const fromSpec = (options: Options): Result => {
       if (!HashSet.has(methods, method) || !isRecord(operationValue)) continue
       const segments = operationPath(method, path, operationValue, used, namespaces)
       const operation: Operation = {
-        operationId: nonEmptyString(operationValue.operationId),
+        operationId: Option.getOrUndefined(nonEmptyString(operationValue.operationId)),
         method: method.toUpperCase(),
         path,
-        summary: nonEmptyString(operationValue.summary),
-        description: nonEmptyString(operationValue.description),
+        summary: Option.getOrUndefined(nonEmptyString(operationValue.summary)),
+        description: Option.getOrUndefined(nonEmptyString(operationValue.description)),
       }
       const output = operationOutput(document, operationValue, definitions)
       if (!output.ok) {
@@ -109,7 +109,7 @@ export const fromSpec = (options: Options): Result => {
         make({
           description: operation.description ?? operation.summary ?? `${operation.method} ${path}`,
           input: inputSchema(input.fields, definitions),
-          output: output.value,
+          output: Option.getOrUndefined(output.value),
           run: (input) => invoke(plan, input),
         }),
       )
@@ -132,8 +132,8 @@ const setTool = (tools: Tools, path: ReadonlyArray<string>, definition: Definiti
     return
   }
   const child = own(tools, head)
-  if (child !== undefined && !isDefinition<HttpClient.HttpClient>(child)) {
-    setTool(child, rest, definition)
+  if (Option.isSome(child) && !isDefinition<HttpClient.HttpClient>(child.value)) {
+    setTool(child.value, rest, definition)
     return
   }
   const namespace = emptyTools()

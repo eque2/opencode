@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import type { Definition, JsonSchema } from "../tool.js"
 
@@ -81,15 +81,16 @@ export type InputField = {
   readonly location: InputLocation
   readonly required: boolean
   readonly schema: JsonSchema
-  readonly style: "simple" | "form" | "deepObject" | undefined
-  readonly explode: boolean | undefined
+  /** Parameter serialization; absent for body fields. */
+  readonly style?: "simple" | "form" | "deepObject"
+  readonly explode?: boolean
 }
 
 export type Body = { readonly required: boolean; readonly mode: "object" | "value"; readonly mediaType: string }
 
 export type OperationInput = {
   readonly fields: ReadonlyArray<InputField>
-  readonly body: Body | undefined
+  readonly body: Option.Option<Body>
 }
 
 /** One OR alternative: scheme name -> required scopes. Empty object = unauthenticated is acceptable. */
@@ -99,7 +100,7 @@ export type Plan = {
   readonly operation: Operation
   readonly url: string
   readonly fields: ReadonlyArray<InputField>
-  readonly body: Body | undefined
+  readonly body: Option.Option<Body>
   readonly security: ReadonlyArray<SecurityRequirement>
   readonly schemes: Readonly<Record<string, SecurityScheme>>
   readonly auth: { readonly resolve: AuthResolver } | undefined

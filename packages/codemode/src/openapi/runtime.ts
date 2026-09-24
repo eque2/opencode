@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
 import { isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"
@@ -64,7 +64,7 @@ const buildRequest = (
     const url = buildUrl(plan, input)
     if (url instanceof ToolError) return yield* Effect.fail(url)
     const missing = plan.fields.find(
-      (field) => field.required && field.location !== "path" && own(input, field.inputName) === undefined,
+      (field) => field.required && field.location !== "path" && Option.isNone(own(input, field.inputName)),
     )
     if (missing !== undefined) {
       const label = missing.location === "body" ? "body field" : `${missing.location} parameter`
@@ -75,8 +75,8 @@ const buildRequest = (
     for (const field of plan.fields) {
       if (field.location !== "query") continue
       const item = own(input, field.inputName)
-      if (item === undefined) continue
-      const serialized = serializeQuery(request, field, item)
+      if (Option.isNone(item)) continue
+      const serialized = serializeQuery(request, field, item.value)
       if (serialized instanceof ToolError) return yield* Effect.fail(serialized)
       request = serialized
     }
@@ -86,8 +86,8 @@ const buildRequest = (
     for (const field of plan.fields) {
       if (field.location !== "header") continue
       const item = own(input, field.inputName)
-      if (item === undefined) continue
-      const serialized = serializeSimple(field, item, String)
+      if (Option.isNone(item)) continue
+      const serialized = serializeSimple(field, item.value, String)
       if (serialized instanceof ToolError) return yield* Effect.fail(serialized)
       request = HttpClientRequest.setHeader(request, field.name, serialized)
     }
@@ -99,22 +99,20 @@ const buildRequest = (
           toolError(`Invalid JSON body for ${plan.operation.method} ${plan.operation.path}.`, cause),
         ),
       )
-    if (plan.body?.mode === "value") {
-      const field = plan.fields.find((field) => field.location === "body")
-      const body = field === undefined ? undefined : own(input, field.inputName)
-      if (body !== undefined) request = yield* setBody(body, plan.body.mediaType)
+    if (Option.isNone(plan.body)) return request
+    const body = plan.body.value
+    if (body.mode === "value") {
+      const value = Arr.findFirst(plan.fields, (field) => field.location === "body").pipe(
+        Option.flatMap((field) => own(input, field.inputName)),
+      )
+      return Option.isSome(value) ? yield* setBody(value.value, body.mediaType) : request
     }
-    if (plan.body?.mode === "object") {
-      const entries = plan.fields.flatMap((field) => {
-        if (field.location !== "body") return []
-        const item = own(input, field.inputName)
-        return item === undefined ? [] : [[field.name, item] as const]
-      })
-      if (plan.body.required || entries.length > 0) {
-        request = yield* setBody(Object.fromEntries(entries), plan.body.mediaType)
-      }
-    }
-    return request
+    const entries = plan.fields.flatMap((field) =>
+      field.location === "body"
+        ? Option.toArray(Option.map(own(input, field.inputName), (item) => [field.name, item] as const))
+        : [],
+    )
+    return body.required || entries.length > 0 ? yield* setBody(Object.fromEntries(entries), body.mediaType) : request
   })
 
 const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
@@ -129,13 +127,13 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
       const credentials: Array<readonly [string, SecurityScheme, Credential]> = []
       for (const name of names) {
         const scheme = own(plan.schemes, name)
-        if (scheme === undefined || plan.auth === undefined) {
+        if (Option.isNone(scheme) || plan.auth === undefined) {
           unavailable.push(name)
           continue alternatives
         }
         const credential = yield* plan.auth.resolve({
           name,
-          definition: scheme,
+          definition: scheme.value,
           scopes: requirement[name] ?? [],
           operation: plan.operation,
         })
@@ -143,7 +141,7 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
           unavailable.push(name)
           continue alternatives
         }
-        credentials.push([name, scheme, credential])
+        credentials.push([name, scheme.value, credential])
       }
       const applied = applyCredentials(credentials)
       return applied instanceof ToolError ? yield* Effect.fail(applied) : applied
@@ -222,10 +220,10 @@ const buildUrl = (plan: Plan, input: Readonly<Record<string, unknown>>): string 
   for (const field of plan.fields) {
     if (field.location !== "path") continue
     const item = own(input, field.inputName)
-    if (item === undefined) {
+    if (Option.isNone(item)) {
       return toolError(`Missing required path parameter '${field.inputName}'.`)
     }
-    const fieldValue = serializeSimple(field, item, (value) =>
+    const fieldValue = serializeSimple(field, item.value, (value) =>
       encodeURIComponent(value).replace(
         /[!'()*]/g,
         (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -314,14 +312,19 @@ const readResponseBody = (
   plan: Plan,
 ): Effect.Effect<string, ToolError> =>
   Effect.gen(function* () {
-    const contentLength = response.headers["content-length"]
-    const parsedSize = contentLength === undefined ? undefined : Number.parseInt(contentLength, 10)
-    const declaredSize =
-      parsedSize !== undefined && Number.isSafeInteger(parsedSize) && parsedSize >= 0 ? parsedSize : undefined
-    if (declaredSize !== undefined && declaredSize > maxResponseBodyBytes) {
+    const declaredSize = Headers.get(response.headers, "content-length").pipe(
+      Option.map((value) => Number.parseInt(value, 10)),
+      Option.filter((size) => Number.isSafeInteger(size) && size >= 0),
+    )
+    if (Option.isSome(declaredSize) && declaredSize.value > maxResponseBodyBytes) {
       return yield* Effect.fail(toolError(`${plan.operation.method} ${plan.operation.path} response exceeds 50 MiB.`))
     }
-    let body = Buffer.allocUnsafe(Math.min(maxResponseBodyBytes, declaredSize ?? 64 * 1024))
+    let body = Buffer.allocUnsafe(
+      Math.min(
+        maxResponseBodyBytes,
+        Option.getOrElse(declaredSize, () => 64 * 1024),
+      ),
+    )
     let size = 0
     yield* Stream.runForEach(response.stream, (chunk) => {
       if (size + chunk.byteLength > maxResponseBodyBytes) {
