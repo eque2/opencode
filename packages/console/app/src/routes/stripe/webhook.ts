@@ -1,4 +1,3 @@
-import type { Stripe } from "stripe"
 import { Billing } from "@opencode-ai/console-core/billing.js"
 import type { APIEvent } from "@solidjs/start/server"
 import { and, Database, eq, sql } from "@opencode-ai/console-core/drizzle/index.js"
@@ -10,6 +9,11 @@ import { Resource } from "@opencode-ai/console-resource"
 import { LiteData } from "@opencode-ai/console-core/lite.js"
 import { BlackData } from "@opencode-ai/console-core/black.js"
 import { Referral } from "@opencode-ai/console-core/referral.js"
+
+// Stripe returns a related object either as its ID or, when expanded, as the object itself.
+function stripeID(value: string | { id?: string } | null | undefined) {
+  return typeof value === "string" ? value : value?.id
+}
 
 export async function POST(input: APIEvent) {
   const body = await Billing.stripe().webhooks.constructEventAsync(
@@ -26,7 +30,7 @@ export async function POST(input: APIEvent) {
       if (!("default_payment_method" in prevInvoiceSettings)) return "ignored"
 
       const customerID = body.data.object.id
-      const paymentMethodID = body.data.object.invoice_settings.default_payment_method as string
+      const paymentMethodID = stripeID(body.data.object.invoice_settings.default_payment_method)
 
       if (!customerID) throw new Error("Customer ID not found")
       if (!paymentMethodID) throw new Error("Payment method ID not found")
@@ -46,9 +50,9 @@ export async function POST(input: APIEvent) {
     if (body.type === "checkout.session.completed" && body.data.object.mode === "payment") {
       const workspaceID = body.data.object.metadata?.workspaceID
       const amountInCents = body.data.object.metadata?.amount && parseInt(body.data.object.metadata?.amount)
-      const customerID = body.data.object.customer as string
-      const paymentID = body.data.object.payment_intent as string
-      const invoiceID = body.data.object.invoice as string
+      const customerID = stripeID(body.data.object.customer)
+      const paymentID = stripeID(body.data.object.payment_intent)
+      const invoiceID = stripeID(body.data.object.invoice)
 
       if (!workspaceID) throw new Error("Workspace ID not found")
       if (!customerID) throw new Error("Customer ID not found")
@@ -112,10 +116,10 @@ export async function POST(input: APIEvent) {
         const userID = body.data.object.metadata?.userID
         const userEmail = body.data.object.metadata?.userEmail
         const coupon = body.data.object.metadata?.coupon
-        const customerID = body.data.object.customer as string
-        const invoiceID = body.data.object.latest_invoice as string
-        const subscriptionID = body.data.object.id as string
-        const paymentMethodID = body.data.object.default_payment_method as string
+        const customerID = stripeID(body.data.object.customer)
+        const invoiceID = stripeID(body.data.object.latest_invoice)
+        const subscriptionID = body.data.object.id
+        const paymentMethodID = stripeID(body.data.object.default_payment_method)
 
         if (!workspaceID) throw new Error("Workspace ID not found")
         if (!userID) throw new Error("User ID not found")
@@ -188,7 +192,7 @@ export async function POST(input: APIEvent) {
       const subscriptionID = body.data.object.id
       if (!subscriptionID) throw new Error("Subscription ID not found")
 
-      const productID = body.data.object.items.data[0].price.product as string
+      const productID = stripeID(body.data.object.items.data[0].price.product)
       if (productID === LiteData.productID()) {
         await Billing.unsubscribeLite({ subscriptionID })
       } else if (productID === BlackData.productID()) {
@@ -199,7 +203,7 @@ export async function POST(input: APIEvent) {
       const subscriptionID = body.data.object.id
       if (!subscriptionID) throw new Error("Subscription ID not found")
 
-      const productID = body.data.object.items.data[0].price.product as string
+      const productID = stripeID(body.data.object.items.data[0].price.product)
       if (productID === LiteData.productID()) {
         await Billing.unsubscribeLite({ subscriptionID })
       } else if (productID === BlackData.productID()) {
@@ -218,11 +222,11 @@ export async function POST(input: APIEvent) {
         body.data.object.billing_reason === "subscription_create" ||
         body.data.object.billing_reason === "subscription_cycle"
       ) {
-        const invoiceID = body.data.object.id as string
+        const invoiceID = body.data.object.id
         const amountInCents = body.data.object.amount_paid
-        const customerID = body.data.object.customer as string
-        const subscriptionID = body.data.object.parent?.subscription_details?.subscription as string
-        const productID = body.data.object.lines?.data[0].pricing?.price_details?.product as string
+        const customerID = stripeID(body.data.object.customer)
+        const subscriptionID = stripeID(body.data.object.parent?.subscription_details?.subscription)
+        const productID = body.data.object.lines?.data[0].pricing?.price_details?.product
 
         if (!customerID) throw new Error("Customer ID not found")
         if (!invoiceID) throw new Error("Invoice ID not found")
@@ -232,8 +236,9 @@ export async function POST(input: APIEvent) {
         const invoice = await Billing.stripe().invoices.retrieve(invoiceID, {
           expand: ["discounts", "payments"],
         })
-        const paymentID = invoice.payments?.data[0]?.payment.payment_intent as string
-        const couponID = (invoice.discounts[0] as Stripe.Discount)?.coupon?.id as string
+        const paymentID = stripeID(invoice.payments?.data[0]?.payment.payment_intent)
+        const discount = invoice.discounts[0]
+        const couponID = typeof discount === "object" ? discount.coupon?.id : undefined
         if (!paymentID) {
           // payment id can be undefined when using coupon
           if (!couponID) throw new Error("Payment ID not found")
@@ -266,8 +271,8 @@ export async function POST(input: APIEvent) {
       } else if (body.data.object.billing_reason === "manual") {
         const workspaceID = body.data.object.metadata?.workspaceID
         const amountInCents = body.data.object.metadata?.amount && parseInt(body.data.object.metadata?.amount)
-        const invoiceID = body.data.object.id as string
-        const customerID = body.data.object.customer as string
+        const invoiceID = body.data.object.id
+        const customerID = stripeID(body.data.object.customer)
 
         if (!workspaceID) throw new Error("Workspace ID not found")
         if (!customerID) throw new Error("Customer ID not found")
@@ -293,7 +298,7 @@ export async function POST(input: APIEvent) {
               id: Identifier.create("payment"),
               amount: centsToMicroCents(amountInCents),
               invoiceID,
-              paymentID: invoice.payments?.data[0].payment.payment_intent as string,
+              paymentID: stripeID(invoice.payments?.data[0].payment.payment_intent),
               customerID,
             })
           })
@@ -330,8 +335,8 @@ export async function POST(input: APIEvent) {
       }
     }
     if (body.type === "charge.refunded") {
-      const customerID = body.data.object.customer as string
-      const paymentIntentID = body.data.object.payment_intent as string
+      const customerID = stripeID(body.data.object.customer)
+      const paymentIntentID = stripeID(body.data.object.payment_intent)
       if (!customerID) throw new Error("Customer ID not found")
       if (!paymentIntentID) throw new Error("Payment ID not found")
 
