@@ -438,6 +438,26 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
       "    buildUrl,",
     ),
   },
+
+  // typescript/no-unnecessary-type-assertion
+  {
+    file: "client/client.gen.ts",
+    rule: "typescript/no-unnecessary-type-assertion",
+    search: "    const _fetch = opts.fetch!\n",
+    replace: "    const _fetch = opts.fetch\n",
+  },
+  {
+    file: "client/client.gen.ts",
+    rule: "typescript/no-unnecessary-type-assertion",
+    search: "          finalError = (await fn(error, undefined as any, request, opts)) as unknown\n",
+    replace: "          finalError = await fn(error, undefined as any, request, opts)\n",
+  },
+  {
+    file: "core/queryKeySerializer.gen.ts",
+    rule: "typescript/no-unnecessary-type-assertion",
+    search: "  const prototype = Object.getPrototypeOf(value as object)\n",
+    replace: "  const prototype = Object.getPrototypeOf(value)\n",
+  },
 ]
 
 /**

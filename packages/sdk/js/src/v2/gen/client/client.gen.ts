@@ -84,7 +84,7 @@ export const createClient = (config: Config = {}): Client => {
 
     // fetch must be assigned here, otherwise it would throw the error:
     // TypeError: Failed to execute 'fetch' on 'Window': Illegal invocation
-    const _fetch = opts.fetch!
+    const _fetch = opts.fetch
     let response: Response
 
     try {
@@ -96,7 +96,7 @@ export const createClient = (config: Config = {}): Client => {
       for (const fn of interceptors.error.fns) {
         if (fn) {
           // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined
-          finalError = (await fn(error, undefined as any, request, opts)) as unknown
+          finalError = await fn(error, undefined as any, request, opts)
         }
       }
 
