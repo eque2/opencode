@@ -189,9 +189,12 @@ export class Message extends Schema.Class<Message>("LLM.Message")({
 }) {}
 
 export namespace Message {
-  export type ContentInput = string | ContentPart | ReadonlyArray<ContentPart>
+  /** Constructor input of the `Message` class; JSON-valued fields accept their make-side input type. */
+  type MakeInput = ConstructorParameters<typeof Message>[0]
+  export type ContentPartInput = MakeInput["content"][number]
+  export type ContentInput = string | ContentPartInput | ReadonlyArray<ContentPartInput>
   export type SystemContentInput = string | TextPart | ReadonlyArray<TextPart>
-  export type Input = Omit<ConstructorParameters<typeof Message>[0], "content"> & {
+  export type Input = Omit<MakeInput, "content"> & {
     readonly content: ContentInput
   }
 
