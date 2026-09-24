@@ -392,8 +392,7 @@ const instanceofValue = (
   node: AstNode,
 ): Effect.Effect<boolean, InterpreterRuntimeError> => {
   if (rhs instanceof ErrorConstructorReference) {
-    const brand = errorBrandName(lhs)
-    return Effect.succeed(brand !== undefined && (rhs.name === "Error" || brand === rhs.name))
+    return Effect.succeed(Option.exists(errorBrandName(lhs), (brand) => rhs.name === "Error" || brand === rhs.name))
   }
   if (rhs instanceof GlobalNamespace) {
     switch (rhs.name) {

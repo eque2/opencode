@@ -45,24 +45,28 @@ export const toHostRegex = (
   }
   return Effect.fail(
     new InterpreterRuntimeError(
-      `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${arg === null ? "null" : typeof arg}.`,
+      `String.${method} expects a regular expression (a /pattern/flags literal or new RegExp(...)) or a string pattern, not ${Predicate.isNull(arg) ? "null" : typeof arg}.`,
       node,
     ),
   )
 }
 
-export const matchToValue = (match: RegExpMatchArray): Array<unknown> => {
-  const result: Array<unknown> = Array.from(match, (group) => group)
-  if (match.index !== undefined) (result as Record<string, unknown> & Array<unknown>).index = match.index
-  if (match.groups) {
-    const groups = makeSafeObject()
-    for (const [key, group] of Object.entries(match.groups)) {
-      if (!isBlockedMember(key)) groups[key] = group
-    }
-    ;(result as Record<string, unknown> & Array<unknown>).groups = groups
+// Named groups copy into a prototype-free object; a blocked group name is dropped.
+const safeGroups = (groups: Record<string, string>): SafeObject => {
+  const copied = makeSafeObject()
+  for (const [key, group] of Object.entries(groups)) {
+    if (!isBlockedMember(key)) copied[key] = group
   }
-  return result
+  return copied
 }
+
+// A match array keeps its index/groups own properties, as String.match and RegExp.exec give them.
+export const matchToValue = (match: RegExpMatchArray): Array<unknown> =>
+  Object.assign(
+    Array.from(match, (group): unknown => group),
+    match.index === undefined ? {} : { index: match.index },
+    match.groups ? { groups: safeGroups(match.groups) } : {},
+  )
 
 // test and exec advance lastIndex on a global or sticky regex, so they run when the call runs.
 export const invokeRegExpMethod = (
@@ -77,7 +81,8 @@ export const invokeRegExpMethod = (
     case "exec":
       return Effect.sync(() => {
         const matched = value.regex.exec(coerceToString(args[0]))
-        return matched === null ? null : matchToValue(matched)
+        // No match: exec's own null result is the program-visible value.
+        return Predicate.isNull(matched) ? matched : matchToValue(matched)
       })
     case "toString":
       return Effect.succeed(coerceToString(value))
@@ -85,8 +90,8 @@ export const invokeRegExpMethod = (
       return Effect.fail(new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node))
   }
 }
-import { Effect, HashSet } from "effect"
+import { Effect, HashSet, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
-import { isBlockedMember, makeSafeObject } from "../tool-runtime.js"
+import { isBlockedMember, makeSafeObject, type SafeObject } from "../tool-runtime.js"
 import { SandboxRegExp } from "../values.js"
 import { coerceToString } from "./value.js"

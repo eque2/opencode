@@ -1,4 +1,4 @@
-import { Effect, HashSet, Result } from "effect"
+import { Effect, HashSet, Predicate, Result } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, makeSafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from "../values.js"
@@ -23,10 +23,10 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
   const requireObject = (): ObjectResult<Record<string, unknown>> =>
     Result.flatMap(boundedData(args[0], `Object.${name} input`), (value) => {
       if (isSandboxValue(value)) return Result.succeed({})
-      if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      if (!Predicate.isObject(value)) {
         return Result.fail(new InterpreterRuntimeError(`Object.${name} expects a data object.`, node))
       }
-      return Result.succeed(value as Record<string, unknown>)
+      return Result.succeed(value)
     })
   // Copies entries into `out` in order; a blocked key stops the copy.
   const assignEntries = (
@@ -46,7 +46,7 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
       return Result.flatMap(boundedData(args[0], "Object.keys input"), (value) => {
         if (isSandboxValue(value)) return Result.succeed([])
         if (Array.isArray(value)) return Result.succeed(Object.keys(value))
-        if (value === null || typeof value !== "object") {
+        if (!Predicate.isObject(value)) {
           return Result.fail(new InterpreterRuntimeError("Object.keys expects a data object or array.", node))
         }
         return Result.succeed(Object.keys(value))
@@ -60,12 +60,12 @@ const objectMethod = (name: string, args: Array<unknown>, node: AstNode): Object
     case "assign": {
       const out = makeSafeObject()
       for (const source of args) {
-        if (source === null || source === undefined) continue
+        if (Predicate.isNullish(source)) continue
         const copied = boundedData(source, "Object.assign input")
         if (Result.isFailure(copied)) return copied
         const value = copied.success
         if (isSandboxValue(value)) continue
-        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+        if (!Predicate.isObject(value)) {
           return Result.fail(new InterpreterRuntimeError("Object.assign expects data objects.", node))
         }
         const assigned = assignEntries(out, Object.entries(value))

@@ -33,16 +33,18 @@ export const createErrorValue = (name: string, message: string): SafeObject => {
   return value
 }
 
-export const errorBrandName = (value: unknown): string | undefined =>
-  value !== null && typeof value === "object"
-    ? ((value as Record<PropertyKey, unknown>)[ErrorBrand] as string | undefined)
-    : undefined
+// The error type name a branded error value carries; None for any other value.
+export const errorBrandName = (value: unknown): Option.Option<string> => {
+  if (!Predicate.hasProperty(value, ErrorBrand)) return Option.none()
+  const brand = value[ErrorBrand]
+  return typeof brand === "string" ? Option.some(brand) : Option.none()
+}
 
 export const boundedData = (value: unknown, label: string): Result.Result<unknown, ToolRuntimeError> =>
   copyIn(value, label, true)
 
 export const coerceToString = (value: unknown): string => {
-  if (value === null) return "null"
+  if (Predicate.isNull(value)) return "null"
   if (value === undefined) return "undefined"
   if (value instanceof SandboxDate)
     return Number.isFinite(value.time) ? new Date(value.time).toISOString() : "Invalid Date"
@@ -53,7 +55,7 @@ export const coerceToString = (value: unknown): string => {
   if (value instanceof SandboxURLSearchParams) return value.params.toString()
   if (typeof value === "object") {
     return Array.isArray(value)
-      ? value.map((item) => (item === null || item === undefined ? "" : coerceToString(item))).join(",")
+      ? value.map((item) => (Predicate.isNullish(item) ? "" : coerceToString(item))).join(",")
       : "[object Object]"
   }
   return String(value)
@@ -62,7 +64,7 @@ export const coerceToString = (value: unknown): string => {
 export const coerceToNumber = (value: unknown): number => {
   if (value instanceof SandboxDate) return value.time
   if (isSandboxValue(value)) return Number.NaN
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? Number.NaN : Number(value)
+  return Predicate.isObject(value) ? Number.NaN : Number(value)
 }
 
 export const invokeCoercion = (
@@ -95,7 +97,7 @@ export const invokeCoercion = (
     },
   )
 }
-import { Effect, HashSet, type Result } from "effect"
+import { Effect, HashSet, Option, Predicate, type Result } from "effect"
 import { type AstNode, CoercionFunction, InterpreterRuntimeError } from "../interpreter/model.js"
 import { copyIn, makeSafeObject, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import {
