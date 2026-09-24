@@ -42,10 +42,7 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     "triggerProps",
   ])
 
-  const state = {
-    key: undefined as string | T | undefined,
-    cleanup: undefined as (() => void) | void,
-  }
+  const state: { key?: string | T; cleanup?: (() => void) | void } = {}
 
   const stop = () => {
     state.cleanup?.()

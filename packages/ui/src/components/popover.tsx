@@ -38,10 +38,13 @@ export function Popover<T extends ValidComponent = "div">(props: PopoverProps<T>
     "modal",
   ])
 
-  const [state, setState] = createStore({
-    contentRef: undefined as HTMLElement | undefined,
-    triggerRef: undefined as HTMLElement | undefined,
-    dismiss: null as "escape" | "outside" | null,
+  const [state, setState] = createStore<{
+    contentRef?: HTMLElement
+    triggerRef?: HTMLElement
+    dismiss: "escape" | "outside" | null
+    uncontrolledOpen: boolean
+  }>({
+    dismiss: null,
     uncontrolledOpen: local.defaultOpen ?? false,
   })
 
