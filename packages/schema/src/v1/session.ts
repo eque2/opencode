@@ -68,7 +68,7 @@ export class OutputFormatText extends Schema.Class<OutputFormatText>("OutputForm
 
 export class OutputFormatJsonSchema extends Schema.Class<OutputFormatJsonSchema>("OutputFormatJsonSchema")({
   type: Schema.Literal("json_schema"),
-  schema: Schema.Record(Schema.String, Schema.Any).annotate({ identifier: "JSONSchema" }),
+  schema: Schema.Record(Schema.String, Schema.MutableJson).annotate({ identifier: "JSONSchema" }),
   retryCount: NonNegativeInt.pipe(Schema.optional, Schema.withDecodingDefault(Effect.succeed(2))),
 }) {}
 
@@ -406,7 +406,7 @@ export const TextPartInput = Schema.Struct({
       end: Schema.optional(NonNegativeInt),
     }),
   ),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.MutableJson)),
 }).annotate({ identifier: "TextPartInput" })
 export type TextPartInput = Types.DeepMutable<Schema.Schema.Type<typeof TextPartInput>>
 
@@ -479,7 +479,7 @@ export const Assistant = Schema.Struct({
       write: Schema.Finite,
     }),
   }),
-  structured: Schema.optional(Schema.Any),
+  structured: Schema.optional(Schema.MutableJson),
   variant: Schema.optional(Schema.String),
   finish: Schema.optional(Schema.String),
 }).annotate({ identifier: "AssistantMessage" })
@@ -556,7 +556,7 @@ export const SessionInfo = Schema.Struct({
   agent: optional(Schema.String),
   model: optional(SessionModel),
   version: Schema.String,
-  metadata: optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: optional(Schema.Record(Schema.String, Schema.MutableJson)),
   time: Schema.Struct({
     created: NonNegativeInt,
     updated: NonNegativeInt,
