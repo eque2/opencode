@@ -81,19 +81,19 @@ const hasUnresolvedRef = (
  * Schema constraints a TypeScript type cannot express natively but a model benefits from,
  * surfaced as JSDoc tags (`@deprecated`, `@default`, `@format`, `@minItems`, `@maxItems`).
  */
-const docTags = (schema: JsonSchema): Array<string> => {
-  const tags: Array<string> = []
-  if (schema.deprecated === true) tags.push("@deprecated")
-  if (schema.default !== undefined) {
-    // An unserializable default is skipped rather than emitted as a broken tag.
-    const rendered = encodeJson(schema.default)
-    if (Result.isSuccess(rendered)) tags.push(`@default ${rendered.success}`)
-  }
-  if (typeof schema.format === "string") tags.push(`@format ${schema.format}`)
-  if (typeof schema.minItems === "number") tags.push(`@minItems ${schema.minItems}`)
-  if (typeof schema.maxItems === "number") tags.push(`@maxItems ${schema.maxItems}`)
-  return tags
-}
+const docTags = (schema: JsonSchema): Array<string> => [
+  ...(schema.deprecated === true ? ["@deprecated"] : []),
+  // An unserializable default is skipped rather than emitted as a broken tag.
+  ...(schema.default === undefined
+    ? []
+    : Result.match(encodeJson(schema.default), {
+        onFailure: () => [],
+        onSuccess: (rendered) => [`@default ${rendered}`],
+      })),
+  ...(typeof schema.format === "string" ? [`@format ${schema.format}`] : []),
+  ...(typeof schema.minItems === "number" ? [`@minItems ${schema.minItems}`] : []),
+  ...(typeof schema.maxItems === "number" ? [`@maxItems ${schema.maxItems}`] : []),
+]
 
 /**
  * Format a schema `description` plus `tags` as a JSDoc comment at the given indent,
@@ -103,11 +103,12 @@ const docTags = (schema: JsonSchema): Array<string> => {
  * callers can prepend it directly to the field line.
  */
 const jsdoc = (description: string | undefined, tags: ReadonlyArray<string>, pad: string): string => {
-  const lines = [...(description === undefined ? [] : description.split("\n")), ...tags].map((line) =>
+  const all = [...(description === undefined ? [] : description.split("\n")), ...tags].map((line) =>
     line.replaceAll("*/", "* /").replace(/\s+$/, ""),
   )
-  while (lines.length > 0 && lines[0]!.trim() === "") lines.shift()
-  while (lines.length > 0 && lines[lines.length - 1]!.trim() === "") lines.pop()
+  // Trim blank leading and trailing lines; with no content line the slice is empty.
+  const hasContent = (line: string) => line.trim() !== ""
+  const lines = all.slice(Math.max(0, all.findIndex(hasContent)), all.findLastIndex(hasContent) + 1)
   if (lines.length === 0) return ""
   if (lines.length === 1) return `${pad}/** ${lines[0]} */\n`
   const body = lines.map((line) => `${pad} *${line === "" ? "" : ` ${line}`}`).join("\n")
@@ -188,18 +189,20 @@ const renderSchema = (
       `${renderKey(name)}${HashSet.has(required, name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
     if (!ctx.pretty) {
-      const fields = properties.map(field)
-      if (Option.isSome(indexType)) fields.push(`[key: string]: ${indexType.value}`)
+      const fields = [
+        ...properties.map(field),
+        ...Option.toArray(Option.map(indexType, (type) => `[key: string]: ${type}`)),
+      ]
       return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
     }
 
     // Pretty: an indented block, each described field preceded by its JSDoc comment.
     if (properties.length === 0 && Option.isNone(indexType)) return "{}"
     const pad = "  ".repeat(depth + 1)
-    const lines = properties.map(
-      (entry) => `${jsdoc(entry[1].description, docTags(entry[1]), pad)}${pad}${field(entry)},`,
-    )
-    if (Option.isSome(indexType)) lines.push(`${pad}[key: string]: ${indexType.value},`)
+    const lines = [
+      ...properties.map((entry) => `${jsdoc(entry[1].description, docTags(entry[1]), pad)}${pad}${field(entry)},`),
+      ...Option.toArray(Option.map(indexType, (type) => `${pad}[key: string]: ${type},`)),
+    ]
     return `{\n${lines.join("\n")}\n${"  ".repeat(depth)}}`
   }
   return "unknown"
