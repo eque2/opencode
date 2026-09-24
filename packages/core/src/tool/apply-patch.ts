@@ -3,7 +3,7 @@ export * as ApplyPatchTool from "./apply-patch"
 import { ToolFailure } from "@opencode-ai/llm"
 import { FileDiff } from "@opencode-ai/schema/file-diff"
 import { createTwoFilesPatch, diffLines } from "diff"
-import { Effect, Layer, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Schema } from "effect"
 import { makeLocationNode } from "../effect/app-node"
 import { FileMutation } from "../file-mutation"
 import { FSUtil } from "../fs-util"
@@ -101,12 +101,11 @@ const layer = Layer.effectDiscard(
                 const targets = yield* Effect.forEach(hunks, (hunk) =>
                   mutation.resolve({ path: hunk.path, kind: "file" }).pipe(Effect.map((target) => ({ hunk, target }))),
                 )
-                const externalDirectories = new Map<string, LocationMutation.ExternalDirectoryAuthorization>()
-                for (const { target } of targets) {
-                  const external = target.externalDirectory
-                  if (external) externalDirectories.set(external.resource, external)
-                }
-                for (const external of externalDirectories.values()) {
+                const externalDirectories = Arr.dedupeWith(
+                  targets.flatMap(({ target }) => (target.externalDirectory ? [target.externalDirectory] : [])),
+                  (left, right) => left.resource === right.resource,
+                )
+                for (const external of externalDirectories) {
                   yield* permission.assert({
                     ...LocationMutation.externalDirectoryPermission(external),
                     sessionID: context.sessionID,
