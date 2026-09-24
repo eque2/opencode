@@ -306,7 +306,7 @@ const isRuntimeReference = (value: unknown): boolean =>
 
 const containsRuntimeReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isRuntimeReference(value)) return true
-  if (value === null || typeof value !== "object") return false
+  if (!Predicate.isObjectOrArray(value)) return false
   if (seen.has(value)) return false
   seen.add(value)
   const contains = Array.isArray(value)
@@ -322,7 +322,7 @@ const containsRuntimeReference = (value: unknown, seen = new WeakSet<object>()):
 const containsOpaqueReference = (value: unknown, seen = new WeakSet<object>()): boolean => {
   if (isSandboxValue(value)) return false
   if (isRuntimeReference(value)) return true
-  if (value === null || typeof value !== "object") return false
+  if (!Predicate.isObjectOrArray(value)) return false
   if (seen.has(value)) return false
   seen.add(value)
   const contains = Array.isArray(value)
@@ -337,7 +337,7 @@ const containsOpaqueReference = (value: unknown, seen = new WeakSet<object>()): 
 // current path, so shared (non-circular) substructures are still walked from each parent.
 const containsContainer = (container: object, value: unknown, seen: WeakSet<object>): boolean => {
   if (value === container) return true
-  if (value === null || typeof value !== "object" || isRuntimeReference(value) || seen.has(value)) return false
+  if (!Predicate.isObjectOrArray(value) || isRuntimeReference(value) || seen.has(value)) return false
   seen.add(value)
   const items = Array.isArray(value) ? value : Object.values(value)
   const found = items.some((item) => containsContainer(container, item, seen))
@@ -439,7 +439,7 @@ const instanceofValue = (
       case "Array":
         return Effect.succeed(Array.isArray(lhs))
       case "Object":
-        return Effect.succeed(lhs !== null && (typeof lhs === "object" || typeofValue(lhs) === "function"))
+        return Effect.succeed(Predicate.isObjectOrArray(lhs) || typeofValue(lhs) === "function")
     }
   }
   if (rhs instanceof PromiseNamespace) return Effect.succeed(lhs instanceof SandboxPromise)
@@ -583,7 +583,8 @@ const invokeStringMethod = (
       case "match": {
         const pattern = toHostRegex(args[0], name, node)
         const matched = value.match(pattern)
-        if (matched === null) return null
+        // No match: String.match's own null result is the program-visible value.
+        if (Predicate.isNull(matched)) return matched
         // A global match is a plain array of matched strings; a non-global match carries
         // index/groups own properties, so bypass the copying data checkpoint to keep them.
         if (pattern.global) return boundedData(matched, "String.match result")
@@ -734,9 +735,8 @@ const collectPatternNames = (pattern: AstNode): Effect.Effect<ReadonlyArray<stri
     case "ArrayPattern":
       return Effect.gen(function* () {
         const elements = yield* getArray(pattern, "elements")
-        const names = yield* Effect.forEach(
-          elements.filter((element) => element !== null),
-          (element) => Effect.flatMap(asNode(element, "elements"), collectPatternNames),
+        const names = yield* Effect.forEach(elements.filter(Predicate.isNotNull), (element) =>
+          Effect.flatMap(asNode(element, "elements"), collectPatternNames),
         )
         return names.flat()
       })
@@ -1334,7 +1334,7 @@ class Interpreter<R> {
     if (Array.isArray(value)) {
       return Object.keys(value)
     }
-    if (value !== null && typeof value === "object" && !isRuntimeReference(value)) {
+    if (Predicate.isObjectOrArray(value) && !isRuntimeReference(value)) {
       return Object.keys(value)
     }
     return undefined
@@ -1587,7 +1587,7 @@ class Interpreter<R> {
     }
     return Effect.gen({ self: this }, function* () {
       for (const [index, item] of (yield* getArray(pattern, "elements")).entries()) {
-        if (item === null) continue
+        if (Predicate.isNull(item)) continue
         const element = yield* asNode(item, `elements[${index}]`)
         // Array rest: `[head, ...tail]` - binds the remaining elements (must be last).
         if (element.type === "RestElement") {
@@ -1734,7 +1734,7 @@ class Interpreter<R> {
       const flagsArg = args[1]
       if (flagsArg !== undefined && typeof flagsArg !== "string") {
         return yield* new InterpreterRuntimeError(
-          `RegExp flags must be a string of flag characters (e.g. "g", "gi"), not ${flagsArg === null ? "null" : typeof flagsArg}.`,
+          `RegExp flags must be a string of flag characters (e.g. "g", "gi"), not ${Predicate.isNull(flagsArg) ? "null" : typeof flagsArg}.`,
           node,
         )
       }
@@ -1760,7 +1760,7 @@ class Interpreter<R> {
   private constructMap(init: unknown, node: AstNode): Effect.Effect<SandboxMap, InterpreterRuntimeError> {
     return Effect.gen(function* () {
       const target = new SandboxMap()
-      if (init === undefined || init === null) return target
+      if (Predicate.isNullish(init)) return target
       const entries = Array.isArray(init)
         ? init
         : init instanceof SandboxMap
@@ -1785,7 +1785,7 @@ class Interpreter<R> {
   private constructSet(init: unknown, node: AstNode): Effect.Effect<SandboxSet, InterpreterRuntimeError> {
     return Effect.gen(function* () {
       const target = new SandboxSet()
-      if (init === undefined || init === null) return target
+      if (Predicate.isNullish(init)) return target
       const items = Array.isArray(init)
         ? init
         : init instanceof SandboxSet
@@ -1832,7 +1832,7 @@ class Interpreter<R> {
         return new SandboxURLSearchParams(new URLSearchParams(init.params))
       }
       if (typeof init === "string") return new SandboxURLSearchParams(new URLSearchParams(init))
-      if (init === null || typeof init === "number" || typeof init === "boolean") {
+      if (Predicate.isNull(init) || typeof init === "number" || typeof init === "boolean") {
         return new SandboxURLSearchParams(new URLSearchParams(coerceToString(init)))
       }
       if (init instanceof SandboxMap) {
@@ -1861,7 +1861,7 @@ class Interpreter<R> {
       }
       if (isSandboxValue(init)) return new SandboxURLSearchParams(new URLSearchParams())
       const data = boundedData(init, "new URLSearchParams input")
-      if (data === null || typeof data !== "object") {
+      if (!Predicate.isObjectOrArray(data)) {
         return yield* new InterpreterRuntimeError(
           "new URLSearchParams(...) expects a query string, data object, array of pairs, or URLSearchParams.",
           node,
@@ -1912,9 +1912,9 @@ class Interpreter<R> {
     // Identity (=== / !==) and the right operand of `in` keep their raw object value.
     const coerceOperand = (operand: unknown): unknown => {
       if (operand instanceof SandboxDate) return operator === "+" ? coerceToString(operand) : operand.time
-      return operand !== null && typeof operand === "object" ? coerceToString(operand) : operand
+      return Predicate.isObjectOrArray(operand) ? coerceToString(operand) : operand
     }
-    const bothObjects = lhs !== null && typeof lhs === "object" && rhs !== null && typeof rhs === "object"
+    const bothObjects = Predicate.isObjectOrArray(lhs) && Predicate.isObjectOrArray(rhs)
     const l = coerceOperand(lhs)
     const r = coerceOperand(rhs)
     // After coercion both operands are primitives, so each operator applies the JS primitive
@@ -1966,7 +1966,7 @@ class Interpreter<R> {
       case ">>>":
         return Effect.succeed(Number(l) >>> Number(r))
       case "in":
-        if (rhs === null || typeof rhs !== "object") {
+        if (!Predicate.isObjectOrArray(rhs)) {
           return Effect.fail(
             new InterpreterRuntimeError("The 'in' operator requires a data object on the right-hand side.", node),
           )
@@ -1985,9 +1985,7 @@ class Interpreter<R> {
       if (operator === "&&") return left ? yield* this.evaluateExpression(yield* getNode(node, "right")) : left
       if (operator === "||") return left ? left : yield* this.evaluateExpression(yield* getNode(node, "right"))
       if (operator === "??") {
-        return left !== null && left !== undefined
-          ? left
-          : yield* this.evaluateExpression(yield* getNode(node, "right"))
+        return Predicate.isNotNullish(left) ? left : yield* this.evaluateExpression(yield* getNode(node, "right"))
       }
       return yield* new InterpreterRuntimeError(`Unsupported logical operator '${operator}'.`, node)
     })
@@ -2023,11 +2021,7 @@ class Interpreter<R> {
       // (`+date` is the epoch-ms idiom), other null-prototype data objects/arrays coerce to
       // their JS string form first (see evaluateBinaryExpression).
       const operand =
-        value instanceof SandboxDate
-          ? value.time
-          : value !== null && typeof value === "object"
-            ? coerceToString(value)
-            : value
+        value instanceof SandboxDate ? value.time : Predicate.isObjectOrArray(value) ? coerceToString(value) : value
       let result: unknown
       switch (operator) {
         case "+":
@@ -2083,7 +2077,7 @@ class Interpreter<R> {
     operator: string,
   ): Effect.Effect<unknown, unknown, R> {
     const shouldAssign = (current: unknown): boolean =>
-      operator === "??=" ? current === null || current === undefined : operator === "||=" ? !current : Boolean(current)
+      operator === "??=" ? Predicate.isNullish(current) : operator === "||=" ? !current : Boolean(current)
     if (left.type === "Identifier") {
       return Effect.gen({ self: this }, function* () {
         const name = yield* getString(left, "name")
@@ -2150,7 +2144,7 @@ class Interpreter<R> {
 
       const callable = yield* this.evaluateExpression(callee)
       if (callable === OptionalShortCircuit) return OptionalShortCircuit
-      if ((callable === null || callable === undefined) && node.optional === true) return OptionalShortCircuit
+      if (Predicate.isNullish(callable) && node.optional === true) return OptionalShortCircuit
 
       const args = yield* this.evaluateCallArguments(argNodes)
 
@@ -2328,7 +2322,7 @@ class Interpreter<R> {
     if (Array.isArray(data)) {
       return data.map((item, index) => ({ index: String(index), values: this.consoleTableValues(item, columns) }))
     }
-    if (data !== null && typeof data === "object" && !isSandboxValue(data)) {
+    if (Predicate.isObjectOrArray(data) && !isSandboxValue(data)) {
       return Object.entries(data).map(([index, item]) => ({ index, values: this.consoleTableValues(item, columns) }))
     }
     return [{ index: "0", values: { Value: data } }]
@@ -2573,7 +2567,7 @@ class Interpreter<R> {
       const collect = (...callbackArgs: Array<unknown>): string => {
         const match = callbackArgs[0]
         const groups = callbackArgs[callbackArgs.length - 1]
-        const hasGroups = groups !== null && typeof groups === "object"
+        const hasGroups = Predicate.isObjectOrArray(groups)
         const offset = callbackArgs[callbackArgs.length - (hasGroups ? 3 : 2)]
         if (typeof match !== "string" || typeof offset !== "number") {
           invalidMatch = true
@@ -3077,7 +3071,7 @@ class Interpreter<R> {
           // JS treats `{ ...null }` / `{ ...undefined }` as a no-op, so the common
           // `{ ...maybeOpts, override }` merge works when the operand is absent. Sandbox values
           // have no own enumerable properties in JS, so they are no-ops too.
-          if (spread === null || spread === undefined || isSandboxValue(spread)) continue
+          if (Predicate.isNullish(spread) || isSandboxValue(spread)) continue
           if (typeof spread !== "object" || Array.isArray(spread) || isRuntimeReference(spread)) {
             return yield* new InterpreterRuntimeError(
               "Object spread requires a data object in CodeMode.",
@@ -3134,7 +3128,7 @@ class Interpreter<R> {
       const elements = yield* getArray(node, "elements")
       const groups = yield* Effect.forEach(elements, (elementValue) =>
         Effect.gen({ self: this }, function* () {
-          if (elementValue === null) return [undefined]
+          if (Predicate.isNull(elementValue)) return [undefined]
           const element = yield* asNode(elementValue, "elements")
           if (element.type !== "SpreadElement") return [yield* this.evaluateExpression(element)]
           const spread = yield* this.evaluateExpression(yield* getNode(element, "argument"))
@@ -3222,7 +3216,7 @@ class Interpreter<R> {
       const computed = yield* getBoolean(node, "computed")
       const objectValue = yield* this.evaluateExpression(objectNode)
       if (objectValue === OptionalShortCircuit) return OptionalShortCircuit
-      if ((objectValue === null || objectValue === undefined) && optional) return OptionalShortCircuit
+      if (Predicate.isNullish(objectValue) && optional) return OptionalShortCircuit
 
       const key =
         !computed && propertyNode.type === "Identifier"
@@ -3704,42 +3698,49 @@ const utf8Truncate = (value: string, maxBytes: number): string => {
  * fails the execution; `truncated: true` marks affected results. Only runs when the host set
  * `maxOutputBytes` - with the limit absent, output passes through unbounded.
  */
-const boundOutput = (result: ExecutionResult, maxOutputBytes: number): ExecutionResult => {
-  let truncated = false
-
-  let value: DataValue = null
-  let valueBytes = 0
-  if (result.ok) {
-    const serialized = Option.match(toJsonValue(result.value), { onNone: () => "null", onSome: encodeJsonText })
-    const bytes = utf8ByteLength(serialized)
-    if (bytes > maxOutputBytes) {
-      truncated = true
-      value = `${utf8Truncate(serialized, maxOutputBytes)} [result truncated: ${bytes} bytes exceeds the ${maxOutputBytes}-byte output limit; return a smaller value]`
-      valueBytes = maxOutputBytes
-    } else {
-      value = result.value
-      valueBytes = bytes
-    }
+// The result value within the output budget: unchanged with its serialized size, or replaced by
+// its truncated serialized text and a marker.
+const boundValue = (
+  value: DataValue,
+  maxOutputBytes: number,
+): { readonly value: DataValue; readonly bytes: number; readonly truncated: boolean } => {
+  const serialized = Option.match(toJsonValue(value), { onNone: () => "null", onSome: encodeJsonText })
+  const bytes = utf8ByteLength(serialized)
+  if (bytes <= maxOutputBytes) return { value, bytes, truncated: false }
+  return {
+    value: `${utf8Truncate(serialized, maxOutputBytes)} [result truncated: ${bytes} bytes exceeds the ${maxOutputBytes}-byte output limit; return a smaller value]`,
+    bytes: maxOutputBytes,
+    truncated: true,
   }
+}
 
-  const logs = result.logs ?? []
+// The leading log lines that fit the byte budget (each line counts its newline), plus a marker
+// line when later lines were cut.
+const boundLogs = (
+  logs: ReadonlyArray<string>,
+  budget: number,
+): { readonly kept: ReadonlyArray<string>; readonly truncated: boolean } => {
   const kept: Array<string> = []
-  const logBudget = Math.max(0, maxOutputBytes - valueBytes)
   let logBytes = 0
   for (const line of logs) {
     const lineBytes = utf8ByteLength(line) + 1
-    if (logBytes + lineBytes > logBudget) break
+    if (logBytes + lineBytes > budget) break
     logBytes += lineBytes
     kept.push(line)
   }
-  if (kept.length < logs.length) {
-    truncated = true
-    kept.push(`[logs truncated: showing ${kept.length} of ${logs.length} lines]`)
-  }
+  if (kept.length === logs.length) return { kept, truncated: false }
+  return { kept: [...kept, `[logs truncated: showing ${kept.length} of ${logs.length} lines]`], truncated: true }
+}
 
-  if (!truncated) return result
-  const logsPart = kept.length > 0 ? { logs: kept } : {}
-  return result.ok
-    ? { ok: true, value, ...logsPart, truncated: true, toolCalls: result.toolCalls }
-    : { ok: false, error: result.error, ...logsPart, truncated: true, toolCalls: result.toolCalls }
+const boundOutput = (result: ExecutionResult, maxOutputBytes: number): ExecutionResult => {
+  const logsPart = (kept: ReadonlyArray<string>) => (kept.length > 0 ? { logs: kept } : {})
+  if (!result.ok) {
+    const logs = boundLogs(result.logs ?? [], maxOutputBytes)
+    if (!logs.truncated) return result
+    return { ok: false, error: result.error, ...logsPart(logs.kept), truncated: true, toolCalls: result.toolCalls }
+  }
+  const value = boundValue(result.value, maxOutputBytes)
+  const logs = boundLogs(result.logs ?? [], Math.max(0, maxOutputBytes - value.bytes))
+  if (!value.truncated && !logs.truncated) return result
+  return { ok: true, value: value.value, ...logsPart(logs.kept), truncated: true, toolCalls: result.toolCalls }
 }

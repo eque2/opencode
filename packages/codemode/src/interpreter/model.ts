@@ -184,8 +184,7 @@ export const unsupportedSyntax = (kind: string, node: AstNode): InterpreterRunti
     [supportedSyntaxMessage],
   )
 
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null
+export const isRecord = (value: unknown): value is Record<string, unknown> => Predicate.isObjectOrArray(value)
 
 export const isAstNode = (value: unknown): value is AstNode => isRecord(value) && typeof value.type === "string"
 
