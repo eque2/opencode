@@ -1,4 +1,4 @@
-import { Config, Effect, Option } from "effect"
+import { Config, Effect, Option, Predicate, Schema } from "effect"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
 import { readEnvSnapshot } from "./env-snapshot"
@@ -49,20 +49,45 @@ function replaceVertexVars(value: string, project: string | undefined, location:
     .replaceAll("${GOOGLE_VERTEX_ENDPOINT}", vertexEndpoint(location))
 }
 
+class GoogleVertexAuthError extends Schema.TaggedError<GoogleVertexAuthError>()("GoogleVertex.AuthError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+// Keep the Google auth library message: it tells the user how to set up credentials.
+const authError = (cause: unknown) =>
+  new GoogleVertexAuthError({
+    message: Predicate.isError(cause) ? cause.message : "Google Cloud authentication failed",
+    cause,
+  })
+
+const accessToken = Effect.fnUntraced(function* () {
+  const { GoogleAuth } = yield* Effect.promise(() => import("google-auth-library"))
+  const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
+  const client = yield* Effect.tryPromise({ try: () => auth.getClient(), catch: authError })
+  const token = yield* Effect.tryPromise({ try: () => client.getAccessToken(), catch: authError })
+  return token.token
+})
+
 function authFetch(fetchWithRuntimeOptions?: unknown) {
   // Native Vertex SDKs handle ADC internally. OpenAI-compatible Vertex endpoints
   // do not, so inject a Google access token into their fetch path.
-  return async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
-    const { GoogleAuth } = await import("google-auth-library")
-    const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
-    const client = await auth.getClient()
-    const token = await client.getAccessToken()
-    const headers = new Headers(init?.headers)
-    headers.set("Authorization", `Bearer ${token.token}`)
-    return typeof fetchWithRuntimeOptions === "function"
-      ? fetchWithRuntimeOptions(input, { ...init, headers })
-      : fetch(input, { ...init, headers })
-  }
+  return (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const token = yield* accessToken()
+        const headers = new Headers(init?.headers)
+        headers.set("Authorization", `Bearer ${token}`)
+        const request = { ...init, headers }
+        // A fetch rejection, such as an abort, reaches the AI SDK unchanged.
+        return yield* Effect.promise(
+          (): Promise<Response> =>
+            typeof fetchWithRuntimeOptions === "function"
+              ? fetchWithRuntimeOptions(input, request)
+              : fetch(input, request),
+        )
+      }),
+    )
 }
 
 export const GoogleVertexPlugin = define({
