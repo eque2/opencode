@@ -43,6 +43,23 @@ const sections = {
   github: "Extensions",
 } as const
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isRelease(value: unknown): value is Release {
+  return isRecord(value) && typeof value.tag_name === "string" && typeof value.draft === "boolean"
+}
+
+function isDiff(value: unknown): value is Diff {
+  return (
+    isRecord(value) &&
+    typeof value.sha === "string" &&
+    (value.login === null || typeof value.login === "string") &&
+    typeof value.message === "string"
+  )
+}
+
 function ref(input: string) {
   if (input === "HEAD") return input
   if (input.startsWith("v")) return input
@@ -51,8 +68,9 @@ function ref(input: string) {
 }
 
 async function latest() {
-  const data = await $`gh api "/repos/${repo}/releases?per_page=100"`.json()
-  const release = (data as Release[]).find((item) => !item.draft)
+  const data: unknown = await $`gh api "/repos/${repo}/releases?per_page=100"`.json()
+  if (!Array.isArray(data) || !data.every(isRelease)) throw new Error("Unexpected GitHub releases response")
+  const release = data.find((item) => !item.draft)
   if (!release) throw new Error("No releases found")
   return release.tag_name.replace(/^v/, "")
 }
@@ -65,7 +83,11 @@ async function diff(base: string, head: string) {
     const batch = text
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as Diff)
+      .map((line): Diff => {
+        const value: unknown = JSON.parse(line)
+        if (!isDiff(value)) throw new Error(`Unexpected compare commit: ${line}`)
+        return value
+      })
     if (batch.length === 0) break
     list.push(...batch)
     if (batch.length < 100) break
@@ -74,9 +96,18 @@ async function diff(base: string, head: string) {
 }
 
 function section(areas: Set<string>) {
-  const priority = ["core", "tui", "app", "tauri", "sdk", "plugin", "extensions/vscode", "github"]
+  const priority: readonly (keyof typeof sections)[] = [
+    "core",
+    "tui",
+    "app",
+    "tauri",
+    "sdk",
+    "plugin",
+    "extensions/vscode",
+    "github",
+  ]
   for (const area of priority) {
-    if (areas.has(area)) return sections[area as keyof typeof sections]
+    if (areas.has(area)) return sections[area]
   }
   return "Core"
 }

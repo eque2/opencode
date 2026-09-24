@@ -181,7 +181,7 @@ export function GLM52Rise() {
                           <div
                             key={seg.key}
                             style={{
-                              height: Math.round(((d[seg.key as keyof typeof d] as number) / fieldTotal) * fieldH),
+                              height: Math.round((d[seg.key] / fieldTotal) * fieldH),
                               background: seg.color,
                               borderTop: `2px solid ${c.bg}`,
                             }}

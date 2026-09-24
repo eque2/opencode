@@ -17,10 +17,15 @@ async function githubFetch(endpoint: string, options: RequestInit = {}) {
   return response.json()
 }
 
-interface PR {
-  title: string
-  html_url: string
-}
+const SearchResult = tool.schema.object({
+  total_count: tool.schema.number(),
+  items: tool.schema.array(
+    tool.schema.object({
+      title: tool.schema.string(),
+      html_url: tool.schema.string(),
+    }),
+  ),
+})
 
 export default tool({
   description: `Use this tool to search GitHub pull requests by title and description.
@@ -44,15 +49,15 @@ Use the query parameter to search for keywords that might appear in PR titles or
 
     const page = Math.floor(args.offset / args.limit) + 1
     const searchQuery = encodeURIComponent(`${args.query} repo:${owner}/${repo} type:pr state:open`)
-    const result = await githubFetch(
-      `/search/issues?q=${searchQuery}&per_page=${args.limit}&page=${page}&sort=updated&order=desc`,
+    const result = SearchResult.parse(
+      await githubFetch(`/search/issues?q=${searchQuery}&per_page=${args.limit}&page=${page}&sort=updated&order=desc`),
     )
 
     if (result.total_count === 0) {
       return `No PRs found matching "${args.query}"`
     }
 
-    const prs = result.items as PR[]
+    const prs = result.items
 
     if (prs.length === 0) {
       return `No other PRs found matching "${args.query}"`

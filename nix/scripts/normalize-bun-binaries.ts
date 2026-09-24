@@ -78,8 +78,20 @@ async function readManifest(dir: string) {
   if (!(await file.exists())) {
     return null
   }
-  const data = (await file.json()) as PackageManifest
-  return data
+  const data: unknown = await file.json()
+  return isPackageManifest(data) ? data : null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isPackageManifest(value: unknown): value is PackageManifest {
+  if (!isRecord(value)) return false
+  if (value.name !== undefined && typeof value.name !== "string") return false
+  const bin = value.bin
+  if (bin === undefined || typeof bin === "string") return true
+  return isRecord(bin) && Object.values(bin).every((target) => typeof target === "string")
 }
 
 async function linkBinary(binRoot: string, name: string, packageDir: string, target: string, seen: Set<string>) {
