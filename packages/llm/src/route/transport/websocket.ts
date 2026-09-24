@@ -19,10 +19,11 @@ export interface Interface {
   readonly open: (input: WebSocketRequest) => Effect.Effect<WebSocketConnection, LLMError>
 }
 
-type WebSocketConstructorWithHeaders = new (
-  url: string,
-  options?: { readonly headers?: Headers.Headers },
-) => globalThis.WebSocket
+// Bun's global WebSocket constructor also accepts `{ headers }` (bun-types
+// `Bun.WebSocketOptions`), but the llm tsconfig loads lib.dom, and the DOM
+// constructor type only takes protocols. This adds Bun's signature to it.
+type WebSocketConstructorWithHeaders = typeof globalThis.WebSocket &
+  (new (url: string, options?: { readonly headers?: Headers.Headers }) => globalThis.WebSocket)
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LLM/WebSocketExecutor") {}
 
@@ -131,7 +132,8 @@ const webSocketUrl = (value: string) =>
 export const open = (input: WebSocketRequest) =>
   Effect.try({
     try: () =>
-      new (globalThis.WebSocket as unknown as WebSocketConstructorWithHeaders)(input.url, { headers: input.headers }),
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Bun WebSocket constructor accepts { headers }; lib.dom omits it.
+      new (globalThis.WebSocket as WebSocketConstructorWithHeaders)(input.url, { headers: input.headers }),
     catch: (error) =>
       transportError("open", error instanceof Error ? error.message : "Failed to construct WebSocket", {
         url: input.url,
