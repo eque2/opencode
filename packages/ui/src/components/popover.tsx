@@ -41,10 +41,11 @@ export function Popover<T extends ValidComponent = "div">(props: PopoverProps<T>
   const [state, setState] = createStore<{
     contentRef?: HTMLElement
     triggerRef?: HTMLElement
-    dismiss: "escape" | "outside" | null
+    // How the popover last closed; "none" once it opens again or the close finishes.
+    dismiss: "escape" | "outside" | "none"
     uncontrolledOpen: boolean
   }>({
-    dismiss: null,
+    dismiss: "none",
     uncontrolledOpen: local.defaultOpen ?? false,
   })
 
@@ -55,7 +56,7 @@ export function Popover<T extends ValidComponent = "div">(props: PopoverProps<T>
   }
 
   const onOpenChange = (next: boolean) => {
-    if (next) setState("dismiss", null)
+    if (next) setState("dismiss", "none")
     if (local.onOpenChange) local.onOpenChange(next)
     if (controlled()) return
     setState("uncontrolledOpen", next)
@@ -115,7 +116,7 @@ export function Popover<T extends ValidComponent = "div">(props: PopoverProps<T>
       style={local.style}
       onCloseAutoFocus={(event: Event) => {
         if (state.dismiss === "outside") event.preventDefault()
-        setState("dismiss", null)
+        setState("dismiss", "none")
       }}
     >
       {/* <Kobalte.Arrow data-slot="popover-arrow" /> */}

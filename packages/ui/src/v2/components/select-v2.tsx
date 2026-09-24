@@ -1,5 +1,5 @@
 import { Select as Kobalte } from "@kobalte/core/select"
-import { MutableHashMap, Option } from "effect"
+import { MutableHashMap, Option, Predicate } from "effect"
 import { Show, createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
 import "./select-v2.css"
 
@@ -191,8 +191,8 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
           <Kobalte.Value<T> data-slot="select-v2-value-text" class={local.valueClass}>
             {(st) => {
               const selected = st.selectedOption()
-              if (local.label && selected != null) return local.label(selected)
-              return selected != null ? String(selected) : ""
+              if (local.label && Predicate.isNotNullish(selected)) return local.label(selected)
+              return Predicate.isNotNullish(selected) ? String(selected) : ""
             }}
           </Kobalte.Value>
         </div>

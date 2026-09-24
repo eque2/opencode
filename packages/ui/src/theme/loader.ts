@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import type { DesktopTheme, ResolvedTheme, ResolvedV2Theme } from "./types"
 import { resolveThemeVariant, themeToCss } from "./resolve"
 import { resolveThemeVariantV2, themeV2ToCss } from "./v2/resolve"
@@ -10,7 +10,7 @@ class ThemeLoadError extends Data.TaggedError("ThemeLoadError")<{
   readonly cause?: unknown
 }> {}
 
-let activeTheme: DesktopTheme | null = null
+let activeTheme: Option.Option<DesktopTheme> = Option.none()
 const THEME_STYLE_ID = "opencode-theme"
 
 function ensureLoaderStyleElement(): HTMLStyleElement {
@@ -25,7 +25,7 @@ function ensureLoaderStyleElement(): HTMLStyleElement {
 }
 
 export function applyTheme(theme: DesktopTheme, themeId?: string): void {
-  activeTheme = theme
+  activeTheme = Option.some(theme)
   const lightTokens = resolveThemeVariant(theme.light, false)
   const darkTokens = resolveThemeVariant(theme.dark, true)
   const lightV2Tokens = resolveThemeVariantV2(theme.light, false)
@@ -104,19 +104,14 @@ export function loadThemeFromUrl(url: string): Promise<DesktopTheme> {
   )
 }
 
+/** Returns the theme that applyTheme set, while the document still shows its id; otherwise null. */
 export function getActiveTheme(): DesktopTheme | null {
   const activeId = document.documentElement.getAttribute("data-theme")
-  if (!activeId) {
-    return null
-  }
-  if (activeTheme?.id === activeId) {
-    return activeTheme
-  }
-  return null
+  return Option.getOrNull(Option.filter(activeTheme, (theme) => Boolean(activeId) && theme.id === activeId))
 }
 
 export function removeTheme(): void {
-  activeTheme = null
+  activeTheme = Option.none()
   const existingElement = document.getElementById(THEME_STYLE_ID)
   if (existingElement) {
     existingElement.remove()

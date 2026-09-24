@@ -201,8 +201,9 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       themeId,
       colorScheme,
       mode,
-      previewThemeId: null as string | null,
-      previewScheme: null as ColorScheme | null,
+      // Option values stay as-is in a Solid store: Option has its own prototype, so the store does not wrap it.
+      previewThemeId: Option.none<string>(),
+      previewScheme: Option.none<ColorScheme>(),
     })
 
     // In-flight theme imports, so concurrent loads of one id share a single import.
@@ -365,40 +366,43 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
         const next = normalize(id)
         if (!next) return
         if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) return
-        setStore("previewThemeId", next)
+        setStore("previewThemeId", Option.some(next))
         whenLoaded(next, (theme) => {
-          if (store.previewThemeId !== next) return
-          const mode = store.previewScheme
-            ? store.previewScheme === "system"
-              ? getSystemMode()
-              : store.previewScheme
-            : store.mode
-          applyTheme(theme, next, mode, store.previewScheme ?? store.colorScheme)
+          if (!Option.exists(store.previewThemeId, (previewId) => previewId === next)) return
+          const mode = Option.match(store.previewScheme, {
+            onNone: () => store.mode,
+            onSome: (scheme) => (scheme === "system" ? getSystemMode() : scheme),
+          })
+          applyTheme(
+            theme,
+            next,
+            mode,
+            Option.getOrElse(store.previewScheme, () => store.colorScheme),
+          )
         })
       },
       previewColorScheme: (scheme: ColorScheme) => {
-        setStore("previewScheme", scheme)
+        setStore("previewScheme", Option.some(scheme))
         const mode = scheme === "system" ? getSystemMode() : scheme
-        const id = store.previewThemeId ?? store.themeId
+        const previewedId = () => Option.getOrElse(store.previewThemeId, () => store.themeId)
+        const id = previewedId()
         whenLoaded(id, (theme) => {
-          if ((store.previewThemeId ?? store.themeId) !== id) return
-          if (store.previewScheme !== scheme) return
+          if (previewedId() !== id) return
+          if (!Option.exists(store.previewScheme, (previewScheme) => previewScheme === scheme)) return
           applyTheme(theme, id, mode, scheme)
         })
       },
       commitPreview: () => {
-        if (store.previewThemeId) {
-          setTheme(store.previewThemeId)
-        }
-        if (store.previewScheme) {
-          setColorScheme(store.previewScheme)
-        }
-        setStore("previewThemeId", null)
-        setStore("previewScheme", null)
+        const previewId = store.previewThemeId
+        if (Option.isSome(previewId)) setTheme(previewId.value)
+        const previewScheme = store.previewScheme
+        if (Option.isSome(previewScheme)) setColorScheme(previewScheme.value)
+        setStore("previewThemeId", Option.none())
+        setStore("previewScheme", Option.none())
       },
       cancelPreview: () => {
-        setStore("previewThemeId", null)
-        setStore("previewScheme", null)
+        setStore("previewThemeId", Option.none())
+        setStore("previewScheme", Option.none())
         whenLoaded(store.themeId, (theme) => {
           applyTheme(theme, store.themeId, store.mode, store.colorScheme)
         })

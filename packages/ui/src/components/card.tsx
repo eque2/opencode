@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { type ComponentProps, Show, splitProps } from "solid-js"
 import { Icon, type IconProps } from "./icon"
 
@@ -64,9 +65,9 @@ export function Card(props: CardProps) {
 
 export function CardTitle(props: CardTitleProps) {
   const [split, rest] = splitProps(props, ["variant", "icon", "class", "classList", "children"])
-  const show = () => split.icon !== false && split.icon !== null
+  const show = () => split.icon !== false && !Predicate.isNull(split.icon)
   const name = () => {
-    if (split.icon === false || split.icon === null) return undefined
+    if (split.icon === false || Predicate.isNull(split.icon)) return undefined
     if (typeof split.icon === "string") return split.icon
     return pick(split.variant ?? "normal")
   }

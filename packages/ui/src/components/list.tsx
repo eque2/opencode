@@ -354,6 +354,7 @@ export function List<T>(props: ListProps<T> & { ref?: (ref: ListRef) => void }) 
                             }}
                             onMouseLeave={() => {
                               if (!store.mouseActive) return
+                              // eslint-disable-next-line effect/no-null-use-option -- (a) solid-list setActive is Setter<string | null>, and null is its only "no active item" value
                               setActive(null)
                             }}
                           >
