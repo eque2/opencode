@@ -368,13 +368,16 @@ const fromRequest = Effect.fn("OpenAIChat.fromRequest")(function* (request: LLMR
     ...(request.toolChoice ? { tool_choice: yield* lowerToolChoice(request.toolChoice) } : {}),
     stream: true as const,
     stream_options: { include_usage: true },
-    max_tokens: generation?.maxTokens,
-    temperature: generation?.temperature,
-    top_p: generation?.topP,
-    frequency_penalty: generation?.frequencyPenalty,
-    presence_penalty: generation?.presencePenalty,
-    seed: generation?.seed,
-    stop: generation?.stop,
+    // Unset generation options are omitted rather than set to undefined, so
+    // bodies that extend this schema with a JSON rest record (OpenRouter)
+    // still validate.
+    ...(generation?.maxTokens === undefined ? {} : { max_tokens: generation.maxTokens }),
+    ...(generation?.temperature === undefined ? {} : { temperature: generation.temperature }),
+    ...(generation?.topP === undefined ? {} : { top_p: generation.topP }),
+    ...(generation?.frequencyPenalty === undefined ? {} : { frequency_penalty: generation.frequencyPenalty }),
+    ...(generation?.presencePenalty === undefined ? {} : { presence_penalty: generation.presencePenalty }),
+    ...(generation?.seed === undefined ? {} : { seed: generation.seed }),
+    ...(generation?.stop === undefined ? {} : { stop: generation.stop }),
     ...(yield* lowerOptions(request)),
   }
 })
