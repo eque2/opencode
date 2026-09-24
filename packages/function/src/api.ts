@@ -40,6 +40,18 @@ const githubAppAuth = Effect.try({
   catch: (cause) => new GitHubError({ cause }),
 })
 
+/** A `{ key, content }` share update, as sent to WebSocket subscribers. */
+const SyncFrame = Schema.Struct({
+  key: Schema.String,
+  content: Schema.Json,
+}).annotate({ identifier: "SyncFrame" })
+
+const SyncFrameJson = Schema.fromJsonString(SyncFrame)
+
+const JsonText = Schema.fromJsonString(Schema.Json)
+
+const DiscordMessageJson = Schema.fromJsonString(Schema.Struct({ content: Schema.String }))
+
 export class SyncServer extends DurableObject<Env> {
   // oxlint-disable-next-line no-useless-constructor
   constructor(ctx: DurableObjectState, env: Env) {
@@ -56,9 +68,12 @@ export class SyncServer extends DurableObject<Env> {
         this.ctx.acceptWebSocket(server)
 
         const data = yield* Effect.tryPromise(() => this.ctx.storage.list())
-        Array.from(data.entries())
-          .filter(([key, _]) => key.startsWith("session/"))
-          .map(([key, content]) => server.send(JSON.stringify({ key, content })))
+        yield* Effect.forEach(
+          Array.from(data.entries()).filter(([key, _]) => key.startsWith("session/")),
+          ([key, content]) =>
+            Schema.encodeUnknownEffect(SyncFrameJson)({ key, content }).pipe(Effect.map((frame) => server.send(frame))),
+          { discard: true },
+        )
 
         return new Response(null, {
           status: 101,
@@ -74,7 +89,7 @@ export class SyncServer extends DurableObject<Env> {
     ws.close(code, "Durable Object is closing WebSocket")
   }
 
-  publish(key: string, content: any) {
+  publish(key: string, content: unknown) {
     return Effect.runPromise(
       Effect.gen({ self: this }, function* () {
         const sessionID = yield* this.getSessionID()
@@ -86,8 +101,9 @@ export class SyncServer extends DurableObject<Env> {
           return new Response("Error: Invalid key", { status: 400 })
 
         // store message
+        const json = yield* Schema.encodeUnknownEffect(JsonText)(content)
         yield* Effect.tryPromise(() =>
-          this.env.Bucket.put(`share/${key}.json`, JSON.stringify(content), {
+          this.env.Bucket.put(`share/${key}.json`, json, {
             httpMetadata: {
               contentType: "application/json",
             },
@@ -96,8 +112,9 @@ export class SyncServer extends DurableObject<Env> {
         yield* Effect.tryPromise(() => this.ctx.storage.put(key, content))
         const clients = this.ctx.getWebSockets()
         yield* Effect.logInfo("SyncServer publish", key, "to", clients.length, "subscribers")
+        const frame = yield* Schema.encodeUnknownEffect(SyncFrameJson)({ key, content })
         for (const client of clients) {
-          client.send(JSON.stringify({ key, content }))
+          client.send(frame)
         }
       }),
     )
@@ -299,7 +316,7 @@ export default new Hono<{ Bindings: Env }>()
             }
           }
         }
-        yield* Effect.logInfo(JSON.stringify(body, null, 2))
+        yield* Effect.logInfo(body)
         const challenge = body.challenge
         if (challenge) return c.json({ challenge })
 
@@ -319,6 +336,9 @@ export default new Hono<{ Bindings: Env }>()
         const threadId = body.event?.message?.root_id || body.event?.message?.message_id
         if (threadId) message = `${message} [${threadId}]`
 
+        const discordBody = yield* Schema.encodeEffect(DiscordMessageJson)({
+          content: `${message}`,
+        })
         const response = yield* Effect.tryPromise(() =>
           fetch(`https://discord.com/api/v10/channels/${Resource.DISCORD_SUPPORT_CHANNEL_ID.value}/messages`, {
             method: "POST",
@@ -326,9 +346,7 @@ export default new Hono<{ Bindings: Env }>()
               "Content-Type": "application/json",
               Authorization: `Bot ${Resource.DISCORD_SUPPORT_BOT_TOKEN.value}`,
             },
-            body: JSON.stringify({
-              content: `${message}`,
-            }),
+            body: discordBody,
           }),
         )
 
