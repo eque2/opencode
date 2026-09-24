@@ -1,3 +1,5 @@
+import { Duration, Effect, Schedule, Schema } from "effect"
+
 export interface RetryOptions {
   attempts?: number
   delay?: number
@@ -24,19 +26,26 @@ function isTransientError(error: unknown): boolean {
   return TRANSIENT_MESSAGES.some((m) => message.includes(m))
 }
 
-export async function retry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+class RetryAttemptError extends Schema.TaggedError<RetryAttemptError>()("Retry.AttemptError", {
+  cause: Schema.Defect(),
+}) {}
+
+export function retry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
   const { attempts = 3, delay = 500, factor = 2, maxDelay = 10000, retryIf = isTransientError } = options
 
-  let lastError: unknown
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error
-      if (attempt === attempts - 1 || !retryIf(error)) throw error
-      const wait = Math.min(delay * Math.pow(factor, attempt), maxDelay)
-      await new Promise((resolve) => setTimeout(resolve, wait))
-    }
-  }
-  throw lastError
+  return Effect.runPromise(
+    Effect.tryPromise({ try: () => fn(), catch: (cause) => new RetryAttemptError({ cause }) }).pipe(
+      Effect.retry({
+        // Wait delay * factor^n before retry n, capped at maxDelay.
+        schedule: Schedule.min([
+          Schedule.exponential(Duration.millis(delay), factor),
+          Schedule.spaced(Duration.millis(maxDelay)),
+        ]),
+        times: attempts - 1,
+        while: (error) => retryIf(error.cause),
+      }),
+      // Callers see the value fn rejected with, as before, so it leaves as the defect runPromise rejects with.
+      Effect.catchTag("Retry.AttemptError", (error) => Effect.die(error.cause)),
+    ),
+  )
 }
