@@ -21,12 +21,16 @@ import {
   postJsonToApi,
   type ResponseHandler,
 } from "@ai-sdk/provider-utils"
-import { z } from "zod/v4"
+import { Schema } from "effect"
 import { convertToOpenAICompatibleChatMessages } from "./convert-to-openai-compatible-chat-messages"
 import { getResponseMetadata } from "./get-response-metadata"
 import { mapOpenAICompatibleFinishReason } from "./map-openai-compatible-finish-reason"
 import { type OpenAICompatibleChatModelId, openaiCompatibleProviderOptions } from "./openai-compatible-chat-options"
-import { defaultOpenAICompatibleErrorStructure, type ProviderErrorStructure } from "../openai-compatible-error"
+import {
+  defaultOpenAICompatibleErrorStructure,
+  type OpenAICompatibleErrorData,
+  type ProviderErrorStructure,
+} from "../openai-compatible-error"
 import type { MetadataExtractor } from "./openai-compatible-metadata-extractor"
 import { prepareTools } from "./openai-compatible-prepare-tools"
 
@@ -50,6 +54,8 @@ export type OpenAICompatibleChatConfig = {
   supportedUrls?: () => LanguageModelV3["supportedUrls"]
 }
 
+const providerOptionsSchema = Schema.toStandardSchemaV1(openaiCompatibleProviderOptions)
+
 export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3"
 
@@ -66,8 +72,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
     // initialize error handling:
     const errorStructure = config.errorStructure ?? defaultOpenAICompatibleErrorStructure
-    this.chunkSchema = createOpenAICompatibleChatChunkSchema(errorStructure.errorSchema)
-    this.failedResponseHandler = createJsonErrorResponseHandler(errorStructure)
+    this.chunkSchema = Schema.toStandardSchemaV1(createOpenAICompatibleChatChunkSchema(errorStructure.errorSchema))
+    this.failedResponseHandler = createJsonErrorResponseHandler({
+      ...errorStructure,
+      errorSchema: Schema.toStandardSchemaV1(errorStructure.errorSchema),
+    })
 
     this.supportsStructuredOutputs = config.supportsStructuredOutputs ?? false
   }
@@ -106,12 +115,12 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       (await parseProviderOptions({
         provider: "copilot",
         providerOptions,
-        schema: openaiCompatibleProviderOptions,
+        schema: providerOptionsSchema,
       })) ?? {},
       (await parseProviderOptions({
         provider: this.providerOptionsName,
         providerOptions,
-        schema: openaiCompatibleProviderOptions,
+        schema: providerOptionsSchema,
       })) ?? {},
     )
 
@@ -168,7 +177,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         seed,
         ...Object.fromEntries(
           Object.entries(providerOptions?.[this.providerOptionsName] ?? {}).filter(
-            ([key]) => !Object.keys(openaiCompatibleProviderOptions.shape).includes(key),
+            ([key]) => !Object.keys(openaiCompatibleProviderOptions.fields).includes(key),
           ),
         ),
 
@@ -206,7 +215,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       headers: combineHeaders(this.config.headers(), options.headers),
       body: args,
       failedResponseHandler: this.failedResponseHandler,
-      successfulResponseHandler: createJsonResponseHandler(OpenAICompatibleChatResponseSchema),
+      successfulResponseHandler: createJsonResponseHandler(Schema.toStandardSchemaV1(OpenAICompatibleChatResponse)),
       abortSignal: options.abortSignal,
       fetch: this.config.fetch,
     })
@@ -378,12 +387,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
     return {
       stream: response.pipeThrough(
-        new TransformStream<ParseResult<z.infer<typeof this.chunkSchema>>, LanguageModelV3StreamPart>({
+        new TransformStream<ParseResult<OpenAICompatibleChatChunkEvent>, LanguageModelV3StreamPart>({
           start(controller) {
             controller.enqueue({ type: "stream-start", warnings })
           },
 
-          // TODO we lost type safety on Chunk, most likely due to the error schema. MUST FIX
           transform(chunk, controller) {
             // Emit raw chunk if requested (before anything else)
             if (options.includeRawChunks) {
@@ -723,93 +731,107 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
   }
 }
 
-const openaiCompatibleTokenUsageSchema = z
-  .object({
-    prompt_tokens: z.number().nullish(),
-    completion_tokens: z.number().nullish(),
-    total_tokens: z.number().nullish(),
-    prompt_tokens_details: z
-      .object({
-        cached_tokens: z.number().nullish(),
-      })
-      .nullish(),
-    completion_tokens_details: z
-      .object({
-        reasoning_tokens: z.number().nullish(),
-        accepted_prediction_tokens: z.number().nullish(),
-        rejected_prediction_tokens: z.number().nullish(),
-      })
-      .nullish(),
-  })
-  .nullish()
+const NullishString = Schema.optional(Schema.NullOr(Schema.String))
+const NullishNumber = Schema.optional(Schema.NullOr(Schema.Number))
+
+const OpenAICompatibleTokenUsage = Schema.Struct({
+  prompt_tokens: NullishNumber,
+  completion_tokens: NullishNumber,
+  total_tokens: NullishNumber,
+  prompt_tokens_details: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        cached_tokens: NullishNumber,
+      }),
+    ),
+  ),
+  completion_tokens_details: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        reasoning_tokens: NullishNumber,
+        accepted_prediction_tokens: NullishNumber,
+        rejected_prediction_tokens: NullishNumber,
+      }),
+    ),
+  ),
+}).annotate({ identifier: "GithubCopilot.OpenAICompatibleTokenUsage" })
 
 // limited version of the schema, focussed on what is needed for the implementation
 // this approach limits breakages when the API changes and increases efficiency
-const OpenAICompatibleChatResponseSchema = z.object({
-  id: z.string().nullish(),
-  created: z.number().nullish(),
-  model: z.string().nullish(),
-  choices: z.array(
-    z.object({
-      message: z.object({
-        role: z.literal("assistant").nullish(),
-        content: z.string().nullish(),
+const OpenAICompatibleChatResponse = Schema.Struct({
+  id: NullishString,
+  created: NullishNumber,
+  model: NullishString,
+  choices: Schema.Array(
+    Schema.Struct({
+      message: Schema.Struct({
+        role: Schema.optional(Schema.NullOr(Schema.Literal("assistant"))),
+        content: NullishString,
         // Copilot-specific reasoning fields
-        reasoning_text: z.string().nullish(),
-        reasoning_opaque: z.string().nullish(),
-        tool_calls: z
-          .array(
-            z.object({
-              id: z.string().nullish(),
-              function: z.object({
-                name: z.string(),
-                arguments: z.string(),
+        reasoning_text: NullishString,
+        reasoning_opaque: NullishString,
+        tool_calls: Schema.optional(
+          Schema.NullOr(
+            Schema.Array(
+              Schema.Struct({
+                id: NullishString,
+                function: Schema.Struct({
+                  name: Schema.String,
+                  arguments: Schema.String,
+                }),
               }),
-            }),
-          )
-          .nullish(),
+            ),
+          ),
+        ),
       }),
-      finish_reason: z.string().nullish(),
+      finish_reason: NullishString,
     }),
   ),
-  usage: openaiCompatibleTokenUsageSchema,
-})
+  usage: Schema.optional(Schema.NullOr(OpenAICompatibleTokenUsage)),
+}).annotate({ identifier: "GithubCopilot.OpenAICompatibleChatResponse" })
 
 // limited version of the schema, focussed on what is needed for the implementation
 // this approach limits breakages when the API changes and increases efficiency
-const createOpenAICompatibleChatChunkSchema = <ERROR_SCHEMA extends z.core.$ZodType>(errorSchema: ERROR_SCHEMA) =>
-  z.union([
-    z.object({
-      id: z.string().nullish(),
-      created: z.number().nullish(),
-      model: z.string().nullish(),
-      choices: z.array(
-        z.object({
-          delta: z
-            .object({
-              role: z.enum(["assistant"]).nullish(),
-              content: z.string().nullish(),
-              // Copilot-specific reasoning fields
-              reasoning_text: z.string().nullish(),
-              reasoning_opaque: z.string().nullish(),
-              tool_calls: z
-                .array(
-                  z.object({
-                    index: z.number(),
-                    id: z.string().nullish(),
-                    function: z.object({
-                      name: z.string().nullish(),
-                      arguments: z.string().nullish(),
+const OpenAICompatibleChatChunk = Schema.Struct({
+  id: NullishString,
+  created: NullishNumber,
+  model: NullishString,
+  choices: Schema.Array(
+    Schema.Struct({
+      delta: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            role: Schema.optional(Schema.NullOr(Schema.Literal("assistant"))),
+            content: NullishString,
+            // Copilot-specific reasoning fields
+            reasoning_text: NullishString,
+            reasoning_opaque: NullishString,
+            tool_calls: Schema.optional(
+              Schema.NullOr(
+                Schema.Array(
+                  Schema.Struct({
+                    index: Schema.Number,
+                    id: NullishString,
+                    function: Schema.Struct({
+                      name: NullishString,
+                      arguments: NullishString,
                     }),
                   }),
-                )
-                .nullish(),
-            })
-            .nullish(),
-          finish_reason: z.string().nullish(),
-        }),
+                ),
+              ),
+            ),
+          }),
+        ),
       ),
-      usage: openaiCompatibleTokenUsageSchema,
+      finish_reason: NullishString,
     }),
-    errorSchema,
-  ])
+  ),
+  usage: Schema.optional(Schema.NullOr(OpenAICompatibleTokenUsage)),
+}).annotate({ identifier: "GithubCopilot.OpenAICompatibleChatChunk" })
+
+// The stream reads `error.message` from an error chunk, so the error schema decodes
+// the default OpenAI-compatible error shape.
+const createOpenAICompatibleChatChunkSchema = (errorSchema: Schema.Decoder<OpenAICompatibleErrorData>) =>
+  Schema.Union([OpenAICompatibleChatChunk, errorSchema])
+
+type OpenAICompatibleChatChunkEvent = typeof OpenAICompatibleChatChunk.Type | OpenAICompatibleErrorData

@@ -1,22 +1,22 @@
-import { z, type ZodType } from "zod/v4"
+import { Schema } from "effect"
 
-export const openaiCompatibleErrorDataSchema = z.object({
-  error: z.object({
-    message: z.string(),
+export const openaiCompatibleErrorDataSchema = Schema.Struct({
+  error: Schema.Struct({
+    message: Schema.String,
 
     // The additional information below is handled loosely to support
     // OpenAI-compatible providers that have slightly different error
     // responses:
-    type: z.string().nullish(),
-    param: z.any().nullish(),
-    code: z.union([z.string(), z.number()]).nullish(),
+    type: Schema.optional(Schema.NullOr(Schema.String)),
+    param: Schema.optional(Schema.Json),
+    code: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number]))),
   }),
-})
+}).annotate({ identifier: "GithubCopilot.OpenAICompatibleErrorData" })
 
-export type OpenAICompatibleErrorData = z.infer<typeof openaiCompatibleErrorDataSchema>
+export type OpenAICompatibleErrorData = typeof openaiCompatibleErrorDataSchema.Type
 
 export type ProviderErrorStructure<T> = {
-  errorSchema: ZodType<T>
+  errorSchema: Schema.Decoder<T>
   errorToMessage: (error: T) => string
   isRetryable?: (response: Response, error?: T) => boolean
 }
