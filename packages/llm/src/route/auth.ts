@@ -1,12 +1,12 @@
-import { Config, Effect, Redacted } from "effect"
+import { Config, Effect, Redacted, Schema } from "effect"
 import { Headers } from "effect/unstable/http"
 import { AuthenticationReason, InvalidRequestReason, LLMError, type LLMRequest } from "../schema"
 
-export class MissingCredentialError extends Error {
-  readonly _tag = "MissingCredentialError"
-
-  constructor(readonly source: string) {
-    super(`Missing auth credential: ${source}`)
+export class MissingCredentialError extends Schema.TaggedError<MissingCredentialError>()("MissingCredentialError", {
+  source: Schema.String,
+}) {
+  override get message() {
+    return `Missing auth credential: ${this.source}`
   }
 }
 
@@ -69,7 +69,7 @@ const fromCredential = (source: Credential, render: (secret: string) => Headers.
 
 const secretEffect = (secret: string | Redacted.Redacted, source: string) => {
   const redacted = typeof secret === "string" ? Redacted.make(secret) : secret
-  if (Redacted.value(redacted) === "") return Effect.fail(new MissingCredentialError(source))
+  if (Redacted.value(redacted) === "") return Effect.fail(new MissingCredentialError({ source }))
   return Effect.succeed(redacted)
 }
 
@@ -86,7 +86,7 @@ export const value = (secret: string, source = "value") => credentialFromSecret(
 
 export const optional = (secret: Secret | undefined, source = "optional value") =>
   secret === undefined
-    ? credential(Effect.fail(new MissingCredentialError(source)))
+    ? credential(Effect.fail(new MissingCredentialError({ source })))
     : credentialFromSecret(secret, source)
 
 export const config = (name: string) => credentialFromSecret(Config.Redacted(name), name)
