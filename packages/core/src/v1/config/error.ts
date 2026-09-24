@@ -8,7 +8,7 @@ const Issue = Schema.StructWithRest(
     message: Schema.String,
     path: Schema.Array(Schema.String),
   }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  [Schema.Record(Schema.String, Schema.Json)],
 )
 
 export const JsonError = NamedError.create("ConfigJsonError", {

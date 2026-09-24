@@ -13,7 +13,7 @@ export const Entry = Schema.Union([
     extensions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
     disabled: Schema.optional(Schema.Boolean),
     env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    initialization: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    initialization: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
   }),
 ]).pipe((schema) => schema)
 
