@@ -171,22 +171,19 @@ function suggestionSelected(
   persisted: PromptInputV2PersistedState,
 ): PromptInputV2Transition {
   const current = promptText(persisted)
-  const commands: PromptInputV2InteractionCommand[] = []
-  if (item.kind === "command") {
-    commands.push({
-      type: "draft.setText",
-      value:
-        state.popover.type === "command-menu"
-          ? current.trim()
-            ? `${item.label} ${current.trim()}`
-            : `${item.label} `
-          : replaceTrigger(current, "/", `${item.label} `),
-    })
-  } else {
-    commands.push({ type: "mention.add", item })
-  }
-  commands.push({ type: "focus.editor" })
-  return changed({ ...state, popover: { type: "closed" }, focus: "editor" }, commands)
+  const edit: PromptInputV2InteractionCommand =
+    item.kind === "command"
+      ? {
+          type: "draft.setText",
+          value:
+            state.popover.type === "command-menu"
+              ? current.trim()
+                ? `${item.label} ${current.trim()}`
+                : `${item.label} `
+              : replaceTrigger(current, "/", `${item.label} `),
+        }
+      : { type: "mention.add", item }
+  return changed({ ...state, popover: { type: "closed" }, focus: "editor" }, [edit, { type: "focus.editor" }])
 }
 
 function keyDown(

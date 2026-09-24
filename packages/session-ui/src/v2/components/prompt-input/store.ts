@@ -1,3 +1,4 @@
+import { Array as Arr } from "effect"
 import { batch, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import type {
@@ -110,8 +111,7 @@ function insertText(prompt: PromptInputV2Prompt, cursor: number, content: string
     inserted = true
     return [{ type: "text", content, start: 0, end: 0 }, part]
   })
-  if (!inserted) parts.push({ type: "text", content, start: 0, end: 0 })
-  return withOffsets(parts)
+  return withOffsets(inserted ? parts : Arr.append(parts, { type: "text" as const, content, start: 0, end: 0 }))
 }
 
 function insertMention(

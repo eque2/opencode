@@ -1,3 +1,4 @@
+import { Array as Arr } from "effect"
 import { createEffect, createMemo, For, Show, type JSX } from "solid-js"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -299,13 +300,18 @@ function renderPromptInputV2Editor(editor: HTMLDivElement, prompt: PromptInputV2
 }
 
 function parsePromptInputV2Editor(editor: HTMLDivElement) {
-  const parts: Exclude<PromptInputV2Prompt[number], PromptInputV2Attachment>[] = []
+  let parts: Exclude<PromptInputV2Prompt[number], PromptInputV2Attachment>[] = []
   let buffer = ""
   let position = 0
 
   const flush = () => {
     if (!buffer) return
-    parts.push({ type: "text", content: buffer, start: position, end: position + buffer.length })
+    parts = Arr.append(parts, {
+      type: "text" as const,
+      content: buffer,
+      start: position,
+      end: position + buffer.length,
+    })
     position += buffer.length
     buffer = ""
   }
@@ -313,8 +319,8 @@ function parsePromptInputV2Editor(editor: HTMLDivElement) {
     flush()
     const content = element.textContent ?? ""
     if (element.dataset.mention === "agent") {
-      parts.push({
-        type: "agent",
+      parts = Arr.append(parts, {
+        type: "agent" as const,
         name: element.dataset.name ?? content.slice(1),
         content,
         start: position,
@@ -323,8 +329,8 @@ function parsePromptInputV2Editor(editor: HTMLDivElement) {
       position += content.length
       return
     }
-    parts.push({
-      type: "file",
+    parts = Arr.append(parts, {
+      type: "file" as const,
       path: element.dataset.path ?? content.slice(1),
       content,
       start: position,
