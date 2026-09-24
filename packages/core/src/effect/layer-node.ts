@@ -208,9 +208,9 @@ function walk<Result>(
   return recur(root)
 }
 
-export function hoist<A, E, T extends Tag, const Items extends Replacements = readonly []>(
+export function hoist<A, E, const Items extends Replacements = readonly []>(
   root: Node<A, E, any>,
-  tag: T,
+  tag: Tag,
   replacements?: ValidReplacements<Items>,
 ): {
   readonly node: Node<A, E>
