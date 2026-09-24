@@ -1,7 +1,7 @@
 export * as GrepTool from "./grep"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import path from "path"
 import { makeLocationNode } from "../effect/app-node"
 import { FileSystem } from "../filesystem"
@@ -93,12 +93,13 @@ const layer = Layer.effectDiscard(
                 source: { type: "tool", messageID: context.assistantMessageID, callID: context.toolCallID },
               })
               const target = path.resolve(location.directory, input.path ?? ".")
-              const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.succeed(undefined)))
+              const info = yield* fs.stat(target).pipe(Effect.option)
+              const cwd = Option.exists(info, (stat) => stat.type === "Directory") ? target : path.dirname(target)
               return yield* ripgrep
                 .grep({
-                  cwd: info?.type === "Directory" ? target : path.dirname(target),
+                  cwd,
                   pattern: input.pattern,
-                  file: info?.type === "File" ? path.basename(target) : undefined,
+                  ...(Option.exists(info, (stat) => stat.type === "File") ? { file: path.basename(target) } : {}),
                   include: input.include,
                   limit: input.limit ?? Number.MAX_SAFE_INTEGER,
                 })
@@ -110,13 +111,7 @@ const layer = Layer.effectDiscard(
                         entry: FileSystem.Entry.make({
                           ...match.entry,
                           path: RelativePath.make(
-                            path.relative(
-                              location.directory,
-                              path.resolve(
-                                info?.type === "Directory" ? target : path.dirname(target),
-                                match.entry.path,
-                              ),
-                            ),
+                            path.relative(location.directory, path.resolve(cwd, match.entry.path)),
                           ),
                         }),
                       }),

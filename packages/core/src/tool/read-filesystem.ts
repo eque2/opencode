@@ -2,7 +2,7 @@ export * as ReadToolFileSystem from "./read-filesystem"
 
 import path from "path"
 import { pathToFileURL } from "url"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Array, Context, Effect, Layer, Option, Schema } from "effect"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { makeLocationNode } from "../effect/app-node"
@@ -161,11 +161,15 @@ const decodeUtf8 = (resource: string, decoder: TextDecoder, bytes?: Uint8Array) 
 const decodeChunk = (resource: string, decoder: TextDecoder, bytes: Uint8Array) =>
   bytes.includes(0) ? Effect.fail(new BinaryFileError({ resource })) : decodeUtf8(resource, decoder, bytes)
 
+const entryType = (type: string): Option.Option<FileSystem.Entry["type"]> =>
+  type === "File" ? Option.some("file") : type === "Directory" ? Option.some("directory") : Option.none()
+
 export const inspect = Effect.fn("ReadTool.inspect")(function* (fs: FSUtil.Interface, input: string) {
   const info = yield* fs.stat(input)
-  const type = info.type === "File" ? "file" : info.type === "Directory" ? "directory" : undefined
-  if (!type) return yield* Effect.fail(new PathKindError({ resource: input, expected: "a file or directory" }))
-  return type
+  const type = entryType(info.type)
+  if (Option.isNone(type))
+    return yield* Effect.fail(new PathKindError({ resource: input, expected: "a file or directory" }))
+  return type.value
 })
 
 export const read = Effect.fn("ReadTool.read")(function* (
@@ -331,21 +335,24 @@ export const list = Effect.fn("ReadTool.list")(function* (fs: FSUtil.Interface, 
     (item) =>
       Effect.gen(function* () {
         const absolute = path.join(real, item.name)
-        const target = yield* fs.realPath(absolute).pipe(Effect.catch(() => Effect.void))
-        if (!target || !FSUtil.contains(real, target)) return
-        const info = yield* fs.stat(target).pipe(Effect.catch(() => Effect.void))
-        const type = info?.type === "Directory" ? "directory" : info?.type === "File" ? "file" : undefined
-        if (!type) return
-        return FileSystem.Entry.make({
-          path: RelativePath.make(item.name + (type === "directory" ? path.sep : "")),
-          type,
-        })
+        const target = yield* fs.realPath(absolute).pipe(Effect.option)
+        if (Option.isNone(target) || !target.value || !FSUtil.contains(real, target.value))
+          return Option.none<FileSystem.Entry>()
+        const info = yield* fs.stat(target.value).pipe(Effect.option)
+        return Option.flatMap(info, (stat) => entryType(stat.type)).pipe(
+          Option.map((type) =>
+            FileSystem.Entry.make({
+              path: RelativePath.make(item.name + (type === "directory" ? path.sep : "")),
+              type,
+            }),
+          ),
+        )
       }),
     { concurrency: 16 },
   )
-  const visible = entries
-    .filter((item): item is FileSystem.Entry => item !== undefined)
-    .sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1))
+  const visible = Array.getSomes(entries).sort((a, b) =>
+    a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1,
+  )
   const selected = visible.slice(offset - 1, offset - 1 + limit)
   const truncated = offset - 1 + selected.length < visible.length
   return new ListPage({ entries: selected, truncated, ...(truncated ? { next: offset + selected.length } : {}) })

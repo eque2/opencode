@@ -2,7 +2,7 @@ export * as LocationMutation from "./location-mutation"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { FSUtil } from "./fs-util"
 import { Location } from "./location"
 
@@ -84,31 +84,34 @@ const layer = Layer.effect(
     const locationRoot = yield* fs.realPath(location.directory)
 
     function notFound<A>(effect: Effect.Effect<A, FSUtil.Error>) {
-      return effect.pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(undefined)))
+      return effect.pipe(
+        Effect.map(Option.some),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+      )
     }
 
     const resolvePath = Effect.fnUntraced(function* (absolute: string) {
       const existing = yield* notFound(fs.realPath(absolute))
-      if (existing !== undefined) {
-        const info = yield* fs.stat(existing)
+      if (Option.isSome(existing)) {
+        const info = yield* fs.stat(existing.value)
         return {
-          canonical: existing,
+          canonical: existing.value,
           type: info.type,
-          directory: info.type === "Directory" ? existing : path.dirname(existing),
+          directory: info.type === "Directory" ? existing.value : path.dirname(existing.value),
         } satisfies ResolvedPath
       }
 
       let anchor = path.dirname(absolute)
       while (true) {
         const canonical = yield* notFound(fs.realPath(anchor))
-        if (canonical !== undefined) {
-          const info = yield* fs.stat(canonical)
+        if (Option.isSome(canonical)) {
+          const info = yield* fs.stat(canonical.value)
           if (info.type !== "Directory") {
             return yield* new PathError({ path: absolute, reason: "non_directory_ancestor" })
           }
           return {
-            canonical: path.resolve(canonical, path.relative(anchor, absolute)),
-            directory: canonical,
+            canonical: path.resolve(canonical.value, path.relative(anchor, absolute)),
+            directory: canonical.value,
           } satisfies ResolvedPath
         }
         const parent = path.dirname(anchor)
@@ -138,14 +141,16 @@ const layer = Layer.effect(
       return {
         canonical: resolved.canonical,
         resource,
-        externalDirectory: external
+        ...(external
           ? {
-              action: "external_directory",
-              directory: externalDirectory,
-              resource: externalResource,
-              save: externalResource,
+              externalDirectory: {
+                action: "external_directory",
+                directory: externalDirectory,
+                resource: externalResource,
+                save: externalResource,
+              },
             }
-          : undefined,
+          : {}),
       } satisfies Target
     })
 
