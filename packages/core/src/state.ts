@@ -1,6 +1,6 @@
 export * as State from "./state"
 
-import { Context, Effect, Scope, Semaphore } from "effect"
+import { Context, Effect, MutableHashSet, Option, Scope, Semaphore } from "effect"
 
 /**
  * A replayable transform applied to a draft during reload.
@@ -26,16 +26,18 @@ export interface Transformable<DraftApi> {
   readonly reload: Reload
 }
 
-const CurrentBatch = Context.Reference<Set<Reload> | undefined>("@opencode/State/CurrentBatch", {
-  defaultValue: () => undefined,
-})
+// The reloads deferred by the enclosing State.batch. A reload that several transforms queue runs once.
+const CurrentBatch = Context.Reference<Option.Option<MutableHashSet.MutableHashSet<Reload>>>(
+  "@opencode/State/CurrentBatch",
+  { defaultValue: () => Option.none() },
+)
 
 export function batch<A, E, R>(effect: Effect.Effect<A, E, R>) {
   return Effect.gen(function* () {
     const current = yield* CurrentBatch
-    if (current) return yield* effect
-    const reloads = new Set<Reload>()
-    const result = yield* effect.pipe(Effect.provideService(CurrentBatch, reloads))
+    if (Option.isSome(current)) return yield* effect
+    const reloads = MutableHashSet.empty<Reload>()
+    const result = yield* effect.pipe(Effect.provideService(CurrentBatch, Option.some(reloads)))
     yield* Effect.forEach(reloads, (reload) => reload(), { discard: true })
     return result
   })
@@ -100,8 +102,8 @@ export function create<State, DraftApi>(options: Options<State, DraftApi>): Inte
                 transforms = transforms.filter((item) => item !== transform)
                 return Effect.gen(function* () {
                   const batch = yield* CurrentBatch
-                  if (batch) {
-                    batch.add(reload)
+                  if (Option.isSome(batch)) {
+                    MutableHashSet.add(batch.value, reload)
                     return
                   }
                   yield* materialize()
@@ -116,7 +118,7 @@ export function create<State, DraftApi>(options: Options<State, DraftApi>): Inte
           )
           yield* Scope.addFinalizer(scope, dispose)
           const batch = yield* CurrentBatch
-          if (batch) batch.add(reload)
+          if (Option.isSome(batch)) MutableHashSet.add(batch.value, reload)
           else yield* reload()
           return { dispose }
         }),
