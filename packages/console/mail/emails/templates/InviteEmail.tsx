@@ -18,10 +18,10 @@ import {
 const CONSOLE_URL = "https://opencode.ai/"
 
 interface InviteEmailProps {
-  inviter: string
-  workspaceID: string
-  workspaceName: string
-  assetsUrl: string
+  inviter?: string
+  workspaceID?: string
+  workspaceName?: string
+  assetsUrl?: string
 }
 export const InviteEmail = ({
   inviter = "test@anoma.ly",
