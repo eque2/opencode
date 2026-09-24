@@ -67,15 +67,6 @@ const resolveEntryPoint = (name: string, dir: string): EntryPoint => ({
 // npm-package-arg throws for a spec it cannot parse, which gives None.
 const parsePackageSpec = Option.liftThrowable(npa)
 
-interface ArboristNode {
-  name: string
-  path: string
-}
-
-interface ArboristTree {
-  edgesOut: Map<string, { to?: ArboristNode }>
-}
-
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -112,7 +103,7 @@ const layer = Layer.effect(
               add,
               dir: input.dir,
             }),
-        }) as Effect.Effect<ArboristTree, InstallFailedError>
+        })
       }).pipe(
         Effect.withSpan("Npm.reify", {
           attributes: input,
