@@ -103,9 +103,19 @@ const layer = Layer.effect(
         variant: model.request.variant,
       }
       return ModelV2.Info.make({
-        ...model,
+        id: model.id,
+        providerID: model.providerID,
+        ...(model.family === undefined ? {} : { family: model.family }),
+        name: model.name,
         api,
+        capabilities: model.capabilities,
         request,
+        variants: model.variants,
+        time: model.time,
+        cost: model.cost,
+        status: model.status,
+        enabled: model.enabled,
+        limit: model.limit,
       })
     }
 
