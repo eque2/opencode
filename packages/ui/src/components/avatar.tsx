@@ -1,15 +1,16 @@
+import { Option } from "effect"
 import { type ComponentProps, splitProps, Show } from "solid-js"
 
-const segmenter =
+const segmenter: Option.Option<Intl.Segmenter> =
   typeof Intl !== "undefined" && "Segmenter" in Intl
     ? // ECMA-402 defaults to the runtime default locale and to "grapheme" granularity.
-      new Intl.Segmenter()
-    : undefined
+      Option.some(new Intl.Segmenter())
+    : Option.none()
 
 function first(value: string) {
   if (!value) return ""
-  if (!segmenter) return Array.from(value)[0] ?? ""
-  return segmenter.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
+  if (Option.isNone(segmenter)) return Array.from(value)[0] ?? ""
+  return segmenter.value.segment(value)[Symbol.iterator]().next().value?.segment ?? Array.from(value)[0] ?? ""
 }
 
 export interface AvatarProps extends ComponentProps<"div"> {

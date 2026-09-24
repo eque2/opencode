@@ -23,7 +23,7 @@ export function TextareaV2(props: TextareaV2Props) {
         {...textareaProps}
         rows={local.rows ?? 3}
         disabled={local.disabled}
-        aria-invalid={local.invalid ? true : undefined}
+        {...(local.invalid ? { "aria-invalid": true } : {})}
         data-slot="textarea-v2-textarea"
       />
     </div>

@@ -1,6 +1,6 @@
 import { Select as Kobalte } from "@kobalte/core/select"
 import { createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
-import { Array, Record } from "effect"
+import { Array, Option, Record } from "effect"
 import { Button, ButtonProps } from "./button"
 import { Icon } from "./icon"
 
@@ -42,12 +42,20 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     "triggerProps",
   ])
 
-  const state: { key?: string | T; cleanup?: (() => void) | void } = {}
+  // The highlighted option key, and the cleanup that its onHighlight call returned.
+  const state: { key: Option.Option<string | T>; cleanup: Option.Option<() => void> } = {
+    key: Option.none(),
+    cleanup: Option.none(),
+  }
+
+  const runCleanup = () => {
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+  }
 
   const stop = () => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    state.key = undefined
+    runCleanup()
+    state.cleanup = Option.none()
+    state.key = Option.none()
   }
 
   const keyFor = (item: T): string | T => (local.value ? local.value(item) : item)
@@ -60,10 +68,11 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
     }
 
     const key = keyFor(item)
-    if (state.key === key) return
-    state.cleanup?.()
-    state.cleanup = local.onHighlight(item)
-    state.key = key
+    if (Option.exists(state.key, (current) => current === key)) return
+    runCleanup()
+    const cleanup = local.onHighlight(item)
+    state.cleanup = typeof cleanup === "function" ? Option.some(cleanup) : Option.none()
+    state.key = Option.some(key)
   }
 
   onCleanup(stop)
@@ -117,7 +126,7 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
         </Kobalte.Item>
       )}
       onChange={(v) => {
-        local.onSelect?.(v ?? undefined)
+        local.onSelect?.(Option.getOrUndefined(Option.fromNullishOr(v)))
         stop()
       }}
       onOpenChange={(open) => {

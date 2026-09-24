@@ -1,4 +1,5 @@
 import { SegmentedControl as Kobalte } from "@kobalte/core/segmented-control"
+import { Option } from "effect"
 import { For, splitProps } from "solid-js"
 import type { ComponentProps, JSX } from "solid-js"
 
@@ -44,6 +45,9 @@ export function RadioGroup<T>(props: RadioGroupProps<T>) {
     return String(item)
   }
 
+  // Kobalte reads an undefined value as "uncontrolled", so absence crosses to it as undefined.
+  const optionValue = (item: T | undefined) => (item ? Option.some(getValue(item)) : Option.none())
+
   const findOption = (v: string): T | undefined => {
     return local.options.find((opt) => getValue(opt) === v)
   }
@@ -59,8 +63,8 @@ export function RadioGroup<T>(props: RadioGroupProps<T>) {
         ...local.classList,
         [local.class ?? ""]: !!local.class,
       }}
-      value={local.current ? getValue(local.current) : undefined}
-      defaultValue={local.defaultValue ? getValue(local.defaultValue) : undefined}
+      value={Option.getOrUndefined(optionValue(local.current))}
+      defaultValue={Option.getOrUndefined(optionValue(local.defaultValue))}
       onChange={(v) => local.onSelect?.(findOption(v))}
     >
       <div role="presentation" data-slot="radio-group-wrapper">

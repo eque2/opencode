@@ -92,12 +92,20 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
 
   const inline = () => (local.appearance ?? "base") === "inline"
 
-  const state: { key?: string; cleanup?: void | (() => void) } = {}
+  // The highlighted option key, and the cleanup that its onHighlight call returned.
+  const state: { key: Option.Option<string>; cleanup: Option.Option<() => void> } = {
+    key: Option.none(),
+    cleanup: Option.none(),
+  }
+
+  const runCleanup = () => {
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+  }
 
   const stop = () => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    state.key = undefined
+    runCleanup()
+    state.cleanup = Option.none()
+    state.key = Option.none()
   }
 
   const keyFor = (item: T) => (local.value ? local.value(item) : String(item))
@@ -109,10 +117,11 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
       return
     }
     const key = keyFor(item)
-    if (state.key === key) return
-    state.cleanup?.()
-    state.cleanup = local.onHighlight(item)
-    state.key = key
+    if (Option.exists(state.key, (current) => current === key)) return
+    runCleanup()
+    const cleanup = local.onHighlight(item)
+    state.cleanup = typeof cleanup === "function" ? Option.some(cleanup) : Option.none()
+    state.key = Option.some(key)
   }
 
   onCleanup(stop)
@@ -178,7 +187,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
         as="div"
         data-component="select-v2"
         data-appearance={local.appearance ?? "base"}
-        data-invalid={local.invalid ? "" : undefined}
+        bool:data-invalid={!!local.invalid}
         bool:data-numeric={!!local.numeric}
         disabled={local.disabled}
         bool:data-disabled={!!local.disabled}

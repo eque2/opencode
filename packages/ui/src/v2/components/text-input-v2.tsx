@@ -64,7 +64,7 @@ export function TextInputV2(props: TextInputV2Props) {
           {...inputProps}
           type={inputProps.type ?? "text"}
           disabled={local.disabled}
-          aria-invalid={local.invalid ? true : undefined}
+          {...(local.invalid ? { "aria-invalid": true } : {})}
           data-slot="text-input-v2-input"
         />
       </div>

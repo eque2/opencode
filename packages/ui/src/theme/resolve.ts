@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { ColorValue, DesktopTheme, HexColor, ResolvedTheme, ThemeVariant } from "./types"
 import { blend, generateNeutralScale, generateScale, hexToOklch, hexToRgb, shift, withAlpha } from "./color"
 import { isHexColor } from "./validate"
@@ -28,13 +29,13 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
     isDark,
   )
   const ink = colors.ink ?? colors.neutral
-  const tint = colors.compact ? hexToOklch(ink) : undefined
-  const body = tint
-    ? shift(ink, {
-        l: isDark ? Math.max(0, 0.88 - tint.l) * 0.4 : -Math.max(0, tint.l - 0.18) * 0.24,
-        c: isDark ? 1.04 : 1.02,
-      })
-    : undefined
+  const tint = colors.compact ? Option.some(hexToOklch(ink)) : Option.none()
+  const body = Option.map(tint, (value) =>
+    shift(ink, {
+      l: isDark ? Math.max(0, 0.88 - value.l) * 0.4 : -Math.max(0, value.l - 0.18) * 0.24,
+      c: isDark ? 1.04 : 1.02,
+    }),
+  )
   const backgroundOverride = overrides["background-base"]
   const backgroundHex = getHex(backgroundOverride)
   const overlay = Boolean(backgroundOverride) && !backgroundHex
@@ -190,15 +191,20 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
   tokens["input-focus"] = isDark ? interactive[6] : interactive[0]
   tokens["input-disabled"] = neutral[3]
 
-  // body is defined exactly when colors.compact is true
-  tokens["text-base"] = body ?? neutral[10]
-  tokens["text-weak"] = body ? shift(body, { l: isDark ? -0.11 : 0.11, c: 0.9 }) : neutral[8]
-  tokens["text-weaker"] = body ? shift(body, { l: isDark ? -0.2 : 0.21, c: isDark ? 0.78 : 0.72 }) : neutral[7]
-  tokens["text-strong"] = body
-    ? isDark
-      ? blend("#ffffff", body, 0.9)
-      : shift(body, { l: -0.07, c: 1.04 })
-    : neutral[11]
+  // body is Some exactly when colors.compact is true
+  tokens["text-base"] = Option.getOrElse(body, () => neutral[10])
+  tokens["text-weak"] = Option.match(body, {
+    onNone: () => neutral[8],
+    onSome: (value) => shift(value, { l: isDark ? -0.11 : 0.11, c: 0.9 }),
+  })
+  tokens["text-weaker"] = Option.match(body, {
+    onNone: () => neutral[7],
+    onSome: (value) => shift(value, { l: isDark ? -0.2 : 0.21, c: isDark ? 0.78 : 0.72 }),
+  })
+  tokens["text-strong"] = Option.match(body, {
+    onNone: () => neutral[11],
+    onSome: (value) => (isDark ? blend("#ffffff", value, 0.9) : shift(value, { l: -0.07, c: 1.04 })),
+  })
   tokens["text-invert-base"] = isDark ? neutral[10] : neutral[1]
   tokens["text-invert-weak"] = isDark ? neutral[8] : neutral[2]
   tokens["text-invert-weaker"] = isDark ? neutral[7] : neutral[3]
