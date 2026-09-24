@@ -1,6 +1,6 @@
 export * as InstructionContext from "./instruction-context"
 
-import { Array, Effect, Layer, Schema } from "effect"
+import { Array, Effect, Layer, Option, Schema } from "effect"
 import { isAbsolute, join, relative, sep } from "path"
 import { FSUtil } from "./fs-util"
 import { Flag } from "./flag/flag"
@@ -64,14 +64,17 @@ const layer = Layer.effectDiscard(
             .readFileStringSafe(path)
             .pipe(
               Effect.map((content) =>
-                content === undefined ? undefined : new File({ path: AbsolutePath.make(path), content }),
+                Option.map(
+                  Option.fromUndefinedOr(content),
+                  (text) => new File({ path: AbsolutePath.make(path), content: text }),
+                ),
               ),
             ),
         { concurrency: "unbounded" },
       )
-      if (files.some((file, index) => file === undefined && discovered.includes(paths[index])))
+      if (files.some((file, index) => Option.isNone(file) && discovered.includes(paths[index])))
         return SystemContext.unavailable
-      return files.filter((file): file is File => file !== undefined)
+      return Array.getSomes(files)
     })
 
     yield* registry.register({

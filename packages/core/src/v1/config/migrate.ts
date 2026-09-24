@@ -40,10 +40,10 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
     model: info.model,
     default_agent: info.default_agent,
     autoupdate: info.autoupdate,
-    share: info.share ?? (info.autoshare ? "auto" : undefined),
+    ...(info.share !== undefined ? { share: info.share } : info.autoshare ? { share: "auto" as const } : {}),
     enterprise: info.enterprise,
     username: info.username,
-    permissions: permissions(info.permission, info.tools),
+    ...permissions(info.permission, info.tools),
     agents: agents(info),
     snapshots: info.snapshot,
     watcher: info.watcher,
@@ -72,6 +72,8 @@ export function migrate(info: typeof ConfigV1.Info.Type) {
   }
 }
 
+// Returns { permissions } for a spread, or {} when there is no rule, so an
+// empty V1 permission set leaves no V2 key.
 function permissions(info?: ConfigPermissionV1.Info, tools?: Readonly<Record<string, boolean>>) {
   const rules: Array<{ action: string; resource: string; effect: ConfigPermissionV1.Action }> = Object.entries(
     tools ?? {},
@@ -88,7 +90,7 @@ function permissions(info?: ConfigPermissionV1.Info, tools?: Readonly<Record<str
     }
     rules.push(...Object.entries(rule).map(([resource, effect]) => ({ action, resource, effect })))
   }
-  return rules.length ? rules : undefined
+  return rules.length ? { permissions: rules } : {}
 }
 
 function normalizeAction(action: string) {
@@ -113,7 +115,7 @@ export function migrateAgent(info: ConfigAgentV1.Info) {
   return {
     model: info.model,
     variant: info.variant,
-    request: Object.keys(body).length ? { body } : undefined,
+    ...(Object.keys(body).length ? { request: { body } } : {}),
     system: info.prompt,
     description: info.description,
     mode: info.mode,
@@ -121,7 +123,7 @@ export function migrateAgent(info: ConfigAgentV1.Info) {
     color: info.color,
     steps: info.steps,
     disabled: info.disable,
-    permissions: permissions(info.permission),
+    ...permissions(info.permission),
   }
 }
 
@@ -133,19 +135,20 @@ function mcp(info: typeof ConfigV1.Info.Type) {
   )
   const timeout = info.experimental?.mcp_timeout
   if (!timeout && !Object.keys(servers).length) return undefined
-  return { timeout: timeout === undefined ? undefined : { request: timeout }, servers }
+  return { ...(timeout === undefined ? {} : { timeout: { request: timeout } }), servers }
 }
 
 function migrateMcp(info: ConfigMCPV1.Info) {
-  const disabled = info.enabled === undefined ? undefined : !info.enabled
+  const disabled = info.enabled === undefined ? {} : { disabled: !info.enabled }
+  const timeout = info.timeout === undefined ? {} : { timeout: { request: info.timeout } }
   if (info.type === "local")
     return {
       type: info.type,
       command: info.command,
       cwd: info.cwd,
       environment: info.environment,
-      disabled,
-      timeout: info.timeout === undefined ? undefined : { request: info.timeout },
+      ...disabled,
+      ...timeout,
     }
   return {
     type: info.type,
@@ -158,8 +161,8 @@ function migrateMcp(info: ConfigMCPV1.Info) {
       callback_port: info.oauth.callbackPort,
       redirect_uri: info.oauth.redirectUri,
     },
-    disabled,
-    timeout: info.timeout === undefined ? undefined : { request: info.timeout },
+    ...disabled,
+    ...timeout,
   }
 }
 
@@ -175,14 +178,16 @@ function migrateProvider(info: ConfigProviderV1.Info) {
   return {
     name: info.name,
     env: info.env,
-    api: info.npm
+    ...(info.npm
       ? {
-          type: "aisdk" as const,
-          package: info.npm,
-          ...(url === undefined ? {} : { url }),
-          settings: options.settings ?? {},
+          api: {
+            type: "aisdk" as const,
+            package: info.npm,
+            ...(url === undefined ? {} : { url }),
+            settings: options.settings ?? {},
+          },
         }
-      : undefined,
+      : {}),
     request: info.options && { headers: options.headers, body: options.body },
     models:
       info.models &&
@@ -213,23 +218,31 @@ function migrateModel(info: typeof ConfigProviderV1.Model.Type, packageName?: st
   ]
   const capabilities =
     info.tool_call !== undefined || info.modalities?.input !== undefined || info.modalities?.output !== undefined
-      ? { tools: info.tool_call ?? false, input: info.modalities?.input ?? [], output: info.modalities?.output ?? [] }
-      : undefined
+      ? {
+          capabilities: {
+            tools: info.tool_call ?? false,
+            input: info.modalities?.input ?? [],
+            output: info.modalities?.output ?? [],
+          },
+        }
+      : {}
   return {
     family: info.family,
     name: info.name,
-    api: info.provider?.npm
+    ...(info.provider?.npm
       ? {
-          ...(info.id === undefined ? {} : { id: info.id }),
-          type: "aisdk" as const,
-          package: info.provider.npm,
-          ...(info.provider.api === undefined ? {} : { url: info.provider.api }),
-          settings: {},
+          api: {
+            ...(info.id === undefined ? {} : { id: info.id }),
+            type: "aisdk" as const,
+            package: info.provider.npm,
+            ...(info.provider.api === undefined ? {} : { url: info.provider.api }),
+            settings: {},
+          },
         }
       : info.id === undefined
-        ? undefined
-        : { id: info.id },
-    capabilities,
+        ? {}
+        : { api: { id: info.id } }),
+    ...capabilities,
     request: (info.headers || request) && {
       headers: info.headers,
       body: request,
@@ -241,10 +254,10 @@ function migrateModel(info: typeof ConfigProviderV1.Model.Type, packageName?: st
         body: lowerer.request(options),
       })),
     cost: costs,
-    disabled: info.status === "deprecated" ? true : undefined,
+    ...(info.status === "deprecated" ? { disabled: true } : {}),
     limit: info.limit && {
       context: int(info.limit.context),
-      input: info.limit.input === undefined ? undefined : int(info.limit.input),
+      ...(info.limit.input === undefined ? {} : { input: int(info.limit.input) }),
       output: int(info.limit.output),
     },
   }

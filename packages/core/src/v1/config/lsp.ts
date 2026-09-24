@@ -63,14 +63,15 @@ export const builtinServerIds = [
 export const requiresExtensionsForCustomServers = Schema.makeFilter<
   boolean | Record<string, Schema.Schema.Type<typeof Entry>>
 >((data) => {
-  if (typeof data === "boolean") return undefined
+  if (typeof data === "boolean") return true
   const ids = HashSet.fromIterable(builtinServerIds)
   const ok = Object.entries(data).every(([id, config]) => {
     if ("disabled" in config && config.disabled) return true
     if (HashSet.has(ids, id)) return true
     return "extensions" in config && Boolean(config.extensions)
   })
-  return ok ? undefined : "For custom LSP servers, 'extensions' array is required."
+  // A filter reports success with true and failure with a message.
+  return ok ? true : "For custom LSP servers, 'extensions' array is required."
 })
 
 export const Info = Schema.Union([Schema.Boolean, Schema.Record(Schema.String, Entry)])

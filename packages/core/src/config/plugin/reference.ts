@@ -26,8 +26,14 @@ export const Plugin = define({
           const directory = doc.path ? path.dirname(doc.path) : location.directory
           for (const [name, entry] of Object.entries(doc.info.references ?? {})) {
             if (!validAlias(name)) continue
-            const description = typeof entry === "string" ? undefined : entry.description
-            const hidden = typeof entry === "string" ? undefined : entry.hidden
+            // Copy only the optional fields that the entry sets.
+            const details =
+              typeof entry === "string"
+                ? {}
+                : {
+                    ...(entry.description === undefined ? {} : { description: entry.description }),
+                    ...(entry.hidden === undefined ? {} : { hidden: entry.hidden }),
+                  }
             MutableHashMap.set(
               entries,
               name,
@@ -37,15 +43,13 @@ export const Plugin = define({
                     path: AbsolutePath.make(
                       localPath(directory, global.home, typeof entry === "string" ? entry : entry.path),
                     ),
-                    ...(description === undefined ? {} : { description }),
-                    ...(hidden === undefined ? {} : { hidden }),
+                    ...details,
                   })
                 : Reference.GitSource.make({
                     type: "git",
                     repository: typeof entry === "string" ? entry : entry.repository,
                     ...(entry.branch === undefined ? {} : { branch: entry.branch }),
-                    ...(description === undefined ? {} : { description }),
-                    ...(hidden === undefined ? {} : { hidden }),
+                    ...details,
                   }),
             )
           }

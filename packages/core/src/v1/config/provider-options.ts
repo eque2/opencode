@@ -1,6 +1,10 @@
 export * as ConfigProviderOptionsV1 from "./provider-options"
 
+import { Option, Predicate } from "effect"
+
 type Options = Readonly<Record<string, unknown>>
+/** A named header whose value may be absent. */
+type Header = readonly [name: string, value: Option.Option<string>]
 
 export interface ProviderResult {
   readonly headers?: Record<string, string>
@@ -29,13 +33,17 @@ const raw: Lowerer = {
 const openai: Lowerer = {
   provider(options) {
     return {
-      url: string(options.baseURL),
-      headers: compact({
-        Authorization: bearer(options.apiKey),
-        "OpenAI-Organization": string(options.organization),
-        "OpenAI-Project": string(options.project),
-        ...headers(options.headers),
-      }),
+      url: Option.getOrUndefined(string(options.baseURL)),
+      headers: Option.getOrUndefined(
+        compact(
+          [
+            ["Authorization", bearer(options.apiKey)],
+            ["OpenAI-Organization", string(options.organization)],
+            ["OpenAI-Project", string(options.project)],
+          ],
+          options.headers,
+        ),
+      ),
       body: body(options.body),
       settings: omit(options, ["apiKey", "baseURL", "organization", "project", "headers", "body"]),
     }
@@ -62,12 +70,16 @@ const openai: Lowerer = {
 const anthropic: Lowerer = {
   provider(options) {
     return {
-      url: string(options.baseURL),
-      headers: compact({
-        "x-api-key": string(options.apiKey),
-        Authorization: options.authToken ? bearer(options.authToken) : undefined,
-        ...headers(options.headers),
-      }),
+      url: Option.getOrUndefined(string(options.baseURL)),
+      headers: Option.getOrUndefined(
+        compact(
+          [
+            ["x-api-key", string(options.apiKey)],
+            ["Authorization", bearer(options.authToken)],
+          ],
+          options.headers,
+        ),
+      ),
       body: body(options.body),
       settings: omit(options, ["apiKey", "authToken", "baseURL", "headers", "body"]),
     }
@@ -89,8 +101,8 @@ const anthropic: Lowerer = {
 const google: Lowerer = {
   provider(options) {
     return {
-      url: string(options.baseURL),
-      headers: compact({ "x-goog-api-key": string(options.apiKey), ...headers(options.headers) }),
+      url: Option.getOrUndefined(string(options.baseURL)),
+      headers: Option.getOrUndefined(compact([["x-goog-api-key", string(options.apiKey)]], options.headers)),
       body: body(options.body),
       settings: omit(options, ["apiKey", "baseURL", "headers", "body"]),
     }
@@ -107,8 +119,8 @@ const google: Lowerer = {
 const azure: Lowerer = {
   provider(options) {
     return {
-      url: string(options.baseURL),
-      headers: compact({ "api-key": string(options.apiKey), ...headers(options.headers) }),
+      url: Option.getOrUndefined(string(options.baseURL)),
+      headers: Option.getOrUndefined(compact([["api-key", string(options.apiKey)]], options.headers)),
       body: body(options.body),
       settings: omit(options, ["apiKey", "baseURL", "headers", "body"]),
     }
@@ -127,7 +139,7 @@ const bedrock: Lowerer = {
 
 const openaiCompatible: Lowerer = {
   provider(options) {
-    return { ...direct(options, ["baseURL"]), url: string(options.baseURL) }
+    return { ...direct(options, ["baseURL"]), url: Option.getOrUndefined(string(options.baseURL)) }
   },
   request(options) {
     const result = clone(options)
@@ -205,21 +217,26 @@ function headers(input: unknown) {
   )
 }
 
-function compact(input: Record<string, string | undefined>) {
-  const entries = Object.entries(input).filter((entry): entry is [string, string] => entry[1] !== undefined)
-  return entries.length ? Object.fromEntries(entries) : undefined
+// Named headers come first and entries from the raw headers option win, as a
+// spread would. The result is None when no header is left.
+function compact(named: ReadonlyArray<Header>, raw: unknown): Option.Option<Record<string, string>> {
+  const entries = [
+    ...named.flatMap(([name, value]) => Option.toArray(Option.map(value, (text) => [name, text] as const))),
+    ...Object.entries(headers(raw) ?? {}),
+  ]
+  return entries.length ? Option.some(Object.fromEntries(entries)) : Option.none()
 }
 
 function compactUnknown(input: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(input).filter((entry) => entry[1] !== undefined))
 }
 
-function string(input: unknown) {
-  return typeof input === "string" && input ? input : undefined
+function string(input: unknown): Option.Option<string> {
+  return Predicate.isString(input) && input !== "" ? Option.some(input) : Option.none()
 }
 
 function bearer(input: unknown) {
-  return typeof input === "string" && input ? `Bearer ${input}` : undefined
+  return Option.map(string(input), (token) => `Bearer ${token}`)
 }
 
 function isRecord(input: unknown): input is Record<string, unknown> {
