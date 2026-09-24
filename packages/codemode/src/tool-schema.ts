@@ -1,4 +1,4 @@
-import { JsonPointer, Result, Schema } from "effect"
+import { HashSet, JsonPointer, Result, Schema } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.js"
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top => Schema.isSchema(schema)
@@ -49,16 +49,20 @@ type RenderContext = {
 const hasUnresolvedRef = (
   schema: JsonSchema,
   definitions: Readonly<Record<string, JsonSchema>>,
-  seen: ReadonlySet<string> = new Set(),
-  visited: ReadonlySet<JsonSchema> = new Set(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
+  /**
+   * The schema objects on the current path, compared by identity: a structurally equal
+   * schema reached again through a `$ref` is a new visit, so the `seen` names catch the cycle.
+   */
+  visited: ReadonlyArray<JsonSchema> = [],
 ): boolean => {
-  if (visited.has(schema)) return false
-  const nextVisited = new Set([...visited, schema])
+  if (visited.includes(schema)) return false
+  const nextVisited = [...visited, schema]
   if (schema.$ref !== undefined) {
     const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
     const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (name === undefined || definitions[name] === undefined || seen.has(name)) return true
-    if (hasUnresolvedRef(definitions[name], definitions, new Set([...seen, name]), nextVisited)) return true
+    if (name === undefined || definitions[name] === undefined || HashSet.has(seen, name)) return true
+    if (hasUnresolvedRef(definitions[name], definitions, HashSet.add(seen, name), nextVisited)) return true
   }
   return [
     ...(schema.anyOf ?? []),
@@ -111,7 +115,7 @@ const renderSchema = (
   schema: JsonSchema,
   ctx: RenderContext,
   depth = 0,
-  seen: ReadonlySet<string> = new Set(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
 ): string => {
   if (depth > MAX_RENDER_DEPTH) return "unknown"
   const nested =
@@ -121,9 +125,9 @@ const renderSchema = (
   if (schema.$ref) {
     const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
     const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (!name || !nested.definitions[name] || seen.has(name)) return "unknown"
+    if (!name || !nested.definitions[name] || HashSet.has(seen, name)) return "unknown"
     return intersection([
-      renderSchema(nested.definitions[name], nested, depth, new Set([...seen, name])),
+      renderSchema(nested.definitions[name], nested, depth, HashSet.add(seen, name)),
       renderSchema({ ...schema, $ref: undefined }, nested, depth + 1, seen),
     ])
   }
@@ -172,13 +176,13 @@ const renderSchema = (
   if (schema.type === "null") return "null"
   if (schema.type === "array") return `Array<${renderSchema(schema.items ?? {}, nested, depth + 1, seen)}>`
   if (schema.type === "object" || schema.properties) {
-    const required = new Set(schema.required ?? [])
+    const required = HashSet.fromIterable(schema.required ?? [])
     const properties = Object.entries(schema.properties ?? {})
     const additional = schema.additionalProperties
     const indexType =
       additional && typeof additional === "object" ? renderSchema(additional, nested, depth + 1, seen) : undefined
     const field = ([name, value]: readonly [string, JsonSchema]) =>
-      `${renderKey(name)}${required.has(name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
+      `${renderKey(name)}${HashSet.has(required, name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
     if (!ctx.pretty) {
       const fields = properties.map(field)
@@ -254,11 +258,11 @@ export const inputProperties = <R>(definition: Definition<R>): Array<InputProper
       if (resolved === undefined) return []
       schema = resolved
     }
-    const required = new Set(schema.required ?? [])
+    const required = HashSet.fromIterable(schema.required ?? [])
     return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
       name,
       description: typeof value.description === "string" ? value.description : undefined,
-      required: required.has(name),
+      required: HashSet.has(required, name),
     }))
   } catch {
     return []
