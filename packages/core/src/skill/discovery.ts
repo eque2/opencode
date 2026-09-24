@@ -1,7 +1,8 @@
 export * as SkillDiscovery from "./discovery"
 
 import path from "path"
-import { Context, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { NodeCrypto } from "@effect/platform-node"
+import { Context, Crypto, Effect, Layer, Option, Schedule, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
@@ -68,6 +69,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const global = yield* Global.Service
+    const cryptoService = yield* Crypto.Crypto
     const http = (yield* HttpClient.HttpClient).pipe(
       HttpClient.retryTransient({
         retryOn: "errors-and-responses",
@@ -162,7 +164,7 @@ const layer = Layer.effect(
                 })
               } else {
                 const version = pending.value
-                const token = crypto.randomUUID()
+                const token = yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)
                 const staging = `${root}.tmp-${token}`
                 const backup = `${root}.old-${token}`
                 yield* Effect.gen(function* () {
@@ -207,6 +209,6 @@ const layer = Layer.effect(
       }),
     })
   }),
-)
+).pipe(Layer.provide(NodeCrypto.layer))
 
 export const node = makeGlobalNode({ service: Service, layer, deps: [httpClient, FSUtil.node, Global.node] })
