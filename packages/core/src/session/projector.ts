@@ -24,23 +24,13 @@ const isAssistant = (message: SessionMessage.Message): message is SessionMessage
 
 export class SessionAlreadyProjected extends Error {}
 
-type Usage = {
-  cost: number
-  tokens: {
-    input: number
-    output: number
-    reasoning: number
-    cache: { read: number; write: number }
-  }
-}
-
-function usage(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"] | unknown): Usage | undefined {
-  if (typeof part !== "object" || part === null) return undefined
-  const value = part as Record<string, unknown>
-  if (value.type !== "step-finish") return undefined
-  if (!("cost" in value) || !("tokens" in value)) return undefined
-  return { cost: value.cost as Usage["cost"], tokens: value.tokens as Usage["tokens"] }
-}
+// The cost and token usage of a V1 step-finish part, read from an event part or a stored part row.
+const StepFinishUsage = Schema.Struct({
+  type: SessionV1.StepFinishPart.fields.type,
+  cost: SessionV1.StepFinishPart.fields.cost,
+  tokens: SessionV1.StepFinishPart.fields.tokens,
+}).annotate({ identifier: "SessionProjector.StepFinishUsage" })
+const decodeUsage = Schema.decodeUnknownOption(StepFinishUsage)
 
 function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInsert {
   return {
@@ -88,26 +78,31 @@ function partData(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"
   return rest as DeepMutable<typeof rest>
 }
 
+// Add (sign 1) or remove (sign -1) the usage of a step-finish part in the session totals; other parts add nothing.
 function applyUsage(
   db: DatabaseService,
   sessionID: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["sessionID"],
-  value: Usage,
+  part: unknown,
   sign = 1,
 ) {
-  return db
-    .update(SessionTable)
-    .set({
-      cost: sql`${SessionTable.cost} + ${value.cost * sign}`,
-      tokens_input: sql`${SessionTable.tokens_input} + ${value.tokens.input * sign}`,
-      tokens_output: sql`${SessionTable.tokens_output} + ${value.tokens.output * sign}`,
-      tokens_reasoning: sql`${SessionTable.tokens_reasoning} + ${value.tokens.reasoning * sign}`,
-      tokens_cache_read: sql`${SessionTable.tokens_cache_read} + ${value.tokens.cache.read * sign}`,
-      tokens_cache_write: sql`${SessionTable.tokens_cache_write} + ${value.tokens.cache.write * sign}`,
-      time_updated: sql`${SessionTable.time_updated}`,
-    })
-    .where(eq(SessionTable.id, sessionID))
-    .run()
-    .pipe(Effect.orDie)
+  return Option.match(decodeUsage(part), {
+    onNone: () => Effect.void,
+    onSome: (value) =>
+      db
+        .update(SessionTable)
+        .set({
+          cost: sql`${SessionTable.cost} + ${value.cost * sign}`,
+          tokens_input: sql`${SessionTable.tokens_input} + ${value.tokens.input * sign}`,
+          tokens_output: sql`${SessionTable.tokens_output} + ${value.tokens.output * sign}`,
+          tokens_reasoning: sql`${SessionTable.tokens_reasoning} + ${value.tokens.reasoning * sign}`,
+          tokens_cache_read: sql`${SessionTable.tokens_cache_read} + ${value.tokens.cache.read * sign}`,
+          tokens_cache_write: sql`${SessionTable.tokens_cache_write} + ${value.tokens.cache.write * sign}`,
+          time_updated: sql`${SessionTable.time_updated}`,
+        })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+        .pipe(Effect.orDie, Effect.asVoid),
+  })
 }
 
 function run(db: DatabaseService, event: SessionEvent.Event) {
@@ -287,8 +282,7 @@ const layer = Layer.effectDiscard(
           .all()
           .pipe(Effect.orDie)
         for (const row of rows) {
-          const previous = usage(row.data)
-          if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
+          yield* applyUsage(db, event.data.sessionID, row.data, -1)
         }
         yield* db
           .delete(MessageTable)
@@ -305,8 +299,7 @@ const layer = Layer.effectDiscard(
           .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
           .get()
           .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        if (previous) yield* applyUsage(db, event.data.sessionID, previous, -1)
+        if (row) yield* applyUsage(db, event.data.sessionID, row.data, -1)
         yield* db
           .delete(PartTable)
           .where(and(eq(PartTable.id, event.data.partID), eq(PartTable.session_id, event.data.sessionID)))
@@ -327,10 +320,8 @@ const layer = Layer.effectDiscard(
           .onConflictDoUpdate({ target: PartTable.id, set: { data } })
           .run()
           .pipe(Effect.orDie)
-        const previous = row && usage(row.data)
-        const next = usage(event.data.part)
-        if (previous) yield* applyUsage(db, row.session_id, previous, -1)
-        if (next) yield* applyUsage(db, sessionID, next)
+        if (row) yield* applyUsage(db, row.session_id, row.data, -1)
+        yield* applyUsage(db, sessionID, event.data.part)
       }),
     )
     yield* events.project(SessionEvent.AgentSwitched, (event) =>
