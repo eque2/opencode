@@ -4,7 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import * as path from "node:path"
 import * as prompts from "@clack/prompts"
 import { AwsV4Signer } from "aws4fetch"
-import { Config, ConfigProvider, Effect, FileSystem, PlatformError, Redacted } from "effect"
+import { Config, ConfigProvider, Effect, FileSystem, Layer, PlatformError, Redacted } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/unstable/http"
 import * as ProviderShared from "../src/protocols/shared"
 import * as Cloudflare from "../src/providers/cloudflare"
@@ -539,4 +539,4 @@ const main = Effect.fn("RecordingEnv.main")(function* () {
   prompts.outro("Keep .env.local local. Store shared team credentials in a password manager or vault.")
 })
 
-await Effect.runPromise(main().pipe(Effect.provide(NodeFileSystem.layer), Effect.provide(FetchHttpClient.layer)))
+await Effect.runPromise(main().pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, FetchHttpClient.layer))))
