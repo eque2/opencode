@@ -47,7 +47,7 @@ export function parse(patchText: string): Result.Result<ReadonlyArray<Hunk>, Par
     let hunks: ReadonlyArray<Hunk> = []
     let index = begin + 1
     while (index < end) {
-      const line = lines[index]!
+      const line = lines[index]
       if (line.startsWith("*** Add File:")) {
         const path = line.slice("*** Add File:".length).trim()
         if (!path) return yield* invalid("Invalid add file path")
@@ -69,7 +69,7 @@ export function parse(patchText: string): Result.Result<ReadonlyArray<Hunk>, Par
         let next = index + 1
         let movePath: string | undefined
         if (lines[next]?.startsWith("*** Move to:")) {
-          movePath = lines[next]!.slice("*** Move to:".length).trim()
+          movePath = lines[next].slice("*** Move to:".length).trim()
           if (!movePath) return yield* invalid("Invalid move file path")
           next++
         }
@@ -129,7 +129,7 @@ function parseUpdate(lines: ReadonlyArray<string>, start: number) {
   return Result.gen(function* () {
     let chunks: ReadonlyArray<UpdateFileChunk> = []
     let index = start
-    while (index < lines.length && !lines[index]!.startsWith("***")) {
+    while (index < lines.length && !lines[index].startsWith("***")) {
       const parsed = yield* parseChunk(lines, index)
       chunks = [...chunks, parsed.chunk]
       index = parsed.next
@@ -140,10 +140,10 @@ function parseUpdate(lines: ReadonlyArray<string>, start: number) {
 
 function parseChunk(lines: ReadonlyArray<string>, index: number) {
   return Result.gen(function* () {
-    if (!lines[index]!.startsWith("@@")) {
+    if (!lines[index].startsWith("@@")) {
       return yield* invalid(`Invalid update file line: ${lines[index]}`)
     }
-    const changeContext = lines[index]!.slice(2).trim()
+    const changeContext = lines[index].slice(2).trim()
     const end = findFrom(lines, index + 1, (line) => line.startsWith("@@") || line.startsWith("***"))
     const body = lines.slice(index + 1, end)
     const bad = body.findIndex((line) => !line.startsWith(" ") && !line.startsWith("-") && !line.startsWith("+"))
@@ -214,7 +214,7 @@ function matches(
   offset: number,
   compare: (left: string, right: string) => boolean,
 ) {
-  return pattern.every((line, index) => compare(lines[offset + index]!, line))
+  return pattern.every((line, index) => compare(lines[offset + index], line))
 }
 
 const exact = (left: string, right: string) => left === right
