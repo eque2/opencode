@@ -21,7 +21,7 @@ export namespace Glob {
     }
   }
 
-  export async function scan(pattern: string, options: Options = {}): Promise<string[]> {
+  export function scan(pattern: string, options: Options = {}): Promise<string[]> {
     return glob(pattern, toGlobOptions(options))
   }
 
