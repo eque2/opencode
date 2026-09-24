@@ -1,7 +1,7 @@
 export * as Catalog from "./catalog"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Array, Context, Effect, Layer, Option, Order, pipe, Schema } from "effect"
+import { Array, Context, Effect, HashMap, HashSet, Layer, MutableHashMap, Option, Order, pipe, Schema } from "effect"
 import { Catalog } from "@opencode-ai/schema/catalog"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
@@ -22,7 +22,7 @@ export const PolicyActions = Schema.Literals(["provider.use"])
 export const Event = Catalog.Event
 
 type Data = {
-  providers: Map<ProviderV2.ID, ProviderRecord>
+  providers: MutableHashMap.MutableHashMap<ProviderV2.ID, ProviderRecord>
   defaultModel?: DefaultModel
 }
 
@@ -68,11 +68,11 @@ const layer = Layer.effect(
     const policy = yield* Policy.Service
     const integrations = yield* Integration.Service
 
-    const available = (provider: ProviderV2.Info, integration: Integration.Info | undefined) => {
+    const available = (provider: ProviderV2.Info, integration: Option.Option<Integration.Info>) => {
       if (provider.disabled) return false
       if (typeof provider.request.body.apiKey === "string") return true
-      if (integration?.connections.length) return true
-      return provider.integrationID === undefined && !integration
+      if (Option.exists(integration, (item) => item.connections.length > 0)) return true
+      return provider.integrationID === undefined && Option.isNone(integration)
     }
 
     const projectModel = (model: ModelV2.Info, provider: ProviderV2.Info) => {
@@ -103,39 +103,42 @@ const layer = Layer.effect(
     }
 
     const state = State.create<Data, Draft>({
-      initial: () => ({ providers: new Map() }),
+      initial: () => ({ providers: MutableHashMap.empty() }),
       draft: (draft) => {
+        // The record for a provider, created empty the first time a transform touches it.
+        const providerRecord = (providerID: ProviderV2.ID) => {
+          const existing = MutableHashMap.get(draft.providers, providerID)
+          if (Option.isSome(existing)) return existing.value
+          const created: ProviderRecord = {
+            provider: ProviderV2.Info.empty(providerID) as ProviderV2.MutableInfo,
+            // eslint-disable-next-line effect/no-map-use-hashmap -- @opencode-ai/plugin CatalogProviderRecord.models is a ReadonlyMap that plugins read from the catalog draft
+            models: new Map<ModelV2.ID, ModelV2.MutableInfo>(),
+          }
+          MutableHashMap.set(draft.providers, providerID, created)
+          return created
+        }
         const result: Draft = {
           provider: {
-            list: () => Array.fromIterable(draft.providers.values()) as ProviderRecord[],
-            get: (providerID) => draft.providers.get(providerID),
+            list: () => Array.fromIterable(MutableHashMap.values(draft.providers)),
+            get: (providerID) => Option.getOrUndefined(MutableHashMap.get(draft.providers, providerID)),
             update: (providerID, fn) => {
-              let current = draft.providers.get(providerID)
-              if (!current) {
-                current = {
-                  provider: ProviderV2.Info.empty(providerID) as ProviderV2.MutableInfo,
-                  models: new Map<ModelV2.ID, ModelV2.MutableInfo>(),
-                }
-                draft.providers.set(providerID, current)
-              }
+              const current = providerRecord(providerID)
               fn(current.provider)
               normalizeApi(current.provider)
             },
             remove: (providerID) => {
-              draft.providers.delete(providerID)
+              MutableHashMap.remove(draft.providers, providerID)
             },
           },
           model: {
-            get: (providerID, modelID) => draft.providers.get(providerID)?.models.get(modelID),
+            get: (providerID, modelID) =>
+              Option.getOrUndefined(
+                MutableHashMap.get(draft.providers, providerID).pipe(
+                  Option.flatMapNullishOr((record) => record.models.get(modelID)),
+                ),
+              ),
             update: (providerID, modelID, fn) => {
-              let record = draft.providers.get(providerID)
-              if (!record) {
-                record = {
-                  provider: ProviderV2.Info.empty(providerID) as ProviderV2.MutableInfo,
-                  models: new Map<ModelV2.ID, ModelV2.MutableInfo>(),
-                }
-                draft.providers.set(providerID, record)
-              }
+              const record = providerRecord(providerID)
               const model =
                 record.models.get(modelID) ?? (ModelV2.Info.empty(providerID, modelID) as ModelV2.MutableInfo)
               if (!record.models.has(modelID)) record.models.set(modelID, model)
@@ -145,7 +148,8 @@ const layer = Layer.effect(
               normalizeApi(model)
             },
             remove: (providerID, modelID) => {
-              draft.providers.get(providerID)?.models.delete(modelID)
+              const record = MutableHashMap.get(draft.providers, providerID)
+              if (Option.isSome(record)) record.value.models.delete(modelID)
             },
             default: {
               get: () => draft.defaultModel,
@@ -174,24 +178,31 @@ const layer = Layer.effect(
 
       provider: {
         get: Effect.fn("CatalogV2.provider.get")(function* (providerID) {
-          return state.get().providers.get(providerID)?.provider
+          return Option.getOrUndefined(
+            Option.map(MutableHashMap.get(state.get().providers, providerID), (record) => record.provider),
+          )
         }),
 
         all: Effect.fn("CatalogV2.provider.all")(function* () {
-          return Array.fromIterable(state.get().providers.values()).map((record) => record.provider)
+          return Array.fromIterable(MutableHashMap.values(state.get().providers)).map((record) => record.provider)
         }),
 
         available: Effect.fn("CatalogV2.provider.available")(function* () {
-          const active = new Map((yield* integrations.list()).map((integration) => [integration.id, integration]))
+          const active = HashMap.fromIterable(
+            (yield* integrations.list()).map((integration): [Integration.ID, Integration.Info] => [
+              integration.id,
+              integration,
+            ]),
+          )
           return (yield* result.provider.all()).filter((provider) =>
-            available(provider, active.get(provider.integrationID ?? Integration.ID.make(provider.id))),
+            available(provider, HashMap.get(active, provider.integrationID ?? Integration.ID.make(provider.id))),
           )
         }),
       },
 
       model: {
         get: Effect.fn("CatalogV2.model.get")(function* (providerID, modelID) {
-          const record = state.get().providers.get(providerID)
+          const record = Option.getOrUndefined(MutableHashMap.get(state.get().providers, providerID))
           if (!record) return
           const model = record.models.get(modelID)
           return model && projectModel(model, record.provider)
@@ -199,7 +210,7 @@ const layer = Layer.effect(
 
         all: Effect.fn("CatalogV2.model.all")(function* () {
           return pipe(
-            Array.fromIterable(state.get().providers.values()),
+            Array.fromIterable(MutableHashMap.values(state.get().providers)),
             Array.flatMap((record) => {
               return Array.fromIterable(record.models.values()).map((model) => projectModel(model, record.provider))
             }),
@@ -208,8 +219,10 @@ const layer = Layer.effect(
         }),
 
         available: Effect.fn("CatalogV2.model.available")(function* () {
-          const providers = new Set((yield* result.provider.available()).map((provider) => provider.id))
-          return (yield* result.model.all()).filter((model) => providers.has(model.providerID) && model.enabled)
+          const providers = HashSet.fromIterable((yield* result.provider.available()).map((provider) => provider.id))
+          return (yield* result.model.all()).filter(
+            (model) => HashSet.has(providers, model.providerID) && model.enabled,
+          )
         }),
 
         default: Effect.fn("CatalogV2.model.default")(function* () {
@@ -232,7 +245,7 @@ const layer = Layer.effect(
         }),
 
         small: Effect.fn("CatalogV2.model.small")(function* (providerID) {
-          const record = state.get().providers.get(providerID)
+          const record = Option.getOrUndefined(MutableHashMap.get(state.get().providers, providerID))
           if (!record) return
           const provider = record.provider
 
