@@ -52,6 +52,22 @@ const JsonText = Schema.fromJsonString(Schema.Json)
 
 const DiscordMessageJson = Schema.fromJsonString(Schema.Struct({ content: Schema.String }))
 
+/** The fields of a Feishu event callback that the support bridge reads. */
+const FeishuEvent = Schema.Struct({
+  challenge: Schema.optional(Schema.String),
+  event: Schema.optional(
+    Schema.Struct({
+      message: Schema.optional(
+        Schema.Struct({
+          message_id: Schema.optional(Schema.String.pipe(Schema.brand("FeishuMessageId"))),
+          root_id: Schema.optional(Schema.String.pipe(Schema.brand("FeishuMessageId"))),
+          content: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+}).annotate({ identifier: "FeishuEvent" })
+
 export class SyncServer extends DurableObject<Env> {
   // oxlint-disable-next-line no-useless-constructor
   constructor(ctx: DurableObjectState, env: Env) {
@@ -304,19 +320,9 @@ export default new Hono<{ Bindings: Env }>()
   .post("/feishu", (c) =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const body = (yield* Effect.tryPromise(() => c.req.json())) as {
-          challenge?: string
-          event?: {
-            message?: {
-              message_id?: string
-              root_id?: string
-              parent_id?: string
-              chat_id?: string
-              content?: string
-            }
-          }
-        }
-        yield* Effect.logInfo(body)
+        const raw = yield* Effect.tryPromise(() => c.req.json<unknown>())
+        yield* Effect.logInfo(raw)
+        const body = yield* Schema.decodeUnknownEffect(FeishuEvent)(raw)
         const challenge = body.challenge
         if (challenge) return c.json({ challenge })
 
