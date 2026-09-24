@@ -1,5 +1,5 @@
 import { isAbsolute, join } from "node:path"
-import { Effect, FileSystem, PlatformError, Schema, SchemaAST, SchemaRepresentation } from "effect"
+import { Effect, FileSystem, PlatformError, Predicate, Schema, SchemaAST, SchemaRepresentation } from "effect"
 import { HttpMethod, type HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
 import { format } from "prettier"
@@ -893,7 +893,7 @@ function checksPortable(checks: SchemaAST.Checks | undefined): boolean {
 }
 
 function representationPortable(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || !("id" in value)) return false
+  if (!Predicate.isObjectOrArray(value) || !("id" in value)) return false
   const id = value.id
   return typeof id === "string" && id.startsWith("effect/schema/")
 }
@@ -925,18 +925,14 @@ function metadataPortable(ast: SchemaAST.AST, seen: Set<SchemaAST.AST>): boolean
 }
 
 function generationPortable(generation: unknown): boolean {
-  if (typeof generation !== "object" || generation === null) return false
-  const value = generation as {
-    readonly runtime?: unknown
-    readonly Type?: unknown
-    readonly importDeclaration?: unknown
-    readonly importDeclarations?: unknown
+  if (!Predicate.isObject(generation)) return false
+  const runtime = generation.runtime
+  if (typeof runtime !== "string" || (generation.Type !== undefined && typeof generation.Type !== "string")) {
+    return false
   }
-  const runtime = value.runtime
-  if (typeof runtime !== "string" || (value.Type !== undefined && typeof value.Type !== "string")) return false
   const imports = [
-    ...(value.importDeclaration === undefined ? [] : [value.importDeclaration]),
-    ...(Array.isArray(value.importDeclarations) ? value.importDeclarations : []),
+    ...(generation.importDeclaration === undefined ? [] : [generation.importDeclaration]),
+    ...(Array.isArray(generation.importDeclarations) ? generation.importDeclarations : []),
   ]
   if (imports.some((item) => typeof item !== "string" || !/from ["']effect(?:\/[^"']+)?["']$/.test(item))) {
     return false
@@ -1006,7 +1002,7 @@ function annotationsPortable(annotations: Schema.Annotations.Annotations | undef
 }
 
 function serializable(value: unknown): boolean {
-  if (value === null || ["string", "number", "boolean"].includes(typeof value)) return true
+  if (Predicate.isNull(value) || ["string", "number", "boolean"].includes(typeof value)) return true
   if (Array.isArray(value)) return value.every(serializable)
   if (typeof value !== "object") return false
   return Object.values(value).every(serializable)
@@ -1050,7 +1046,7 @@ function isStreamSchema(schema: Schema.Top): schema is HttpApiSchema.StreamSchem
 }
 
 function streamDataSchema(schema: SseStreamSchema) {
-  if (!("fields" in schema.events) || typeof schema.events.fields !== "object" || schema.events.fields === null) {
+  if (!("fields" in schema.events) || !Predicate.isObjectOrArray(schema.events.fields)) {
     throw new GenerationError({ reason: "Invalid SSE data schema" })
   }
   const data = Reflect.get(schema.events.fields, "data")
