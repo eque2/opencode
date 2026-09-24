@@ -1,5 +1,8 @@
 import { and, Database, inArray } from "@opencode-ai/console-core/drizzle/index.js"
 import { ModelTpsRateLimitTable } from "@opencode-ai/console-core/schema/ip.sql.js"
+import { z } from "zod"
+
+const Body = z.object({ ids: z.array(z.string()) })
 
 type Result = Record<string, { interval: number; qualify: number; unqualify: number }[]>
 
@@ -7,7 +10,7 @@ export default {
   async fetch(request: Request) {
     if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 })
 
-    const body = (await request.json()) as { ids: string[] }
+    const body = Body.parse(await request.json())
     const ids = body.ids
     if (ids.length === 0) return Response.json({} satisfies Result)
 

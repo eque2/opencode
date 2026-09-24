@@ -23,6 +23,18 @@ type Env = {
   AuthStorage: KVNamespace
 }
 
+const GithubEmails = z.array(
+  z.object({
+    email: z.string(),
+    primary: z.boolean(),
+    verified: z.boolean(),
+  }),
+)
+
+const GithubUser = z.object({
+  id: z.number(),
+})
+
 export const subjects = createSubjects({
   account: z.object({
     accountID: z.string(),
@@ -122,30 +134,34 @@ export default {
         let email: string | undefined
 
         if (response.provider === "github") {
-          const emails = (await fetch("https://api.github.com/user/emails", {
-            headers: {
-              Authorization: `Bearer ${response.tokenset.access}`,
-              "User-Agent": "opencode",
-              Accept: "application/vnd.github+json",
-            },
-          }).then((x) => x.json())) as any
-          const user = (await fetch("https://api.github.com/user", {
-            headers: {
-              Authorization: `Bearer ${response.tokenset.access}`,
-              "User-Agent": "opencode",
-              Accept: "application/vnd.github+json",
-            },
-          }).then((x) => x.json())) as any
+          const emails = GithubEmails.parse(
+            await fetch("https://api.github.com/user/emails", {
+              headers: {
+                Authorization: `Bearer ${response.tokenset.access}`,
+                "User-Agent": "opencode",
+                Accept: "application/vnd.github+json",
+              },
+            }).then((x) => x.json()),
+          )
+          const user = GithubUser.parse(
+            await fetch("https://api.github.com/user", {
+              headers: {
+                Authorization: `Bearer ${response.tokenset.access}`,
+                "User-Agent": "opencode",
+                Accept: "application/vnd.github+json",
+              },
+            }).then((x) => x.json()),
+          )
           subject = user.id.toString()
 
-          const primaryEmail = emails.find((x: any) => x.primary)
+          const primaryEmail = emails.find((x) => x.primary)
           if (!primaryEmail) throw new Error("No primary email found for GitHub user")
           if (!primaryEmail.verified) throw new Error("Primary email for GitHub user not verified")
           email = primaryEmail.email
         } else if (response.provider === "google") {
           if (!response.id.email_verified) throw new Error("Google email not verified")
-          subject = response.id.sub as string
-          email = response.id.email as string
+          subject = typeof response.id.sub === "string" ? response.id.sub : undefined
+          email = typeof response.id.email === "string" ? response.id.email : undefined
         } else throw new Error("Unsupported provider")
 
         if (!email) throw new Error("No email found")

@@ -1,5 +1,8 @@
 import { Resource } from "@opencode-ai/console-resource"
 import type { TraceItem } from "@cloudflare/workers-types"
+import { z } from "zod"
+
+const Metric = z.record(z.string(), z.unknown())
 
 export default {
   async tail(events: TraceItem[]) {
@@ -41,7 +44,7 @@ export default {
         ...event.logs.flatMap((log) =>
           log.message.flatMap((message: string) => {
             if (!message.startsWith("_metric:")) return []
-            const json = JSON.parse(message.slice(8)) as Record<string, unknown>
+            const json = Metric.parse(JSON.parse(message.slice(8)))
             data = { ...data, ...json }
             if ("llm.error.code" in json) {
               return [{ time, data: { ...data, event_type: "llm.error" } }]
@@ -165,7 +168,9 @@ function ipPrefix(ip: string | undefined) {
   if (!ip.includes(":")) return undefined
 
   // Expand "::" to its full form, then keep the first 4 hextets.
-  const [head, tail] = ip.split("::") as [string, string | undefined]
+  const parts = ip.split("::")
+  const head = parts[0]
+  const tail = parts.at(1)
   const headParts = head ? head.split(":") : []
   const tailParts = tail !== undefined ? tail.split(":") : []
   const missing = 8 - headParts.length - tailParts.length
