@@ -516,14 +516,17 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     ),
   },
   {
+    // The `_` prefix marks the positional placeholder as intentionally
+    // unused for eslint/no-unused-vars; type parameter names are not part
+    // of the call sites.
     file: "client/types.gen.ts",
-    rule: "typescript/no-unnecessary-type-parameters",
+    rule: "typescript/no-unnecessary-type-parameters, eslint/no-unused-vars",
     search: lines("type SseFn = <", "  TData = unknown,", "  TError = unknown,"),
     replace: lines(
       "type SseFn = <",
       "  TData = unknown,",
       "  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- positional type parameter required by the @hey-api/openapi-ts generated sdk.gen.ts calls sse.get<Responses, Errors, ThrowOnError> and the public Client['sse'] signature; the SseFn patch in build.ts removed its only use",
-      "  TError = unknown,",
+      "  _TError = unknown,",
     ),
   },
 ]
