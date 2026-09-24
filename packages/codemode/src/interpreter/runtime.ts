@@ -16,7 +16,6 @@ import { ToolError } from "../tool-error.js"
 import type {
   DataValue,
   Diagnostic,
-  DiagnosticKind,
   ExecuteOptions,
   ResolvedExecutionLimits,
   Result,
@@ -31,7 +30,6 @@ import {
   ErrorConstructorReference,
   GlobalMethodReference,
   GlobalNamespace,
-  type GlobalNamespaceName,
   formatLocation,
   getArray,
   getBoolean,
@@ -82,7 +80,6 @@ import {
   urlMethods,
   urlProperties,
   urlSearchParamsMethods,
-  urlStatics,
   urlWritableProperties,
   invokeUriFunction,
   invokeURLMethod,
@@ -1937,13 +1934,13 @@ class Interpreter<R> {
   private invokeConsole(name: string, args: Array<unknown>, node: AstNode): undefined {
     if (!consoleMethods.has(name))
       throw new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node)
-    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args, node)))
+    this.logs.push(publicErrorMessage(this.formatConsoleMessage(name, args)))
     return undefined
   }
 
-  private formatConsoleMessage(name: string, args: Array<unknown>, node: AstNode): string {
+  private formatConsoleMessage(name: string, args: Array<unknown>): string {
     if (name === "dir") return args.length === 0 ? "undefined" : this.formatConsoleArgument(args[0])
-    if (name === "table") return this.formatConsoleTable(args[0], args[1], node)
+    if (name === "table") return this.formatConsoleTable(args[0], args[1])
     const prefix = name === "warn" ? "[warn] " : name === "error" ? "[error] " : name === "debug" ? "[debug] " : ""
     return `${prefix}${args.map((arg) => this.formatConsoleArgument(arg)).join(" ")}`
   }
@@ -2006,13 +2003,13 @@ class Interpreter<R> {
     }
   }
 
-  private formatConsoleTable(value: unknown, columnsArgument: unknown, node: AstNode): string {
+  private formatConsoleTable(value: unknown, columnsArgument: unknown): string {
     if (value === undefined) return "undefined"
     // Sandbox values are legitimate table data (cells render their friendly forms); only
     // truly opaque references (functions, tools, promises) collapse to the marker.
     if (containsOpaqueReference(value)) return "[CodeMode reference]"
     const data = boundedData(value, "console.table argument")
-    const columns = this.consoleTableColumns(columnsArgument, node)
+    const columns = this.consoleTableColumns(columnsArgument)
     const rows = this.consoleTableRows(data, columns)
     const keys = columns ?? Array.from(new Set(rows.flatMap((row) => Object.keys(row.values))))
     const header = ["(index)", ...keys].join("\t")
@@ -2022,7 +2019,7 @@ class Interpreter<R> {
     ].join("\n")
   }
 
-  private consoleTableColumns(value: unknown, node: AstNode): ReadonlyArray<string> | undefined {
+  private consoleTableColumns(value: unknown): ReadonlyArray<string> | undefined {
     if (value === undefined) return undefined
     if (containsRuntimeReference(value)) return undefined
     const columns = copyOut(copyIn(value, "console.table columns"), true)
