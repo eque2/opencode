@@ -24,7 +24,7 @@ const completedEventSchema = z.object({
   response: z.object({ usage: usageSchema.nullish() }).nullish(),
 })
 
-export const openaiHelper: ProviderHelper = ({ workspaceID }) => ({
+export const openaiHelper: ProviderHelper = () => ({
   format: "openai",
   modifyUrl: (providerApi: string) => providerApi + "/responses",
   modifyHeaders: (headers: Headers, apiKey: string, _stickyId: string) => {
