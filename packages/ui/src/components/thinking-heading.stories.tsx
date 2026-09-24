@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { createEffect, on, onMount, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TextShimmer } from "./text-shimmer"
@@ -21,18 +22,18 @@ duration, travel, bounce, and fade controls.`,
   },
 }
 
-const HEADINGS = [
-  "Planning key generation details",
-  "Analyzing error handling",
-  undefined,
-  "Reviewing authentication flow",
-  "Considering edge cases",
-  "Evaluating performance",
-  "Structuring the response",
-  "Checking type safety",
-  "Designing the API surface",
-  "Mapping dependencies",
-  "Outlining test strategy",
+const HEADINGS: ReadonlyArray<Option.Option<string>> = [
+  Option.some("Planning key generation details"),
+  Option.some("Analyzing error handling"),
+  Option.none(),
+  Option.some("Reviewing authentication flow"),
+  Option.some("Considering edge cases"),
+  Option.some("Evaluating performance"),
+  Option.some("Structuring the response"),
+  Option.some("Checking type safety"),
+  Option.some("Designing the API surface"),
+  Option.some("Mapping dependencies"),
+  Option.some("Outlining test strategy"),
 ]
 
 // ---------------------------------------------------------------------------
@@ -376,9 +377,14 @@ input[type="range"].heading-slider::-webkit-slider-thumb {
 // ---------------------------------------------------------------------------
 
 function AnimatedHeading(props) {
-  const [state, setState] = createStore({
+  const [state, setState] = createStore<{
+    current?: string
+    leaving?: string
+    width: string
+    ready: boolean
+    swapping: boolean
+  }>({
     current: props.text,
-    leaving: undefined,
     width: "auto",
     ready: false,
     swapping: false,
@@ -391,7 +397,7 @@ function AnimatedHeading(props) {
   let enterRef
   let leaveRef
   let containerRef
-  let frame
+  let frame: Option.Option<number> = Option.none()
 
   const measureEnter = () => enterRef?.scrollWidth ?? 0
   const measureLeave = () => leaveRef?.scrollWidth ?? 0
@@ -420,22 +426,24 @@ function AnimatedHeading(props) {
         setState("leaving", prev)
         setState("current", next)
 
-        if (frame) cancelAnimationFrame(frame)
-        frame = requestAnimationFrame(() => {
-          // For odometer keep width as a grow-only max so heading never shrinks.
-          if (props.variant === "odometer") {
-            const enterW = measureEnter()
-            const leaveW = measureLeave()
-            widen(Math.max(enterW, leaveW))
-            containerRef?.offsetHeight // reflow with max width + swap positions
-            setState("swapping", false)
-          } else {
-            containerRef?.offsetHeight
-            setState("swapping", false)
-            measure()
-          }
-          frame = undefined
-        })
+        if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
+        frame = Option.some(
+          requestAnimationFrame(() => {
+            // For odometer keep width as a grow-only max so heading never shrinks.
+            if (props.variant === "odometer") {
+              const enterW = measureEnter()
+              const leaveW = measureLeave()
+              widen(Math.max(enterW, leaveW))
+              containerRef?.offsetHeight // reflow with max width + swap positions
+              setState("swapping", false)
+            } else {
+              containerRef?.offsetHeight
+              setState("swapping", false)
+              measure()
+            }
+            frame = Option.none()
+          }),
+        )
       },
     ),
   )
@@ -449,7 +457,7 @@ function AnimatedHeading(props) {
   })
 
   onCleanup(() => {
-    if (frame) cancelAnimationFrame(frame)
+    if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
   })
 
   return (
@@ -458,8 +466,8 @@ function AnimatedHeading(props) {
       data-variant={props.variant}
       data-ready={ready()}
       data-swapping={swapping()}
-      data-debug={props.debug ? "true" : undefined}
-      data-odo-blur={props.odoBlur ? "true" : undefined}
+      data-debug={Option.getOrUndefined(Option.as(Option.liftPredicate(props.debug, Boolean), "true"))}
+      data-odo-blur={Option.getOrUndefined(Option.as(Option.liftPredicate(props.odoBlur, Boolean), "true"))}
     >
       <span data-slot="track" style={{ width: width() }}>
         <span data-slot="entering" ref={enterRef}>
@@ -619,7 +627,7 @@ export const Playground = {
     }
 
     const clearHeading = () => {
-      setState("heading", undefined)
+      setState("heading", Option.none())
       if (cycling()) {
         clearTimeout(cycleTimer)
         cycleTimer = undefined
@@ -656,7 +664,7 @@ export const Playground = {
               <TextShimmer text="Thinking" active={active()} />
               <span style={headingSlot}>
                 <TextReveal
-                  text={heading()}
+                  text={Option.getOrUndefined(heading())}
                   duration={duration()}
                   travel={25}
                   edge={17}
@@ -674,7 +682,7 @@ export const Playground = {
                 <TextShimmer text="Thinking" active={active()} />
                 <span style={headingSlot}>
                   <AnimatedHeading
-                    text={heading()}
+                    text={Option.getOrUndefined(heading())}
                     variant={v.key}
                     debug={v.key === "odometer" && debug()}
                     odoBlur={v.key === "odometer" && odoBlur()}
@@ -832,7 +840,7 @@ export const Playground = {
                 }}
                 style={smallBtn(headingIndex() === i)}
               >
-                {h ?? "(no submessage)"}
+                {Option.getOrElse(h, () => "(no submessage)")}
               </button>
             ))}
           </div>
@@ -844,7 +852,7 @@ export const Playground = {
               "font-family": "monospace",
             }}
           >
-            heading: {heading() ?? "(none)"} · sim: {cycling() ? "on" : "off"} · bounce: {bounce().toFixed(2)} ·
+            heading: {Option.getOrElse(heading(), () => "(none)")} · sim: {cycling() ? "on" : "off"} · bounce: {bounce().toFixed(2)} ·
             odo-blur: {odoBlur() ? "on" : "off"}
           </div>
         </div>
