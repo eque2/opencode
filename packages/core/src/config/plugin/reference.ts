@@ -2,7 +2,7 @@ export * as ConfigReferencePlugin from "./reference"
 
 import { define } from "../../plugin/internal"
 import path from "path"
-import { Effect } from "effect"
+import { Effect, MutableHashMap } from "effect"
 import { Config } from "../../config"
 import { ConfigReference } from "../reference"
 import { Reference } from "../../reference"
@@ -18,7 +18,8 @@ export const Plugin = define({
     const global = yield* Global.Service
     yield* ctx.reference.transform(
       Effect.fn(function* (draft) {
-        const entries = new Map<string, Reference.Source>()
+        // String keys keep insertion order, so references reach the draft in config order.
+        const entries = MutableHashMap.empty<string, Reference.Source>()
         for (const doc of (yield* config.entries()).filter(
           (entry): entry is Config.Document => entry.type === "document",
         )) {
@@ -27,7 +28,8 @@ export const Plugin = define({
             if (!validAlias(name)) continue
             const description = typeof entry === "string" ? undefined : entry.description
             const hidden = typeof entry === "string" ? undefined : entry.hidden
-            entries.set(
+            MutableHashMap.set(
+              entries,
               name,
               local(entry)
                 ? Reference.LocalSource.make({
