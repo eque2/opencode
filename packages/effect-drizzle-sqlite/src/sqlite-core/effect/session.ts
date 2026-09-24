@@ -322,7 +322,7 @@ export class SQLiteEffectPreparedQuery<
         return yield* this.mapCachedResult(result, mapResult)
       }
 
-      assertUnreachable(cacheStrat)
+      return assertUnreachable(cacheStrat)
     }).pipe(
       Effect.catch((e) => {
         return Effect.fail(new EffectDrizzleQueryError({ query: queryString, params, cause: Cause.fail(e) }))
@@ -344,6 +344,9 @@ export class SQLiteEffectPreparedQuery<
       }
       case "get": {
         return this.mapGetResult(response, isFromBatch)
+      }
+      default: {
+        return assertUnreachable(this.effectExecuteMethod)
       }
     }
   }
@@ -449,6 +452,16 @@ export abstract class SQLiteEffectTransaction<
   }
 }
 
+/** Builds the bookkeeping insert for one applied migration, stamped with the current time. */
+const migrationRecord = (migrationsTable: string, migration: MigrationMeta) =>
+  Effect.map(
+    DateTime.now,
+    (now) =>
+      sql`insert into ${sql.identifier(
+        migrationsTable,
+      )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${DateTime.formatIso(now)})`,
+  )
+
 export const migrate = Effect.fn("migrate")(function* <TEffectHKT extends QueryEffectHKTBase>(
   migrations: MigrationMeta[],
   session: SQLiteEffectSession<TEffectHKT>,
@@ -484,35 +497,25 @@ export const migrate = Effect.fn("migrate")(function* <TEffectHKT extends QueryE
       return yield* new MigratorInitError({ exitCode: "localMigrations" })
     }
 
-    const [migration] = migrations
-    if (!migration) return
-
-    const appliedAt = DateTime.formatIso(yield* DateTime.now)
-    yield* session.run(
-      sql`insert into ${sql.identifier(
-        migrationsTable,
-      )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${appliedAt})`,
+    // At most one local migration remains here; record it without running its SQL.
+    return yield* Effect.forEach(
+      migrations,
+      (migration) => Effect.flatMap(migrationRecord(migrationsTable, migration), (record) => session.run(record)),
+      { discard: true },
     )
-
-    return
   }
 
   const migrationsToRun = getMigrationsToRun({ localMigrations: migrations, dbMigrations })
-  if (migrationsToRun.length === 0) return
-
-  yield* session.transaction((tx) =>
+  const applyMigrations = session.transaction((tx) =>
     Effect.gen(function* () {
       for (const migration of migrationsToRun) {
         for (const stmt of migration.sql) {
           yield* tx.run(sql.raw(stmt))
         }
-        const appliedAt = DateTime.formatIso(yield* DateTime.now)
-        yield* tx.run(
-          sql`insert into ${sql.identifier(
-            migrationsTable,
-          )} ("hash", "created_at", "name", "applied_at") values(${migration.hash}, ${migration.folderMillis}, ${migration.name}, ${appliedAt})`,
-        )
+        yield* tx.run(yield* migrationRecord(migrationsTable, migration))
       }
     }),
   )
+
+  return yield* migrationsToRun.length === 0 ? Effect.void : applyMigrations
 })
