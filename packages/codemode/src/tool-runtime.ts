@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, Schema } from "effect"
+import { Cause, Clock, Data, Effect, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -724,20 +724,25 @@ export const make = <R>(
   const observeEnd = <A, E>(effect: Effect.Effect<A, E, R>, call: ToolCallStarted): Effect.Effect<A, E, R> => {
     const onEnd = hooks?.onToolCallEnd
     if (onEnd === undefined) return effect
-    const startedAt = Date.now()
-    return effect.pipe(
-      Effect.tap(() => onEnd({ ...call, durationMs: Date.now() - startedAt, outcome: "success" })),
-      Effect.tapError((error) => {
-        const message =
-          error instanceof ToolError || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
-        return onEnd({
-          ...call,
-          durationMs: Date.now() - startedAt,
-          outcome: "failure",
-          message,
-        })
-      }),
-    )
+    return Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis
+      const elapsed = Effect.map(Clock.currentTimeMillis, (now) => now - startedAt)
+      return yield* effect.pipe(
+        Effect.tap(() => Effect.flatMap(elapsed, (durationMs) => onEnd({ ...call, durationMs, outcome: "success" }))),
+        Effect.tapError((error) => {
+          const message =
+            error instanceof ToolError || error instanceof ToolRuntimeError ? error.message : "Tool execution failed"
+          return Effect.flatMap(elapsed, (durationMs) =>
+            onEnd({
+              ...call,
+              durationMs,
+              outcome: "failure",
+              message,
+            }),
+          )
+        }),
+      )
+    })
   }
 
   const decodeOutput = (value: unknown, name: string) =>
