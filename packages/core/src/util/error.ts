@@ -1,13 +1,11 @@
-import { Schema } from "effect"
+import { Predicate, Schema } from "effect"
 
 export abstract class NamedError extends Error {
   abstract schema(): Schema.Top
   abstract toObject(): { name: string; data: unknown }
 
   static hasName(error: unknown, name: string): boolean {
-    return (
-      typeof error === "object" && error !== null && "name" in error && (error as Record<string, unknown>).name === name
-    )
+    return Predicate.isObjectOrArray(error) && "name" in error && error.name === name
   }
 
   static create<Name extends string, Fields extends Schema.Struct.Fields>(
