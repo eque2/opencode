@@ -1,9 +1,8 @@
-import { describe, expect, beforeAll, beforeEach, afterAll } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { describe, expect, beforeEach, afterAll } from "bun:test"
+import { ConfigProvider, Effect, Layer, Ref } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { it } from "./lib/effect"
@@ -12,19 +11,15 @@ import path from "path"
 
 // test/preload.ts pins OPENCODE_MODELS_PATH to a fixture so other tests can
 // resolve providers without network. These tests need to drive the on-disk
-// cache themselves and silence the eager refresh fork. Save/restore around
-// the suite — never leak the mutation to subsequent test files in the same
-// bun process.
-const ORIGINAL_MODELS_PATH = Flag.OPENCODE_MODELS_PATH
-const ORIGINAL_DISABLE_FETCH = Flag.OPENCODE_DISABLE_MODELS_FETCH
-beforeAll(() => {
-  Flag.OPENCODE_MODELS_PATH = undefined
-  Flag.OPENCODE_DISABLE_MODELS_FETCH = true
-})
-afterAll(() => {
-  Flag.OPENCODE_MODELS_PATH = ORIGINAL_MODELS_PATH
-  Flag.OPENCODE_DISABLE_MODELS_FETCH = ORIGINAL_DISABLE_FETCH
-})
+// cache themselves and silence the eager refresh fork, so they read their
+// flags from a provider without OPENCODE_MODELS_PATH. It keeps the in-memory
+// database of test/preload.ts. The environment itself is never changed.
+const flags = (input: { readonly fetch: boolean }) =>
+  ConfigProvider.fromUnknown({
+    OPENCODE_DB: ":memory:",
+    OPENCODE_DISABLE_MODELS_FETCH: input.fetch ? "false" : "true",
+  })
+const fetchDisabled = flags({ fetch: false })
 
 const cacheFile = path.join(Global.Path.cache, "models.json")
 
@@ -109,7 +104,7 @@ const writeCacheText = (text: string, mtimeMs?: number) =>
 const writeCache = (data: object, mtimeMs?: number) => writeCacheText(JSON.stringify(data), mtimeMs)
 
 const provided = <A, E>(state: Ref.Ref<MockState>, eff: Effect.Effect<A, E, ModelsDev.Service>) =>
-  eff.pipe(Effect.provide(buildLayer(state)))
+  eff.pipe(Effect.provide(buildLayer(state)), Effect.provideService(ConfigProvider.ConfigProvider, fetchDisabled))
 
 beforeEach(async () => {
   await rm(cacheFile, { force: true })
@@ -157,16 +152,14 @@ describe("ModelsDev Service", () => {
     Effect.gen(function* () {
       yield* writeCacheText("{")
       const state = yield* Ref.make({ ...initialState, body: JSON.stringify(fixture2) })
-      const context = yield* Layer.build(buildLayer(state))
-      const result = yield* Effect.acquireUseRelease(
-        Effect.sync(() => {
-          Flag.OPENCODE_DISABLE_MODELS_FETCH = false
-        }),
-        () => ModelsDev.Service.use((s) => s.get()).pipe(Effect.provide(context)),
-        () =>
-          Effect.sync(() => {
-            Flag.OPENCODE_DISABLE_MODELS_FETCH = true
-          }),
+      // The layer builds with the fetch disabled, so the eager refresh does not run.
+      // The catalog load then reads the flag from the caller, where the fetch is enabled.
+      const context = yield* Layer.build(buildLayer(state)).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, fetchDisabled),
+      )
+      const result = yield* ModelsDev.Service.use((s) => s.get()).pipe(
+        Effect.provide(context),
+        Effect.provideService(ConfigProvider.ConfigProvider, flags({ fetch: true })),
       )
       expect(result).toEqual(fixture2)
       expect(yield* Effect.promise(() => readFile(cacheFile, "utf8"))).toBe(JSON.stringify(fixture2))

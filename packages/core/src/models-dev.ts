@@ -3,7 +3,7 @@ import { Clock, Context, Duration, Effect, Layer, Option, Record, Result, Schedu
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
-import { Flag } from "./flag/flag"
+import { FlagConfig } from "./flag/flag"
 import { Flock } from "./util/flock"
 import { Hash } from "./util/hash"
 import { FSUtil } from "./fs-util"
@@ -19,8 +19,6 @@ const InterleavedField = Schema.Union([
   Schema.Literals(["reasoning", "reasoning_content", "reasoning_text"]),
   Schema.String,
 ])
-
-const USER_AGENT = `opencode/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
 
 const CostTier = Schema.Struct({
   input: Schema.Finite,
@@ -195,7 +193,12 @@ const layer = Layer.effect(
       ),
     )
 
-    const source = Flag.OPENCODE_MODELS_URL || "https://models.opencode.ai"
+    // The variables are optional, so a ConfigError is a defect. An empty variable counts as not set.
+    const source = Option.getOrElse(
+      yield* FlagConfig.OPENCODE_MODELS_URL.pipe(Effect.orDie),
+      () => "https://models.opencode.ai",
+    )
+    const modelsPath = yield* FlagConfig.OPENCODE_MODELS_PATH.pipe(Effect.orDie)
     const filepath = path.join(
       Global.Path.cache,
       source === "https://models.opencode.ai" ? "models.json" : `models-${Hash.fast(source)}.json`,
@@ -212,22 +215,24 @@ const layer = Layer.effect(
     })
 
     const fetchApi = Effect.fn("ModelsDev.fetchApi")(function* () {
+      // The CLI sets OPENCODE_CLIENT after start, so each request reads the live value.
+      const client = yield* FlagConfig.OPENCODE_CLIENT.pipe(Effect.orDie)
       return yield* HttpClientRequest.get(`${source}/api.json`).pipe(
-        HttpClientRequest.setHeader("User-Agent", USER_AGENT),
+        HttpClientRequest.setHeader("User-Agent", `opencode/${InstallationChannel}/${InstallationVersion}/${client}`),
         http.execute,
         Effect.flatMap((res) => res.text),
         Effect.timeout("10 seconds"),
       )
     })
 
-    const loadFromDisk = fs.readJson(Flag.OPENCODE_MODELS_PATH ?? filepath).pipe(
+    const loadFromDisk = fs.readJson(Option.getOrElse(modelsPath, () => filepath)).pipe(
       Effect.flatMap(decodeEntries),
       Effect.flatMap(toCatalog),
       Effect.map(Option.some),
       Effect.catch((error) => {
         // A cache file that does not parse, or does not hold a JSON object, is corrupt: remove it to refetch.
         if (
-          Flag.OPENCODE_MODELS_PATH === undefined &&
+          Option.isNone(modelsPath) &&
           (error._tag === "SchemaError" || (error._tag === "FileSystemError" && error.method === "readJson"))
         ) {
           return fs
@@ -262,7 +267,8 @@ const layer = Layer.effect(
       if (Option.isSome(fromDisk)) return fromDisk.value
       const snapshot = yield* loadSnapshot
       if (Option.isSome(snapshot)) return snapshot.value
-      if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
+      // Read when the catalog loads, from the ConfigProvider of the fiber that calls get().
+      if (yield* FlagConfig.OPENCODE_DISABLE_MODELS_FETCH) return {}
       // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
       const text = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -295,7 +301,8 @@ const layer = Layer.effect(
       )
     })
 
-    if (!Flag.OPENCODE_DISABLE_MODELS_FETCH && !process.argv.includes("--get-yargs-completions")) {
+    const fetchDisabled = yield* FlagConfig.OPENCODE_DISABLE_MODELS_FETCH.pipe(Effect.orDie)
+    if (!fetchDisabled && !process.argv.includes("--get-yargs-completions")) {
       // Schedule.spaced runs the effect once, then waits between completions.
       yield* Effect.forkScoped(refresh().pipe(Effect.repeat(Schedule.spaced("60 minutes")), Effect.ignore))
     }
