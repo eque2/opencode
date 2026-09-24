@@ -1363,7 +1363,7 @@ export function UserMessageDisplay(props: {
               icon="reset"
               label={i18n.t("ui.message.revertMessage")}
               useV2={props.useV2Actions}
-              disabled={!!busy()}
+              disabled={busy()}
               onMouseDown={(event) => event.preventDefault()}
               onClick={(event) => {
                 event.stopPropagation()
