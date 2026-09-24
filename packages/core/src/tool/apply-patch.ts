@@ -115,7 +115,7 @@ const layer = Layer.effectDiscard(
                 }
                 yield* permission.assert({
                   action: "edit",
-                  resources: [...new Set(targets.map(({ target }) => target.resource))],
+                  resources: Arr.dedupe(targets.map(({ target }) => target.resource)),
                   save: ["*"],
                   sessionID: context.sessionID,
                   agent: context.agent,
