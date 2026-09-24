@@ -439,14 +439,6 @@ export abstract class SQLiteEffectTransaction<
 > extends SQLiteEffectDatabase<TEffectHKT, TRunResult, TRelations> {
   static override readonly [entityKind]: string = "SQLiteEffectTransaction"
 
-  constructor(
-    dialect: SQLiteAsyncDialect,
-    session: SQLiteEffectSession<TEffectHKT, TRunResult, TRelations>,
-    protected relations: TRelations,
-  ) {
-    super(dialect, session, relations)
-  }
-
   rollback() {
     return new EffectTransactionRollbackError()
   }
