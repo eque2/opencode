@@ -1,6 +1,6 @@
 import { Select as Kobalte } from "@kobalte/core/select"
 import { createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
-import { pipe, groupBy, entries, map } from "remeda"
+import { Array, Record } from "effect"
 import { Button, ButtonProps } from "./button"
 import { Icon } from "./icon"
 
@@ -68,16 +68,12 @@ export function Select<T>(props: SelectProps<T> & Omit<ButtonProps, "children">)
 
   onCleanup(stop)
 
-  const grouped = createMemo(() => {
-    const result = pipe(
-      local.options,
-      groupBy((x) => (local.groupBy ? local.groupBy(x) : "")),
-      // mapValues((x) => x.sort((a, b) => a.title.localeCompare(b.title))),
-      entries(),
-      map(([k, v]) => ({ category: k, options: v })),
-    )
-    return result
-  })
+  const grouped = createMemo(() =>
+    Array.map(
+      Record.toEntries(Array.groupBy(local.options, (x) => (local.groupBy ? local.groupBy(x) : ""))),
+      ([k, v]) => ({ category: k, options: v }),
+    ),
+  )
 
   return (
     // @ts-ignore
