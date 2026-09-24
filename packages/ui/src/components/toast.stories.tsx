@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Effect } from "effect"
 import * as mod from "./toast"
 import { Button } from "./button"
 
@@ -104,7 +105,7 @@ export const Promise = {
       <Button
         variant="secondary"
         onClick={() =>
-          mod.showPromiseToast(() => new Promise((resolve) => setTimeout(() => resolve(true), 800)), {
+          mod.showPromiseToast(() => Effect.runPromise(Effect.as(Effect.sleep("800 millis"), true)), {
             loading: "Saving...",
             success: () => "Saved",
             error: () => "Failed",
