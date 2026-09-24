@@ -67,6 +67,8 @@ type Slot = {
   readonly schema: Schema.Top
 }
 
+type SseStreamSchema = Exclude<HttpApiSchema.StreamSchema, HttpApiSchema.StreamUint8Array>
+
 const resolveHttpApiStatus = SchemaAST.resolveAt<number>("httpApiStatus")
 const resolveHttpApiEncoding = SchemaAST.resolveAt<HttpApiSchema.Encoding>("~httpApiEncoding")
 const Manifest = Schema.fromJsonString(Schema.Array(Schema.String))
@@ -1043,7 +1045,7 @@ function isStreamSchema(schema: Schema.Top): schema is HttpApiSchema.StreamSchem
   return "_tag" in schema && (schema._tag === "StreamSse" || schema._tag === "StreamUint8Array")
 }
 
-function streamDataSchema(schema: Extract<HttpApiSchema.StreamSchema, { readonly _tag: "StreamSse" }>) {
+function streamDataSchema(schema: SseStreamSchema) {
   if (!("fields" in schema.events) || typeof schema.events.fields !== "object" || schema.events.fields === null) {
     throw new GenerationError({ reason: "Invalid SSE data schema" })
   }
@@ -1054,11 +1056,11 @@ function streamDataSchema(schema: Extract<HttpApiSchema.StreamSchema, { readonly
   return data.to
 }
 
-function streamEventsSchema(schema: Extract<HttpApiSchema.StreamSchema, { readonly _tag: "StreamSse" }>) {
+function streamEventsSchema(schema: SseStreamSchema) {
   return Schema.make<Schema.Top>(schema.events.ast)
 }
 
-function streamEncodedDataSchema(schema: Extract<HttpApiSchema.StreamSchema, { readonly _tag: "StreamSse" }>) {
+function streamEncodedDataSchema(schema: SseStreamSchema) {
   return Schema.toEncoded(streamDataSchema(schema))
 }
 
