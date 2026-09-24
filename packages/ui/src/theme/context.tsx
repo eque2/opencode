@@ -1,6 +1,6 @@
 // @refresh reload
 
-import { HashSet } from "effect"
+import { HashSet, Option, Result } from "effect"
 import { createEffect, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
@@ -90,36 +90,39 @@ function isColorScheme(value: unknown): value is ColorScheme {
   return value === "light" || value === "dark" || value === "system"
 }
 
-function normalize(id: string | null | undefined) {
+function normalize(id: string) {
   return id === "oc-1" ? "oc-2" : id
 }
 
-function read(key: string) {
-  if (typeof localStorage !== "object") return null
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+// Picks the stored theme id, then the default theme, then "oc-2".
+function resolveThemeId(stored: Option.Option<string>, fallback: string | undefined) {
+  return normalize(
+    Option.getOrElse(
+      Option.orElse(stored, () => Option.fromNullishOr(fallback)),
+      () => "oc-2",
+    ),
+  )
+}
+
+// localStorage can be missing (SSR) or throw (blocked storage, quota). A read treats both as no value;
+// a write or a removal ignores the failure, and the theme still applies for this session.
+function read(key: string): Option.Option<string> {
+  if (typeof localStorage !== "object") return Option.none()
+  return Option.flatMap(Result.getSuccess(Result.try(() => localStorage.getItem(key))), Option.fromNullOr)
 }
 
 function write(key: string, value: string) {
   if (typeof localStorage !== "object") return
-  try {
-    localStorage.setItem(key, value)
-  } catch {}
+  Result.try(() => localStorage.setItem(key, value))
 }
 
 function drop(key: string) {
   if (typeof localStorage !== "object") return
-  try {
-    localStorage.removeItem(key)
-  } catch {}
+  Result.try(() => localStorage.removeItem(key))
 }
 
 function readColorScheme(): ColorScheme {
-  const scheme = read(STORAGE_KEYS.COLOR_SCHEME)
-  return isColorScheme(scheme) ? scheme : "system"
+  return Option.getOrElse(Option.filter(read(STORAGE_KEYS.COLOR_SCHEME), isColorScheme), () => "system" as const)
 }
 
 function clear() {
@@ -188,7 +191,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     defaultTheme?: string
     onThemeApplied?: (theme: DesktopTheme, mode: "light" | "dark", scheme: ColorScheme) => void
   }) => {
-    const themeId = normalize(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
+    const themeId = resolveThemeId(read(STORAGE_KEYS.THEME_ID), props.defaultTheme)
     const colorScheme = readColorScheme()
     const mode = colorScheme === "system" ? getSystemMode() : colorScheme
     const [store, setStore] = createStore({
@@ -274,9 +277,9 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       makeEventListener(mediaQuery, "change", onMedia)
 
       const rawTheme = read(STORAGE_KEYS.THEME_ID)
-      const savedTheme = normalize(rawTheme ?? props.defaultTheme) ?? "oc-2"
+      const savedTheme = resolveThemeId(rawTheme, props.defaultTheme)
       const savedScheme = readColorScheme()
-      if (rawTheme && rawTheme !== savedTheme) {
+      if (Option.exists(rawTheme, (raw) => raw !== savedTheme)) {
         write(STORAGE_KEYS.THEME_ID, savedTheme)
         clear()
       }
