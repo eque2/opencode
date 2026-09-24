@@ -63,7 +63,9 @@ describe("AlibabaPlugin", () => {
         package: "@ai-sdk/alibaba",
         options: { name: "custom-alibaba", apiKey: "test" },
       })
-      const expected = createAlibaba({ apiKey: "test", name: "custom-alibaba" }).languageModel("qwen")
+      // The plugin passes its options record through unchanged, `name` included.
+      const settings = { apiKey: "test", name: "custom-alibaba" }
+      const expected = createAlibaba(settings).languageModel("qwen")
       const actual = result.sdk?.languageModel("qwen")
       expect(actual?.provider).toBe(expected.provider)
       expect(actual?.modelId).toBe(expected.modelId)
