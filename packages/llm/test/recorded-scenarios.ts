@@ -6,6 +6,7 @@ import {
   LLMResponse,
   Message,
   ToolRuntime,
+  ToolCallPart,
   ToolChoice,
   ToolDefinition,
   toDefinitions,
@@ -381,7 +382,7 @@ const runImageToolResultScenario = (context: GoldenScenarioContext) =>
         generation: generation(context, context.maxTokens ?? 40),
         messages: [
           Message.user("Use the read_screenshot tool, then reply with the words shown."),
-          Message.assistant([{ type: "tool-call", id: "call_screenshot_1", name: screenshotToolName, input: {} }]),
+          Message.assistant([ToolCallPart.make({ id: "call_screenshot_1", name: screenshotToolName, input: {} })]),
           Message.tool({
             id: "call_screenshot_1",
             name: screenshotToolName,

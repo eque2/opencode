@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { LLMError } from "../src/schema"
+import { LLMError, ToolCallID } from "../src/schema"
 import { ToolStream } from "../src/protocols/utils/tool-stream"
 import { it } from "./lib/effect"
 
@@ -28,15 +28,17 @@ describe("ToolStream", () => {
       const finished = yield* ToolStream.finish(ADAPTER, second.tools, 0)
 
       expect(first.events).toEqual([
-        { type: "tool-input-start", id: "call_1", name: "lookup" },
-        { type: "tool-input-delta", id: "call_1", name: "lookup", text: '{"query"' },
+        { type: "tool-input-start", id: ToolCallID.make("call_1"), name: "lookup" },
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: '{"query"' },
       ])
-      expect(second.events).toEqual([{ type: "tool-input-delta", id: "call_1", name: "lookup", text: ':"weather"}' }])
+      expect(second.events).toEqual([
+        { type: "tool-input-delta", id: ToolCallID.make("call_1"), name: "lookup", text: ':"weather"}' },
+      ])
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: { query: "weather" } },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: { query: "weather" } },
         ],
       })
     }),
@@ -63,8 +65,8 @@ describe("ToolStream", () => {
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: { query: "final" } },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: { query: "final" } },
         ],
       })
     }),
@@ -88,12 +90,12 @@ describe("ToolStream", () => {
       expect(finished).toEqual({
         tools: {},
         events: [
-          { type: "tool-input-end", id: "call_1", name: "lookup" },
-          { type: "tool-call", id: "call_1", name: "lookup", input: {} },
-          { type: "tool-input-end", id: "call_2", name: "web_search" },
+          { type: "tool-input-end", id: ToolCallID.make("call_1"), name: "lookup" },
+          { type: "tool-call", id: ToolCallID.make("call_1"), name: "lookup", input: {} },
+          { type: "tool-input-end", id: ToolCallID.make("call_2"), name: "web_search" },
           {
             type: "tool-call",
-            id: "call_2",
+            id: ToolCallID.make("call_2"),
             name: "web_search",
             input: { query: "docs" },
             providerExecuted: true,
