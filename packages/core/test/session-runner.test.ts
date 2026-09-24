@@ -2278,21 +2278,21 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         name: "echo",
       })
       yield* events.publish(SessionEvent.Tool.Input.Ended, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         text: '{"text":"stale"}',
       })
       yield* events.publish(SessionEvent.Tool.Called, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-interrupted"),
         tool: "echo",
         input: { text: "stale" },
         provider: { executed: false },
@@ -2342,21 +2342,21 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         name: "web_search",
       })
       yield* events.publish(SessionEvent.Tool.Input.Ended, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         text: '{"query":"stale"}',
       })
       yield* events.publish(SessionEvent.Tool.Called, {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-hosted-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-hosted-interrupted"),
         tool: "web_search",
         input: { query: "stale" },
         provider: { executed: true, metadata: { openai: { itemId: "call-hosted-interrupted" } } },
@@ -2402,7 +2402,7 @@ describe("SessionRunnerLLM", () => {
         sessionID,
         timestamp: yield* DateTime.now,
         assistantMessageID,
-        callID: "call-pending-interrupted",
+        callID: SessionMessage.ToolCallID.make("call-pending-interrupted"),
         name: "echo",
       })
       requests.length = 0
