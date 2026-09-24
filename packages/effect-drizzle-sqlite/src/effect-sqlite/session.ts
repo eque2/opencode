@@ -87,7 +87,7 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
       {
         fields: options.fields,
         useJitMappers: this.options.useJitMappers,
-        customResultMapper: options.customResultMapper,
+        relationalResultMapper: options.customResultMapper,
         isRqbV2Query: true,
         rqbConfig: options.config,
         isInTransaction: this.isInTransaction(),

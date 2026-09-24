@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause"
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
+import * as Predicate from "effect/Predicate"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import { NoopCache, strategyFor } from "drizzle-orm/cache/core/cache"
@@ -47,8 +48,9 @@ export interface SQLiteEffectPreparedQueryOptions<TIsRqbV2 extends boolean = fal
   readonly cacheConfig?: WithCacheConfig
   readonly fields?: SelectedFieldsOrdered
   readonly useJitMappers?: boolean
-  readonly customResultMapper?: (
-    rows: TIsRqbV2 extends true ? Record<string, unknown>[] : unknown[][],
+  readonly customResultMapper?: (rows: unknown[][], mapColumnValue?: (value: unknown) => unknown) => unknown
+  readonly relationalResultMapper?: (
+    rows: Record<string, unknown>[],
     mapColumnValue?: (value: unknown) => unknown,
   ) => unknown
   readonly isRqbV2Query?: TIsRqbV2
@@ -82,14 +84,16 @@ export class SQLiteEffectPreparedQuery<
 
   /** @internal */
   joinsNotNullableMap?: Record<string, boolean>
-  private jitMapper?: RowsMapper<any> | RelationalRowsMapper
+  private jitQueryMapper?: RowsMapper<unknown[]>
+  private jitRqbMapper?: RelationalRowsMapper
   private cacheConfig: Option.Option<WithCacheConfig>
   private effectExecuteMethod: SQLiteExecuteMethod
   private queryMetadata?: SQLiteEffectQueryMetadata
   private fields?: SelectedFieldsOrdered
   private useJitMappers?: boolean
-  private customResultMapper?: (
-    rows: TIsRqbV2 extends true ? Record<string, unknown>[] : unknown[][],
+  private customResultMapper?: (rows: unknown[][], mapColumnValue?: (value: unknown) => unknown) => unknown
+  private relationalResultMapper?: (
+    rows: Record<string, unknown>[],
     mapColumnValue?: (value: unknown) => unknown,
   ) => unknown
   private isRqbV2Query?: TIsRqbV2
@@ -112,6 +116,7 @@ export class SQLiteEffectPreparedQuery<
     this.fields = options.fields
     this.useJitMappers = options.useJitMappers
     this.customResultMapper = options.customResultMapper
+    this.relationalResultMapper = options.relationalResultMapper
     this.isRqbV2Query = options.isRqbV2Query
     this.rqbConfig = options.rqbConfig
     this.isInTransaction = options.isInTransaction ?? Effect.succeed(false)
@@ -124,7 +129,7 @@ export class SQLiteEffectPreparedQuery<
 
   run(placeholderValues?: Record<string, unknown>): QueryEffectKind<TEffectHKT, T["run"]>
   run(placeholderValues?: Record<string, unknown>): any {
-    return this.executeWithCache<T["run"]>(placeholderValues, "run")
+    return this.executeWithCache(placeholderValues, "run")
   }
 
   all(placeholderValues?: Record<string, unknown>): QueryEffectKind<TEffectHKT, T["all"]>
@@ -132,14 +137,10 @@ export class SQLiteEffectPreparedQuery<
     if (this.isRqbV2Query) return this.allRqbV2(placeholderValues)
 
     if (!this.fields && !this.customResultMapper) {
-      return this.executeWithCache<T["all"]>(placeholderValues, "all")
+      return this.executeWithCache(placeholderValues, "all")
     }
 
-    return this.executeWithCache<T["values"], T["all"]>(
-      placeholderValues,
-      "values",
-      (rows) => this.mapAllResult(rows) as T["all"],
-    )
+    return this.executeWithCache(placeholderValues, "values", (rows) => this.mapAllResult(rows))
   }
 
   get(placeholderValues?: Record<string, unknown>): QueryEffectKind<TEffectHKT, T["get"]>
@@ -147,19 +148,15 @@ export class SQLiteEffectPreparedQuery<
     if (this.isRqbV2Query) return this.getRqbV2(placeholderValues)
 
     if (!this.fields && !this.customResultMapper) {
-      return this.executeWithCache<T["get"]>(placeholderValues, "get")
+      return this.executeWithCache(placeholderValues, "get")
     }
 
-    return this.executeWithCache<T["values"], T["get"]>(
-      placeholderValues,
-      "values",
-      (rows) => this.mapGetResult(rows) as T["get"],
-    )
+    return this.executeWithCache(placeholderValues, "values", (rows) => this.mapGetResult(rows))
   }
 
   values(placeholderValues?: Record<string, unknown>): QueryEffectKind<TEffectHKT, T["values"]>
   values(placeholderValues?: Record<string, unknown>): any {
-    return this.executeWithCache<T["values"]>(placeholderValues, "values")
+    return this.executeWithCache(placeholderValues, "values")
   }
 
   execute(placeholderValues?: Record<string, unknown>): QueryEffectKind<TEffectHKT, T["execute"]>
@@ -176,28 +173,21 @@ export class SQLiteEffectPreparedQuery<
       rows = Array.isArray(rows) ? rows : []
     }
 
-    if (!this.fields && !this.customResultMapper) {
-      return rows
-    }
+    const list = Array.isArray(rows) ? rows : []
 
     if (this.isRqbV2Query) {
-      return this.useJitMappers
-        ? (this.jitMapper =
-            (this.jitMapper as RelationalRowsMapper<T["all"]>) ?? makeJitRqbMapper<T["all"]>(this.rqbConfig!))(
-            rows as Record<string, unknown>[],
-          )
-        : (this.customResultMapper as (rows: Record<string, unknown>[]) => unknown)(rows as Record<string, unknown>[])
+      return this.mapRelationalRows(list)
     }
 
     if (this.customResultMapper) {
-      return (this.customResultMapper as (rows: unknown[][]) => unknown)(rows as unknown[][]) as T["all"]
+      return this.customResultMapper(list)
     }
 
-    return this.useJitMappers
-      ? (this.jitMapper =
-          (this.jitMapper as RowsMapper<T["all"]>) ??
-          makeJitQueryMapper<T["all"]>(this.fields!, this.joinsNotNullableMap))(rows as unknown[][])
-      : makeDefaultQueryMapper<T["all"]>(this.fields!, this.joinsNotNullableMap)(rows as unknown[][])
+    if (this.fields) {
+      return this.mapFieldRows(this.fields, list)
+    }
+
+    return rows
   }
 
   mapGetResult(rows: unknown, isFromBatch?: boolean): unknown {
@@ -205,54 +195,67 @@ export class SQLiteEffectPreparedQuery<
       rows = Array.isArray(rows) ? rows : []
     }
 
-    if (!this.fields && !this.customResultMapper) {
-      return Array.isArray(rows) ? rows[0] : rows
+    const row: unknown = Array.isArray(rows) ? rows[0] : rows
+
+    if (!this.isRqbV2Query && !this.fields && !this.customResultMapper) {
+      return row
     }
 
-    const row = Array.isArray(rows) ? rows[0] : rows
     if (!row) return undefined
 
     if (this.isRqbV2Query) {
-      return this.useJitMappers
-        ? (this.jitMapper =
-            (this.jitMapper as RelationalRowsMapper<T["get"][]>) ?? makeJitRqbMapper<T["get"][]>(this.rqbConfig!))([
-            row as Record<string, unknown>,
-          ])
-        : (this.customResultMapper as (rows: Record<string, unknown>[]) => unknown)([row as Record<string, unknown>])
+      if (!Predicate.isObject(row)) return undefined
+      return this.mapRelationalRows([row])
     }
+
+    if (!Array.isArray(row)) return undefined
 
     if (this.customResultMapper) {
-      return (this.customResultMapper as (rows: unknown[][]) => unknown)([row as unknown[]]) as T["get"]
+      return this.customResultMapper([row])
     }
 
-    return this.useJitMappers
-      ? (this.jitMapper =
-          (this.jitMapper as RowsMapper<T["get"][]>) ??
-          makeJitQueryMapper<T["get"][]>(this.fields!, this.joinsNotNullableMap))([row as unknown[]])[0]
-      : makeDefaultQueryMapper<T["get"][]>(this.fields!, this.joinsNotNullableMap)([row as unknown[]])[0]
+    if (this.fields) {
+      return this.mapFieldRows(this.fields, [row])[0]
+    }
+
+    return row
+  }
+
+  private mapRelationalRows(rows: Record<string, unknown>[]): unknown {
+    if (this.useJitMappers && this.rqbConfig) {
+      this.jitRqbMapper ??= makeJitRqbMapper(this.rqbConfig)
+      return this.jitRqbMapper(rows)
+    }
+
+    return this.relationalResultMapper?.(rows)
+  }
+
+  private mapFieldRows(fields: SelectedFieldsOrdered, rows: unknown[][]): unknown[] {
+    if (this.useJitMappers) {
+      this.jitQueryMapper ??= makeJitQueryMapper<unknown[]>(fields, this.joinsNotNullableMap)
+      return this.jitQueryMapper(rows)
+    }
+
+    return makeDefaultQueryMapper<unknown[]>(fields, this.joinsNotNullableMap)(rows)
   }
 
   private allRqbV2(placeholderValues?: Record<string, unknown>) {
-    return this.executeWithCache<unknown[], T["all"]>(
-      placeholderValues,
-      "all",
-      (rows) => this.mapAllResult(rows) as T["all"],
-    )
+    return this.executeWithCache(placeholderValues, "all", (rows) => this.mapAllResult(rows))
   }
 
   private getRqbV2(placeholderValues?: Record<string, unknown>) {
-    return this.executeWithCache<unknown, T["get"] | undefined>(placeholderValues, "get", (row) =>
+    return this.executeWithCache(placeholderValues, "get", (row) =>
       Option.fromUndefinedOr(row).pipe(
-        Option.map((value) => this.mapGetResult(value) as T["get"]),
+        Option.map((value) => this.mapGetResult(value)),
         Option.getOrUndefined,
       ),
     )
   }
 
-  private executeWithCache<A, B = A>(
+  private executeWithCache(
     placeholderValues: Record<string, unknown> | undefined,
     executeMethod: SQLiteEffectExecuteMethod,
-    mapResult?: (result: A) => B,
+    mapResult?: (result: unknown) => unknown,
   ) {
     return Effect.gen({ self: this }, function* () {
       const params = fillPlaceholders(this.query.params, placeholderValues ?? {})
@@ -262,25 +265,25 @@ export class SQLiteEffectPreparedQuery<
       return yield* this.queryWithCache(
         this.query.sql,
         params,
-        Effect.suspend(() => this.executor(params, executeMethod) as Effect.Effect<A, unknown, unknown>),
+        Effect.suspend(() => this.executor(params, executeMethod)),
         mapResult,
       )
     })
   }
 
-  private mapCachedResult<A, B>(result: A, mapResult: ((result: A) => B) | undefined) {
-    if (!mapResult) return Effect.succeed(result as unknown as B)
+  private mapCachedResult(result: unknown, mapResult: ((result: unknown) => unknown) | undefined) {
+    if (!mapResult) return Effect.succeed(result)
     return Effect.try({
       try: () => mapResult(result),
       catch: (cause) => new EffectDrizzleError({ message: "Failed to map query result", cause }),
     })
   }
 
-  private queryWithCache<A, E, R, B = A>(
+  private queryWithCache<E, R>(
     queryString: string,
     params: unknown[],
-    query: Effect.Effect<A, E, R>,
-    mapResult?: (result: A) => B,
+    query: Effect.Effect<unknown, E, R>,
+    mapResult?: (result: unknown) => unknown,
   ) {
     return Effect.gen({ self: this }, function* () {
       if (this.queryMetadata?.type === "select" && Option.isSome(this.cacheConfig) && (yield* this.isInTransaction)) {
@@ -312,7 +315,7 @@ export class SQLiteEffectPreparedQuery<
         const fromCache: any[] | undefined = yield* this.cache.get(key, tables, isTag, autoInvalidate)
 
         if (typeof fromCache !== "undefined") {
-          return yield* this.mapCachedResult(fromCache as unknown as A, mapResult)
+          return yield* this.mapCachedResult(fromCache, mapResult)
         }
 
         const result = yield* query
