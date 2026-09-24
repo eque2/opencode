@@ -2,7 +2,7 @@ export * as Pty from "./pty"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { Disp, Proc } from "#pty"
-import { Context, Effect, Layer, Schema, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Schema, Types } from "effect"
 import { Pty } from "@opencode-ai/schema/pty"
 import { Config } from "./config"
 import { EventV2 } from "./event"
@@ -32,7 +32,8 @@ type Active = {
   buffer: string
   bufferCursor: number
   cursor: number
-  subscribers: Map<object, Subscriber>
+  // Keyed by a per-service attach counter, so every attachment has its own entry.
+  subscribers: MutableHashMap.MutableHashMap<number, Subscriber>
   listeners: Disp[]
 }
 
@@ -97,11 +98,12 @@ const layer = Layer.effect(
     const config = yield* Config.Service
     const context = yield* Effect.context()
     const runFork = Effect.runForkWith(context)
-    const sessions = new Map<PtyID, Active>()
+    const sessions = MutableHashMap.empty<PtyID, Active>()
     const exitOrder: PtyID[] = []
+    let nextSubscriber = 0
 
     function notifyEnd(session: Active, event: { exitCode?: number }) {
-      for (const subscriber of session.subscribers.values()) {
+      for (const subscriber of MutableHashMap.values(session.subscribers)) {
         if (!subscriber.active) {
           subscriber.end = event
           continue
@@ -110,7 +112,7 @@ const layer = Layer.effect(
           subscriber.onEnd(event)
         } catch {}
       }
-      session.subscribers.clear()
+      MutableHashMap.clear(session.subscribers)
     }
 
     function teardown(session: Active) {
@@ -126,22 +128,23 @@ const layer = Layer.effect(
 
     yield* Effect.addFinalizer(() =>
       Effect.sync(() => {
-        for (const session of sessions.values()) teardown(session)
-        sessions.clear()
+        for (const session of MutableHashMap.values(sessions)) teardown(session)
+        MutableHashMap.clear(sessions)
         exitOrder.length = 0
       }),
     )
 
     const requireSession = Effect.fn("Pty.requireSession")(function* (id: PtyID) {
-      const session = sessions.get(id)
-      if (!session) return yield* new NotFoundError({ ptyID: id })
-      return session
+      const session = MutableHashMap.get(sessions, id)
+      if (Option.isNone(session)) return yield* new NotFoundError({ ptyID: id })
+      return session.value
     })
 
     const removeSession = Effect.fnUntraced(function* (id: PtyID) {
-      const session = sessions.get(id)
-      if (!session) return
-      sessions.delete(id)
+      const found = MutableHashMap.get(sessions, id)
+      if (Option.isNone(found)) return
+      const session = found.value
+      MutableHashMap.remove(sessions, id)
       const index = exitOrder.indexOf(id)
       if (index !== -1) exitOrder.splice(index, 1)
       yield* Effect.logInfo("removing session", { id })
@@ -155,7 +158,7 @@ const layer = Layer.effect(
     })
 
     const list = Effect.fn("Pty.list")(function* () {
-      return Array.from(sessions.values()).map((session) => session.info)
+      return Array.from(MutableHashMap.values(sessions), (session) => session.info)
     })
 
     const get = Effect.fn("Pty.get")(function* (id: PtyID) {
@@ -196,14 +199,14 @@ const layer = Layer.effect(
         buffer: "",
         bufferCursor: 0,
         cursor: 0,
-        subscribers: new Map(),
+        subscribers: MutableHashMap.empty(),
         listeners: [],
       }
-      sessions.set(id, session)
+      MutableHashMap.set(sessions, id, session)
       session.listeners.push(
         proc.onData((chunk) => {
           session.cursor += chunk.length
-          for (const [token, subscriber] of session.subscribers.entries()) {
+          for (const [token, subscriber] of session.subscribers) {
             if (!subscriber.active) {
               subscriber.pending.push(chunk)
               continue
@@ -211,7 +214,7 @@ const layer = Layer.effect(
             try {
               subscriber.onData(chunk)
             } catch {
-              session.subscribers.delete(token)
+              MutableHashMap.remove(session.subscribers, token)
             }
           }
           session.buffer += chunk
@@ -260,7 +263,7 @@ const layer = Layer.effect(
       const session = yield* requireSession(id)
       if (session.info.status !== "running") return yield* new ExitedError({ ptyID: id })
       yield* Effect.logInfo("client attached to session", { id, directory: location.directory })
-      const token = {}
+      const token = nextSubscriber++
       const subscriber: Subscriber = {
         onData: input.onData,
         onEnd: input.onEnd,
@@ -268,7 +271,7 @@ const layer = Layer.effect(
         detached: false,
         pending: [],
       }
-      session.subscribers.set(token, subscriber)
+      MutableHashMap.set(session.subscribers, token, subscriber)
       const start = session.bufferCursor
       const end = session.cursor
       const from =
@@ -297,14 +300,14 @@ const layer = Layer.effect(
             subscriber.pending.length = 0
             if (subscriber.end) subscriber.onEnd(subscriber.end)
           } catch {
-            session.subscribers.delete(token)
+            MutableHashMap.remove(session.subscribers, token)
           }
         },
         detach: () => {
           subscriber.detached = true
           subscriber.pending.length = 0
           subscriber.end = undefined
-          session.subscribers.delete(token)
+          MutableHashMap.remove(session.subscribers, token)
         },
       }
     })
