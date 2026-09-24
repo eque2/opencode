@@ -403,38 +403,38 @@ const makeSearchTool = (searchIndex: ReadonlyArray<SearchEntry>): Definition =>
         const pathQuery = trimmed.startsWith("tools.") ? trimmed.slice("tools.".length) : trimmed
         const exact =
           pathQuery === ""
-            ? undefined
-            : scoped.find(
+            ? Option.none()
+            : Arr.findFirst(
+                scoped,
                 (entry) => entry.description.path === pathQuery || toolExpression(entry.description.path) === trimmed,
               )
         const terms = tokenize(query).map(termForms)
         // Additive field-weighted scoring, summed across terms: exact path or path segment
         // (20) > path substring (8) > description substring (4) > any searchable text,
         // including input parameter names and descriptions (2).
-        const ranked =
-          exact !== undefined
-            ? [exact]
-            : scoped
-                .map((entry) => {
-                  const path = entry.description.path.toLowerCase()
-                  const description = entry.description.description.toLowerCase()
-                  const score = terms.reduce(
-                    (total, forms) =>
-                      total +
-                      (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
-                      (forms.some((form) => path.includes(form)) ? 8 : 0) +
-                      (forms.some((form) => description.includes(form)) ? 4 : 0) +
-                      (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
-                    0,
-                  )
-                  return { entry, score }
-                })
-                .filter(({ score }) => terms.length === 0 || score > 0)
-                .sort(
-                  (left, right) =>
-                    right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
+        const ranked = Option.isSome(exact)
+          ? [exact.value]
+          : scoped
+              .map((entry) => {
+                const path = entry.description.path.toLowerCase()
+                const description = entry.description.description.toLowerCase()
+                const score = terms.reduce(
+                  (total, forms) =>
+                    total +
+                    (forms.some((form) => path === form || path.endsWith(`.${form}`)) ? 20 : 0) +
+                    (forms.some((form) => path.includes(form)) ? 8 : 0) +
+                    (forms.some((form) => description.includes(form)) ? 4 : 0) +
+                    (forms.some((form) => entry.searchText.includes(form)) ? 2 : 0),
+                  0,
                 )
-                .map(({ entry }) => entry)
+                return { entry, score }
+              })
+              .filter(({ score }) => terms.length === 0 || score > 0)
+              .sort(
+                (left, right) =>
+                  right.score - left.score || left.entry.description.path.localeCompare(right.entry.description.path),
+              )
+              .map(({ entry }) => entry)
         const items = ranked.slice(offset, offset + (request.limit ?? defaultSearchLimit)).map(({ description }) => ({
           ...description,
           path: toolExpression(description.path),
