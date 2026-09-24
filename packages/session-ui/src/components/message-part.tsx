@@ -28,9 +28,8 @@ import {
   ToolPart,
   UserMessage,
   Todo,
-  QuestionAnswer,
-  QuestionInfo,
 } from "@opencode-ai/sdk/v2"
+import { Predicate } from "effect"
 import { useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -246,6 +245,9 @@ function MessageActionButton(
 }
 
 export type PartComponent = Component<MessagePartProps>
+
+// A part component registered for one part type receives that part, narrowed by its slot.
+type PartDisplayProps<P extends PartType> = Omit<MessagePartProps, "part"> & { part: P }
 
 export const PART_MAPPING: Record<string, PartComponent | undefined> = {}
 
@@ -1196,7 +1198,7 @@ export function UserMessageDisplay(props: {
   const busy = () => state.busy
 
   const textPart = createMemo(
-    () => props.parts?.find((p) => p.type === "text" && !p.synthetic) as TextPart | undefined,
+    () => props.parts?.find((p): p is TextPart => p.type === "text" && !p.synthetic),
   )
 
   const text = createMemo(() => textPart()?.text || "")
@@ -1531,10 +1533,18 @@ function ToolFileAccordion(props: { path: string; actions?: JSX.Element; childre
   )
 }
 
-PART_MAPPING["tool"] = function ToolPartDisplay(props) {
+PART_MAPPING["tool"] = function ToolPartSlot(props) {
+  return (
+    <Show when={props.part.type === "tool" && props.part}>
+      {(part) => <ToolPartDisplay {...props} part={part()} />}
+    </Show>
+  )
+}
+
+function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
   const data = useData()
   const i18n = useI18n()
-  const part = () => props.part as ToolPart
+  const part = () => props.part
   if (part().tool === "todowrite") return null
 
   const hideQuestion = createMemo(
@@ -1563,6 +1573,11 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
     return taskId()
   })
 
+  const errorText = () => {
+    const state = part().state
+    return state.status === "error" && state.error
+  }
+
   const render = createMemo(() => ToolRegistry.render(part().tool) ?? GenericTool)
   const controlledOpen = () => (props.onToolOpenChange ? (props.toolOpen ?? props.defaultOpen) : undefined)
   const handleToolOpenChange = (open: boolean) => props.onToolOpenChange?.(open)
@@ -1571,7 +1586,7 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
     <Show when={!hideQuestion()}>
       <div data-component="tool-part-wrapper" data-timeline-part-id={part().id}>
         <Switch>
-          <Match when={part().state.status === "error" && (part().state as any).error}>
+          <Match when={errorText()}>
             {(error) => {
               const cleaned = error().replace("Error: ", "")
               if (part().tool === "question" && cleaned.includes("dismissed this question")) {
@@ -1651,11 +1666,19 @@ PART_MAPPING["compaction"] = function CompactionPartDisplay() {
   return <MessageDivider label={i18n.t("ui.messagePart.compaction")} />
 }
 
-PART_MAPPING["text"] = function TextPartDisplay(props) {
+PART_MAPPING["text"] = function TextPartSlot(props) {
+  return (
+    <Show when={props.part.type === "text" && props.part}>
+      {(part) => <TextPartDisplay {...props} part={part()} />}
+    </Show>
+  )
+}
+
+function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   const data = useData()
   const i18n = useI18n()
   const numfmt = createMemo(() => new Intl.NumberFormat(i18n.locale()))
-  const part = () => props.part as TextPart
+  const part = () => props.part
   const interrupted = createMemo(
     () =>
       props.message.role === "assistant" && props.message.error?.name === "MessageAbortedError",
@@ -1756,9 +1779,17 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   )
 }
 
-PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
+PART_MAPPING["reasoning"] = function ReasoningPartSlot(props) {
+  return (
+    <Show when={props.part.type === "reasoning" && props.part}>
+      {(part) => <ReasoningPartDisplay {...props} part={part()} />}
+    </Show>
+  )
+}
+
+function ReasoningPartDisplay(props: PartDisplayProps<ReasoningPart>) {
   const data = useData()
-  const part = () => props.part as ReasoningPart
+  const part = () => props.part
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof props.message.time.completed !== "number",
   )
@@ -2573,12 +2604,28 @@ ToolRegistry.register({
   },
 })
 
+// Tool input and metadata arrive untyped. Read only the fields this view renders, and keep one
+// entry per question so that answers stay aligned by index.
+function questionText(value: unknown) {
+  return Predicate.hasProperty(value, "question") && Predicate.isString(value.question) ? value.question : ""
+}
+
+function answerLabels(value: unknown) {
+  return Array.isArray(value) ? value.filter(Predicate.isString) : []
+}
+
 ToolRegistry.register({
   name: "question",
   render(props) {
     const i18n = useI18n()
-    const questions = createMemo(() => (props.input.questions ?? []) as QuestionInfo[])
-    const answers = createMemo(() => (props.metadata.answers ?? []) as QuestionAnswer[])
+    const questions = createMemo(() => {
+      const value: unknown = props.input.questions
+      return Array.isArray(value) ? value.map(questionText) : []
+    })
+    const answers = createMemo(() => {
+      const value: unknown = props.metadata.answers
+      return Array.isArray(value) ? value.map(answerLabels) : []
+    })
     const completed = createMemo(() => answers().length > 0)
 
     const subtitle = createMemo(() => {
@@ -2605,7 +2652,7 @@ ToolRegistry.register({
                 const answer = () => answers()[i()] ?? []
                 return (
                   <div data-slot="question-answer-item">
-                    <div data-slot="question-text">{q.question}</div>
+                    <div data-slot="question-text">{q}</div>
                     <div data-slot="answer-text">{answer().join(", ") || i18n.t("ui.question.answer.none")}</div>
                   </div>
                 )
