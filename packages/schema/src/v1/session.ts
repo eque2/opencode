@@ -261,18 +261,23 @@ export type StepFinishPart = Types.DeepMutable<Schema.Schema.Type<typeof StepFin
 // tool context metadata are typed `any`) and from in-process writers that leave
 // undefined-valued keys. The durable event commit encodes event data on the type
 // side, so Schema.Json would reject these legacy values.
+// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin tool.execute.before output.args is typed any; plugins and legacy writers store arbitrary values
+const ToolInput = Schema.Record(Schema.String, Schema.Any)
+// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin ToolContext.metadata and tool.execute.after metadata are typed any
+const ToolMetadata = Schema.Record(Schema.String, Schema.Any)
+
 export const ToolStatePending = Schema.Struct({
   status: Schema.Literal("pending"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   raw: Schema.String,
 }).annotate({ identifier: "ToolStatePending" })
 export type ToolStatePending = Types.DeepMutable<Schema.Schema.Type<typeof ToolStatePending>>
 
 export const ToolStateRunning = Schema.Struct({
   status: Schema.Literal("running"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   title: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(ToolMetadata),
   time: Schema.Struct({
     start: NonNegativeInt,
   }),
@@ -281,10 +286,10 @@ export type ToolStateRunning = Types.DeepMutable<Schema.Schema.Type<typeof ToolS
 
 export const ToolStateCompleted = Schema.Struct({
   status: Schema.Literal("completed"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   output: Schema.String,
   title: Schema.String,
-  metadata: Schema.Record(Schema.String, Schema.Any),
+  metadata: ToolMetadata,
   time: Schema.Struct({
     start: NonNegativeInt,
     end: NonNegativeInt,
@@ -296,9 +301,9 @@ export type ToolStateCompleted = Types.DeepMutable<Schema.Schema.Type<typeof Too
 
 export const ToolStateError = Schema.Struct({
   status: Schema.Literal("error"),
-  input: Schema.Record(Schema.String, Schema.Any),
+  input: ToolInput,
   error: Schema.String,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(ToolMetadata),
   time: Schema.Struct({
     start: NonNegativeInt,
     end: NonNegativeInt,
