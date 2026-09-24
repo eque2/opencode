@@ -1,4 +1,5 @@
-import { Formatter, Logger, Predicate, Schema, type LogLevel } from "effect"
+import { Config, ConfigProvider, Effect, Formatter, Logger, Option, Predicate, Schema, type LogLevel } from "effect"
+import { constVoid } from "effect/Function"
 import path from "path"
 import { Global } from "../global"
 import { runID } from "./shared"
@@ -54,6 +55,12 @@ export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id
 }
 
 const stderrLogger = Logger.make((options) => process.stderr.write(formatter().log(options) + "\n"))
+const silentLogger = Logger.make(constVoid)
+
+const printLogs = Config.String("OPENCODE_PRINT_LOGS").pipe(
+  Config.option,
+  Config.map((value) => Option.contains(value, "1")),
+)
 
 const isLevelName = Schema.is(Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]))
 
@@ -69,7 +76,13 @@ export function minimumLogLevel() {
 }
 
 export function loggers() {
-  return process.env.OPENCODE_PRINT_LOGS === "1" ? [fileLogger(), stderrLogger] : [fileLogger()]
+  // The CLI sets OPENCODE_PRINT_LOGS after startup and the ambient ConfigProvider copies
+  // process.env once, so read it from a fresh env provider when the logger layer builds.
+  const printed = printLogs.parse(ConfigProvider.fromEnv()).pipe(
+    Effect.orDie,
+    Effect.map((print) => (print ? stderrLogger : silentLogger)),
+  )
+  return [fileLogger(), printed]
 }
 
 export * as Logging from "./logging"
