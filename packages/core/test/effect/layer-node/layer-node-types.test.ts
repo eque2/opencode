@@ -51,8 +51,8 @@ make({ service: C, layer: cLayer, deps: [a] })
 
 const closed = build(LayerNode.group([c]))
 const closedWithError = build(LayerNode.group([dependent]))
-const checkClosed: Layer.Layer<C, never, never> = closed
-const checkError: Layer.Layer<B, LayerError, never> = closedWithError
+const checkClosed: Layer.Layer<C> = closed
+const checkError: Layer.Layer<B, LayerError> = closedWithError
 void checkClosed
 void checkError
 
