@@ -60,9 +60,18 @@ const OpenAIResponsesReasoningItem = Schema.Struct({
   encrypted_content: optionalNull(Schema.String),
 }).annotate({ identifier: "OpenAIResponses.ReasoningItem" })
 
+// The id of a provider output item (reasoning or hosted tool call) that a
+// stored conversation can reference instead of resending it.
+export const ItemID = Schema.String.pipe(Schema.brand("OpenAIResponses.ItemID"))
+export type ItemID = typeof ItemID.Type
+
+// The `call_id` that pairs a function call with its function call output.
+export const CallID = Schema.String.pipe(Schema.brand("OpenAIResponses.CallID"))
+export type CallID = typeof CallID.Type
+
 const OpenAIResponsesItemReference = Schema.Struct({
   type: Schema.tag("item_reference"),
-  id: Schema.String,
+  id: ItemID,
 }).annotate({ identifier: "OpenAIResponses.ItemReference" })
 
 // `function_call_output.output` accepts either a plain string or an ordered
@@ -83,13 +92,13 @@ const OpenAIResponsesInputItem = Schema.Union([
   OpenAIResponsesItemReference,
   Schema.Struct({
     type: Schema.tag("function_call"),
-    call_id: Schema.String,
+    call_id: CallID,
     name: Schema.String,
     arguments: Schema.String,
   }),
   Schema.Struct({
     type: Schema.tag("function_call_output"),
-    call_id: Schema.String,
+    call_id: CallID,
     output: OpenAIResponsesFunctionCallOutput,
   }),
 ])
@@ -276,20 +285,22 @@ const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
 
 const lowerToolCall = (part: ToolCallPart): OpenAIResponsesInputItem => ({
   type: "function_call",
-  call_id: part.id,
+  call_id: CallID.make(part.id),
   name: part.name,
   arguments: ProviderShared.encodeJson(part.input),
 })
 
-const openaiItemID = (metadata: ProviderMetadata | undefined): Option.Option<string> =>
-  Option.filter(Option.liftPredicate(metadata?.openai?.itemId, Predicate.isString), (id) => id.length > 0)
+const openaiItemID = (metadata: ProviderMetadata | undefined): Option.Option<ItemID> =>
+  Option.filter(Option.liftPredicate(metadata?.openai?.itemId, Predicate.isString), (id) => id.length > 0).pipe(
+    Option.map((id) => ItemID.make(id)),
+  )
 
 // Reasoning state read back from a previous response's `providerMetadata`.
 // Only string encrypted state can be replayed: with `store: false`,
 // `lowerMessages` drops reasoning items without it, so a null and a missing
 // `reasoningEncryptedContent` both lower to `Option.none()`.
 interface ReasoningReplayPart {
-  readonly id: string
+  readonly id: ItemID
   readonly summary: ReadonlyArray<{ readonly type: "summary_text"; readonly text: string }>
   readonly encryptedContent: Option.Option<string>
 }
@@ -436,7 +447,7 @@ const lowerMessages = Effect.fn("OpenAIResponses.lowerMessages")(function* (requ
         return yield* ProviderShared.unsupportedContent("OpenAI Responses", "tool", ["tool-result"])
       input.push({
         type: "function_call_output",
-        call_id: part.id,
+        call_id: CallID.make(part.id),
         output: yield* lowerToolResultOutput(part),
       })
     }
@@ -651,13 +662,13 @@ const onReasoningDone = (state: ParserState, _event: OpenAIResponsesEvent): Step
 // holds it as an Option and the codec writes the `null`, which continuation
 // callers persist and send back.
 const OpenAIResponsesReasoningMetadata = Schema.Struct({
-  itemId: Schema.String,
+  itemId: ItemID,
   reasoningEncryptedContent: Schema.OptionFromNullOr(Schema.String),
 }).annotate({ identifier: "OpenAIResponses.ReasoningMetadata" })
 const encodeReasoningMetadata = Schema.encodeSync(OpenAIResponsesReasoningMetadata)
 
 const reasoningMetadata = (itemId: string, encryptedContent: Option.Option<string>) =>
-  openaiMetadata(encodeReasoningMetadata({ itemId, reasoningEncryptedContent: encryptedContent }))
+  openaiMetadata(encodeReasoningMetadata({ itemId: ItemID.make(itemId), reasoningEncryptedContent: encryptedContent }))
 
 const reasoningItemMetadata = (item: OpenAIResponsesStreamItem & { id: string }) =>
   reasoningMetadata(item.id, Option.fromNullishOr(item.encrypted_content))

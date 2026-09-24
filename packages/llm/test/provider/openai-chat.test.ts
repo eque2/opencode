@@ -239,7 +239,7 @@ describe("OpenAI Chat route", () => {
 
       expect(prepared.body.messages.at(-1)).toEqual({
         role: "tool",
-        tool_call_id: "call_1",
+        tool_call_id: OpenAIChat.ToolCallID.make("call_1"),
         content: ProviderShared.encodeJson(error),
       })
     }),
@@ -273,13 +273,13 @@ describe("OpenAI Chat route", () => {
           content: null,
           tool_calls: [
             {
-              id: "call_image",
+              id: OpenAIChat.ToolCallID.make("call_image"),
               type: "function",
               function: { name: "read", arguments: encodeJson({ path: "pixel.png" }) },
             },
           ],
         },
-        { role: "tool", tool_call_id: "call_image", content: "Image read successfully" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_image"), content: "Image read successfully" },
         {
           role: "user",
           content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAECAw==" } }],
@@ -326,8 +326,8 @@ describe("OpenAI Chat route", () => {
         }),
       )
       expect(prepared.body.messages.slice(1)).toEqual([
-        { role: "tool", tool_call_id: "call_1", content: "" },
-        { role: "tool", tool_call_id: "call_2", content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_1"), content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_2"), content: "" },
         {
           role: "user",
           content: [
@@ -366,8 +366,8 @@ describe("OpenAI Chat route", () => {
         }),
       )
       expect(prepared.body.messages).toEqual([
-        { role: "tool", tool_call_id: "call_1", content: "" },
-        { role: "tool", tool_call_id: "call_2", content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_1"), content: "" },
+        { role: "tool", tool_call_id: OpenAIChat.ToolCallID.make("call_2"), content: "" },
         {
           role: "user",
           content: [

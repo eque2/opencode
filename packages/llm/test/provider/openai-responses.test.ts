@@ -1024,7 +1024,7 @@ describe("OpenAI Responses route", () => {
         }),
       )
 
-      expect(prepared.body.input).toEqual([{ type: "item_reference", id: "rs_1" }])
+      expect(prepared.body.input).toEqual([{ type: "item_reference", id: OpenAIResponses.ItemID.make("rs_1") }])
     }),
   )
 
@@ -1058,7 +1058,7 @@ describe("OpenAI Responses route", () => {
       )
 
       expect(prepared.body.input).toEqual([
-        { type: "item_reference", id: "ws_1" },
+        { type: "item_reference", id: OpenAIResponses.ItemID.make("ws_1") },
         { role: "user", content: [{ type: "input_text", text: "Continue." }] },
       ])
     }),

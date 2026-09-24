@@ -45,8 +45,13 @@ const OpenAIChatTool = Schema.Struct({
 }).annotate({ identifier: "OpenAIChat.Tool" })
 type OpenAIChatTool = Schema.Schema.Type<typeof OpenAIChatTool>
 
+// The id of one tool call on the wire: the assistant `tool_calls[].id` and
+// the `tool_call_id` of the tool message that answers it.
+export const ToolCallID = Schema.String.pipe(Schema.brand("OpenAIChat.ToolCallID"))
+export type ToolCallID = typeof ToolCallID.Type
+
 const OpenAIChatAssistantToolCall = Schema.Struct({
-  id: Schema.String,
+  id: ToolCallID,
   type: Schema.tag("function"),
   function: Schema.Struct({
     name: Schema.String,
@@ -75,7 +80,7 @@ const OpenAIChatMessage = Schema.Union([
     tool_calls: optionalArray(OpenAIChatAssistantToolCall),
     reasoning_content: Schema.optional(Schema.String),
   }),
-  Schema.Struct({ role: Schema.Literal("tool"), tool_call_id: Schema.String, content: Schema.String }),
+  Schema.Struct({ role: Schema.Literal("tool"), tool_call_id: ToolCallID, content: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("role"))
 type OpenAIChatMessage = Schema.Schema.Type<typeof OpenAIChatMessage>
 type OpenAIChatUserContentPart = Schema.Schema.Type<typeof OpenAIChatUserContent>
@@ -194,7 +199,7 @@ const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
   })
 
 const lowerToolCall = (part: ToolCallPart): OpenAIChatAssistantToolCall => ({
-  id: part.id,
+  id: ToolCallID.make(part.id),
   type: "function",
   function: {
     name: part.name,
@@ -266,14 +271,18 @@ const lowerToolResult = Effect.fn("OpenAIChat.lowerToolResult")(function* (
     return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
   if (part.result.type !== "content")
     return {
-      message: { role: "tool" as const, tool_call_id: part.id, content: ProviderShared.toolResultText(part) },
+      message: {
+        role: "tool" as const,
+        tool_call_id: ToolCallID.make(part.id),
+        content: ProviderShared.toolResultText(part),
+      },
       images: [],
     }
   const content: ReadonlyArray<ToolContent> = part.result.value
   const text = content.filter((item) => item.type === "text").map((item) => item.text)
   const files = content.filter((item) => item.type === "file")
   return {
-    message: { role: "tool" as const, tool_call_id: part.id, content: text.join("\n") },
+    message: { role: "tool" as const, tool_call_id: ToolCallID.make(part.id), content: text.join("\n") },
     images: yield* Effect.forEach(files, (item) =>
       lowerMedia({ type: "media", mediaType: item.mime, data: item.uri, filename: item.name }),
     ),
