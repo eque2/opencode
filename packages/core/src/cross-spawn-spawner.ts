@@ -399,7 +399,7 @@ export const make = Effect.gen(function* () {
               ...next.options,
               additionalFds: {
                 ...next.options.additionalFds,
-                [ChildProcess.fdName(fd) as `fd${number}`]: { type: "input", stream },
+                [ChildProcess.fdName(fd)]: { type: "input", stream },
               },
             }),
           )
