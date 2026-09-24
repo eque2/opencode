@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Option } from "effect"
+import { Effect, Fiber, Option, Random } from "effect"
 import { createEffect, on, onMount, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TextShimmer } from "./text-shimmer"
@@ -596,7 +596,7 @@ export const Playground = {
     const maskHeight = () => state.maskHeight
     const debug = () => state.debug
     const odoBlur = () => state.odoBlur
-    let cycleTimer
+    let cycle: Option.Option<Fiber.Fiber<never>> = Option.none()
 
     const nextHeading = () => {
       const next = (headingIndex() + 1) % HEADINGS.length
@@ -610,34 +610,40 @@ export const Playground = {
       setState("heading", HEADINGS[prev])
     }
 
+    const stopCycle = () => {
+      if (Option.isSome(cycle)) Effect.runFork(Fiber.interrupt(cycle.value))
+      cycle = Option.none()
+    }
+
     const toggleCycling = () => {
       if (cycling()) {
-        clearTimeout(cycleTimer)
-        cycleTimer = undefined
+        stopCycle()
         setState("cycling", false)
         return
       }
       setState("cycling", true)
-      const tick = () => {
-        if (!cycling()) return
-        nextHeading()
-        cycleTimer = setTimeout(tick, 850 + Math.floor(Math.random() * 550))
-      }
-      cycleTimer = setTimeout(tick, 850 + Math.floor(Math.random() * 550))
+      cycle = Option.some(
+        Effect.runFork(
+          Effect.forever(
+            Effect.gen(function* () {
+              const jitter = yield* Random.nextIntBetween(0, 550, { halfOpen: true })
+              yield* Effect.sleep(850 + jitter)
+              if (cycling()) nextHeading()
+            }),
+          ),
+        ),
+      )
     }
 
     const clearHeading = () => {
       setState("heading", Option.none())
       if (cycling()) {
-        clearTimeout(cycleTimer)
-        cycleTimer = undefined
+        stopCycle()
         setState("cycling", false)
       }
     }
 
-    onCleanup(() => {
-      if (cycleTimer) clearTimeout(cycleTimer)
-    })
+    onCleanup(stopCycle)
 
     const vars = () => ({
       "--h-duration": `${duration()}ms`,
