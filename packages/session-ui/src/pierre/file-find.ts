@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { createStore } from "solid-js/store"
-import { Option } from "effect"
+import { Array as Arr, Option } from "effect"
 
 export type FindHost = {
   element: () => HTMLElement | undefined
@@ -12,7 +12,8 @@ export type FindHost = {
   isOpen: () => boolean
 }
 
-const hosts = new Set<FindHost>()
+// Registered find hosts in mount order. Each host is a distinct object, so membership is by reference.
+let hosts: ReadonlyArray<FindHost> = []
 let target: FindHost | undefined
 let current: FindHost | undefined
 let installed = false
@@ -66,7 +67,7 @@ function installShortcuts() {
         return
       }
 
-      const host = hostForNode(document.activeElement) ?? hostForNode(event.target) ?? target ?? Array.from(hosts)[0]
+      const host = hostForNode(document.activeElement) ?? hostForNode(event.target) ?? target ?? hosts[0]
       if (!host) return
 
       event.preventDefault()
@@ -417,11 +418,11 @@ export function createFileFind(opts: CreateFileFindOptions) {
   onMount(() => {
     mode = supportsHighlights() ? "highlights" : "overlay"
     installShortcuts()
-    hosts.add(host)
+    hosts = Arr.append(hosts, host)
     if (!target) target = host
 
     onCleanup(() => {
-      hosts.delete(host)
+      hosts = hosts.filter((item) => item !== host)
       if (current === host) {
         current = undefined
         clearHighlightFind()
