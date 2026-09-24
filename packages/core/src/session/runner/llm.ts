@@ -227,7 +227,7 @@ const layer = Layer.effect(
         },
         snapshot: startSnapshot,
       })
-      const withPublication = Semaphore.makeUnsafe(1).withPermit
+      const withPublication = Semaphore.withPermit(Semaphore.makeUnsafe(1))
       const publish = (event: LLMEvent, outputPaths: ReadonlyArray<string> = []) =>
         withPublication(publisher.publish(event, outputPaths))
       let overflowFailure: ProviderErrorEvent | undefined
