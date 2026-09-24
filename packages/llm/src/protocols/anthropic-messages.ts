@@ -66,7 +66,7 @@ const AnthropicToolUseBlock = Schema.Struct({
   type: Schema.tag("tool_use"),
   id: Schema.String,
   name: Schema.String,
-  input: Schema.Unknown,
+  input: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
 }).annotate({ identifier: "AnthropicMessages.ToolUseBlock" })
 type AnthropicToolUseBlock = Schema.Schema.Type<typeof AnthropicToolUseBlock>
@@ -75,7 +75,7 @@ const AnthropicServerToolUseBlock = Schema.Struct({
   type: Schema.tag("server_tool_use"),
   id: Schema.String,
   name: Schema.String,
-  input: Schema.Unknown,
+  input: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
 }).annotate({ identifier: "AnthropicMessages.ServerToolUseBlock" })
 type AnthropicServerToolUseBlock = Schema.Schema.Type<typeof AnthropicServerToolUseBlock>
@@ -95,7 +95,7 @@ type AnthropicServerToolResultType = Schema.Schema.Type<typeof AnthropicServerTo
 const AnthropicServerToolResultBlock = Schema.Struct({
   type: AnthropicServerToolResultType,
   tool_use_id: Schema.String,
-  content: Schema.Unknown,
+  content: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
 }).annotate({ identifier: "AnthropicMessages.ServerToolResultBlock" })
 type AnthropicServerToolResultBlock = Schema.Schema.Type<typeof AnthropicServerToolResultBlock>
@@ -185,12 +185,12 @@ const AnthropicStreamBlock = Schema.Struct({
   text: Schema.optional(Schema.String),
   thinking: Schema.optional(Schema.String),
   signature: Schema.optional(Schema.String),
-  input: Schema.optional(Schema.Unknown),
+  input: Schema.optional(Schema.Json),
   // *_tool_result blocks arrive whole as content_block_start (no streaming
   // delta) with the structured payload in `content` and the originating
   // server_tool_use id in `tool_use_id`.
   tool_use_id: Schema.optional(Schema.String),
-  content: Schema.optional(Schema.Unknown),
+  content: Schema.optional(Schema.Json),
 }).annotate({ identifier: "AnthropicMessages.StreamBlock" })
 
 const AnthropicStreamDelta = Schema.Struct({
@@ -273,18 +273,32 @@ const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
     tool: (name) => ({ type: "tool" as const, name }),
   })
 
-const lowerToolCall = (part: ToolCallPart): AnthropicToolUseBlock => ({
-  type: "tool_use",
-  id: part.id,
-  name: part.name,
-  input: part.input,
+// Tool-call input and server tool results are provider wire JSON. Narrow the
+// common model's untyped values here so a non-JSON value fails as an invalid
+// request instead of being coerced by JSON encoding.
+const isJson = Schema.is(Schema.Json)
+
+const lowerToolInput = Effect.fn("AnthropicMessages.lowerToolInput")(function* (part: ToolCallPart) {
+  if (!isJson(part.input)) return yield* invalid(`Anthropic Messages tool call ${part.name} input must be JSON`)
+  return part.input
 })
 
-const lowerServerToolCall = (part: ToolCallPart): AnthropicServerToolUseBlock => ({
-  type: "server_tool_use",
-  id: part.id,
-  name: part.name,
-  input: part.input,
+const lowerToolCall = Effect.fn("AnthropicMessages.lowerToolCall")(function* (part: ToolCallPart) {
+  return {
+    type: "tool_use" as const,
+    id: part.id,
+    name: part.name,
+    input: yield* lowerToolInput(part),
+  } satisfies AnthropicToolUseBlock
+})
+
+const lowerServerToolCall = Effect.fn("AnthropicMessages.lowerServerToolCall")(function* (part: ToolCallPart) {
+  return {
+    type: "server_tool_use" as const,
+    id: part.id,
+    name: part.name,
+    input: yield* lowerToolInput(part),
+  } satisfies AnthropicServerToolUseBlock
 })
 
 // Server tool result blocks are typed by name. Anthropic ships three today;
@@ -301,7 +315,9 @@ const lowerServerToolResult = Effect.fn("AnthropicMessages.lowerServerToolResult
   const wireType = serverToolResultType(part.name)
   if (!wireType)
     return yield* invalid(`Anthropic Messages does not know how to round-trip server tool result for ${part.name}`)
-  return { type: wireType, tool_use_id: part.id, content: part.result.value } satisfies AnthropicServerToolResultBlock
+  const content = part.result.value
+  if (!isJson(content)) return yield* invalid(`Anthropic Messages server tool result for ${part.name} must be JSON`)
+  return { type: wireType, tool_use_id: part.id, content } satisfies AnthropicServerToolResultBlock
 })
 
 const lowerImage = Effect.fn("AnthropicMessages.lowerImage")(function* (part: MediaPart) {
@@ -455,7 +471,7 @@ const lowerMessages = Effect.fn("AnthropicMessages.lowerMessages")(function* (
           continue
         }
         if (part.type === "tool-call") {
-          content.push(part.providerExecuted ? lowerServerToolCall(part) : lowerToolCall(part))
+          content.push(yield* part.providerExecuted ? lowerServerToolCall(part) : lowerToolCall(part))
           continue
         }
         if (part.type === "tool-result" && part.providerExecuted) {

@@ -45,7 +45,7 @@ const GeminiInlineDataPart = Schema.Struct({
 const GeminiFunctionCallPart = Schema.Struct({
   functionCall: Schema.Struct({
     name: Schema.String,
-    args: Schema.Unknown,
+    args: Schema.Json,
   }),
   thoughtSignature: Schema.optional(Schema.String),
 }).annotate({ identifier: "Gemini.FunctionCallPart" })
@@ -53,7 +53,7 @@ const GeminiFunctionCallPart = Schema.Struct({
 const GeminiFunctionResponsePart = Schema.Struct({
   functionResponse: Schema.Struct({
     name: Schema.String,
-    response: Schema.Unknown,
+    response: Schema.JsonObject,
   }),
 }).annotate({ identifier: "Gemini.FunctionResponsePart" })
 
@@ -197,9 +197,18 @@ const thoughtSignature = (providerMetadata: ProviderMetadata | undefined) => {
     : undefined
 }
 
-const lowerToolCall = (part: ToolCallPart) => ({
-  functionCall: { name: part.name, args: part.input },
-  thoughtSignature: thoughtSignature(part.providerMetadata),
+// Function-call args are provider wire JSON. Narrow the common model's untyped
+// input here so a non-JSON value fails as an invalid request instead of being
+// coerced by JSON encoding.
+const isJson = Schema.is(Schema.Json)
+
+const lowerToolCall = Effect.fn("Gemini.lowerToolCall")(function* (part: ToolCallPart) {
+  if (!isJson(part.input))
+    return yield* ProviderShared.invalidRequest(`Gemini tool call ${part.name} input must be JSON`)
+  return {
+    functionCall: { name: part.name, args: part.input },
+    thoughtSignature: thoughtSignature(part.providerMetadata),
+  }
 })
 
 const lowerMessages = Effect.fn("Gemini.lowerMessages")(function* (request: LLMRequest) {
@@ -240,7 +249,7 @@ const lowerMessages = Effect.fn("Gemini.lowerMessages")(function* (request: LLMR
           continue
         }
         if (part.type === "tool-call") {
-          parts.push(lowerToolCall(part))
+          parts.push(yield* lowerToolCall(part))
           continue
         }
       }
