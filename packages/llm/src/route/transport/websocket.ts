@@ -42,11 +42,12 @@ const eventMessage = (event: Event) => {
   return event.type
 }
 
-const binaryMessage = (data: unknown) => {
-  if (data instanceof Uint8Array) return data
-  if (data instanceof ArrayBuffer) return new Uint8Array(data)
-  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-  return undefined
+const messagePayload = (data: unknown): Option.Option<string | Uint8Array> => {
+  if (typeof data === "string") return Option.some(data)
+  if (data instanceof Uint8Array) return Option.some(data)
+  if (data instanceof ArrayBuffer) return Option.some(new Uint8Array(data))
+  if (ArrayBuffer.isView(data)) return Option.some(new Uint8Array(data.buffer, data.byteOffset, data.byteLength))
+  return Option.none()
 }
 
 const waitOpen = (ws: globalThis.WebSocket, input: WebSocketRequest) => {
@@ -149,15 +150,15 @@ export const fromWebSocket = (
     const messages = yield* Queue.bounded<string | Uint8Array, LLMError | Cause.Done>(128)
 
     const onMessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") return Queue.offerUnsafe(messages, event.data)
-      const binary = binaryMessage(event.data)
-      if (binary) return Queue.offerUnsafe(messages, binary)
-      Queue.failCauseUnsafe(
-        messages,
-        Cause.fail(
-          transportError("message", "Unsupported WebSocket message payload", { url: input.url, kind: "message" }),
-        ),
-      )
+      const payload = messagePayload(event.data)
+      if (Option.isSome(payload)) Queue.offerUnsafe(messages, payload.value)
+      else
+        Queue.failCauseUnsafe(
+          messages,
+          Cause.fail(
+            transportError("message", "Unsupported WebSocket message payload", { url: input.url, kind: "message" }),
+          ),
+        )
     }
     const onError = (event: Event) => {
       Queue.failCauseUnsafe(
@@ -168,13 +169,14 @@ export const fromWebSocket = (
       )
     }
     const onClose = (event: CloseEvent) => {
-      if (event.code === 1000 || event.code === 1005) return Queue.endUnsafe(messages)
-      Queue.failCauseUnsafe(
-        messages,
-        Cause.fail(
-          transportError("message", `WebSocket closed with code ${event.code}`, { url: input.url, kind: "close" }),
-        ),
-      )
+      if (event.code === 1000 || event.code === 1005) Queue.endUnsafe(messages)
+      else
+        Queue.failCauseUnsafe(
+          messages,
+          Cause.fail(
+            transportError("message", `WebSocket closed with code ${event.code}`, { url: input.url, kind: "close" }),
+          ),
+        )
     }
     const cleanup = Effect.sync(() => {
       ws.removeEventListener("message", onMessage)
