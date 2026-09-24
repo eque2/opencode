@@ -19,6 +19,13 @@ export interface Interface {
   readonly open: (input: WebSocketRequest) => Effect.Effect<WebSocketConnection, LLMError>
 }
 
+// The WebSocket members that `fromWebSocket` uses. A global WebSocket
+// satisfies it, and so does any other socket with the same members.
+export type WebSocketLike = Pick<
+  globalThis.WebSocket,
+  "readyState" | "addEventListener" | "removeEventListener" | "send" | "close"
+>
+
 // Bun's global WebSocket constructor also accepts `{ headers }` (bun-types
 // `Bun.WebSocketOptions`), but the llm tsconfig loads lib.dom, and the DOM
 // constructor type only takes protocols. This adds Bun's signature to it.
@@ -51,7 +58,7 @@ const messagePayload = (data: unknown): Option.Option<string | Uint8Array> => {
   return Option.none()
 }
 
-const waitOpen = (ws: globalThis.WebSocket, input: WebSocketRequest) => {
+const waitOpen = (ws: WebSocketLike, input: WebSocketRequest) => {
   if (ws.readyState === globalThis.WebSocket.OPEN) return Effect.void
   if (ws.readyState === globalThis.WebSocket.CLOSING || ws.readyState === globalThis.WebSocket.CLOSED) {
     return Effect.fail(
@@ -132,7 +139,7 @@ const webSocketUrl = (value: string) =>
 export const open = (input: WebSocketRequest) =>
   Effect.try({
     try: () =>
-      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Bun WebSocket constructor accepts { headers }; lib.dom omits it.
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) Bun's WebSocket constructor accepts { headers }; the lib.dom constructor type omits it.
       new (globalThis.WebSocket as WebSocketConstructorWithHeaders)(input.url, { headers: input.headers }),
     catch: (error) =>
       transportError("open", error instanceof Error ? error.message : "Failed to construct WebSocket", {
@@ -144,7 +151,7 @@ export const open = (input: WebSocketRequest) =>
 export const layer: Layer.Layer<Service> = Layer.succeed(Service, Service.of({ open }))
 
 export const fromWebSocket = (
-  ws: globalThis.WebSocket,
+  ws: WebSocketLike,
   input: WebSocketRequest,
 ): Effect.Effect<WebSocketConnection, LLMError> =>
   Effect.gen(function* () {

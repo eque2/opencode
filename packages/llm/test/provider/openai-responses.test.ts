@@ -1,8 +1,9 @@
 import { describe, expect } from "bun:test"
-import { ConfigProvider, Effect, Layer, Stream } from "effect"
+import { ConfigProvider, Effect, Function, Layer, Stream } from "effect"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import { LLM, LLMError, Message, Model, ToolCallID, ToolCallPart, Usage } from "../../src"
 import { Auth, LLMClient, RequestExecutor, WebSocketExecutor } from "../../src/route"
+import type { WebSocketLike } from "../../src/route/transport/websocket"
 import * as Azure from "../../src/providers/azure"
 import * as OpenAI from "../../src/providers/openai"
 import * as OpenAIResponses from "../../src/protocols/openai-responses"
@@ -232,11 +233,17 @@ describe("OpenAI Responses route", () => {
 
   it.effect("fails immediately when WebSocket is already closed", () =>
     Effect.gen(function* () {
-      const error = yield* WebSocketExecutor.fromWebSocket(
-        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- fromWebSocket reads readyState before touching WebSocket methods on this branch.
-        { readyState: globalThis.WebSocket.CLOSED } as globalThis.WebSocket,
-        { url: "wss://api.openai.test/v1/responses", headers: Headers.empty },
-      ).pipe(Effect.flip)
+      const closedSocket: WebSocketLike = {
+        readyState: globalThis.WebSocket.CLOSED,
+        addEventListener: Function.constVoid,
+        removeEventListener: Function.constVoid,
+        send: Function.constVoid,
+        close: Function.constVoid,
+      }
+      const error = yield* WebSocketExecutor.fromWebSocket(closedSocket, {
+        url: "wss://api.openai.test/v1/responses",
+        headers: Headers.empty,
+      }).pipe(Effect.flip)
 
       expect(error.message).toContain("closed before opening")
     }),
