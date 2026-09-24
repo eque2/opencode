@@ -1,3 +1,5 @@
+import { Crypto, Effect } from "effect"
+
 export function base64Encode(value: string) {
   const bytes = new TextEncoder().encode(value)
   const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("")
@@ -10,14 +12,15 @@ export function base64Decode(value: string) {
   return new TextDecoder().decode(bytes)
 }
 
-export async function hash(content: string, algorithm = "SHA-256"): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(content)
-  const hashBuffer = await crypto.subtle.digest(algorithm, data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
-  return hashHex
-}
+/** Hex digest of `content`; the caller provides the Crypto service (for example NodeCrypto.layer). */
+export const hash = Effect.fn("Encode.hash")(function* (
+  content: string,
+  algorithm: Crypto.DigestAlgorithm = "SHA-256",
+) {
+  const crypto = yield* Crypto.Crypto
+  const digest = yield* crypto.digest(algorithm, new TextEncoder().encode(content))
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("")
+})
 
 export function checksum(content: string): string | undefined {
   if (!content) return undefined
