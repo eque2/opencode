@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "child_process"
 import { readFile } from "fs/promises"
 import { statSync } from "fs"
 import { setTimeout as sleep } from "node:timers/promises"
+import { Schema } from "effect"
 import { Flag } from "./flag/flag"
 import { FSUtil } from "./fs-util"
 import { which } from "./util/which"
@@ -27,6 +28,9 @@ export type Item = {
   name: string
   acceptable: boolean
 }
+
+// The command as a JSON string literal, which the POSIX shells below eval as double-quoted text.
+const quote = Schema.encodeSync(Schema.fromJsonString(Schema.String))
 
 export async function killTree(proc: ChildProcess, opts?: { exited?: () => boolean }): Promise<void> {
   const pid = proc.pid
@@ -174,7 +178,7 @@ export function args(file: string, command: string, cwd: string) {
         [[ -f ~/.zshenv ]] && source ~/.zshenv >/dev/null 2>&1 || true
         [[ -f "\${ZDOTDIR:-$HOME}/.zshrc" ]] && source "\${ZDOTDIR:-$HOME}/.zshrc" >/dev/null 2>&1 || true
         cd -- "$1"
-        eval ${JSON.stringify(command)}
+        eval ${quote(command)}
       `,
       "opencode",
       cwd,
@@ -188,7 +192,7 @@ export function args(file: string, command: string, cwd: string) {
         shopt -s expand_aliases
         [[ -f ~/.bashrc ]] && source ~/.bashrc >/dev/null 2>&1 || true
         cd -- "$1"
-        eval ${JSON.stringify(command)}
+        eval ${quote(command)}
       `,
       "opencode",
       cwd,
