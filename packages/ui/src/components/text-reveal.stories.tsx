@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Option } from "effect"
+import { Effect, Fiber, Option, Random } from "effect"
 import { onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TextReveal } from "./text-reveal"
@@ -112,29 +112,37 @@ export const Playground = {
     const edge = () => state.edge
     const revealTravel = () => state.revealTravel
 
-    let timer: number | undefined
+    let cycle: Option.Option<Fiber.Fiber<never>> = Option.none()
     const text = () => Option.getOrUndefined(TEXTS[index()])
     const next = () => setState("index", (value) => (value + 1) % TEXTS.length)
     const prev = () => setState("index", (value) => (value - 1 + TEXTS.length) % TEXTS.length)
 
+    const stopCycle = () => {
+      if (Option.isSome(cycle)) Effect.runFork(Fiber.interrupt(cycle.value))
+      cycle = Option.none()
+    }
+
     const toggleCycle = () => {
       if (cycling()) {
-        if (timer) clearTimeout(timer)
-        timer = undefined
+        stopCycle()
         setState("cycling", false)
         return
       }
       setState("cycling", true)
-      const tick = () => {
-        next()
-        timer = window.setTimeout(tick, 700 + Math.floor(Math.random() * 600))
-      }
-      timer = window.setTimeout(tick, 700 + Math.floor(Math.random() * 600))
+      cycle = Option.some(
+        Effect.runFork(
+          Effect.forever(
+            Effect.gen(function* () {
+              const jitter = yield* Random.nextIntBetween(0, 600, { halfOpen: true })
+              yield* Effect.sleep(700 + jitter)
+              next()
+            }),
+          ),
+        ),
+      )
     }
 
-    onCleanup(() => {
-      if (timer) clearTimeout(timer)
-    })
+    onCleanup(stopCycle)
 
     const spring = () => `cubic-bezier(0.34, ${bounce()}, 0.64, 1)`
     const springSoft = () => `cubic-bezier(0.34, ${bounceSoft()}, 0.64, 1)`
