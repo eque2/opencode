@@ -1,17 +1,28 @@
+import { z } from "zod"
 import { ProviderHelper, CommonRequest, CommonResponse, CommonChunk } from "./provider"
 
-type Usage = {
-  input_tokens?: number
-  input_tokens_details?: {
-    cached_tokens?: number
-    cache_write_tokens?: number
-  }
-  output_tokens?: number
-  output_tokens_details?: {
-    reasoning_tokens?: number
-  }
-  total_tokens?: number
-}
+const usageSchema = z.object({
+  input_tokens: z.number().nullish(),
+  input_tokens_details: z
+    .object({
+      cached_tokens: z.number().nullish(),
+      cache_write_tokens: z.number().nullish(),
+    })
+    .nullish(),
+  output_tokens: z.number().nullish(),
+  output_tokens_details: z
+    .object({
+      reasoning_tokens: z.number().nullish(),
+    })
+    .nullish(),
+  total_tokens: z.number().nullish(),
+})
+
+type Usage = z.infer<typeof usageSchema>
+
+const completedEventSchema = z.object({
+  response: z.object({ usage: usageSchema.nullish() }).nullish(),
+})
 
 export const openaiHelper: ProviderHelper = ({ workspaceID }) => ({
   format: "openai",
@@ -30,15 +41,15 @@ export const openaiHelper: ProviderHelper = ({ workspaceID }) => ({
         if (event !== "event: response.completed") return
         if (!data.startsWith("data: ")) return
 
-        let json
+        let parsed
         try {
-          json = JSON.parse(data.slice(6)) as { response?: { usage?: Usage } }
+          parsed = completedEventSchema.safeParse(JSON.parse(data.slice(6)))
         } catch {
           return
         }
 
-        if (!json.response?.usage) return
-        usage = json.response.usage
+        if (!parsed.success || !parsed.data.response?.usage) return
+        usage = parsed.data.response.usage
       },
       retrieve: () => usage,
     }
@@ -215,16 +226,16 @@ export function toOpenaiRequest(body: CommonRequest) {
   }
 
   for (const m of msgsIn) {
-    if (!m || !(m as any).role) continue
+    if (!m || !m.role) continue
 
-    if ((m as any).role === "system") {
-      const c = (m as any).content
+    if (m.role === "system") {
+      const c = m.content
       if (typeof c === "string") input.push({ role: "system", content: c })
       continue
     }
 
-    if ((m as any).role === "user") {
-      const c = (m as any).content
+    if (m.role === "user") {
+      const c = m.content
       if (typeof c === "string") {
         input.push({ role: "user", content: [{ type: "input_text", text: c }] })
       } else if (Array.isArray(c)) {
@@ -238,13 +249,13 @@ export function toOpenaiRequest(body: CommonRequest) {
       continue
     }
 
-    if ((m as any).role === "assistant") {
-      const c = (m as any).content
+    if (m.role === "assistant") {
+      const c = m.content
       if (typeof c === "string" && c.length > 0) {
         input.push({ role: "assistant", content: [{ type: "output_text", text: c }] })
       }
-      if (Array.isArray((m as any).tool_calls)) {
-        for (const tc of (m as any).tool_calls) {
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls) {
           if (tc.type === "function" && tc.function) {
             const name = tc.function.name
             const a = tc.function.arguments
@@ -256,9 +267,9 @@ export function toOpenaiRequest(body: CommonRequest) {
       continue
     }
 
-    if ((m as any).role === "tool") {
-      const out = typeof (m as any).content === "string" ? (m as any).content : JSON.stringify((m as any).content)
-      input.push({ type: "function_call_output", call_id: (m as any).tool_call_id, output: out })
+    if (m.role === "tool") {
+      const out = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+      input.push({ type: "function_call_output", call_id: m.tool_call_id, output: out })
       continue
     }
   }
@@ -276,8 +287,8 @@ export function toOpenaiRequest(body: CommonRequest) {
     if (!tcIn) return undefined
     if (tcIn === "auto") return "auto"
     if (tcIn === "required") return "required"
-    if ((tcIn as any).type === "function" && (tcIn as any).function?.name)
-      return { type: "function", function: { name: (tcIn as any).function.name } }
+    if (tcIn.type === "function" && tcIn.function?.name)
+      return { type: "function", function: { name: tcIn.function.name } }
     return undefined
   })()
 
@@ -306,11 +317,12 @@ export function toOpenaiRequest(body: CommonRequest) {
     stream: !!body.stream,
     tools,
     tool_choice,
-    include: Array.isArray((body as any).include) ? (body as any).include : undefined,
-    truncation: (body as any).truncation,
-    metadata: (body as any).metadata,
-    store: (body as any).store,
-    user: (body as any).user,
+    // Pass-through fields that CommonRequest does not declare: read them only when present.
+    include: "include" in body && Array.isArray(body.include) ? body.include : undefined,
+    truncation: "truncation" in body ? body.truncation : undefined,
+    metadata: "metadata" in body ? body.metadata : undefined,
+    store: "store" in body ? body.store : undefined,
+    user: "user" in body ? body.user : undefined,
     text: { verbosity: body.model === "gpt-5-codex" ? "medium" : "low" },
     reasoning: { effort: "medium" },
   }
@@ -356,7 +368,7 @@ export function fromOpenaiResponse(resp: any): CommonResponse {
 
   const u = r.usage ?? resp.usage
   const usage = (() => {
-    if (!u) return undefined as any
+    if (!u) return undefined
     const pt = typeof u.input_tokens === "number" ? u.input_tokens : undefined
     const ct = typeof u.output_tokens === "number" ? u.output_tokens : undefined
     const total = pt != null && ct != null ? pt + ct : undefined
@@ -392,9 +404,9 @@ export function fromOpenaiResponse(resp: any): CommonResponse {
 
 export function toOpenaiResponse(resp: CommonResponse) {
   if (!resp || typeof resp !== "object") return resp
-  if (!Array.isArray((resp as any).choices)) return resp
+  if (!Array.isArray(resp.choices)) return resp
 
-  const choice = (resp as any).choices[0]
+  const choice = resp.choices[0]
   if (!choice) return resp
 
   const msg = choice.message
@@ -436,7 +448,7 @@ export function toOpenaiResponse(resp: CommonResponse) {
   })()
 
   const usage = (() => {
-    const u = (resp as any).usage
+    const u = resp.usage
     if (!u) return undefined
     return {
       input_tokens: u.prompt_tokens,
@@ -449,9 +461,9 @@ export function toOpenaiResponse(resp: CommonResponse) {
   })()
 
   return {
-    id: (resp as any).id?.replace(/^chatcmpl_/, "resp_") ?? `resp_${Math.random().toString(36).slice(2)}`,
+    id: resp.id?.replace(/^chatcmpl_/, "resp_") ?? `resp_${Math.random().toString(36).slice(2)}`,
     object: "response",
-    model: (resp as any).model,
+    model: resp.model,
     output: outputItems,
     stop_reason,
     usage,
