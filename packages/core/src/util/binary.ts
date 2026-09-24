@@ -19,7 +19,8 @@ export namespace Binary {
     return { found: false, index: left }
   }
 
-  export function insert<T>(array: T[], item: T, compare: (item: T) => string): T[] {
+  /** Returns a new sorted array with `item` inserted; the input array is not changed. */
+  export function insert<T>(array: ReadonlyArray<T>, item: T, compare: (item: T) => string): T[] {
     const id = compare(item)
     let left = 0
     let right = array.length
@@ -35,7 +36,6 @@ export namespace Binary {
       }
     }
 
-    array.splice(left, 0, item)
-    return array
+    return [...array.slice(0, left), item, ...array.slice(left)]
   }
 }
