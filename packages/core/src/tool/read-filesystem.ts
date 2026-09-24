@@ -150,14 +150,13 @@ const binary = (resource: string, bytes: Uint8Array) => {
   }
   return nonPrintable / bytes.length > 0.3
 }
+// A fatal TextDecoder reports malformed UTF-8 with a TypeError; any other throw stays a defect.
 const decodeUtf8 = (resource: string, decoder: TextDecoder, bytes?: Uint8Array) =>
-  Effect.try({
-    try: () => decoder.decode(bytes, { stream: bytes !== undefined }),
-    catch: (error) => {
-      if (error instanceof TypeError) return new MalformedUtf8Error({ resource })
-      throw error
-    },
-  })
+  Effect.sync(() => decoder.decode(bytes, { stream: bytes !== undefined })).pipe(
+    Effect.catchDefect((defect) =>
+      defect instanceof TypeError ? Effect.fail(new MalformedUtf8Error({ resource })) : Effect.die(defect),
+    ),
+  )
 const decodeChunk = (resource: string, decoder: TextDecoder, bytes: Uint8Array) =>
   bytes.includes(0) ? Effect.fail(new BinaryFileError({ resource })) : decodeUtf8(resource, decoder, bytes)
 

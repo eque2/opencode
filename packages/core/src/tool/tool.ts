@@ -33,6 +33,10 @@ export class RegistrationError extends Schema.TaggedError<RegistrationError>()("
   message: Schema.String,
 }) {}
 
+export class InvalidToolError extends Schema.TaggedError<InvalidToolError>()("Tool.InvalidToolError", {
+  message: Schema.String,
+}) {}
+
 export type Content =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "file"; readonly data: string; readonly mime: string; readonly name?: string }
@@ -135,24 +139,34 @@ export const validateName = (name: string) =>
     ? Effect.void
     : Effect.fail(new RegistrationError({ name, message: `Invalid tool name: ${name}` }))
 
+/**
+ * Decorates a tool with a catalog permission action. A value that `make` did
+ * not create gets no runtime, so its later definition or settlement dies with
+ * InvalidToolError.
+ */
 export const withPermission = <Input extends SchemaType<any>, Output extends SchemaType<any>>(
   tool: Definition<Input, Output>,
   permission: string,
 ) => {
   const decorated = Object.freeze({}) as Definition<Input, Output>
-  runtimes.set(decorated, { ...runtimeOf(tool), permission })
+  const runtime = runtimes.get(tool)
+  if (runtime) runtimes.set(decorated, { ...runtime, permission })
   return decorated
 }
 
-export const permission = (tool: AnyTool, name: string) => runtimeOf(tool).permission ?? name
-export const definition = (name: string, tool: AnyTool) => runtimeOf(tool).definition(name)
-export const settle = (tool: AnyTool, call: ToolCall, context: Context) => runtimeOf(tool).settle(call, context)
+export const permission = (tool: AnyTool, name: string) =>
+  Effect.map(runtimeOf(tool), (runtime) => runtime.permission ?? name)
+export const definition = (name: string, tool: AnyTool) =>
+  Effect.map(runtimeOf(tool), (runtime) => runtime.definition(name))
+export const settle = (tool: AnyTool, call: ToolCall, context: Context) =>
+  Effect.flatMap(runtimeOf(tool), (runtime) => runtime.settle(call, context))
 
-function runtimeOf(tool: AnyTool) {
-  const runtime = runtimes.get(tool)
-  if (!runtime) throw new TypeError("Invalid Core Tool value")
-  return runtime
-}
+/** A value that `make` did not create is a caller defect, so it dies instead of failing. */
+const runtimeOf = (tool: AnyTool) =>
+  Option.match(Option.fromUndefinedOr(runtimes.get(tool)), {
+    onNone: () => Effect.die(new InvalidToolError({ message: "Invalid Core Tool value" })),
+    onSome: (runtime) => Effect.succeed(runtime),
+  })
 
 function toJsonSchema(schema: Schema.Top): JsonSchema.JsonSchema {
   const document = Schema.toJsonSchemaDocument(schema)

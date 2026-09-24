@@ -117,13 +117,12 @@ const registryLayer = Layer.effect(
           const latest = Array.last(entries)
           if (Option.isSome(latest)) MutableHashMap.set(registrations, name, latest.value.registration)
         }
-        const visible = Array.filter(
-          Array.fromIterable(registrations),
-          ([name, registration]) => !whollyDisabled(permission(registration.tool, name), permissions),
+        const visible = yield* Effect.filter(Array.fromIterable(registrations), ([name, registration]) =>
+          Effect.map(permission(registration.tool, name), (action) => !whollyDisabled(action, permissions)),
         )
         const advertised = MutableHashMap.fromIterable(visible)
         return {
-          definitions: Array.map(visible, ([name, registration]) => definition(name, registration.tool)),
+          definitions: yield* Effect.forEach(visible, ([name, registration]) => definition(name, registration.tool)),
           settle: (input) => {
             const registration = MutableHashMap.get(advertised, input.call.name)
             if (Option.isSome(registration)) return settleWith(input, registration.value.identity)
