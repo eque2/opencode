@@ -2,7 +2,7 @@ export * as Git from "./git"
 
 import path from "path"
 import { randomUUID } from "crypto"
-import { Context, Effect, Layer, Schema, Stream } from "effect"
+import { Array, Context, Effect, HashSet, Layer, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { AbsolutePath, RelativePath } from "./schema"
 import { FSUtil } from "./fs-util"
@@ -443,18 +443,18 @@ const layer = Layer.effect(
         ],
         { concurrency: 2 },
       )
-      const candidates = Array.from(new Set([...tracked, ...untracked]))
+      const candidates = Array.dedupe([...tracked, ...untracked])
       if (!candidates.length) return { skipped: [] }
       const ignored = input.ignores
-        ? new Set(
+        ? HashSet.fromIterable(
             (yield* repositoryOperation("refresh", input.ignores, ["check-ignore", "--no-index", "--stdin", "-z"], {
               stdin: candidates.join("\0") + "\0",
             }).pipe(Effect.catch(() => Effect.succeed({ text: "", stderr: "" })))).text
               .split("\0")
               .filter(Boolean),
           )
-        : new Set<string>()
-      const allowed = candidates.filter((item) => !ignored.has(item))
+        : HashSet.empty<string>()
+      const allowed = candidates.filter((item) => !HashSet.has(ignored, item))
       const maximum = input.maximumUntrackedFileBytes
       const skipped = maximum
         ? (yield* Effect.forEach(
@@ -680,7 +680,7 @@ const layer = Layer.effect(
                 from: input.current,
                 to: target,
                 context: input.context,
-                paths: Array.from(input.files.keys()),
+                paths: Array.fromIterable(input.files.keys()),
               })
             }).pipe(Effect.ensuring(fs.remove(index).pipe(Effect.catch(() => Effect.void))))
           }),

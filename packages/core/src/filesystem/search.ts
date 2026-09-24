@@ -2,7 +2,7 @@ export * as FileSystemSearch from "./search"
 
 import { makeLocationNode } from "../effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, MutableHashSet, Scope } from "effect"
 import { Fff } from "#fff"
 import fuzzysort from "fuzzysort"
 import { Entry, Match } from "@opencode-ai/schema/filesystem"
@@ -32,7 +32,7 @@ export const ripgrepLayer = Layer.effect(
       files: [] as string[],
       directories: [] as string[],
     }
-    const directories = new Set<string>()
+    const directories = MutableHashSet.empty<string>()
     yield* ripgrep
       .find({
         cwd: location.directory,
@@ -42,7 +42,9 @@ export const ripgrepLayer = Layer.effect(
           Effect.sync(() => {
             state.files.push(entry.path)
             const parts = entry.path.split("/")
-            parts.slice(0, -1).forEach((_, index) => directories.add(parts.slice(0, index + 1).join("/") + path.sep))
+            parts
+              .slice(0, -1)
+              .forEach((_, index) => MutableHashSet.add(directories, parts.slice(0, index + 1).join("/") + path.sep))
             state.directories = Array.from(directories)
           }),
       })
