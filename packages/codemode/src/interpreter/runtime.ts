@@ -1761,13 +1761,13 @@ class Interpreter<R> {
       let result: unknown
       switch (operator) {
         case "+":
-          result = +(operand as number)
+          result = Number(operand)
           break
         case "-":
-          result = -(operand as number)
+          result = -Number(operand)
           break
         case "~":
-          result = ~(operand as number)
+          result = ~Number(operand)
           break
         default:
           throw new InterpreterRuntimeError(`Unsupported unary operator '${operator}'.`, node)
@@ -3038,7 +3038,7 @@ class Interpreter<R> {
       if (objectValue instanceof SandboxPromise) {
         if (key === "then" || key === "catch" || key === "finally") {
           throw new InterpreterRuntimeError(
-            `Promise.prototype.${String(key)} is not supported in CodeMode; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
+            `Promise.prototype.${key} is not supported in CodeMode; use await instead (with try/catch to handle failures) - e.g. \`const result = await tools.ns.tool(...)\`.`,
             propertyNode,
             "UnsupportedSyntax",
             [supportedSyntaxMessage],
