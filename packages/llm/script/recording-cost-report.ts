@@ -216,7 +216,8 @@ const rowFor = (models: JsonRecord, file: string, cassette: unknown): Row | unde
 const money = (value: number) => (value === 0 ? "$0.000000" : `$${value.toFixed(6)}`)
 const tokens = (value: number) => value.toLocaleString("en-US")
 
-const models = (await (await fetch(MODELS_DEV_URL)).json()) as JsonRecord
+const modelsJson: unknown = await (await fetch(MODELS_DEV_URL)).json()
+const models: JsonRecord = isRecord(modelsJson) ? modelsJson : {}
 const rows = (
   await Promise.all(
     (await walk(RECORDINGS_DIR))

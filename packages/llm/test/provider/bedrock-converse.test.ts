@@ -632,7 +632,7 @@ describe("Bedrock Converse route", () => {
   it.effect("drops cachePoint markers past the 4-per-request cap", () =>
     Effect.gen(function* () {
       const cache = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<BedrockConverse.BedrockConverseBody>(
         LLM.request({
           model,
           system: [
@@ -647,7 +647,7 @@ describe("Bedrock Converse route", () => {
         }),
       )
 
-      const system = (prepared.body as { system: Array<{ cachePoint?: unknown }> }).system
+      const system = prepared.body.system ?? []
       expect(system.filter((part) => "cachePoint" in part)).toHaveLength(4)
     }),
   )
