@@ -19,7 +19,7 @@ import {
   type ParseResult,
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
-import { Effect, Schema } from "effect"
+import { DateTime, Effect, Schema } from "effect"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler, ResponsesCallError } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema, ContainerID } from "./tool/code-interpreter"
@@ -826,7 +826,7 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
     request: { body },
     response: {
       id: response.id,
-      timestamp: new Date(response.created_at * 1000),
+      timestamp: DateTime.toDateUtc(DateTime.fromEpochSeconds(response.created_at)),
       modelId: response.model,
       headers: responseHeaders,
       body: rawResponse,
@@ -1267,7 +1267,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
             controller.enqueue({
               type: "response-metadata",
               id: value.response.id,
-              timestamp: new Date(value.response.created_at * 1000),
+              timestamp: DateTime.toDateUtc(DateTime.fromEpochSeconds(value.response.created_at)),
               modelId: value.response.model,
             })
           } else if (isTextDeltaChunk(value)) {
