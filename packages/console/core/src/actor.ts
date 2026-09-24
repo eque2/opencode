@@ -35,6 +35,16 @@ export namespace Actor {
 
   export type Info = Account | Public | User | System
 
+  type Properties = { [I in Info as I["type"]]: I["properties"] }
+
+  // Indexed by a generic actor type, this mapped type keeps the type and its properties correlated.
+  const build: { [K in keyof Properties]: (properties: Properties[K]) => Info } = {
+    account: (properties) => ({ type: "account", properties }),
+    public: (properties) => ({ type: "public", properties }),
+    user: (properties) => ({ type: "user", properties }),
+    system: (properties) => ({ type: "system", properties }),
+  }
+
   const ctx = Context.create<Info>()
   export const use = ctx.use
 
@@ -42,14 +52,11 @@ export namespace Actor {
 
   export function provide<R, T extends Info["type"]>(
     type: T,
-    properties: Extract<Info, { type: T }>["properties"],
+    properties: Properties[T],
     cb: () => R,
   ) {
     return ctx.provide(
-      {
-        type,
-        properties,
-      } as any,
+      build[type](properties),
       () => {
         return Log.provide({ ...properties }, () => {
           log.info("provided")
@@ -59,12 +66,16 @@ export namespace Actor {
     )
   }
 
+  function isType<T extends Info["type"]>(actor: Info, type: T): actor is Extract<Info, { type: T }> {
+    return actor.type === type
+  }
+
   export function assert<T extends Info["type"]>(type: T) {
     const actor = use()
-    if (actor.type !== type) {
+    if (!isType(actor, type)) {
       throw new Error(`Expected actor type ${type}, got ${actor.type}`)
     }
-    return actor as Extract<Info, { type: T }>
+    return actor
   }
 
   export const assertAdmin = () => {
