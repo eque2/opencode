@@ -1,4 +1,5 @@
 import os from "os"
+import type { OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible"
 import { InstallationVersion } from "../../installation/version"
 import { Config, Effect, Option, Predicate, Redacted } from "effect"
 import { define } from "../internal"
@@ -38,16 +39,13 @@ export const CloudflareWorkersAIPlugin = define({
         const env = yield* readEnvSnapshot(WorkersEnv)
         const accountId = resolveAccountId(evt.options, env)
         if (!hasWorkersEndpoint(evt.model.api) && Option.isNone(accountId)) return
-        const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
-        evt.sdk = mod.createOpenAICompatible(
-          sdkOptions(
-            {
-              ...evt.options,
-              baseURL: evt.options.baseURL ?? Option.getOrUndefined(Option.map(accountId, workersEndpoint)),
-            },
-            env,
-          ) as any,
+        const baseURL = stringOption(evt.options, "baseURL").pipe(
+          Option.orElse(() => Option.map(accountId, workersEndpoint)),
         )
+        // The OpenAI-compatible SDK requires a baseURL; without one it has no endpoint to call.
+        if (Option.isNone(baseURL)) return
+        const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
+        evt.sdk = mod.createOpenAICompatible(sdkOptions(evt.options, baseURL.value, env))
       }),
     )
     yield* ctx.aisdk.language(
@@ -76,11 +74,16 @@ function hasWorkersEndpoint(api: { readonly type: string; readonly url?: string 
   return api.type === "aisdk" && Boolean(api.url)
 }
 
-function sdkOptions(options: Record<string, any>, env: WorkersEnv) {
+function sdkOptions(options: Record<string, any>, baseURL: string, env: WorkersEnv): OpenAICompatibleProviderSettings {
+  const apiKey = env.apiKey.pipe(
+    Option.map(Redacted.value),
+    Option.orElse(() => stringOption(options, "apiKey")),
+  )
   return {
     ...options,
-    baseURL: expandAccountId(options.baseURL, env),
-    apiKey: Option.getOrElse(Option.map(env.apiKey, Redacted.value), () => options.apiKey),
+    baseURL: expandAccountId(baseURL, env),
+    // OpenAICompatibleProviderSettings.apiKey is string | undefined.
+    apiKey: Option.getOrUndefined(apiKey),
     headers: {
       "User-Agent": `opencode/${InstallationVersion} cloudflare-workers-ai (${os.platform()} ${os.release()}; ${os.arch()})`,
       ...options.headers,
@@ -89,8 +92,7 @@ function sdkOptions(options: Record<string, any>, env: WorkersEnv) {
   }
 }
 
-function expandAccountId(baseURL: unknown, env: WorkersEnv) {
-  if (typeof baseURL !== "string") return baseURL
+function expandAccountId(baseURL: string, env: WorkersEnv) {
   return baseURL.replaceAll(
     "${CLOUDFLARE_ACCOUNT_ID}",
     Option.getOrElse(env.accountId, () => "${CLOUDFLARE_ACCOUNT_ID}"),

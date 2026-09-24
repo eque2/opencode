@@ -1,4 +1,5 @@
 import os from "os"
+import type { AiGatewayOptions } from "ai-gateway-provider"
 import { InstallationVersion } from "../../installation/version"
 import { Config, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { define } from "../internal"
@@ -26,7 +27,7 @@ export const CloudflareAIGatewayPlugin = define({
           gateway: gatewayId,
           apiKey,
           options: gatewayOptions(evt.options, metadata),
-        } as any)
+        })
         evt.sdk = {
           languageModel(modelID: string) {
             // Workers AI is the only first-party provider whose upstream is Cloudflare itself, so it is
@@ -59,7 +60,19 @@ const GatewayEnv = Config.all({
 
 type GatewayEnv = Config.Success<typeof GatewayEnv>
 
-const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+// AiGatewayOptions.metadata: a flat record of primitive values, sent as the cf-aig-metadata header.
+const GatewayMetadata = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
+).annotate({ identifier: "CloudflareAIGateway.Metadata" })
+
+type GatewayMetadata = typeof GatewayMetadata.Type
+
+const decodeMetadata = Schema.decodeUnknownOption(GatewayMetadata)
+const decodeMetadataJson = Schema.decodeUnknownOption(Schema.fromJsonString(GatewayMetadata))
+
+// The gateway ignores the headers key today; it is kept so the User-Agent stays in the options.
+type GatewayOptions = AiGatewayOptions & { readonly headers: Record<string, string> }
 
 function gatewayConfig(options: Record<string, unknown>, env: GatewayEnv): Option.Option<GatewayConfig> {
   const accountId = env.accountId.pipe(Option.orElse(() => stringOption(options, "accountId")))
@@ -80,26 +93,23 @@ function gatewayConfig(options: Record<string, unknown>, env: GatewayEnv): Optio
   )
 }
 
-function gatewayMetadata(options: Record<string, unknown>) {
+function gatewayMetadata(options: Record<string, unknown>): Option.Option<GatewayMetadata> {
   // Preserve the legacy cf-aig-metadata header escape hatch for gateway logging
   // metadata, but prefer the typed metadata option when present.
-  if (options.metadata !== undefined) return options.metadata
-  return Option.getOrUndefined(headerMetadata(options.headers))
-}
-
-function headerMetadata(headers: unknown): Option.Option<unknown> {
+  if (options.metadata !== undefined) return decodeMetadata(options.metadata)
+  const headers = options.headers
   if (!Predicate.hasProperty(headers, "cf-aig-metadata")) return Option.none()
-  const raw = headers["cf-aig-metadata"]
-  return raw ? decodeJson(raw) : Option.none()
+  return decodeMetadataJson(headers["cf-aig-metadata"])
 }
 
-function gatewayOptions(options: Record<string, unknown>, metadata: unknown) {
+function gatewayOptions(options: Record<string, unknown>, metadata: Option.Option<GatewayMetadata>): GatewayOptions {
+  // Each option keeps the type that AiGatewayOptions declares; an absent or mistyped value is left out.
   return {
-    metadata,
-    cacheTtl: options.cacheTtl,
-    cacheKey: options.cacheKey,
-    skipCache: options.skipCache,
-    collectLog: options.collectLog,
+    ...Option.match(metadata, { onNone: () => ({}), onSome: (metadata) => ({ metadata }) }),
+    ...(Predicate.isNumber(options.cacheTtl) ? { cacheTtl: options.cacheTtl } : {}),
+    ...(Predicate.isString(options.cacheKey) ? { cacheKey: options.cacheKey } : {}),
+    ...(Predicate.isBoolean(options.skipCache) ? { skipCache: options.skipCache } : {}),
+    ...(Predicate.isBoolean(options.collectLog) ? { collectLog: options.collectLog } : {}),
     headers: {
       "User-Agent": `opencode/${InstallationVersion} cloudflare-ai-gateway (${os.platform()} ${os.release()}; ${os.arch()})`,
     },
