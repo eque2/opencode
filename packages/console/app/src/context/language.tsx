@@ -35,7 +35,7 @@ function initial() {
   return detectFromLanguages(languages)
 }
 
-export const { use: useLanguage, provider: LanguageProvider } = createSimpleContext({
+const context = createSimpleContext({
   name: "Language",
   init: () => {
     const [store, setStore] = createStore({
@@ -70,3 +70,6 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
     }
   },
 })
+
+export const useLanguage = () => context.use()
+export const LanguageProvider = context.provider

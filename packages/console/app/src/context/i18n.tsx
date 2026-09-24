@@ -12,16 +12,17 @@ function resolve(text: string, params?: Record<string, string | number>) {
   })
 }
 
-export const { use: useI18n, provider: I18nProvider } = createSimpleContext({
+const context = createSimpleContext({
   name: "I18n",
   init: () => {
     const language = useLanguage()
     const dict = createMemo(() => i18n(language.locale()))
 
     return {
-      t(key: Key, params?: Record<string, string | number>) {
-        return resolve(dict()[key], params)
-      },
+      t: (key: Key, params?: Record<string, string | number>) => resolve(dict()[key], params),
     }
   },
 })
+
+export const useI18n = () => context.use()
+export const I18nProvider = context.provider
