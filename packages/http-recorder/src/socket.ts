@@ -2,7 +2,7 @@ import { NodeFileSystem } from "@effect/platform-node"
 import { Deferred, Effect, Exit, Layer, Ref, Scope, Semaphore } from "effect"
 import { Socket } from "effect/unstable/socket"
 import * as CassetteService from "./cassette.js"
-import { canonicalizeJson, decodeJson, safeText } from "./matching.js"
+import { canonicalizeJson, decodeJson, encodeJson, safeText } from "./matching.js"
 import { makeReplayState, resolveAutoMode } from "./recorder.js"
 import { make, type Redactor } from "./redactor.js"
 import { webSocketInteractions } from "./schema.js"
@@ -49,9 +49,9 @@ const redactEvent = (event: WebSocketEvent, redactor: Redactor): WebSocketEvent 
 }
 
 const comparable = (event: WebSocketEvent, asJson: boolean) => {
-  if (!asJson || event.kind === "binary") return JSON.stringify(canonicalizeJson(event))
+  if (!asJson || event.kind === "binary") return encodeJson(canonicalizeJson(event))
   const decoded = decodeJson(event.body)
-  return JSON.stringify(
+  return encodeJson(
     canonicalizeJson({
       ...event,
       body: decoded._tag === "None" ? event.body : canonicalizeJson(decoded.value),
@@ -218,7 +218,7 @@ const makeReplaySocket = (
               const incoming = openSnapshot(request, redactor)
               if (
                 interaction &&
-                JSON.stringify(canonicalizeJson(incoming)) === JSON.stringify(canonicalizeJson(interaction.open))
+                encodeJson(canonicalizeJson(incoming)) === encodeJson(canonicalizeJson(interaction.open))
               )
                 return
               throw new Error(

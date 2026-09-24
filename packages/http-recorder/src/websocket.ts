@@ -1,7 +1,7 @@
 import { Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
 import type { Headers } from "effect/unstable/http"
 import * as CassetteService from "./cassette.js"
-import { canonicalizeJson, decodeJson, safeText } from "./matching.js"
+import { canonicalizeJson, decodeJson, encodeJson, safeText } from "./matching.js"
 import { makeReplayState, resolveAutoMode } from "./recorder.js"
 import type { RecordReplayMode } from "./internal-effect.js"
 import { make, type Redactor } from "./redactor.js"
@@ -55,8 +55,8 @@ const assertClientEvent = (actual: string, expected: WebSocketEvent | undefined,
     const matches =
       expected?.direction === "client" &&
       expected.kind === "text" &&
-      JSON.stringify(asJson ? jsonOrText(actual) : actual) ===
-        JSON.stringify(asJson ? jsonOrText(expected.body) : expected.body)
+      encodeJson(asJson ? jsonOrText(actual) : actual) ===
+        encodeJson(asJson ? jsonOrText(expected.body) : expected.body)
     if (matches) return
     throw new Error(`WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`)
   })
@@ -143,7 +143,7 @@ export const makeWebSocketExecutor = <E>(
             .claim((interaction, index) =>
               Effect.sync(() => {
                 const incoming = canonicalizeJson(openSnapshot(request))
-                if (interaction && JSON.stringify(incoming) === JSON.stringify(canonicalizeJson(interaction.open)))
+                if (interaction && encodeJson(incoming) === encodeJson(canonicalizeJson(interaction.open)))
                   return
                 throw new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`)
               }),

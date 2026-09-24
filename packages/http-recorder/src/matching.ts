@@ -4,6 +4,8 @@ import type { HttpInteraction, RequestMatcher, RequestSnapshot } from "./types.j
 
 const JsonValue = Schema.fromJsonString(Schema.Unknown)
 export const decodeJson = Schema.decodeUnknownOption(JsonValue)
+export const encodeJson = Schema.encodeSync(JsonValue)
+const encodeJsonOption = Schema.encodeUnknownOption(JsonValue)
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
@@ -23,7 +25,7 @@ export const canonicalizeJson = (value: unknown): unknown => {
 export type { RequestMatcher } from "./types.js"
 
 export const canonicalSnapshot = (snapshot: RequestSnapshot): string =>
-  JSON.stringify({
+  encodeJson({
     method: snapshot.method,
     url: snapshot.url,
     headers: canonicalizeJson(snapshot.headers),
@@ -38,10 +40,11 @@ export const defaultMatcher: RequestMatcher = (incoming, recorded) =>
 
 export const safeText = (value: unknown) => {
   if (value === undefined) return "undefined"
-  if (secretFindings(value).length > 0) return JSON.stringify(REDACTED)
-  const text = JSON.stringify(value)
-  if (!text) return typeof value
-  return text.length > 300 ? `${text.slice(0, 300)}...` : text
+  if (secretFindings(value).length > 0) return encodeJson(REDACTED)
+  return Option.match(encodeJsonOption(value), {
+    onNone: () => typeof value,
+    onSome: (text) => (text.length > 300 ? `${text.slice(0, 300)}...` : text),
+  })
 }
 
 const jsonBody = (body: string) => Option.getOrUndefined(decodeJson(body))

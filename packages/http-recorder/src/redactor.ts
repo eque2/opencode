@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import { decodeJson } from "./matching.js"
+import { decodeJson, encodeJson } from "./matching.js"
 import { REDACTED, redactHeaders, redactUrl } from "./redaction.js"
 import type { RedactOptions, RequestSnapshot, ResponseSnapshot } from "./types.js"
 
@@ -57,7 +57,7 @@ export const body = (transform: (parsed: unknown) => unknown): Partial<Redactor>
     ...snapshot,
     body: Option.match(decodeJson(snapshot.body), {
       onNone: () => snapshot.body,
-      onSome: (parsed) => JSON.stringify(transform(parsed)),
+      onSome: (parsed) => encodeJson(transform(parsed)),
     }),
   }),
 })
@@ -96,7 +96,7 @@ const redactJsonFields = (value: unknown, fields: ReadonlySet<string>): unknown 
 const redactBody = (value: string, fields: ReadonlySet<string>, transform: ((body: string) => string) | undefined) => {
   const redacted = Option.match(decodeJson(value), {
     onNone: () => value,
-    onSome: (parsed) => JSON.stringify(redactJsonFields(parsed, fields)),
+    onSome: (parsed) => encodeJson(redactJsonFields(parsed, fields)),
   })
   return transform?.(redacted) ?? redacted
 }

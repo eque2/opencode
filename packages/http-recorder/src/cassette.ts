@@ -2,7 +2,7 @@ import { Context, Effect, FileSystem, Layer, Schema, Semaphore } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
-import { CassetteSchema, encodeCassette, type Cassette, type CassetteMetadata, type Interaction } from "./schema.js"
+import { CassetteSchema, type Cassette, type CassetteMetadata, type Interaction } from "./schema.js"
 
 const DEFAULT_RECORDINGS_DIR = path.resolve(process.cwd(), "test", "fixtures", "recordings")
 
@@ -62,7 +62,9 @@ const buildCassette = (
   interactions,
 })
 
-const formatCassette = (cassette: Cassette) => `${JSON.stringify(encodeCassette(cassette), null, 2)}\n`
+const encodeCassetteJson = Schema.encodeSync(Schema.fromJsonString(CassetteSchema, { space: 2 }))
+
+const formatCassette = (cassette: Cassette) => `${encodeCassetteJson(cassette)}\n`
 
 const parseCassette = Schema.decodeUnknownSync(Schema.fromJsonString(CassetteSchema))
 
