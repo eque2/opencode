@@ -3,7 +3,7 @@ export * as InstructionContext from "./instruction-context"
 import { Array, Effect, Layer, Option, Schema } from "effect"
 import { isAbsolute, join, relative, sep } from "path"
 import { FSUtil } from "./fs-util"
-import { Flag } from "./flag/flag"
+import { FlagConfig } from "./flag/flag"
 import { Global } from "./global"
 import { Location } from "./location"
 import { AbsolutePath } from "./schema"
@@ -43,10 +43,11 @@ const layer = Layer.effectDiscard(
       const fromProject = relative(stop, start)
       const insideProject =
         fromProject === "" || (fromProject !== ".." && !fromProject.startsWith(`..${sep}`) && !isAbsolute(fromProject))
+      const disableProjectConfig = yield* FlagConfig.OPENCODE_DISABLE_PROJECT_CONFIG
       // Array.dedupe keeps the first occurrence, like the insertion order of a Set.
       const discovered = Array.dedupe(
         yield* Effect.forEach(
-          Flag.OPENCODE_DISABLE_PROJECT_CONFIG || !insideProject
+          disableProjectConfig || !insideProject
             ? []
             : yield* fs.up({
                 targets: ["AGENTS.md"],
