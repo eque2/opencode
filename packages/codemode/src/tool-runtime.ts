@@ -1,4 +1,4 @@
-import { Cause, Clock, Data, Effect, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Data, Effect, HashSet, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -147,9 +147,9 @@ const runHost = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, Tool
     }),
   )
 
-const blockedMemberNames = new Set(["__proto__", "constructor", "prototype"])
+const blockedMemberNames = HashSet.make("__proto__", "constructor", "prototype")
 
-export const isBlockedMember = (name: string): boolean => blockedMemberNames.has(name)
+export const isBlockedMember = (name: string): boolean => HashSet.has(blockedMemberNames, name)
 
 /**
  * Validates and copies a value against the plain-data contract (depth, circularity, plain
@@ -167,13 +167,14 @@ export const isBlockedMember = (name: string): boolean => blockedMemberNames.has
  * Both modes reject un-awaited promises with an await-hinting diagnostic.
  */
 export const copyIn = (value: unknown, label: string, preserveSandboxValues = false): unknown =>
-  copyBounded(value, label, 0, new Set(), preserveSandboxValues)
+  copyBounded(value, label, 0, new WeakSet(), preserveSandboxValues)
 
 const copyBounded = (
   value: unknown,
   label: string,
   depth: number,
-  seen: Set<object>,
+  /** Identity guard over the objects on the current path; entries leave again on the way out. */
+  seen: WeakSet<object>,
   preserveSandboxValues: boolean,
 ): unknown => {
   if (depth > MAX_VALUE_DEPTH) {
@@ -511,14 +512,18 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   // next-cheapest line against the shared budget; a namespace whose next line does not
   // fit is done - the others keep going - so every namespace gets some representation
   // before any namespace gets everything.
-  const selections = ordered.map(([namespace, group]) => ({
-    namespace,
-    picked: new Set<ToolDescription>(),
-    queue: [...group].sort(
-      (left, right) =>
-        estimateTokens(catalogLine(left)) - estimateTokens(catalogLine(right)) || left.path.localeCompare(right.path),
-    ),
-  }))
+  const selections = ordered.map(([namespace, group]) => {
+    // Picked descriptions keep their identity: `includes` below matches the exact entries.
+    const picked: ReadonlyArray<ToolDescription> = []
+    return {
+      namespace,
+      picked,
+      queue: [...group].sort(
+        (left, right) =>
+          estimateTokens(catalogLine(left)) - estimateTokens(catalogLine(right)) || left.path.localeCompare(right.path),
+      ),
+    }
+  })
   let used = 0
   let active = selections.filter((selection) => selection.queue.length > 0)
   while (active.length > 0) {
@@ -528,16 +533,16 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
       const cost = estimateTokens(catalogLine(tool))
       if (used + cost > catalogBudget) continue
       selection.queue.shift()
-      selection.picked.add(tool)
+      selection.picked = Arr.append(selection.picked, tool)
       used += cost
       if (selection.queue.length > 0) stillActive.push(selection)
     }
     active = stillActive
   }
-  const shown = new Map<string, ReadonlySet<ToolDescription>>(
+  const shown = new Map<string, ReadonlyArray<ToolDescription>>(
     selections.map(({ namespace, picked }) => [namespace, picked]),
   )
-  const totalShown = selections.reduce((total, { picked }) => total + picked.size, 0)
+  const totalShown = selections.reduce((total, { picked }) => total + picked.length, 0)
   const complete = totalShown === described.length
 
   const empty = described.length === 0
@@ -623,13 +628,13 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
       // Annotate only when a namespace is not fully shown, so a comprehensive
       // namespace reads cleanly and a truncated one is unambiguous.
       const label =
-        picked.size === group.length
+        picked.length === group.length
           ? count
-          : picked.size === 0
+          : picked.length === 0
             ? `${count}, none shown`
-            : `${count}, ${picked.size} shown`
+            : `${count}, ${picked.length} shown`
       toolSection.push(`- ${namespace} (${label})`)
-      for (const tool of group) if (picked.has(tool)) toolSection.push(catalogLine(tool))
+      for (const tool of group) if (picked.includes(tool)) toolSection.push(catalogLine(tool))
     }
     if (!complete) {
       toolSection.push("", "Search returns complete callable signatures:", `- ${searchDescription.signature}`)
