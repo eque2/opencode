@@ -48,7 +48,7 @@ export class SyncServer extends DurableObject<Env> {
   fetch() {
     return Effect.runPromise(
       Effect.gen({ self: this }, function* () {
-        console.log("SyncServer subscribe")
+        yield* Effect.logInfo("SyncServer subscribe")
 
         const webSocketPair = new WebSocketPair()
         const [client, server] = Object.values(webSocketPair)
@@ -95,7 +95,7 @@ export class SyncServer extends DurableObject<Env> {
         )
         yield* Effect.tryPromise(() => this.ctx.storage.put(key, content))
         const clients = this.ctx.getWebSockets()
-        console.log("SyncServer publish", key, "to", clients.length, "subscribers")
+        yield* Effect.logInfo("SyncServer publish", key, "to", clients.length, "subscribers")
         for (const client of clients) {
           client.send(JSON.stringify({ key, content }))
         }
@@ -236,22 +236,26 @@ export default new Hono<{ Bindings: Env }>()
       }),
     ),
   )
-  .get("/share_poll", (c) => {
-    const upgradeHeader = c.req.header("Upgrade")
-    if (!upgradeHeader || upgradeHeader !== "websocket") {
-      return c.text("Error: Upgrade header is required", { status: 426 })
-    }
-    const id = c.req.query("id")
-    console.log("share_poll", id)
-    if (!id) return c.text("Error: Share ID is required", { status: 400 })
-    const stub = c.env.SYNC_SERVER.get(c.env.SYNC_SERVER.idFromName(id))
-    return stub.fetch(c.req.raw)
-  })
+  .get("/share_poll", (c) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const upgradeHeader = c.req.header("Upgrade")
+        if (!upgradeHeader || upgradeHeader !== "websocket") {
+          return c.text("Error: Upgrade header is required", { status: 426 })
+        }
+        const id = c.req.query("id")
+        yield* Effect.logInfo("share_poll", id)
+        if (!id) return c.text("Error: Share ID is required", { status: 400 })
+        const stub = c.env.SYNC_SERVER.get(c.env.SYNC_SERVER.idFromName(id))
+        return yield* Effect.tryPromise(() => stub.fetch(c.req.raw))
+      }),
+    ),
+  )
   .get("/share_data", (c) =>
     Effect.runPromise(
       Effect.gen(function* () {
         const id = c.req.query("id")
-        console.log("share_data", id)
+        yield* Effect.logInfo("share_data", id)
         if (!id) return c.text("Error: Share ID is required", { status: 400 })
         const stub = c.env.SYNC_SERVER.get(c.env.SYNC_SERVER.idFromName(id))
         const data = yield* Effect.tryPromise(() => stub.getData())
@@ -295,7 +299,7 @@ export default new Hono<{ Bindings: Env }>()
             }
           }
         }
-        console.log(JSON.stringify(body, null, 2))
+        yield* Effect.logInfo(JSON.stringify(body, null, 2))
         const challenge = body.challenge
         if (challenge) return c.json({ challenge })
 
@@ -329,7 +333,7 @@ export default new Hono<{ Bindings: Env }>()
         )
 
         if (!response.ok) {
-          console.error(yield* Effect.tryPromise(() => response.text()))
+          yield* Effect.logError(yield* Effect.tryPromise(() => response.text()))
           return c.json({ error: "Discord bot message failed" }, { status: 502 })
         }
 
@@ -364,7 +368,7 @@ export default new Hono<{ Bindings: Env }>()
         )
         if (Result.isFailure(verified)) {
           const err = verified.failure
-          console.error("Token verification failed:", err._tag === "GitHubError" ? err.cause : err)
+          yield* Effect.logError("Token verification failed:", err._tag === "GitHubError" ? err.cause : err)
           return c.json({ error: "Invalid or expired token" }, { status: 403 })
         }
         const repository = verified.success
@@ -387,15 +391,16 @@ export default new Hono<{ Bindings: Env }>()
           )
           return c.json({ token: installationAuth.token })
         }).pipe(
-          Effect.catch((error) => {
-            console.error("GitHub App token exchange failed:", error.cause)
-            return Effect.succeed(
-              c.json(
-                { error: `Failed to exchange GitHub App token for ${repository.owner}/${repository.repo}` },
-                { status: 502 },
+          Effect.catch((error) =>
+            Effect.logError("GitHub App token exchange failed:", error.cause).pipe(
+              Effect.as(
+                c.json(
+                  { error: `Failed to exchange GitHub App token for ${repository.owner}/${repository.repo}` },
+                  { status: 502 },
+                ),
               ),
-            )
-          }),
+            ),
+          ),
         )
       }),
     ),
