@@ -1,3 +1,5 @@
+import { DateTime } from "effect"
+
 const length = 26
 const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 let lastTimestamp = 0
@@ -11,7 +13,7 @@ export function descending() {
   return create(true)
 }
 
-export function create(descending: boolean, timestamp = Date.now()) {
+export function create(descending: boolean, timestamp = DateTime.toEpochMillis(DateTime.nowUnsafe())) {
   if (timestamp !== lastTimestamp) {
     lastTimestamp = timestamp
     counter = 0
