@@ -1,5 +1,5 @@
 import { parse } from "acorn"
-import { Cause, Effect, Exit, Fiber, Semaphore } from "effect"
+import { Cause, Effect, Exit, Fiber, Predicate, Semaphore } from "effect"
 import { DiagnosticCategory, ModuleKind, ScriptTarget, flattenDiagnosticMessageText, transpileModule } from "typescript"
 import {
   copyIn,
@@ -1959,12 +1959,22 @@ class Interpreter<R> {
   }
 
   private formatConsoleValue(value: unknown, seen: Set<object>, depth: number): string {
-    // Nested undefined renders as null, matching what JSON boundary output would show.
-    if (value === null || value === undefined) return "null"
-    if (typeof value === "string") return JSON.stringify(value)
-    // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
-    if (typeof value === "number" || typeof value === "boolean") return String(value)
-    if (typeof value !== "object") return String(value)
+    switch (typeof value) {
+      // Nested undefined renders as null, matching what JSON boundary output would show.
+      case "undefined":
+        return "null"
+      case "string":
+        return JSON.stringify(value)
+      // String(value) keeps NaN/Infinity/-Infinity readable; finite numbers match their JSON form.
+      case "number":
+      case "boolean":
+      case "bigint":
+      case "symbol":
+      case "function":
+        return String(value)
+    }
+    // Only objects remain here; a null object renders as null.
+    if (!Predicate.isObjectOrArray(value)) return "null"
     if (value instanceof SandboxPromise) return "[Promise (await it to get its value)]"
     if (value instanceof SandboxDate) return coerceToString(value)
     if (value instanceof SandboxRegExp) return coerceToString(value)
