@@ -36,10 +36,28 @@ export type StatementResult =
   | { kind: "break" }
   | { kind: "continue" }
 
-export type MemberReference = {
-  target: SafeObject | Array<unknown> | SandboxURL
-  key: string | number
-}
+// The URL properties a program may read (stdlib/url.ts `urlProperties`) and write
+// (`urlWritableProperties`: all but the read-only `origin`).
+export type UrlPropertyName =
+  | "href"
+  | "origin"
+  | "protocol"
+  | "username"
+  | "password"
+  | "host"
+  | "hostname"
+  | "port"
+  | "pathname"
+  | "search"
+  | "hash"
+
+export type WritableUrlPropertyName = Exclude<UrlPropertyName, "origin">
+
+// A resolved data field: an array slot or property, a data object property, or a URL component.
+export type MemberReference =
+  | { readonly kind: "array"; readonly target: Array<unknown>; readonly key: string | number }
+  | { readonly kind: "object"; readonly target: SafeObject; readonly key: string | number }
+  | { readonly kind: "url"; readonly target: SandboxURL; readonly key: UrlPropertyName }
 
 // One lexical scope, keyed by binding name. It is mutable in place: closures capture scope
 // objects by reference, so a later declaration or assignment must be visible to every capture.

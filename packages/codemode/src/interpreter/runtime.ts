@@ -66,6 +66,8 @@ import {
   type ProgramNode,
   type Scope,
   type StatementResult,
+  type UrlPropertyName,
+  type WritableUrlPropertyName,
   sourceLocation,
   supportedSyntaxMessage,
   unsupportedSyntax,
@@ -201,6 +203,16 @@ const toJsonValue = (value: unknown): Option.Option<Schema.Json> => {
   return Option.none()
 }
 
+const isJson = Schema.is(Schema.Json)
+
+/** A prototype-free record, so a program-visible key can never resolve through Object.prototype. */
+// eslint-disable-next-line effect/no-null-use-option -- Object.create(null) is the only platform API that builds a prototype-free object
+const makeSafeObject = (): SafeObject => Object.create(null)
+
+// A data object with a numeric `length` is array-like, as Array.from reads it.
+const isArrayLike = (value: unknown): value is ArrayLike<unknown> =>
+  Predicate.isObjectOrArray(value) && typeof value.length === "number"
+
 const publicErrorMessage = (message: string): string =>
   message.replace(/\/(?:Users|home|private|tmp|var\/folders)\/[^\s"'`]+/g, "<redacted-path>")
 
@@ -234,12 +246,8 @@ const normalizeError = (error: unknown): Diagnostic => {
       message = "a non-data value"
     } else if (typeof value === "string") {
       message = value
-    } else if (
-      value !== null &&
-      typeof value === "object" &&
-      typeof (value as { message?: unknown }).message === "string"
-    ) {
-      message = (value as { message: string }).message
+    } else if (Predicate.hasProperty(value, "message") && typeof value.message === "string") {
+      message = value.message
     } else {
       // copyOut rejects values that cannot cross the data boundary; those render with String().
       message = Result.getOrElse(
@@ -336,6 +344,29 @@ const containsContainer = (container: object, value: unknown, seen: WeakSet<obje
   seen.delete(value)
   return found
 }
+
+// Name guards over the stdlib allowlists: an allowed key indexes its host object with a
+// precise type instead of a cast.
+type MathConstantName = "PI" | "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "SQRT2" | "SQRT1_2"
+type NumberConstantName = "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "MAX_VALUE" | "MIN_VALUE" | "EPSILON"
+type RegExpPropertyName =
+  | "source"
+  | "flags"
+  | "lastIndex"
+  | "global"
+  | "ignoreCase"
+  | "multiline"
+  | "sticky"
+  | "unicode"
+  | "dotAll"
+const isMathConstant = (key: string): key is MathConstantName => mathConstants.has(key)
+const isNumberConstant = (key: string): key is NumberConstantName => numberConstants.has(key)
+const isRegExpProperty = (key: string): key is RegExpPropertyName => regexpProperties.has(key)
+const isUrlProperty = (key: string): key is UrlPropertyName => urlProperties.has(key)
+const isWritableUrlProperty = (key: UrlPropertyName): key is WritableUrlPropertyName => urlWritableProperties.has(key)
+// promiseStatics holds PromiseMethodName values; read as a set of strings it can test any key.
+const promiseStaticNames: ReadonlySet<string> = promiseStatics
+const isPromiseMethodName = (key: string): key is PromiseMethodName => promiseStaticNames.has(key)
 
 // Copies each named binding (as a fresh binding object) from one scope into another: a `for`
 // loop gives every iteration its own copies of the loop variables, then writes them back.
@@ -649,13 +680,7 @@ const invokeArrayStatic = (
         const source = boundedData(args[0], "Array.from input")
         if (typeof source === "string") return Array.from(source)
         if (Array.isArray(source)) return [...source]
-        if (
-          source !== null &&
-          typeof source === "object" &&
-          typeof (source as { length?: unknown }).length === "number"
-        ) {
-          return Array.from(source as ArrayLike<unknown>)
-        }
+        if (isArrayLike(source)) return Array.from(source)
         return yield* new InterpreterRuntimeError(
           "Array.from expects an array, string, Map, Set, or array-like value.",
           node,
@@ -1510,7 +1535,7 @@ class Interpreter<R> {
   }
 
   private declareObjectPattern(pattern: AstNode, value: unknown, mutable: boolean): Effect.Effect<void, unknown, R> {
-    if (value === null || typeof value !== "object" || Array.isArray(value) || isRuntimeReference(value)) {
+    if (!Predicate.isObject(value) || isRuntimeReference(value)) {
       return Effect.fail(
         new InterpreterRuntimeError("Object destructuring requires a data object value.", pattern, "InvalidDataValue"),
       )
@@ -1525,8 +1550,8 @@ class Interpreter<R> {
 
             // Object rest: `{ a, ...others }` - gather the not-yet-consumed own keys.
             if (property.type === "RestElement") {
-              const rest: SafeObject = Object.create(null) as SafeObject
-              for (const [key, item] of Object.entries(value as SafeObject)) {
+              const rest = makeSafeObject()
+              for (const [key, item] of Object.entries(value)) {
                 if (!HashSet.has(consumed, key) && !isBlockedMember(key)) rest[key] = item
               }
               return yield* this.declarePattern(yield* getNode(property, "argument"), rest, mutable, property)
@@ -1549,12 +1574,7 @@ class Interpreter<R> {
               return yield* new InterpreterRuntimeError(`Property '${key}' is not available in CodeMode.`, keyNode)
             }
             consumed = HashSet.add(consumed, key)
-            return yield* this.declarePattern(
-              yield* getNode(property, "value"),
-              (value as SafeObject)[key],
-              mutable,
-              property,
-            )
+            return yield* this.declarePattern(yield* getNode(property, "value"), value[key], mutable, property)
           }),
         { discard: true },
       ),
@@ -1698,9 +1718,12 @@ class Interpreter<R> {
       if (typeof arg === "string") return Effect.succeed(new SandboxDate(Date.parse(arg)))
       return Effect.succeed(new SandboxDate(Number.NaN))
     }
-    // new Date(year, month, day?, hours?, ...) - local-time component form.
-    const parts = args.map((arg) => coerceToNumber(arg))
-    return Effect.succeed(new SandboxDate(new Date(...(parts as [number, number])).getTime()))
+    // new Date(year, month, day?, hours?, ...) - local-time component form. Omitted components
+    // take the defaults the Date constructor uses (day 1, all time fields 0).
+    const [year, month, day = 1, hours = 0, minutes = 0, seconds = 0, milliseconds = 0] = args.map((arg) =>
+      coerceToNumber(arg),
+    )
+    return Effect.succeed(new SandboxDate(new Date(year, month, day, hours, minutes, seconds, milliseconds).getTime()))
   }
 
   private constructRegExp(args: Array<unknown>, node: AstNode): Effect.Effect<SandboxRegExp, InterpreterRuntimeError> {
@@ -1894,19 +1917,25 @@ class Interpreter<R> {
     const bothObjects = lhs !== null && typeof lhs === "object" && rhs !== null && typeof rhs === "object"
     const l = coerceOperand(lhs)
     const r = coerceOperand(rhs)
+    // After coercion both operands are primitives, so each operator applies the JS primitive
+    // semantics directly: `+` concatenates when either side is a string and adds otherwise, the
+    // other arithmetic and bitwise operators apply ToNumber, and relational operators compare
+    // two strings by code unit and anything else numerically.
     switch (operator) {
       case "+":
-        return Effect.succeed((l as string) + (r as string))
+        return Effect.succeed(
+          typeof l === "string" || typeof r === "string" ? String(l) + String(r) : Number(l) + Number(r),
+        )
       case "-":
-        return Effect.succeed((l as number) - (r as number))
+        return Effect.succeed(Number(l) - Number(r))
       case "*":
-        return Effect.succeed((l as number) * (r as number))
+        return Effect.succeed(Number(l) * Number(r))
       case "/":
-        return Effect.succeed((l as number) / (r as number))
+        return Effect.succeed(Number(l) / Number(r))
       case "%":
-        return Effect.succeed((l as number) % (r as number))
+        return Effect.succeed(Number(l) % Number(r))
       case "**":
-        return Effect.succeed((l as number) ** (r as number))
+        return Effect.succeed(Number(l) ** Number(r))
       // Two objects compare by identity in JS (no ToPrimitive); only object-vs-primitive coerces.
       case "==":
         return Effect.succeed(bothObjects ? lhs === rhs : l == r)
@@ -1917,25 +1946,25 @@ class Interpreter<R> {
       case "!==":
         return Effect.succeed(lhs !== rhs)
       case "<":
-        return Effect.succeed((l as string) < (r as string))
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l < r : Number(l) < Number(r))
       case "<=":
-        return Effect.succeed((l as string) <= (r as string))
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l <= r : Number(l) <= Number(r))
       case ">":
-        return Effect.succeed((l as string) > (r as string))
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l > r : Number(l) > Number(r))
       case ">=":
-        return Effect.succeed((l as string) >= (r as string))
+        return Effect.succeed(typeof l === "string" && typeof r === "string" ? l >= r : Number(l) >= Number(r))
       case "&":
-        return Effect.succeed((l as number) & (r as number))
+        return Effect.succeed(Number(l) & Number(r))
       case "|":
-        return Effect.succeed((l as number) | (r as number))
+        return Effect.succeed(Number(l) | Number(r))
       case "^":
-        return Effect.succeed((l as number) ^ (r as number))
+        return Effect.succeed(Number(l) ^ Number(r))
       case "<<":
-        return Effect.succeed((l as number) << (r as number))
+        return Effect.succeed(Number(l) << Number(r))
       case ">>":
-        return Effect.succeed((l as number) >> (r as number))
+        return Effect.succeed(Number(l) >> Number(r))
       case ">>>":
-        return Effect.succeed((l as number) >>> (r as number))
+        return Effect.succeed(Number(l) >>> Number(r))
       case "in":
         if (rhs === null || typeof rhs !== "object") {
           return Effect.fail(
@@ -1943,7 +1972,7 @@ class Interpreter<R> {
           )
         }
         // Own properties only, so arrays don't leak the host Array.prototype (map/constructor/...).
-        return Effect.succeed(Object.hasOwn(rhs, coerceOperand(lhs) as PropertyKey))
+        return Effect.succeed(Object.hasOwn(rhs, String(coerceOperand(lhs))))
       default:
         return Effect.fail(new InterpreterRuntimeError(`Unsupported binary operator '${operator}'.`, node))
     }
@@ -2306,8 +2335,8 @@ class Interpreter<R> {
   }
 
   private consoleTableValues(value: unknown, columns: ReadonlyArray<string> | undefined): Record<string, unknown> {
-    if (value !== null && typeof value === "object" && !Array.isArray(value) && !isSandboxValue(value)) {
-      const source = value as Record<string, unknown>
+    if (Predicate.isObject(value) && !isSandboxValue(value)) {
+      const source = value
       if (columns !== undefined) return Object.fromEntries(columns.map((column) => [column, source[column]]))
       return Object.fromEntries(Object.entries(source))
     }
@@ -2393,9 +2422,7 @@ class Interpreter<R> {
         return Effect.forEach(observations, (observation) =>
           Effect.flatMap(observation, ({ exit, promise }): Effect.Effect<SafeObject, unknown> => {
             if (Exit.isSuccess(exit)) {
-              return Effect.succeed(
-                Object.assign(Object.create(null) as SafeObject, { status: "fulfilled", value: exit.value }),
-              )
+              return Effect.succeed(Object.assign(makeSafeObject(), { status: "fulfilled", value: exit.value }))
             }
             const raceInterrupted = promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)
             if (Cause.hasInterruptsOnly(exit.cause) && !raceInterrupted) {
@@ -2409,7 +2436,7 @@ class Interpreter<R> {
                 )
               : Cause.squash(exit.cause)
             return Effect.succeed(
-              Object.assign(Object.create(null) as SafeObject, {
+              Object.assign(makeSafeObject(), {
                 status: "rejected",
                 reason: caughtErrorValue(thrown),
               }),
@@ -2553,7 +2580,7 @@ class Interpreter<R> {
           return ""
         }
         if (hasGroups) {
-          const safeGroups: SafeObject = Object.create(null) as SafeObject
+          const safeGroups = makeSafeObject()
           for (const [key, group] of Object.entries(groups)) {
             if (!isBlockedMember(key)) safeGroups[key] = group
           }
@@ -2797,14 +2824,16 @@ class Interpreter<R> {
     return Effect.gen({ self: this }, function* () {
       switch (name) {
         case "join": {
-          if (args.length > 1 || (args.length === 1 && typeof args[0] !== "string")) {
+          const separator = args.length === 0 ? "," : args[0]
+          if (args.length > 1 || typeof separator !== "string") {
             return yield* new InterpreterRuntimeError(
               "Array.join expects zero arguments or one string separator.",
               node,
             )
           }
-          const input = boundedData(target, "Array.join input") as Array<unknown>
-          return input.map((item) => coerceToString(item ?? "")).join(args.length === 0 ? "," : (args[0] as string))
+          // The data checkpoint rejects opaque elements; the elements themselves render unchanged.
+          boundedData(target, "Array.join input")
+          return target.map((item) => coerceToString(item ?? "")).join(separator)
         }
         case "includes":
           if (args.length === 0 || args.length > 2)
@@ -3038,7 +3067,7 @@ class Interpreter<R> {
 
   private evaluateObjectExpression(node: AstNode): Effect.Effect<Record<string, unknown>, unknown, R> {
     return Effect.gen({ self: this }, function* () {
-      const objectValue: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+      const objectValue = makeSafeObject()
       const properties = yield* getArray(node, "properties")
       for (const propertyValue of properties) {
         const property = yield* asNode(propertyValue, "properties")
@@ -3208,8 +3237,8 @@ class Interpreter<R> {
       }
 
       if (objectValue instanceof PromiseNamespace) {
-        if (typeof key === "string" && promiseStatics.has(key as PromiseMethodName)) {
-          return new PromiseMethodReference(key as PromiseMethodName)
+        if (typeof key === "string" && isPromiseMethodName(key)) {
+          return new PromiseMethodReference(key)
         }
         return yield* new InterpreterRuntimeError(
           `Promise.${String(key)} is not available in CodeMode. Available: Promise.all, Promise.allSettled, Promise.race, Promise.resolve, and Promise.reject; consume promises with await.`,
@@ -3224,8 +3253,8 @@ class Interpreter<R> {
             propertyNode,
           )
         }
-        if (objectValue.name === "Math" && mathConstants.has(key)) {
-          return new ComputedValue((Math as unknown as Record<string, number>)[key])
+        if (objectValue.name === "Math" && isMathConstant(key)) {
+          return new ComputedValue(Math[key])
         }
         return new GlobalMethodReference(objectValue.name, key)
       }
@@ -3250,8 +3279,8 @@ class Interpreter<R> {
 
       // Number / String expose a small allowlist of statics; everything else stays opaque.
       if (objectValue instanceof CoercionFunction && typeof key === "string" && !isBlockedMember(key)) {
-        if (objectValue.name === "Number" && numberConstants.has(key)) {
-          return new ComputedValue((Number as unknown as Record<string, number>)[key])
+        if (objectValue.name === "Number" && isNumberConstant(key)) {
+          return new ComputedValue(Number[key])
         }
         if (objectValue.name === "Number" && numberStatics.has(key)) return new GlobalMethodReference("Number", key)
         if (objectValue.name === "String" && stringStatics.has(key)) return new GlobalMethodReference("String", key)
@@ -3264,8 +3293,8 @@ class Interpreter<R> {
         return new ComputedValue(undefined)
       }
       if (objectValue instanceof SandboxRegExp) {
-        if (typeof key === "string" && regexpProperties.has(key)) {
-          return new ComputedValue((objectValue.regex as unknown as Record<string, unknown>)[key])
+        if (typeof key === "string" && isRegExpProperty(key)) {
+          return new ComputedValue(objectValue.regex[key])
         }
         if (typeof key === "string" && regexpMethods.has(key)) return new IntrinsicReference(objectValue, key)
         return new ComputedValue(undefined)
@@ -3285,7 +3314,9 @@ class Interpreter<R> {
           return new ComputedValue(objectValue.searchParams)
         }
         if (typeof key === "string" && urlMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        if (typeof key === "string" && urlProperties.has(key)) return { target: objectValue, key }
+        if (typeof key === "string" && isUrlProperty(key)) {
+          return { kind: "url", target: objectValue, key } satisfies MemberReference
+        }
         return new ComputedValue(undefined)
       }
       if (objectValue instanceof SandboxURLSearchParams) {
@@ -3323,7 +3354,7 @@ class Interpreter<R> {
         )
       }
 
-      if (typeof objectValue !== "object" || objectValue === null) {
+      if (!Predicate.isObjectOrArray(objectValue)) {
         return yield* new InterpreterRuntimeError("Cannot access a property on a non-object value.", objectNode)
       }
 
@@ -3340,17 +3371,17 @@ class Interpreter<R> {
         ) {
           // Own non-index properties read through (match results carry index/groups); like JS,
           // they are readable in place and dropped by JSON at data boundaries.
-          if (typeof key === "string" && Object.hasOwn(objectValue, key)) {
-            return new ComputedValue((objectValue as Record<string, unknown> & Array<unknown>)[key])
+          if (typeof key === "string" && Object.hasOwn(objectValue, key) && Predicate.hasProperty(objectValue, key)) {
+            return new ComputedValue(objectValue[key])
           }
           // Unknown property on an array reads as `undefined`, matching JS (`[1,2].foo === undefined`),
           // instead of throwing - so defensive access under optional chaining behaves as expected.
           return new ComputedValue(undefined)
         }
-        return { target: objectValue, key }
+        return { kind: "array", target: objectValue, key } satisfies MemberReference
       }
 
-      return { target: objectValue as SafeObject, key }
+      return { kind: "object", target: objectValue, key } satisfies MemberReference
     })
   }
 
@@ -3366,15 +3397,13 @@ class Interpreter<R> {
         reference instanceof GlobalMethodReference
       )
         return reference
-      if (Array.isArray(reference.target)) {
+      if (reference.kind === "array") {
         if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
           return new IntrinsicReference(reference.target, reference.key)
         }
         return reference.key === "length" ? reference.target.length : reference.target[Number(reference.key)]
       }
-      if (reference.target instanceof SandboxURL) {
-        return (reference.target.url as unknown as Record<string, unknown>)[String(reference.key)]
-      }
+      if (reference.kind === "url") return reference.target.url[reference.key]
       return reference.target[String(reference.key)]
     })
   }
@@ -3403,20 +3432,21 @@ class Interpreter<R> {
       ) {
         return yield* new InterpreterRuntimeError("Only data fields may be assigned in CodeMode.", node)
       }
-      if (Array.isArray(reference.target)) {
+      if (reference.kind === "array") {
         if (reference.key === "length")
           return yield* new InterpreterRuntimeError("Array length cannot be assigned in CodeMode.", node)
         if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
           return yield* new InterpreterRuntimeError("Array methods cannot be assigned in CodeMode.", node)
         }
       }
-      const key = Array.isArray(reference.target) ? Number(reference.key) : String(reference.key)
       const current =
-        reference.target instanceof SandboxURL
-          ? (reference.target.url as unknown as Record<string, unknown>)[key]
-          : (reference.target as Record<PropertyKey, unknown>)[key]
+        reference.kind === "array"
+          ? reference.target[Number(reference.key)]
+          : reference.kind === "url"
+            ? reference.target.url[reference.key]
+            : reference.target[String(reference.key)]
       const { write, next, result } = yield* compute(current)
-      if (write) yield* this.assignToReference(reference, key, next, node)
+      if (write) yield* this.assignToReference(reference, next, node)
       return result
     })
   }
@@ -3434,16 +3464,11 @@ class Interpreter<R> {
       : Effect.void
   }
 
-  private assignToReference(
-    reference: MemberReference,
-    key: number | string,
-    next: unknown,
-    node: AstNode,
-  ): Effect.Effect<void, unknown> {
+  private assignToReference(reference: MemberReference, next: unknown, node: AstNode): Effect.Effect<void, unknown> {
     return Effect.gen({ self: this }, function* () {
-      if (Array.isArray(reference.target)) {
+      if (reference.kind === "array") {
         const target = reference.target
-        const index = key as number
+        const index = Number(reference.key)
         if (!Number.isInteger(index) || index < 0) {
           return yield* new InterpreterRuntimeError(
             "Array assignment index must be a non-negative integer.",
@@ -3455,12 +3480,12 @@ class Interpreter<R> {
           target[index] = next
         })
       }
-      if (reference.target instanceof SandboxURL) {
-        const property = key as string
-        if (!urlWritableProperties.has(property)) {
+      if (reference.kind === "url") {
+        const property = reference.key
+        if (!isWritableUrlProperty(property)) {
           return yield* new InterpreterRuntimeError(`URL.${property} is read-only.`, node).as("TypeError")
         }
-        const url = reference.target.url as unknown as Record<string, string>
+        const url = reference.target.url
         // An invalid value makes the host URL setter throw; an interpreter or tool-runtime error
         // raised while reading the value keeps its own diagnostic.
         return yield* Effect.try({
@@ -3474,7 +3499,7 @@ class Interpreter<R> {
         })
       }
       const target = reference.target
-      const objectKey = key as string
+      const objectKey = String(reference.key)
       return yield* Effect.map(this.rejectCircularInsertion(target, next, "Object assignment result", node), () => {
         target[objectKey] = next
       })
@@ -3620,7 +3645,9 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     const program = yield* parseProgram(options.code)
     const interpreter = new Interpreter<Services<Tools>>(tools.invoke, tools.keys, logs)
     const value = yield* interpreter.run(program)
-    const result = copyOut(copyIn(value, "Execution result"), true) as DataValue
+    const copied = copyOut(copyIn(value, "Execution result"), true)
+    // copyOut produces JSON data; only a sparse array (holes are not JSON) needs JSON's reading.
+    const result: DataValue = isJson(copied) ? copied : Option.getOrNull(toJsonValue(copied))
     return {
       ok: true,
       value: result,
