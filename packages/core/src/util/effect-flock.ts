@@ -1,7 +1,7 @@
 import path from "path"
 import os from "os"
 import { randomUUID } from "crypto"
-import { Context, Effect, Function, Layer, Option, Schedule, Schema } from "effect"
+import { Context, DateTime, Effect, Function, Layer, Option, Schedule, Schema } from "effect"
 import type { FileSystem, Scope } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FSUtil } from "../fs-util"
@@ -89,7 +89,8 @@ export namespace EffectFlock {
     return performance.timeOrigin + performance.now()
   }
 
-  const mtimeMs = (info: FileSystem.File.Info) => Option.getOrElse(info.mtime, () => new Date(0)).getTime()
+  const mtimeMs = (info: FileSystem.File.Info) =>
+    Option.match(info.mtime, { onNone: () => 0, onSome: (date) => date.getTime() })
 
   const isPathGone = (e: PlatformError) => e.reason._tag === "NotFound" || e.reason._tag === "Unknown"
 
@@ -205,7 +206,8 @@ export namespace EffectFlock {
           // We own the lock dir — write heartbeat + meta with exclusive create
           yield* exclusiveWrite(heartbeatPath, "", lockDir, "heartbeat already existed")
 
-          const metaJson = encodeMeta({ token, pid: process.pid, hostname, createdAt: new Date().toISOString() })
+          const createdAt = DateTime.formatIso(yield* DateTime.now)
+          const metaJson = encodeMeta({ token, pid: process.pid, hostname, createdAt })
           yield* exclusiveWrite(metaPath, metaJson, lockDir, "meta.json already existed")
 
           return { token, metaPath, heartbeatPath, lockDir } satisfies Handle
@@ -258,10 +260,13 @@ export namespace EffectFlock {
         // acquireRelease: acquire is uninterruptible, release is guaranteed
         const handle = yield* Effect.acquireRelease(acquireHandle(lockfile, key), (handle) => release(handle))
 
-        // Heartbeat fiber — scoped, so it's interrupted before release runs
-        yield* fs
-          .utimes(handle.heartbeatPath, new Date(), new Date())
-          .pipe(Effect.ignore, Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
+        // Heartbeat fiber — scoped, so it's interrupted before release runs.
+        // Each tick reads the clock, so the heartbeat mtime moves forward.
+        const touch = Effect.gen(function* () {
+          const now = DateTime.toDateUtc(yield* DateTime.now)
+          return yield* fs.utimes(handle.heartbeatPath, now, now)
+        })
+        yield* touch.pipe(Effect.ignore, Effect.repeat(Schedule.spaced(HEARTBEAT_MS)), Effect.forkScoped)
       })
 
       const withLock: Interface["withLock"] = Function.dual(
