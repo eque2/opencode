@@ -68,7 +68,8 @@ export type CssVarRef = `var(--${string})`
 
 export type ColorValue = HexColor | CssVarRef
 
-export type V2ColorValue = HexColor | CssVarRef | string
+// A hex color (HexColor), a CSS variable reference (CssVarRef), or any other CSS color string such as rgba().
+export type V2ColorValue = string
 
 export type ResolvedTheme = Record<ThemeToken, ColorValue>
 
