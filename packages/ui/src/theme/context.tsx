@@ -324,11 +324,11 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     const setTheme = (id: string) => {
       const next = normalize(id)
       if (!next) {
-        console.warn(`Theme "${id}" not found`)
+        Effect.runFork(Effect.logWarning(`Theme "${id}" not found`))
         return
       }
       if (next !== "oc-2" && !HashSet.has(knownThemes(), next) && !store.themes[next]) {
-        console.warn(`Theme "${id}" not found`)
+        Effect.runFork(Effect.logWarning(`Theme "${id}" not found`))
         return
       }
       setStore("themeId", next)
