@@ -37,12 +37,11 @@ const getWorkspaces = query(async () => {
 const createWorkspace = action(async (form: FormData) => {
   "use server"
   const name = form.get("workspaceName") as string
-  if (name?.trim()) {
-    return withActor(async () => {
-      const workspaceID = await Workspace.create({ name: name.trim() })
-      return redirect(`/workspace/${workspaceID}`)
-    })
-  }
+  if (!name?.trim()) return undefined
+  return withActor(async () => {
+    const workspaceID = await Workspace.create({ name: name.trim() })
+    return redirect(`/workspace/${workspaceID}`)
+  })
 }, "createWorkspace")
 
 export function WorkspacePicker() {
