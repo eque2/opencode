@@ -119,24 +119,22 @@ export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationB
 export function buildSQLiteMigrationBackfillStatements(
   migrationsTable: string,
   backfillEntries: SQLiteMigrationBackfillEntry[],
-) {
+): SQL[] {
   const table = sql`${sql.identifier(migrationsTable)}`
-  const statements: SQL[] = [
+
+  return [
     sql`ALTER TABLE ${table} ADD COLUMN ${sql.identifier("name")} text`,
     sql`ALTER TABLE ${table} ADD COLUMN ${sql.identifier("applied_at")} TEXT`,
+    ...backfillEntries.map((backfillEntry) => {
+      const updateQuery = sql`UPDATE ${table} SET ${sql.identifier("name")} = ${backfillEntry.name}, ${sql.identifier(
+        "applied_at",
+      )} = NULL WHERE`
+
+      updateQuery.append(sql` ${sql.identifier(backfillEntry.selector.column)} = ${backfillEntry.selector.value}`)
+
+      return updateQuery
+    }),
   ]
-
-  for (const backfillEntry of backfillEntries) {
-    const updateQuery = sql`UPDATE ${table} SET ${sql.identifier("name")} = ${backfillEntry.name}, ${sql.identifier(
-      "applied_at",
-    )} = NULL WHERE`
-
-    updateQuery.append(sql` ${sql.identifier(backfillEntry.selector.column)} = ${backfillEntry.selector.value}`)
-
-    statements.push(updateQuery)
-  }
-
-  return statements
 }
 
 /**
