@@ -13,7 +13,7 @@ import type {
   OpenAICompatibleToolMessage,
 } from "./openai-compatible-api-types"
 import { convertToBase64 } from "@ai-sdk/provider-utils"
-import { Effect, Option, Predicate, Schema } from "effect"
+import { Array, Effect, Option, Predicate, Schema } from "effect"
 
 export class UnsupportedRoleError extends Schema.TaggedError<UnsupportedRoleError>()(
   "GithubCopilot.UnsupportedRoleError",
@@ -121,28 +121,19 @@ function convertUserPart(
 }
 
 const convertAssistantMessage = Effect.fnUntraced(function* (content: AssistantContent, metadata: OpenAIMetadata) {
-  let text = ""
-  let reasoningText: string | undefined
-  let reasoningOpaque: string | undefined
-
-  for (const part of content) {
-    // Check for reasoningOpaque on any part (may be attached to text/tool-call)
-    const partOpaque = part.providerOptions?.copilot?.reasoningOpaque
-    if (Predicate.isString(partOpaque) && partOpaque && !reasoningOpaque) {
-      reasoningOpaque = partOpaque
-    }
-
-    switch (part.type) {
-      case "text": {
-        text += part.text
-        break
-      }
-      case "reasoning": {
-        if (part.text) reasoningText = part.text
-        break
-      }
-    }
-  }
+  const text = content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+  // Only the last non-empty reasoning text is sent.
+  const reasoningText = Array.findLast(
+    content.flatMap((part) => (part.type === "reasoning" ? [part.text] : [])),
+    (reasoning) => reasoning.length > 0,
+  )
+  // reasoningOpaque may be attached to any part (text, reasoning or tool-call); the first one wins.
+  const reasoningOpaque = Array.findFirst(content, (part) =>
+    Option.fromNullishOr(part.providerOptions?.copilot?.reasoningOpaque).pipe(
+      Option.filter(Predicate.isString),
+      Option.filter((opaque) => opaque.length > 0),
+    ),
+  )
 
   const toolCalls = yield* Effect.forEach(
     content.flatMap((part) => (part.type === "tool-call" ? [part] : [])),
@@ -165,9 +156,16 @@ const convertAssistantMessage = Effect.fnUntraced(function* (content: AssistantC
   const assistant: OpenAICompatibleMessage = {
     role: "assistant",
     content: encodeAssistantContent(text.length > 0 ? Option.some(text) : Option.none()),
-    tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-    reasoning_text: reasoningOpaque ? reasoningText : undefined,
-    reasoning_opaque: reasoningOpaque,
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    // Copilot takes reasoning_text only together with the reasoning_opaque signature.
+    ...Option.match(reasoningOpaque, {
+      onNone: () => ({}),
+      onSome: (reasoning_opaque) =>
+        Option.match(reasoningText, {
+          onNone: () => ({ reasoning_opaque }),
+          onSome: (reasoning_text) => ({ reasoning_text, reasoning_opaque }),
+        }),
+    }),
     ...metadata,
   }
   return [assistant]

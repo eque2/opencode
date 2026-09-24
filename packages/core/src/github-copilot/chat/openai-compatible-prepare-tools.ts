@@ -9,26 +9,22 @@ export function prepareTools({
   toolChoice?: LanguageModelV3CallOptions["toolChoice"]
 }): Effect.Effect<
   {
-    tools:
-      | undefined
-      | Array<{
-          type: "function"
-          function: {
-            name: string
-            description: string | undefined
-            parameters: unknown
-          }
-        }>
-    toolChoice: { type: "function"; function: { name: string } } | "auto" | "none" | "required" | undefined
+    tools?: Array<{
+      type: "function"
+      function: {
+        name: string
+        description: string | undefined
+        parameters: unknown
+      }
+    }>
+    toolChoice?: { type: "function"; function: { name: string } } | "auto" | "none" | "required"
     toolWarnings: SharedV3Warning[]
   },
   UnsupportedFunctionalityError
 > {
-  // when the tools array is empty, change it to undefined to prevent errors:
-  tools = tools?.length ? tools : undefined
-
-  if (Predicate.isNullish(tools)) {
-    return Effect.succeed({ tools: undefined, toolChoice: undefined, toolWarnings: [] })
+  // when the tools array is empty, send no tools to prevent errors:
+  if (Predicate.isNullish(tools) || tools.length === 0) {
+    return Effect.succeed({ toolWarnings: [] })
   }
 
   const toolWarnings = tools.flatMap((tool): SharedV3Warning[] =>
@@ -50,7 +46,7 @@ export function prepareTools({
   )
 
   if (Predicate.isNullish(toolChoice)) {
-    return Effect.succeed({ tools: openaiCompatTools, toolChoice: undefined, toolWarnings })
+    return Effect.succeed({ tools: openaiCompatTools, toolWarnings })
   }
 
   const type = toolChoice.type

@@ -187,19 +187,21 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           top_p: topP,
           frequency_penalty: frequencyPenalty,
           presence_penalty: presencePenalty,
-          response_format:
-            responseFormat?.type === "json"
-              ? this.supportsStructuredOutputs && Predicate.isNotNullish(responseFormat.schema)
-                ? {
-                    type: "json_schema",
-                    json_schema: {
-                      schema: responseFormat.schema,
-                      name: responseFormat.name ?? "response",
-                      description: responseFormat.description,
-                    },
-                  }
-                : { type: "json_object" }
-              : undefined,
+          ...(responseFormat?.type === "json"
+            ? {
+                response_format:
+                  this.supportsStructuredOutputs && Predicate.isNotNullish(responseFormat.schema)
+                    ? {
+                        type: "json_schema",
+                        json_schema: {
+                          schema: responseFormat.schema,
+                          name: responseFormat.name ?? "response",
+                          description: responseFormat.description,
+                        },
+                      }
+                    : { type: "json_object" },
+              }
+            : {}),
 
           stop: stopSequences,
           seed,
@@ -261,86 +263,67 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       )
 
       const choice = responseBody.choices[0]
-      const content: Array<LanguageModelV3Content> = []
+      // Include reasoning_opaque for Copilot multi-turn reasoning
+      const opaqueMetadata = reasoningOpaqueMetadata(nonEmpty(choice.message.reasoning_opaque))
 
-      // text content:
-      const text = choice.message.content
-      if (Predicate.isNotNullish(text) && text.length > 0) {
-        content.push({
-          type: "text",
-          text,
-          providerMetadata: choice.message.reasoning_opaque
-            ? { copilot: { reasoningOpaque: choice.message.reasoning_opaque } }
-            : undefined,
-        })
-      }
-
-      // reasoning content (Copilot uses reasoning_text):
-      const reasoning = choice.message.reasoning_text
-      if (Predicate.isNotNullish(reasoning) && reasoning.length > 0) {
-        content.push({
-          type: "reasoning",
-          text: reasoning,
-          // Include reasoning_opaque for Copilot multi-turn reasoning
-          providerMetadata: choice.message.reasoning_opaque
-            ? { copilot: { reasoningOpaque: choice.message.reasoning_opaque } }
-            : undefined,
-        })
-      }
-
-      // tool calls:
-      if (Predicate.isNotNullish(choice.message.tool_calls)) {
-        for (const toolCall of choice.message.tool_calls) {
-          content.push({
+      const content: LanguageModelV3Content[] = [
+        // text content:
+        ...Option.toArray(
+          Option.map(
+            nonEmpty(choice.message.content),
+            (text): LanguageModelV3Content => ({ type: "text", text, ...opaqueMetadata }),
+          ),
+        ),
+        // reasoning content (Copilot uses reasoning_text):
+        ...Option.toArray(
+          Option.map(
+            nonEmpty(choice.message.reasoning_text),
+            (text): LanguageModelV3Content => ({ type: "reasoning", text, ...opaqueMetadata }),
+          ),
+        ),
+        // tool calls:
+        ...(choice.message.tool_calls ?? []).map(
+          (toolCall): LanguageModelV3Content => ({
             type: "tool-call",
             toolCallId: toolCall.id ?? generateId(),
             toolName: toolCall.function.name,
             input: toolCall.function.arguments,
-            providerMetadata: choice.message.reasoning_opaque
-              ? { copilot: { reasoningOpaque: choice.message.reasoning_opaque } }
-              : undefined,
-          })
-        }
-      }
+            ...opaqueMetadata,
+          }),
+        ),
+      ]
+
+      const usage = Option.match(Option.fromNullishOr(responseBody.usage), {
+        onNone: () => noTokenUsage,
+        onSome: (wireUsage) => mergeTokenUsage(noTokenUsage, wireUsage),
+      })
 
       // provider metadata:
       const extractedMetadata = yield* Option.match(Option.fromNullishOr(this.config.metadataExtractor), {
         onNone: () => Effect.succeed({}),
         onSome: (extractor) => fromAISDK(() => extractor.extractMetadata({ parsedBody: rawResponse })),
       })
-      const providerMetadata: SharedV3ProviderMetadata = {
+      const baseMetadata: SharedV3ProviderMetadata = {
         [this.providerOptionsName]: {},
         ...extractedMetadata,
       }
-      const completionTokenDetails = responseBody.usage?.completion_tokens_details
-      if (Predicate.isNotNullish(completionTokenDetails?.accepted_prediction_tokens)) {
-        providerMetadata[this.providerOptionsName].acceptedPredictionTokens =
-          completionTokenDetails?.accepted_prediction_tokens
-      }
-      if (Predicate.isNotNullish(completionTokenDetails?.rejected_prediction_tokens)) {
-        providerMetadata[this.providerOptionsName].rejectedPredictionTokens =
-          completionTokenDetails?.rejected_prediction_tokens
+      const providerMetadata: SharedV3ProviderMetadata = {
+        ...baseMetadata,
+        [this.providerOptionsName]: {
+          ...baseMetadata[this.providerOptionsName],
+          ...predictionTokenMetadata(usage),
+        },
       }
 
       return {
         content,
-        finishReason: {
-          unified: mapOpenAICompatibleFinishReason(choice.finish_reason),
-          raw: choice.finish_reason ?? undefined,
-        },
+        finishReason: encodeFinishReason(finishReasonOf(Option.fromNullishOr(choice.finish_reason))),
         usage: {
-          inputTokens: {
-            total: responseBody.usage?.prompt_tokens ?? undefined,
-            noCache: undefined,
-            cacheRead: responseBody.usage?.prompt_tokens_details?.cached_tokens ?? undefined,
-            cacheWrite: undefined,
-          },
-          outputTokens: {
-            total: responseBody.usage?.completion_tokens ?? undefined,
-            text: undefined,
-            reasoning: responseBody.usage?.completion_tokens_details?.reasoning_tokens ?? undefined,
-          },
-          raw: responseBody.usage ?? undefined,
+          ...encodeUsage(usage, Option.none()),
+          ...Option.match(Option.fromNullishOr(responseBody.usage), {
+            onNone: () => ({}),
+            onSome: (raw) => ({ raw }),
+          }),
         },
         providerMetadata,
         request: { body },
@@ -363,7 +346,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         stream: true,
 
         // only include stream_options when in strict compatibility mode:
-        stream_options: this.config.includeUsage ? { include_usage: true } : undefined,
+        ...(this.config.includeUsage ? { stream_options: { include_usage: true } } : {}),
       }
 
       const metadataExtractor = this.config.metadataExtractor?.createStreamExtractor()
@@ -393,43 +376,13 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         hasFinished: boolean
       }> = []
 
-      let finishReason: {
-        unified: ReturnType<typeof mapOpenAICompatibleFinishReason>
-        raw: string | undefined
-      } = {
-        unified: "other",
-        raw: undefined,
-      }
-      const usage: {
-        completionTokens: number | undefined
-        completionTokensDetails: {
-          reasoningTokens: number | undefined
-          acceptedPredictionTokens: number | undefined
-          rejectedPredictionTokens: number | undefined
-        }
-        promptTokens: number | undefined
-        promptTokensDetails: {
-          cachedTokens: number | undefined
-        }
-        totalTokens: number | undefined
-      } = {
-        completionTokens: undefined,
-        completionTokensDetails: {
-          reasoningTokens: undefined,
-          acceptedPredictionTokens: undefined,
-          rejectedPredictionTokens: undefined,
-        },
-        promptTokens: undefined,
-        promptTokensDetails: {
-          cachedTokens: undefined,
-        },
-        totalTokens: undefined,
-      }
+      let finishReason = finishReasonOf(Option.none())
+      let usage = noTokenUsage
       let isFirstChunk = true
       const providerOptionsName = this.providerOptionsName
       let isActiveReasoning = false
       let isActiveText = false
-      let reasoningOpaque: string | undefined
+      let reasoningOpaque: Option.Option<string> = Option.none()
 
       return {
         stream: response.pipeThrough(
@@ -446,10 +399,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
               // handle failed chunk parsing / validation:
               if (!chunk.success) {
-                finishReason = {
-                  unified: "error",
-                  raw: undefined,
-                }
+                finishReason = { unified: "error", raw: Option.none() }
                 controller.enqueue({ type: "error", error: chunk.error })
                 return
               }
@@ -459,10 +409,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
               // handle error chunks:
               if ("error" in value) {
-                finishReason = {
-                  unified: "error",
-                  raw: undefined,
-                }
+                finishReason = { unified: "error", raw: Option.none() }
                 controller.enqueue({ type: "error", error: value.error.message })
                 return
               }
@@ -477,40 +424,14 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
               }
 
               if (Predicate.isNotNullish(value.usage)) {
-                const {
-                  prompt_tokens,
-                  completion_tokens,
-                  total_tokens,
-                  prompt_tokens_details,
-                  completion_tokens_details,
-                } = value.usage
-
-                usage.promptTokens = prompt_tokens ?? undefined
-                usage.completionTokens = completion_tokens ?? undefined
-                usage.totalTokens = total_tokens ?? undefined
-                if (Predicate.isNotNullish(completion_tokens_details?.reasoning_tokens)) {
-                  usage.completionTokensDetails.reasoningTokens = completion_tokens_details?.reasoning_tokens
-                }
-                if (Predicate.isNotNullish(completion_tokens_details?.accepted_prediction_tokens)) {
-                  usage.completionTokensDetails.acceptedPredictionTokens =
-                    completion_tokens_details?.accepted_prediction_tokens
-                }
-                if (Predicate.isNotNullish(completion_tokens_details?.rejected_prediction_tokens)) {
-                  usage.completionTokensDetails.rejectedPredictionTokens =
-                    completion_tokens_details?.rejected_prediction_tokens
-                }
-                if (Predicate.isNotNullish(prompt_tokens_details?.cached_tokens)) {
-                  usage.promptTokensDetails.cachedTokens = prompt_tokens_details?.cached_tokens
-                }
+                usage = mergeTokenUsage(usage, value.usage)
               }
 
               const choice = value.choices[0]
 
-              if (Predicate.isNotNullish(choice?.finish_reason)) {
-                finishReason = {
-                  unified: mapOpenAICompatibleFinishReason(choice.finish_reason),
-                  raw: choice.finish_reason ?? undefined,
-                }
+              const rawFinishReason = Option.fromNullishOr(choice?.finish_reason)
+              if (Option.isSome(rawFinishReason)) {
+                finishReason = finishReasonOf(rawFinishReason)
               }
 
               const delta = choice?.delta
@@ -521,7 +442,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
               // Capture reasoning_opaque for Copilot multi-turn reasoning.
               // An invalid chunk errors the stream through its controller, as a throw from transform did.
               if (delta.reasoning_opaque) {
-                if (Predicate.isNotNullish(reasoningOpaque)) {
+                if (Option.isSome(reasoningOpaque)) {
                   controller.error(
                     new InvalidResponseDataError({
                       data: delta,
@@ -531,7 +452,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   )
                   return
                 }
-                reasoningOpaque = delta.reasoning_opaque
+                reasoningOpaque = Option.some(delta.reasoning_opaque)
               }
 
               // enqueue reasoning before text deltas (Copilot uses reasoning_text):
@@ -559,7 +480,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   controller.enqueue({
                     type: "reasoning-end",
                     id: "reasoning-0",
-                    providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                    ...reasoningOpaqueMetadata(reasoningOpaque),
                   })
                   isActiveReasoning = false
                 }
@@ -568,7 +489,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   controller.enqueue({
                     type: "text-start",
                     id: "txt-0",
-                    providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                    ...reasoningOpaqueMetadata(reasoningOpaque),
                   })
                   isActiveText = true
                 }
@@ -587,7 +508,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   controller.enqueue({
                     type: "reasoning-end",
                     id: "reasoning-0",
-                    providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                    ...reasoningOpaqueMetadata(reasoningOpaque),
                   })
                   isActiveReasoning = false
                 }
@@ -655,7 +576,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                         toolCallId: toolCall.id ?? generateId(),
                         toolName: toolCall.function.name,
                         input: toolCall.function.arguments,
-                        providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                        ...reasoningOpaqueMetadata(reasoningOpaque),
                       })
                       toolCall.hasFinished = true
                     }
@@ -691,7 +612,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                       toolCallId: toolCall.id ?? generateId(),
                       toolName: toolCall.function.name,
                       input: toolCall.function.arguments,
-                      providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                      ...reasoningOpaqueMetadata(reasoningOpaque),
                     })
                     toolCall.hasFinished = true
                   }
@@ -705,7 +626,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   type: "reasoning-end",
                   id: "reasoning-0",
                   // Include reasoning_opaque for Copilot multi-turn reasoning
-                  providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                  ...reasoningOpaqueMetadata(reasoningOpaque),
                 })
               }
 
@@ -728,43 +649,35 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 })
               }
 
-              const providerMetadata: SharedV3ProviderMetadata = {
+              const baseMetadata: SharedV3ProviderMetadata = {
                 [providerOptionsName]: {},
                 // Include reasoning_opaque for Copilot multi-turn reasoning
-                ...(reasoningOpaque ? { copilot: { reasoningOpaque } } : {}),
+                ...Option.match(reasoningOpaque, {
+                  onNone: () => ({}),
+                  onSome: (reasoningOpaque) => ({ copilot: { reasoningOpaque } }),
+                }),
                 ...metadataExtractor?.buildMetadata(),
               }
-              if (Predicate.isNotNullish(usage.completionTokensDetails.acceptedPredictionTokens)) {
-                providerMetadata[providerOptionsName].acceptedPredictionTokens =
-                  usage.completionTokensDetails.acceptedPredictionTokens
-              }
-              if (Predicate.isNotNullish(usage.completionTokensDetails.rejectedPredictionTokens)) {
-                providerMetadata[providerOptionsName].rejectedPredictionTokens =
-                  usage.completionTokensDetails.rejectedPredictionTokens
+              const providerMetadata: SharedV3ProviderMetadata = {
+                ...baseMetadata,
+                [providerOptionsName]: {
+                  ...baseMetadata[providerOptionsName],
+                  ...predictionTokenMetadata(usage),
+                },
               }
 
               controller.enqueue({
                 type: "finish",
-                finishReason,
+                finishReason: encodeFinishReason(finishReason),
                 usage: {
-                  inputTokens: {
-                    total: usage.promptTokens,
-                    noCache:
-                      usage.promptTokens != undefined && usage.promptTokensDetails.cachedTokens != undefined
-                        ? usage.promptTokens - usage.promptTokensDetails.cachedTokens
-                        : undefined,
-                    cacheRead: usage.promptTokensDetails.cachedTokens,
-                    cacheWrite: undefined,
-                  },
-                  outputTokens: {
-                    total: usage.completionTokens,
-                    text: undefined,
-                    reasoning: usage.completionTokensDetails.reasoningTokens,
-                  },
+                  ...encodeUsage(
+                    usage,
+                    Option.zipWith(usage.promptTokens, usage.cachedTokens, (prompt, cached) => prompt - cached),
+                  ),
                   raw: encodeRawStreamUsage({
-                    prompt_tokens: Option.fromUndefinedOr(usage.promptTokens),
-                    completion_tokens: Option.fromUndefinedOr(usage.completionTokens),
-                    total_tokens: Option.fromUndefinedOr(usage.totalTokens),
+                    prompt_tokens: usage.promptTokens,
+                    completion_tokens: usage.completionTokens,
+                    total_tokens: usage.totalTokens,
                   }),
                 },
                 providerMetadata,
@@ -883,3 +796,105 @@ const createOpenAICompatibleChatChunkSchema = (errorSchema: Schema.Decoder<OpenA
   Schema.Union([OpenAICompatibleChatChunk, errorSchema])
 
 type OpenAICompatibleChatChunkEvent = typeof OpenAICompatibleChatChunk.Type | OpenAICompatibleErrorData
+
+const nonEmpty = (text: string | null | undefined) =>
+  Option.fromNullishOr(text).pipe(Option.filter((value) => value.length > 0))
+
+// Copilot multi-turn reasoning: a part carries the reasoning_opaque signature under the copilot namespace.
+const reasoningOpaqueMetadata = (reasoningOpaque: Option.Option<string>) =>
+  Option.match(reasoningOpaque, {
+    onNone: () => ({}),
+    onSome: (reasoningOpaque) => ({ providerMetadata: { copilot: { reasoningOpaque } } }),
+  })
+
+interface TokenUsage {
+  readonly promptTokens: Option.Option<number>
+  readonly completionTokens: Option.Option<number>
+  readonly totalTokens: Option.Option<number>
+  readonly cachedTokens: Option.Option<number>
+  readonly reasoningTokens: Option.Option<number>
+  readonly acceptedPredictionTokens: Option.Option<number>
+  readonly rejectedPredictionTokens: Option.Option<number>
+}
+
+const noTokenUsage: TokenUsage = {
+  promptTokens: Option.none(),
+  completionTokens: Option.none(),
+  totalTokens: Option.none(),
+  cachedTokens: Option.none(),
+  reasoningTokens: Option.none(),
+  acceptedPredictionTokens: Option.none(),
+  rejectedPredictionTokens: Option.none(),
+}
+
+// A usage record replaces the prompt, completion and total counts. A detail count replaces the
+// earlier one only when the record carries it.
+const mergeTokenUsage = (previous: TokenUsage, usage: typeof OpenAICompatibleTokenUsage.Type): TokenUsage => ({
+  promptTokens: Option.fromNullishOr(usage.prompt_tokens),
+  completionTokens: Option.fromNullishOr(usage.completion_tokens),
+  totalTokens: Option.fromNullishOr(usage.total_tokens),
+  cachedTokens: Option.orElse(
+    Option.fromNullishOr(usage.prompt_tokens_details?.cached_tokens),
+    () => previous.cachedTokens,
+  ),
+  reasoningTokens: Option.orElse(
+    Option.fromNullishOr(usage.completion_tokens_details?.reasoning_tokens),
+    () => previous.reasoningTokens,
+  ),
+  acceptedPredictionTokens: Option.orElse(
+    Option.fromNullishOr(usage.completion_tokens_details?.accepted_prediction_tokens),
+    () => previous.acceptedPredictionTokens,
+  ),
+  rejectedPredictionTokens: Option.orElse(
+    Option.fromNullishOr(usage.completion_tokens_details?.rejected_prediction_tokens),
+    () => previous.rejectedPredictionTokens,
+  ),
+})
+
+const predictionTokenMetadata = (usage: TokenUsage) => ({
+  ...Option.match(usage.acceptedPredictionTokens, {
+    onNone: () => ({}),
+    onSome: (acceptedPredictionTokens) => ({ acceptedPredictionTokens }),
+  }),
+  ...Option.match(usage.rejectedPredictionTokens, {
+    onNone: () => ({}),
+    onSome: (rejectedPredictionTokens) => ({ rejectedPredictionTokens }),
+  }),
+})
+
+// The AI SDK result types hold an absent count or raw finish reason as `undefined`.
+// Code holds these values as Option and the codecs write the undefined.
+const UsageCount = Schema.OptionFromUndefinedOr(Schema.Number)
+
+const LanguageModelUsage = Schema.Struct({
+  inputTokens: Schema.Struct({
+    total: UsageCount,
+    noCache: UsageCount,
+    cacheRead: UsageCount,
+    cacheWrite: UsageCount,
+  }),
+  outputTokens: Schema.Struct({
+    total: UsageCount,
+    text: UsageCount,
+    reasoning: UsageCount,
+  }),
+}).annotate({ identifier: "GithubCopilot.LanguageModelUsage" })
+const encodeLanguageModelUsage = Schema.encodeSync(LanguageModelUsage)
+
+// Copilot reports no cache-write or text-only output counts.
+const encodeUsage = (usage: TokenUsage, noCache: Option.Option<number>) =>
+  encodeLanguageModelUsage({
+    inputTokens: { total: usage.promptTokens, noCache, cacheRead: usage.cachedTokens, cacheWrite: Option.none() },
+    outputTokens: { total: usage.completionTokens, text: Option.none(), reasoning: usage.reasoningTokens },
+  })
+
+const LanguageModelFinishReason = Schema.Struct({
+  unified: Schema.Literals(["stop", "length", "content-filter", "tool-calls", "error", "other"]),
+  raw: Schema.OptionFromUndefinedOr(Schema.String),
+}).annotate({ identifier: "GithubCopilot.LanguageModelFinishReason" })
+const encodeFinishReason = Schema.encodeSync(LanguageModelFinishReason)
+
+const finishReasonOf = (raw: Option.Option<string>): typeof LanguageModelFinishReason.Type => ({
+  unified: mapOpenAICompatibleFinishReason(Option.getOrUndefined(raw)),
+  raw,
+})

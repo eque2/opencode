@@ -10,8 +10,8 @@ export function getResponseMetadata({
   model?: string | undefined | null
 }) {
   return {
-    id: id ?? undefined,
-    modelId: model ?? undefined,
+    id: Option.getOrUndefined(Option.fromNullishOr(id)),
+    modelId: Option.getOrUndefined(Option.fromNullishOr(model)),
     // `created` is in Unix seconds; a value outside the Date range gives no timestamp.
     timestamp: Option.fromNullishOr(created).pipe(
       Option.flatMap((seconds) => DateTime.make(seconds * 1000)),
