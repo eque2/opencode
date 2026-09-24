@@ -250,7 +250,7 @@ export class SQLiteEffectInsertBase<
     fields: SelectedFieldsFlat = getTableColumns(this.config.table),
   ): SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat> | SQLiteEffectInsertReturningAll<this, TDynamic> {
     this.config.returning = orderSelectedFields(fields)
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state returning() overloads, which this adapter mirrors, return the same builder as their next states; the union is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as
       | SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat>
       | SQLiteEffectInsertReturningAll<this, TDynamic>
@@ -339,7 +339,7 @@ export class SQLiteEffectInsertBase<
   }
 
   $dynamic(): SQLiteEffectInsertDynamic<this> {
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: $dynamic returns the same builder typed as its dynamic (TDynamic = true) state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm $dynamic() signature, which this adapter mirrors, returns the same builder in its TDynamic = true, excludedMethods = never state; TS2352 rejects the precise cast (_TExcludedMethods is not comparable to never), and a double cast is forbidden, so `as any` stays
     return this as any
   }
 

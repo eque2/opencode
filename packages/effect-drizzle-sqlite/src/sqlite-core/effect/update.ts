@@ -256,7 +256,7 @@ export class SQLiteEffectUpdateBase<
     source: TFrom,
   ): SQLiteEffectUpdateWithJoins<this, TDynamic, TFrom> {
     this.config.from = source
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state from() signature, which this adapter mirrors, returns the same builder as SQLiteEffectUpdateWithJoins; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as SQLiteEffectUpdateWithJoins<this, TDynamic, TFrom>
   }
 
@@ -283,7 +283,7 @@ export class SQLiteEffectUpdateBase<
         )
         on = on(
           updateTableProxy,
-          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm update join callback API types this argument by a conditional on T["_"]["from"], which TypeScript cannot relate to the runtime selection proxy
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm update join callback signature types this argument by a conditional on T["_"]["from"], which TypeScript cannot relate to the runtime selection proxy; the cast is the precise parameter type
           fromProxy as Parameters<typeof on>[1],
         )
       }
@@ -304,7 +304,7 @@ export class SQLiteEffectUpdateBase<
 
   where(where: SQL | undefined): SQLiteEffectUpdateWithout<this, TDynamic, "where"> {
     this.config.where = where
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as SQLiteEffectUpdateWithout<this, TDynamic, "where">
   }
 
@@ -319,7 +319,7 @@ export class SQLiteEffectUpdateBase<
   ): SQLiteEffectUpdateWithout<this, TDynamic, "orderBy"> {
     if (typeof columns[0] === "function") {
       const orderBy = columns[0](
-        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm orderBy callback API types its argument as the table (TTable), while the runtime passes a selection proxy of the table's columns
+        // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm orderBy callback signature types its argument as the table (TTable), while the runtime passes a selection proxy of the table's columns, as in upstream drizzle; TS2352 rejects `as TTable`, and SelectionProxyHandler rejects a table target, so `as any` stays
         new Proxy(
           getTableColumns(this.config.table),
           new SelectionProxyHandler({ sqlAliasedBehavior: "alias", sqlBehavior: "sql" }),
@@ -327,18 +327,18 @@ export class SQLiteEffectUpdateBase<
       )
 
       this.config.orderBy = Array.isArray(orderBy) ? orderBy : [orderBy]
-      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
       return this as SQLiteEffectUpdateWithout<this, TDynamic, "orderBy">
     }
 
     this.config.orderBy = columns.filter((column) => typeof column !== "function")
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as SQLiteEffectUpdateWithout<this, TDynamic, "orderBy">
   }
 
   limit(limit: number | Placeholder): SQLiteEffectUpdateWithout<this, TDynamic, "limit"> {
     this.config.limit = limit
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state builder signature, which this adapter mirrors, returns the same builder as its Omit-based next state; that type is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as SQLiteEffectUpdateWithout<this, TDynamic, "limit">
   }
 
@@ -350,7 +350,7 @@ export class SQLiteEffectUpdateBase<
     fields: SelectedFields = getTableColumns(this.config.table),
   ): SQLiteEffectUpdateReturning<this, TDynamic, SelectedFields> | SQLiteEffectUpdateReturningAll<this, TDynamic> {
     this.config.returning = orderSelectedFields(fields)
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm type-state returning() overloads, which this adapter mirrors, return the same builder as their next states; the union is a conditional on the generic TDynamic, so TypeScript cannot relate `this` to it without an assertion
     return this as
       | SQLiteEffectUpdateReturning<this, TDynamic, SelectedFields>
       | SQLiteEffectUpdateReturningAll<this, TDynamic>
@@ -403,7 +403,7 @@ export class SQLiteEffectUpdateBase<
   }
 
   $dynamic(): SQLiteEffectUpdateDynamic<this> {
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: $dynamic returns the same builder typed as its dynamic (TDynamic = true) state, which TypeScript cannot relate to `this`
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the drizzle-orm $dynamic() signature, which this adapter mirrors, returns the same builder in its TDynamic = true, excludedMethods = never state; TS2352 rejects the precise cast (_TExcludedMethods is not comparable to never), and a double cast is forbidden, so `as any` stays
     return this as any
   }
 
