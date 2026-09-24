@@ -838,7 +838,7 @@ describe("Anthropic Messages route", () => {
   it.effect("drops cache_control breakpoints past the 4-per-request cap", () =>
     Effect.gen(function* () {
       const hint = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model,
           system: [
@@ -853,7 +853,7 @@ describe("Anthropic Messages route", () => {
         }),
       )
 
-      const system = (prepared.body as { system: Array<{ cache_control?: unknown }> }).system
+      const system = prepared.body.system ?? []
       const marked = system.filter((part) => part.cache_control !== undefined)
       expect(marked).toHaveLength(4)
       expect(system[4]?.cache_control).toBeUndefined()
@@ -864,7 +864,7 @@ describe("Anthropic Messages route", () => {
   it.effect("spends breakpoint budget on tools before system before messages", () =>
     Effect.gen(function* () {
       const hint = new CacheHint({ type: "ephemeral" })
-      const prepared = yield* LLMClient.prepare(
+      const prepared = yield* LLMClient.prepare<AnthropicMessages.AnthropicMessagesBody>(
         LLM.request({
           model,
           tools: [
@@ -898,13 +898,10 @@ describe("Anthropic Messages route", () => {
         }),
       )
 
-      const body = prepared.body as {
-        tools: Array<{ cache_control?: unknown }>
-        system: Array<{ cache_control?: unknown }>
-        messages: Array<{ content: Array<{ cache_control?: unknown }> }>
-      }
-      expect(body.tools.every((t) => t.cache_control !== undefined)).toBe(true)
-      expect(body.system[0]?.cache_control).toBeUndefined()
+      const body = prepared.body
+      expect(body.tools?.every((t) => t.cache_control !== undefined)).toBe(true)
+      expect(body.system).toHaveLength(1)
+      expect(body.system?.[0]?.cache_control).toBeUndefined()
       expect(body.messages[0]?.content[0]?.cache_control).toBeUndefined()
     }),
   )
