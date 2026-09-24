@@ -21,6 +21,17 @@ const RegistryRelease = Schema.Struct({
   version: Schema.String,
 }).annotate({ identifier: "RegistryRelease" })
 
+const ScriptInfo = Schema.Struct({
+  channel: Schema.String,
+  version: Schema.String,
+  preview: Schema.Boolean,
+  release: Schema.Boolean,
+  team: Schema.Array(Schema.String),
+}).annotate({ identifier: "ScriptInfo" })
+
+/** Pretty JSON form of the resolved Script values, as printed at import time. */
+const ScriptInfoJson = Schema.fromJsonString(ScriptInfo, { space: 2 })
+
 const program = Effect.gen(function* () {
   const rootPkgPath = path.resolve(import.meta.dir, "../../../package.json")
   const rootPkg = yield* Effect.tryPromise({
@@ -89,13 +100,15 @@ const program = Effect.gen(function* () {
     Effect.map((x) => x.filter((x) => x && !x.startsWith("#"))),
   )
 
-  return {
+  const resolved = {
     channel,
     version,
     preview,
     release: Option.isSome(env.OPENCODE_RELEASE),
     team: [...members, ...bot],
   }
+  yield* Effect.logInfo("opencode script", yield* Schema.encodeEffect(ScriptInfoJson)(resolved))
+  return resolved
 })
 
 // eslint-disable-next-line effect/no-async-await-use-effect -- ES module top-level await: consumers read Script getters synchronously at import, so module evaluation must wait for the async registry, file and git lookups
@@ -118,4 +131,3 @@ export const Script = {
     return info.team
   },
 }
-console.log(`opencode script`, JSON.stringify(Script, null, 2))
