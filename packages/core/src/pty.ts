@@ -17,6 +17,12 @@ const BUFFER_LIMIT = 1024 * 1024 * 2
 const EXITED_LIMIT = 25
 const pty = lazy(() => import("#pty"))
 
+// Subscriber callbacks and the native kill run on the synchronous PTY path. A throwing
+// callback must not break delivery to the others, so each call reports success as an
+// Option instead of throwing.
+const attempt = <A extends ReadonlyArray<unknown>>(callback: (...args: A) => void, ...args: A) =>
+  Option.isSome(Option.liftThrowable(callback)(...args))
+
 type Subscriber = {
   readonly onData: (chunk: string) => void
   readonly onEnd: (event: { exitCode?: number }) => void
@@ -108,9 +114,7 @@ const layer = Layer.effect(
           subscriber.end = event
           continue
         }
-        try {
-          subscriber.onEnd(event)
-        } catch {}
+        attempt(subscriber.onEnd, event)
       }
       MutableHashMap.clear(session.subscribers)
     }
@@ -118,11 +122,7 @@ const layer = Layer.effect(
     function teardown(session: Active) {
       for (const listener of session.listeners) listener.dispose()
       session.listeners.length = 0
-      if (session.info.status === "running") {
-        try {
-          session.process.kill()
-        } catch {}
-      }
+      if (session.info.status === "running") attempt(() => session.process.kill())
       notifyEnd(session, {})
     }
 
@@ -211,11 +211,7 @@ const layer = Layer.effect(
               subscriber.pending.push(chunk)
               continue
             }
-            try {
-              subscriber.onData(chunk)
-            } catch {
-              MutableHashMap.remove(session.subscribers, token)
-            }
+            if (!attempt(subscriber.onData, chunk)) MutableHashMap.remove(session.subscribers, token)
           }
           session.buffer += chunk
           if (session.buffer.length <= BUFFER_LIMIT) return
@@ -295,13 +291,12 @@ const layer = Layer.effect(
         activate: () => {
           if (subscriber.active || subscriber.detached) return
           subscriber.active = true
-          try {
+          const flushed = attempt(() => {
             for (const chunk of subscriber.pending) subscriber.onData(chunk)
             subscriber.pending.length = 0
             if (subscriber.end) subscriber.onEnd(subscriber.end)
-          } catch {
-            MutableHashMap.remove(session.subscribers, token)
-          }
+          })
+          if (!flushed) MutableHashMap.remove(session.subscribers, token)
         },
         detach: () => {
           subscriber.detached = true

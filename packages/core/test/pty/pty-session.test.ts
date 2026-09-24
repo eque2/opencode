@@ -174,6 +174,27 @@ describe("pty", () => {
     }),
   )
 
+  ptyTest("keeps delivering output when another attachment callback throws", () =>
+    Effect.gen(function* () {
+      const pty = yield* Pty.Service
+      const info = yield* createPty("cat")
+      const faulty = yield* pty.attach(info.id, {
+        cursor: -1,
+        onData: () => {
+          throw new Error("subscriber failed")
+        },
+        onEnd: () => {},
+      })
+      faulty.activate()
+      const healthy = yield* attachCollecting(info.id, -1)
+
+      yield* pty.write(info.id, "AAA\n")
+      yield* waitForOutput(healthy.output, "AAA")
+      yield* pty.write(info.id, "BBB\n")
+      yield* waitForOutput(healthy.output, "BBB")
+    }),
+  )
+
   ptyTest("isolates output between sessions", () =>
     Effect.gen(function* () {
       const pty = yield* Pty.Service
