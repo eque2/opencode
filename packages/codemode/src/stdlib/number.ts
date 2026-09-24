@@ -1,8 +1,15 @@
-export const numberMethods = new Set(["toFixed", "toPrecision", "toExponential", "toString"])
+export const numberMethods = HashSet.make("toFixed", "toPrecision", "toExponential", "toString")
 
-export const numberConstants = new Set(["MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "MAX_VALUE", "MIN_VALUE", "EPSILON"])
+const numberConstantNames = ["MAX_SAFE_INTEGER", "MIN_SAFE_INTEGER", "MAX_VALUE", "MIN_VALUE", "EPSILON"] as const
 
-export const numberStatics = new Set(["isInteger", "isFinite", "isNaN", "isSafeInteger", "parseInt", "parseFloat"])
+/** A Number constant a program may read; the name indexes Number with a precise type. */
+export type NumberConstantName = (typeof numberConstantNames)[number]
+
+export const numberConstants = HashSet.make(...numberConstantNames)
+
+export const isNumberConstant = (key: string): key is NumberConstantName => HashSet.has(numberConstants, key)
+
+export const numberStatics = HashSet.make("isInteger", "isFinite", "isNaN", "isSafeInteger", "parseInt", "parseFloat")
 
 export const invokeNumberMethod = (
   value: number,
@@ -73,7 +80,7 @@ export const invokeNumberStatic = (
       return Effect.fail(new InterpreterRuntimeError(`Number.${name} is not available in CodeMode.`, node))
   }
 }
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import type { ToolRuntimeError } from "../tool-runtime.js"
 import { boundedData, coerceToString } from "./value.js"

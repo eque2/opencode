@@ -1,4 +1,4 @@
-export const dateMethods = new Set([
+export const dateMethods = HashSet.make(
   "getTime",
   "valueOf",
   "toISOString",
@@ -21,9 +21,9 @@ export const dateMethods = new Set([
   "getUTCSeconds",
   "getUTCMilliseconds",
   "getTimezoneOffset",
-])
+)
 
-export const dateStatics = new Set(["now", "parse", "UTC"])
+export const dateStatics = HashSet.make("now", "parse", "UTC")
 
 export const invokeDateStatic = (
   name: string,
@@ -97,7 +97,7 @@ export const invokeDateMethod = (
       return Effect.fail(new InterpreterRuntimeError(`Date method '${name}' is not available in CodeMode.`, node))
   }
 }
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { SandboxDate } from "../values.js"
 import { coerceToNumber, coerceToString } from "./value.js"

@@ -1,4 +1,4 @@
-export const urlProperties = new Set([
+const urlPropertyNames = [
   "href",
   "origin",
   "protocol",
@@ -10,24 +10,26 @@ export const urlProperties = new Set([
   "pathname",
   "search",
   "hash",
-])
+] as const
 
-export const urlWritableProperties = new Set([
-  "href",
-  "protocol",
-  "username",
-  "password",
-  "host",
-  "hostname",
-  "port",
-  "pathname",
-  "search",
-  "hash",
-])
+/** A URL property a program may read. */
+export type UrlPropertyName = (typeof urlPropertyNames)[number]
 
-export const urlMethods = new Set(["toString", "toJSON"])
-export const urlStatics = new Set(["canParse", "parse"])
-export const urlSearchParamsMethods = new Set([
+/** A URL property a program may write: all but the read-only `origin`. */
+export type WritableUrlPropertyName = Exclude<UrlPropertyName, "origin">
+
+export const urlProperties = HashSet.make(...urlPropertyNames)
+
+export const urlWritableProperties = HashSet.remove(urlProperties, "origin")
+
+export const isUrlProperty = (key: string): key is UrlPropertyName => HashSet.has(urlProperties, key)
+
+export const isWritableUrlProperty = (key: UrlPropertyName): key is WritableUrlPropertyName =>
+  HashSet.has(urlWritableProperties, key)
+
+export const urlMethods = HashSet.make("toString", "toJSON")
+export const urlStatics = HashSet.make("canParse", "parse")
+export const urlSearchParamsMethods = HashSet.make(
   "append",
   "delete",
   "get",
@@ -40,7 +42,7 @@ export const urlSearchParamsMethods = new Set([
   "values",
   "entries",
   "toString",
-])
+)
 
 export const uriArgument = (value: unknown, label: string): Effect.Effect<string, ToolRuntimeError> =>
   Effect.map(Effect.fromResult(boundedData(value, label)), coerceToString)
@@ -80,7 +82,7 @@ export const invokeURLStatic = (
   args: Array<unknown>,
   node: AstNode,
 ): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> => {
-  if (!urlStatics.has(name)) {
+  if (!HashSet.has(urlStatics, name)) {
     return Effect.fail(new InterpreterRuntimeError(`URL.${name} is not available in CodeMode.`, node))
   }
   if (args.length === 0) {
@@ -110,7 +112,7 @@ export const invokeURLMethod = (
   if (name === "toString" || name === "toJSON") return Effect.succeed(value.url.href)
   return Effect.fail(new InterpreterRuntimeError(`URL method '${name}' is not available in CodeMode.`, node))
 }
-import { Effect, Option } from "effect"
+import { Effect, HashSet, Option } from "effect"
 import { type AstNode, InterpreterRuntimeError, UriFunction } from "../interpreter/model.js"
 import type { ToolRuntimeError } from "../tool-runtime.js"
 import { SandboxURL } from "../values.js"

@@ -1,6 +1,6 @@
-export const regexpMethods = new Set(["test", "exec", "toString"])
+export const regexpMethods = HashSet.make("test", "exec", "toString")
 
-export const regexpProperties = new Set([
+const regexpPropertyNames = [
   "source",
   "flags",
   "lastIndex",
@@ -10,7 +10,14 @@ export const regexpProperties = new Set([
   "sticky",
   "unicode",
   "dotAll",
-])
+] as const
+
+/** A RegExp property a program may read; the name indexes the host regex with a precise type. */
+export type RegExpPropertyName = (typeof regexpPropertyNames)[number]
+
+export const regexpProperties = HashSet.make(...regexpPropertyNames)
+
+export const isRegExpProperty = (key: string): key is RegExpPropertyName => HashSet.has(regexpProperties, key)
 
 export const regexFailureReason = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).replace(/^Invalid regular expression:\s*/i, "")
@@ -78,7 +85,7 @@ export const invokeRegExpMethod = (
       return Effect.fail(new InterpreterRuntimeError(`RegExp method '${name}' is not available in CodeMode.`, node))
   }
 }
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, type SafeObject } from "../tool-runtime.js"
 import { SandboxRegExp } from "../values.js"

@@ -1,4 +1,4 @@
-export const stringMethods = new Set([
+export const stringMethods = HashSet.make(
   "toLowerCase",
   "toUpperCase",
   "trim",
@@ -31,9 +31,9 @@ export const stringMethods = new Set([
   "search",
   "localeCompare",
   "normalize",
-])
+)
 
-export const stringStatics = new Set(["fromCharCode", "fromCodePoint"])
+export const stringStatics = HashSet.make("fromCharCode", "fromCodePoint")
 
 export const invokeStringStatic = (
   name: string,
@@ -55,5 +55,5 @@ export const invokeStringStatic = (
       return Effect.fail(new InterpreterRuntimeError(`String.${name} is not available in CodeMode.`, node))
   }
 }
-import { Effect, Predicate } from "effect"
+import { Effect, HashSet, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"

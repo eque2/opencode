@@ -1,4 +1,4 @@
-export const arrayMethods = new Set([
+export const arrayMethods = HashSet.make(
   "map",
   "filter",
   "find",
@@ -34,11 +34,11 @@ export const arrayMethods = new Set([
   "keys",
   "values",
   "entries",
-])
+)
 
-export const mapMethods = new Set(["get", "set", "has", "delete", "clear", "forEach", "keys", "values", "entries"])
+export const mapMethods = HashSet.make("get", "set", "has", "delete", "clear", "forEach", "keys", "values", "entries")
 
-export const setMethods = new Set(["add", "has", "delete", "clear", "forEach", "keys", "values", "entries"])
+export const setMethods = HashSet.make("add", "has", "delete", "clear", "forEach", "keys", "values", "entries")
 
 export const spreadItems = (value: unknown): Array<unknown> | undefined => {
   if (Array.isArray(value)) return value
@@ -48,4 +48,5 @@ export const spreadItems = (value: unknown): Array<unknown> | undefined => {
   if (value instanceof SandboxURLSearchParams) return Array.from(value.params.entries(), ([key, item]) => [key, item])
   return undefined
 }
+import { HashSet } from "effect"
 import { SandboxMap, SandboxSet, SandboxURLSearchParams } from "../values.js"

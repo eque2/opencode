@@ -1,4 +1,4 @@
-export const errorConstructors = new Set([
+export const errorConstructors = HashSet.make(
   "Error",
   "TypeError",
   "RangeError",
@@ -6,11 +6,24 @@ export const errorConstructors = new Set([
   "ReferenceError",
   "EvalError",
   "URIError",
-])
+)
 
-export const valueConstructors = new Set(["Date", "RegExp", "Map", "Set", "URL", "URLSearchParams"])
+export const valueConstructors = HashSet.make("Date", "RegExp", "Map", "Set", "URL", "URLSearchParams")
 
-export const compoundOperators = new Set(["+=", "-=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>="])
+export const compoundOperators = HashSet.make(
+  "+=",
+  "-=",
+  "*=",
+  "/=",
+  "%=",
+  "**=",
+  "&=",
+  "|=",
+  "^=",
+  "<<=",
+  ">>=",
+  ">>>=",
+)
 
 const ErrorBrand: unique symbol = Symbol("codemode.error")
 
@@ -82,7 +95,7 @@ export const invokeCoercion = (
     },
   )
 }
-import { Effect, type Result } from "effect"
+import { Effect, HashSet, type Result } from "effect"
 import { type AstNode, CoercionFunction, InterpreterRuntimeError } from "../interpreter/model.js"
 import { copyIn, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import {

@@ -1,6 +1,13 @@
-export const mathConstants = new Set(["PI", "E", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT2", "SQRT1_2"])
+const mathConstantNames = ["PI", "E", "LN2", "LN10", "LOG2E", "LOG10E", "SQRT2", "SQRT1_2"] as const
 
-export const mathMethods = new Set([
+/** A Math constant a program may read; the name indexes Math with a precise type. */
+export type MathConstantName = (typeof mathConstantNames)[number]
+
+export const mathConstants = HashSet.make(...mathConstantNames)
+
+export const isMathConstant = (key: string): key is MathConstantName => HashSet.has(mathConstants, key)
+
+export const mathMethods = HashSet.make(
   "max",
   "min",
   "abs",
@@ -17,14 +24,14 @@ export const mathMethods = new Set([
   "log2",
   "log10",
   "exp",
-])
+)
 
 export const invokeMathMethod = (
   name: string,
   args: Array<unknown>,
   node: AstNode,
 ): Effect.Effect<number, InterpreterRuntimeError> => {
-  if (!mathMethods.has(name)) {
+  if (!HashSet.has(mathMethods, name)) {
     return Effect.fail(new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node))
   }
   if (!args.every(Predicate.isNumber)) {
@@ -68,5 +75,5 @@ export const invokeMathMethod = (
   }
   return Effect.fail(new InterpreterRuntimeError(`Math.${name} is not available in CodeMode.`, node))
 }
-import { Effect, Predicate } from "effect"
+import { Effect, HashSet, Predicate } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"

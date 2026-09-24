@@ -1,4 +1,6 @@
 import { Data, Effect, type MutableHashMap, Option, Predicate } from "effect"
+import type { PromiseMethodName } from "../stdlib/promise.js"
+import type { UrlPropertyName } from "../stdlib/url.js"
 import type { SafeObject } from "../tool-runtime.js"
 import type { SandboxURL } from "../values.js"
 
@@ -38,22 +40,8 @@ export type StatementResult =
   | { kind: "break" }
   | { kind: "continue" }
 
-// The URL properties a program may read (stdlib/url.ts `urlProperties`) and write
-// (`urlWritableProperties`: all but the read-only `origin`).
-export type UrlPropertyName =
-  | "href"
-  | "origin"
-  | "protocol"
-  | "username"
-  | "password"
-  | "host"
-  | "hostname"
-  | "port"
-  | "pathname"
-  | "search"
-  | "hash"
-
-export type WritableUrlPropertyName = Exclude<UrlPropertyName, "origin">
+// The URL property names derive from the stdlib/url.ts tables, so the lists cannot drift.
+export type { UrlPropertyName, WritableUrlPropertyName } from "../stdlib/url.js"
 
 // A resolved data field: an array slot or property, a data object property, or a URL component.
 export type MemberReference =
@@ -90,7 +78,8 @@ export class PromiseNamespace extends Data.TaggedClass("PromiseNamespace") {}
 
 export const promiseNamespace: PromiseNamespace = new PromiseNamespace()
 
-export type PromiseMethodName = "all" | "allSettled" | "race" | "resolve" | "reject"
+// The Promise static names derive from the stdlib/promise.ts table.
+export type { PromiseMethodName } from "../stdlib/promise.js"
 
 export class PromiseMethodReference {
   constructor(readonly name: PromiseMethodName) {}

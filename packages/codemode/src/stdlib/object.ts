@@ -1,10 +1,10 @@
-import { Effect, Result } from "effect"
+import { Effect, HashSet, Result } from "effect"
 import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { isBlockedMember, type ToolRuntimeError } from "../tool-runtime.js"
 import { isSandboxValue, SandboxMap, SandboxURLSearchParams } from "../values.js"
 import { boundedData, coerceToString } from "./value.js"
 
-export const objectStatics = new Set(["keys", "values", "entries", "hasOwn", "assign", "fromEntries"])
+export const objectStatics = HashSet.make("keys", "values", "entries", "hasOwn", "assign", "fromEntries")
 
 type ObjectResult<A> = Result.Result<A, InterpreterRuntimeError | ToolRuntimeError>
 
@@ -17,7 +17,7 @@ export const invokeObjectMethod = (
 
 // The helpers are synchronous: each step returns at its first failure.
 const objectMethod = (name: string, args: Array<unknown>, node: AstNode): ObjectResult<unknown> => {
-  if (!objectStatics.has(name)) {
+  if (!HashSet.has(objectStatics, name)) {
     return Result.fail(new InterpreterRuntimeError(`Object.${name} is not available in CodeMode.`, node))
   }
   const requireObject = (): ObjectResult<Record<string, unknown>> =>

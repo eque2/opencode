@@ -59,15 +59,12 @@ import {
   type MemberReference,
   OptionalShortCircuit,
   PromiseMethodReference,
-  type PromiseMethodName,
   PromiseNamespace,
   promiseNamespace,
   ProgramThrow,
   type ProgramNode,
   type Scope,
   type StatementResult,
-  type UrlPropertyName,
-  type WritableUrlPropertyName,
   sourceLocation,
   supportedSyntaxMessage,
   unsupportedSyntax,
@@ -77,32 +74,32 @@ import { arrayMethods, mapMethods, setMethods, spreadItems } from "../stdlib/col
 import { consoleMethods, MAX_CONSOLE_DEPTH } from "../stdlib/console.js"
 import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic } from "../stdlib/date.js"
 import { invokeJsonMethod } from "../stdlib/json.js"
-import { invokeMathMethod, mathConstants } from "../stdlib/math.js"
+import { invokeMathMethod, isMathConstant } from "../stdlib/math.js"
 import {
   invokeNumberMethod,
   invokeNumberStatic,
-  numberConstants,
+  isNumberConstant,
   numberMethods,
   numberStatics,
 } from "../stdlib/number.js"
 import { invokeObjectMethod } from "../stdlib/object.js"
-import { promiseStatics, TOOL_CALL_CONCURRENCY } from "../stdlib/promise.js"
+import { isPromiseMethodName, TOOL_CALL_CONCURRENCY } from "../stdlib/promise.js"
 import {
   escapeRegexHint,
   invokeRegExpMethod,
+  isRegExpProperty,
   matchToValue,
   regexpMethods,
-  regexpProperties,
   regexFailureReason,
   toHostRegex,
 } from "../stdlib/regexp.js"
 import { invokeStringStatic, stringMethods, stringStatics } from "../stdlib/string.js"
 import {
   urlMethods,
-  urlProperties,
   urlSearchParamsMethods,
-  urlWritableProperties,
   invokeUriFunction,
+  isUrlProperty,
+  isWritableUrlProperty,
   invokeURLMethod,
   invokeURLStatic,
   uriArgument,
@@ -285,7 +282,7 @@ const normalizeError = (error: unknown): Diagnostic => {
 const caughtErrorValue = (thrown: unknown): unknown => {
   if (thrown instanceof ProgramThrow) return thrown.value
   if (thrown instanceof InterpreterRuntimeError) return createErrorValue(thrown.errorName, thrown.message)
-  const name = thrown instanceof Error && errorConstructors.has(thrown.name) ? thrown.name : "Error"
+  const name = thrown instanceof Error && HashSet.has(errorConstructors, thrown.name) ? thrown.name : "Error"
   return createErrorValue(name, normalizeError(thrown).message)
 }
 
@@ -343,29 +340,6 @@ const containsContainer = (container: object, value: unknown, seen: WeakSet<obje
   seen.delete(value)
   return found
 }
-
-// Name guards over the stdlib allowlists: an allowed key indexes its host object with a
-// precise type instead of a cast.
-type MathConstantName = "PI" | "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "SQRT2" | "SQRT1_2"
-type NumberConstantName = "MAX_SAFE_INTEGER" | "MIN_SAFE_INTEGER" | "MAX_VALUE" | "MIN_VALUE" | "EPSILON"
-type RegExpPropertyName =
-  | "source"
-  | "flags"
-  | "lastIndex"
-  | "global"
-  | "ignoreCase"
-  | "multiline"
-  | "sticky"
-  | "unicode"
-  | "dotAll"
-const isMathConstant = (key: string): key is MathConstantName => mathConstants.has(key)
-const isNumberConstant = (key: string): key is NumberConstantName => numberConstants.has(key)
-const isRegExpProperty = (key: string): key is RegExpPropertyName => regexpProperties.has(key)
-const isUrlProperty = (key: string): key is UrlPropertyName => urlProperties.has(key)
-const isWritableUrlProperty = (key: UrlPropertyName): key is WritableUrlPropertyName => urlWritableProperties.has(key)
-// promiseStatics holds PromiseMethodName values; read as a set of strings it can test any key.
-const promiseStaticNames: ReadonlySet<string> = promiseStatics
-const isPromiseMethodName = (key: string): key is PromiseMethodName => promiseStaticNames.has(key)
 
 // An unknown property of a string, number, array or sandbox value reads as undefined, as in JS.
 const unknownPropertyRead = new ComputedValue(undefined)
@@ -710,7 +684,7 @@ const invokeGlobalMethod = (
   if (ref.namespace === "String") return invokeStringStatic(ref.name, args, node)
   if (ref.namespace === "URL") return invokeURLStatic(ref.name, args, node)
   if (ref.namespace === "Date") {
-    if (!dateStatics.has(ref.name))
+    if (!HashSet.has(dateStatics, ref.name))
       return Effect.fail(new InterpreterRuntimeError(`Date.${ref.name} is not available in CodeMode.`, node))
     return invokeDateStatic(ref.name, args, node)
   }
@@ -1696,12 +1670,12 @@ class Interpreter<R> {
           [supportedSyntaxMessage],
         )
       }
-      if (errorConstructors.has(name)) {
+      if (HashSet.has(errorConstructors, name)) {
         if (argNodes.length === 0) return createErrorValue(name, "")
         const arg = yield* this.evaluateExpression(yield* asNode(argNodes[0], "arguments[0]"))
         return createErrorValue(name, arg === undefined ? "" : coerceToString(arg))
       }
-      if (valueConstructors.has(name)) {
+      if (HashSet.has(valueConstructors, name)) {
         const args = yield* this.evaluateCallArguments(argNodes)
         switch (name) {
           case "Date":
@@ -2245,7 +2219,7 @@ class Interpreter<R> {
     args: Array<unknown>,
     node: AstNode,
   ): Effect.Effect<void, InterpreterRuntimeError | ToolRuntimeError> {
-    if (!consoleMethods.has(name)) {
+    if (!HashSet.has(consoleMethods, name)) {
       return Effect.fail(new InterpreterRuntimeError(`console.${name} is not available in CodeMode.`, node))
     }
     return Effect.suspend(() =>
@@ -3234,7 +3208,7 @@ class Interpreter<R> {
     // so compound assignment inherits the same coercion semantics (Dates, data objects, ...).
     // Only the arithmetic/bitwise operators are compoundable; logical assignments (&&=/||=/??=)
     // short-circuit and are handled by evaluateLogicalAssignment before reaching here.
-    if (!compoundOperators.has(operator)) {
+    if (!HashSet.has(compoundOperators, operator)) {
       return Effect.fail(new InterpreterRuntimeError(`Unsupported assignment operator '${operator}'.`, node))
     }
     return this.applyBinaryOperator(operator.slice(0, -1), current, incoming, node)
@@ -3302,7 +3276,7 @@ class Interpreter<R> {
         if (key === "length") return new ComputedValue(objectValue.length)
         if (typeof key === "number") return new ComputedValue(objectValue[key])
         if (typeof key === "string" && /^\d+$/.test(key)) return new ComputedValue(objectValue[Number(key)])
-        if (typeof key === "string" && stringMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(stringMethods, key)) return new IntrinsicReference(objectValue, key)
         // Unknown property on a string reads as `undefined`, matching JS (`"x".foo === undefined`),
         // instead of throwing - so defensive access like `result?.login ?? result` on a JSON-string
         // tool result doesn't crash. (Optional chaining only guards null/undefined receivers, so a
@@ -3311,7 +3285,7 @@ class Interpreter<R> {
       }
 
       if (typeof objectValue === "number") {
-        if (typeof key === "string" && numberMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(numberMethods, key)) return new IntrinsicReference(objectValue, key)
         // Unknown property on a number reads as `undefined`, matching JS, rather than throwing.
         return unknownPropertyRead
       }
@@ -3321,38 +3295,40 @@ class Interpreter<R> {
         if (objectValue.name === "Number" && isNumberConstant(key)) {
           return new ComputedValue(Number[key])
         }
-        if (objectValue.name === "Number" && numberStatics.has(key)) return new GlobalMethodReference("Number", key)
-        if (objectValue.name === "String" && stringStatics.has(key)) return new GlobalMethodReference("String", key)
+        if (objectValue.name === "Number" && HashSet.has(numberStatics, key))
+          return new GlobalMethodReference("Number", key)
+        if (objectValue.name === "String" && HashSet.has(stringStatics, key))
+          return new GlobalMethodReference("String", key)
       }
 
       // Sandbox value types expose their method/property allowlists; any other key reads as
       // `undefined`, consistent with unknown-property reads on strings/numbers/arrays.
       if (objectValue instanceof SandboxDate) {
-        if (typeof key === "string" && dateMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(dateMethods, key)) return new IntrinsicReference(objectValue, key)
         return unknownPropertyRead
       }
       if (objectValue instanceof SandboxRegExp) {
         if (typeof key === "string" && isRegExpProperty(key)) {
           return new ComputedValue(objectValue.regex[key])
         }
-        if (typeof key === "string" && regexpMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(regexpMethods, key)) return new IntrinsicReference(objectValue, key)
         return unknownPropertyRead
       }
       if (objectValue instanceof SandboxMap) {
         if (key === "size") return new ComputedValue(objectValue.map.size)
-        if (typeof key === "string" && mapMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(mapMethods, key)) return new IntrinsicReference(objectValue, key)
         return unknownPropertyRead
       }
       if (objectValue instanceof SandboxSet) {
         if (key === "size") return new ComputedValue(objectValue.set.size)
-        if (typeof key === "string" && setMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(setMethods, key)) return new IntrinsicReference(objectValue, key)
         return unknownPropertyRead
       }
       if (objectValue instanceof SandboxURL) {
         if (key === "searchParams") {
           return new ComputedValue(objectValue.searchParams)
         }
-        if (typeof key === "string" && urlMethods.has(key)) return new IntrinsicReference(objectValue, key)
+        if (typeof key === "string" && HashSet.has(urlMethods, key)) return new IntrinsicReference(objectValue, key)
         if (typeof key === "string" && isUrlProperty(key)) {
           return { kind: "url", target: objectValue, key } satisfies MemberReference
         }
@@ -3360,7 +3336,7 @@ class Interpreter<R> {
       }
       if (objectValue instanceof SandboxURLSearchParams) {
         if (key === "size") return new ComputedValue(objectValue.params.size)
-        if (typeof key === "string" && urlSearchParamsMethods.has(key)) {
+        if (typeof key === "string" && HashSet.has(urlSearchParamsMethods, key)) {
           return new IntrinsicReference(objectValue, key)
         }
         return unknownPropertyRead
@@ -3404,7 +3380,7 @@ class Interpreter<R> {
       if (Array.isArray(objectValue)) {
         if (
           key !== "length" &&
-          !(typeof key === "string" && arrayMethods.has(key)) &&
+          !(typeof key === "string" && HashSet.has(arrayMethods, key)) &&
           typeof key !== "number" &&
           !/^\d+$/.test(key)
         ) {
@@ -3437,7 +3413,7 @@ class Interpreter<R> {
       )
         return reference
       if (reference.kind === "array") {
-        if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
+        if (typeof reference.key === "string" && HashSet.has(arrayMethods, reference.key)) {
           return new IntrinsicReference(reference.target, reference.key)
         }
         return reference.key === "length" ? reference.target.length : reference.target[Number(reference.key)]
@@ -3474,7 +3450,7 @@ class Interpreter<R> {
       if (reference.kind === "array") {
         if (reference.key === "length")
           return yield* new InterpreterRuntimeError("Array length cannot be assigned in CodeMode.", node)
-        if (typeof reference.key === "string" && arrayMethods.has(reference.key)) {
+        if (typeof reference.key === "string" && HashSet.has(arrayMethods, reference.key)) {
           return yield* new InterpreterRuntimeError("Array methods cannot be assigned in CodeMode.", node)
         }
       }

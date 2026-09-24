@@ -1,4 +1,4 @@
-import { Effect, Result, Schema } from "effect"
+import { Effect, HashSet, Result, Schema } from "effect"
 import {
   type AstNode,
   CodeModeFunction,
@@ -7,7 +7,7 @@ import {
 } from "../interpreter/model.js"
 import { copyIn, copyOut, type ToolRuntimeError } from "../tool-runtime.js"
 
-export const jsonStatics = new Set(["stringify", "parse"])
+export const jsonStatics = HashSet.make("stringify", "parse")
 
 // JSON text decodes without asserting a shape: copyIn validates the parsed value next.
 const decodeJsonText = Schema.decodeResult(Schema.fromJsonString(Schema.Unknown))
@@ -17,7 +17,7 @@ export const invokeJsonMethod = (
   args: Array<unknown>,
   node: AstNode,
 ): Effect.Effect<unknown, InterpreterRuntimeError | ToolRuntimeError> => {
-  if (!jsonStatics.has(name)) {
+  if (!HashSet.has(jsonStatics, name)) {
     return Effect.fail(new InterpreterRuntimeError(`JSON.${name} is not available in CodeMode.`, node))
   }
   switch (name) {
