@@ -66,22 +66,14 @@ export const lower = Effect.fn("BedrockMedia.lower")(function* (part: MediaPart)
   const mime = part.mediaType.toLowerCase()
   const imageFormat = IMAGE_FORMATS[mime as keyof typeof IMAGE_FORMATS]
   if (imageFormat) {
-    const media = yield* ProviderShared.validateMedia(
-      "Bedrock Converse",
-      part,
-      new Set<string>(Object.keys(IMAGE_FORMATS)),
-    )
+    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Object.keys(IMAGE_FORMATS))
     return { image: { format: imageFormat, source: { bytes: media.base64 } } } satisfies ImageBlock
   }
   if (mime.startsWith("image/"))
     return yield* ProviderShared.invalidRequest(`Bedrock Converse does not support image media type ${part.mediaType}`)
   const documentFormat = DOCUMENT_FORMATS[mime as keyof typeof DOCUMENT_FORMATS]
   if (documentFormat) {
-    const media = yield* ProviderShared.validateMedia(
-      "Bedrock Converse",
-      part,
-      new Set<string>(Object.keys(DOCUMENT_FORMATS)),
-    )
+    const media = yield* ProviderShared.validateMedia("Bedrock Converse", part, Object.keys(DOCUMENT_FORMATS))
     return documentBlock(part, documentFormat, media.base64)
   }
   return yield* ProviderShared.invalidRequest(`Bedrock Converse does not support media type ${part.mediaType}`)
