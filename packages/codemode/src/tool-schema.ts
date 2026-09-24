@@ -1,4 +1,4 @@
-import { HashSet, JsonPointer, Result, Schema } from "effect"
+import { HashSet, JsonPointer, Option, Predicate, Result, Schema, Struct } from "effect"
 import type { Definition, JsonSchema, SchemaType } from "./tool.js"
 
 const isEffectSchema = (schema: SchemaType): schema is Schema.Decoder<unknown> & Schema.Top => Schema.isSchema(schema)
@@ -25,6 +25,10 @@ const effectNumberSentinel = (schema: JsonSchema) =>
   Array.isArray(schema.enum) &&
   schema.enum.length === 1 &&
   (schema.enum[0] === "NaN" || schema.enum[0] === "Infinity" || schema.enum[0] === "-Infinity")
+
+/** The definition name that a local `#/$defs/<name>` or `#/definitions/<name>` reference targets. */
+const refName = (ref: string): Option.Option<string> =>
+  Option.map(Option.fromNullishOr(ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]), JsonPointer.unescapeToken)
 
 const intersection = (members: ReadonlyArray<string>): string => {
   const concrete = members.filter((member) => member !== "unknown")
@@ -59,10 +63,9 @@ const hasUnresolvedRef = (
   if (visited.includes(schema)) return false
   const nextVisited = [...visited, schema]
   if (schema.$ref !== undefined) {
-    const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-    const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (name === undefined || definitions[name] === undefined || HashSet.has(seen, name)) return true
-    if (hasUnresolvedRef(definitions[name], definitions, HashSet.add(seen, name), nextVisited)) return true
+    const name = refName(schema.$ref)
+    if (Option.isNone(name) || definitions[name.value] === undefined || HashSet.has(seen, name.value)) return true
+    if (hasUnresolvedRef(definitions[name.value], definitions, HashSet.add(seen, name.value), nextVisited)) return true
   }
   return [
     ...(schema.anyOf ?? []),
@@ -123,12 +126,11 @@ const renderSchema = (
       ? ctx
       : { ...ctx, definitions: { ...ctx.definitions, ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) } }
   if (schema.$ref) {
-    const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-    const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-    if (!name || !nested.definitions[name] || HashSet.has(seen, name)) return "unknown"
+    const name = refName(schema.$ref)
+    if (Option.isNone(name) || !nested.definitions[name.value] || HashSet.has(seen, name.value)) return "unknown"
     return intersection([
-      renderSchema(nested.definitions[name], nested, depth, HashSet.add(seen, name)),
-      renderSchema({ ...schema, $ref: undefined }, nested, depth + 1, seen),
+      renderSchema(nested.definitions[name.value], nested, depth, HashSet.add(seen, name.value)),
+      renderSchema(Struct.omit(schema, ["$ref"]), nested, depth + 1, seen),
     ])
   }
   if (schema.const !== undefined) return renderLiteral(schema.const)
@@ -159,13 +161,13 @@ const renderSchema = (
     if (members.some((member) => member === "unknown")) return "unknown"
     return intersection([
       members.join(" | "),
-      renderSchema({ ...schema, anyOf: undefined, oneOf: undefined }, nested, depth + 1, seen),
+      renderSchema(Struct.omit(schema, ["anyOf", "oneOf"]), nested, depth + 1, seen),
     ])
   }
   if (schema.allOf) {
     const members = schema.allOf.map((item) => renderSchema(item, nested, depth + 1, seen))
     if (schema.allOf.some((item) => hasUnresolvedRef(item, nested.definitions))) return "unknown"
-    return intersection([renderSchema({ ...schema, allOf: undefined }, nested, depth + 1, seen), ...members])
+    return intersection([renderSchema(Struct.omit(schema, ["allOf"]), nested, depth + 1, seen), ...members])
   }
   if (Array.isArray(schema.type)) {
     return schema.type.map((item) => renderSchema({ ...schema, type: item }, nested, depth + 1, seen)).join(" | ")
@@ -179,24 +181,25 @@ const renderSchema = (
     const required = HashSet.fromIterable(schema.required ?? [])
     const properties = Object.entries(schema.properties ?? {})
     const additional = schema.additionalProperties
-    const indexType =
-      additional && typeof additional === "object" ? renderSchema(additional, nested, depth + 1, seen) : undefined
+    const indexType = Predicate.isObjectOrArray(additional)
+      ? Option.some(renderSchema(additional, nested, depth + 1, seen))
+      : Option.none()
     const field = ([name, value]: readonly [string, JsonSchema]) =>
       `${renderKey(name)}${HashSet.has(required, name) ? "" : "?"}: ${renderSchema(value, nested, depth + 1, seen)}`
 
     if (!ctx.pretty) {
       const fields = properties.map(field)
-      if (indexType !== undefined) fields.push(`[key: string]: ${indexType}`)
+      if (Option.isSome(indexType)) fields.push(`[key: string]: ${indexType.value}`)
       return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
     }
 
     // Pretty: an indented block, each described field preceded by its JSDoc comment.
-    if (properties.length === 0 && indexType === undefined) return "{}"
+    if (properties.length === 0 && Option.isNone(indexType)) return "{}"
     const pad = "  ".repeat(depth + 1)
     const lines = properties.map(
       (entry) => `${jsdoc(entry[1].description, docTags(entry[1]), pad)}${pad}${field(entry)},`,
     )
-    if (indexType !== undefined) lines.push(`${pad}[key: string]: ${indexType},`)
+    if (Option.isSome(indexType)) lines.push(`${pad}[key: string]: ${indexType.value},`)
     return `{\n${lines.join("\n")}\n${"  ".repeat(depth)}}`
   }
   return "unknown"
@@ -250,18 +253,16 @@ export const inputProperties = <R>(definition: Definition<R>): Array<InputProper
           definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
         }
     const definitions = document.definitions ?? {}
-    let schema = document.schema
-    if (schema.$ref !== undefined) {
-      const segment = schema.$ref.match(/^#\/(?:\$defs|definitions)\/([^/]+)$/)?.[1]
-      const name = segment === undefined ? undefined : JsonPointer.unescapeToken(segment)
-      const resolved = name === undefined ? undefined : definitions[name]
-      if (resolved === undefined) return []
-      schema = resolved
-    }
+    const resolved =
+      document.schema.$ref === undefined
+        ? Option.some(document.schema)
+        : Option.flatMap(refName(document.schema.$ref), (name) => Option.fromNullishOr(definitions[name]))
+    if (Option.isNone(resolved)) return []
+    const schema = resolved.value
     const required = HashSet.fromIterable(schema.required ?? [])
     return Object.entries(schema.properties ?? {}).map(([name, value]) => ({
       name,
-      description: typeof value.description === "string" ? value.description : undefined,
+      description: Option.getOrUndefined(Option.liftPredicate(value.description, Predicate.isString)),
       required: HashSet.has(required, name),
     }))
   } catch {
