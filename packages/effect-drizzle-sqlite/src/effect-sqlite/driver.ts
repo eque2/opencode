@@ -57,7 +57,7 @@ export const make = Effect.fn("SQLiteDrizzle.make")(function* <TRelations extend
   const session = new EffectSQLiteSession(client, dialect, relations, {
     logger,
     cache,
-    useJitMappers: jitCompatCheck(config.jit),
+    useJitMappers: yield* jitCompatCheck(config.jit),
   })
   const db = new EffectSQLiteDatabase(dialect, session, relations) as EffectSQLiteDatabase<TRelations> & {
     $client: SqlClient

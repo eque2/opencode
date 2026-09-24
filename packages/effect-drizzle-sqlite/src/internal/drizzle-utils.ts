@@ -1,4 +1,6 @@
+import * as Effect from "effect/Effect"
 import { Column } from "drizzle-orm/column"
+import { EffectDrizzleError } from "drizzle-orm/effect-core/errors"
 import { is } from "drizzle-orm/entity"
 import type { JoinNullability } from "drizzle-orm/query-builders/select.types"
 import { Param, SQL } from "drizzle-orm/sql/sql"
@@ -26,14 +28,17 @@ export function getViewSelectedFieldsRuntime(view: SQLiteViewBase) {
   return (view as unknown as Record<symbol, { selectedFields: Record<string, unknown>; name: string }>)[ViewBaseConfig]
 }
 
-export function jitCompatCheck(isEnabled: boolean | undefined) {
+/**
+ * Probes whether this runtime allows the Function constructor that drizzle-orm
+ * makeJitQueryMapper uses. Succeeds with false when JIT is off or the probe fails.
+ */
+export const jitCompatCheck = Effect.fn("jitCompatCheck")(function* (isEnabled: boolean | undefined) {
   if (!isEnabled) return false
-  try {
-    return new Function("input", '"use strict"; return input;')(true) === true
-  } catch {
-    return false
-  }
-}
+  return yield* Effect.try({
+    try: () => new Function("input", '"use strict"; return input;')(true) === true,
+    catch: (cause) => new EffectDrizzleError({ message: "JIT query mappers are unavailable in this runtime", cause }),
+  }).pipe(Effect.orElseSucceed(() => false))
+})
 
 export function orderSelectedFields<TColumn extends Column>(
   fields: Record<string, unknown>,
