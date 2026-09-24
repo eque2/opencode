@@ -72,12 +72,17 @@ export interface Tags<Config extends TagConfig> {
 export function tags<const Config extends { readonly [Name in keyof Config]: readonly (keyof Config & string)[] }>(
   config: Config,
 ): Tags<Config> {
-  const names = Object.keys(config) as TagNames<Config>[]
-  const values = Object.fromEntries(names.map((name) => [name, makeTag(name)])) as Tags<Config>["values"]
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- TypeScript cannot build the key-dependent mapped type { [Name]: Tag<Name> } from runtime keys; each value is makeTag of its own key
+  const values = Object.fromEntries(Object.keys(config).map((name) => [name, makeTag(name)])) as Tags<Config>["values"]
   return {
     values,
-    make: ((name: TagNames<Config>) => (input: DistributiveOmit<MakeInput<Layer.Any, NodeList, Tag>, "tag">) =>
-      make({ ...input, tag: values[name] })) as Tags<Config>["make"],
+    make:
+      <Name extends TagNames<Config>>(name: Name) =>
+      <const Implementation extends Layer.Any, const Items extends NodeList>(
+        input: DistributiveOmit<MakeInput<Implementation, Items, Tag<Name>>, "tag"> &
+          CheckTags<Items, Name | Extract<Config[Name][number], string>>,
+      ) =>
+        make<Implementation, Items, Tag<Name>>({ ...input, tag: values[name] }),
   }
 }
 
@@ -152,7 +157,7 @@ function replacementNode(source: AnyNode, replacement: AnyNode | Layer.Any): Res
     ? replacement
     : make({
         ...nodeMakeIdentity(source),
-        layer: replacement as Layer.Layer<unknown, unknown>,
+        layer: replacement,
         deps: [],
         tag: source.tag,
       })
@@ -209,7 +214,8 @@ function walk<Out>(
     stack.push(target)
     const result = visit(target, { cache, visit: recur })
     stack.pop()
-    if (Result.isSuccess(result) && !MutableHashMap.has(cache, target)) MutableHashMap.set(cache, target, result.success)
+    if (Result.isSuccess(result) && !MutableHashMap.has(cache, target))
+      MutableHashMap.set(cache, target, result.success)
     return result
   }
 
@@ -239,7 +245,9 @@ export function hoist<A, E, const Items extends Replacements = readonly []>(
     return { node: failed, hoisted: failed }
   }
   return {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- the graph walk erases the Node phantom types; the hoisted tree provides the root's services and errors
     node: result.success.node as Node<A, E>,
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- the graph walk erases the Node phantom types; hoisted nodes are dependencies of the root, so their errors are in E
     hoisted: result.success.hoisted as Node<unknown, E>,
   }
 }
@@ -284,6 +292,7 @@ export function compile<A, E, const Items extends Replacements = readonly []>(
   return Layer.suspend(() => {
     const result = compileGraph(root, replacements)
     if (Result.isFailure(result)) return Layer.effectContext(Effect.die(result.failure))
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- effect Layer.provide and Layer.provideMerge erase the graph's service and error types; the root Node<A, E>, checked by make and CheckReplacements, carries them
     return result.success as Layer.Layer<A, E>
   })
 }
@@ -298,11 +307,10 @@ function compileGraph(root: AnyNode, replacements: Replacements = []) {
         (node, context) =>
           Result.gen(function* () {
             if (node.kind === "unbound") return yield* graphError(`Unbound layer node: ${node.name}`)
+            const implementation = node.implementation
+            if (!Layer.isLayer(implementation)) return yield* graphError(`Layer node has no layer: ${node.name}`)
             const dependencies = yield* visitAll(node.dependencies.flatMap(flatten), context.visit)
-            const implementation = node.implementation! as RuntimeLayer
-            return dependencies.length === 0
-              ? implementation
-              : implementation.pipe(Layer.provide(dependencies as [RuntimeLayer, ...RuntimeLayer[]]))
+            return Array.isArrayNonEmpty(dependencies) ? Layer.provide(implementation, dependencies) : implementation
           }),
         { cache, resolve: (node) => resolveReplacement(replacementMap, node) },
       )
@@ -321,7 +329,8 @@ function replacementMapFrom(replacements: Replacements = []) {
     for (const [source, replacement] of replacements) {
       const normalized = yield* rewriteReplacementDependencies(yield* replacementNode(source, replacement), map)
       const current = MutableHashMap.make([source.name, normalized])
-      for (const [name, node] of map) MutableHashMap.set(map, name, yield* rewriteReplacementDependencies(node, current))
+      for (const [name, node] of map)
+        MutableHashMap.set(map, name, yield* rewriteReplacementDependencies(node, current))
       MutableHashMap.set(map, source.name, normalized)
     }
     return map

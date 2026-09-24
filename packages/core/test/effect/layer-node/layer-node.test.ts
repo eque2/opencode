@@ -204,9 +204,7 @@ describe("layer node", () => {
     })
     expect(result.hoisted.dependencies).toEqual([database])
 
-    const layer = LayerNode.compile(result.node).pipe(
-      Layer.provide(LayerNode.compile(result.hoisted)),
-    ) as unknown as Layer.Layer<App>
+    const layer = LayerNode.compile(result.node).pipe(Layer.provide(LayerNode.compile(result.hoisted)))
     const program = Effect.gen(function* () {
       return yield* (yield* App).run
     }).pipe(Effect.provide(layer))

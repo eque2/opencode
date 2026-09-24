@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Context, Effect, Exit, Layer, LayerMap, Option } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Option } from "effect"
 import { Node } from "@opencode-ai/core/effect/app-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Location } from "@opencode-ai/core/location"
 import { LocationServiceMap } from "@opencode-ai/core/location-service-map"
-import type { LocationError, LocationServices } from "@opencode-ai/core/location-services"
 import { Project } from "@opencode-ai/core/project"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { tmpdir } from "../../fixture/tmpdir"
@@ -45,23 +44,10 @@ describe("node build", () => {
       ),
       deps: [a],
     })
+    // The map layer needs CycleB, which closes the cycle. The graph is rejected before any layer builds.
     const mapLayer = Layer.effect(
       LocationServiceMap.Service,
-      Effect.gen(function* () {
-        const service = yield* CycleB
-        return yield* LayerMap.make(
-          (ref: Location.Ref) =>
-            Layer.succeed(
-              Location.Service,
-              Location.Service.of({
-                directory: ref.directory,
-                workspaceID: ref.workspaceID,
-                project: { id: Project.ID.global, directory: service.directory },
-              }),
-            ),
-          { idleTimeToLive: "1 minute" },
-        )
-      }) as unknown as Effect.Effect<LayerMap.LayerMap<Location.Ref, LocationServices, LocationError>, never, CycleB>,
+      Effect.flatMap(CycleB, () => Effect.die("the cycle is rejected before this layer builds")),
     )
     const map = Node.makeGlobalNode({ service: LocationServiceMap.Service, layer: mapLayer, deps: [b] })
     const layer = AppNodeBuilder.build(LayerNode.group([a]), [[LocationServiceMap.node, map]])
