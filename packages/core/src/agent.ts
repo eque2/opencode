@@ -43,6 +43,16 @@ export interface Interface extends State.Transformable<Draft> {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/Agent") {}
 
+// The values of Agent.Info.empty, built as the mutable draft that update() edits in place.
+// The "creates agents with runtime defaults" test checks that the two stay equal.
+const emptyDraft = (id: ID): Types.DeepMutable<Info> => ({
+  id,
+  request: { headers: {}, body: {} },
+  mode: "all",
+  hidden: false,
+  permissions: [],
+})
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -55,10 +65,7 @@ const layer = Layer.effect(
           draft.default = id
         },
         update: (id, fn) => {
-          const current = Option.getOrElse(
-            MutableHashMap.get(draft.agents, id),
-            () => Info.empty(id) as Types.DeepMutable<Info>,
-          )
+          const current = Option.getOrElse(MutableHashMap.get(draft.agents, id), () => emptyDraft(id))
           if (!MutableHashMap.has(draft.agents, id)) MutableHashMap.set(draft.agents, id, current)
           fn(current)
           current.id = id
