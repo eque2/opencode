@@ -48,11 +48,7 @@ export interface ToolAccumulator {
  * Anthropic-style providers (which don't surface a total) still get a
  * sensible aggregate on the input + output axes.
  */
-export const totalTokens = (
-  inputTokens: number | undefined,
-  outputTokens: number | undefined,
-  total?: number | undefined,
-) => {
+export const totalTokens = (inputTokens: number | undefined, outputTokens: number | undefined, total?: number) => {
   if (total !== undefined) return total
   if (inputTokens === undefined && outputTokens === undefined) return undefined
   return (inputTokens ?? 0) + (outputTokens ?? 0)
@@ -177,7 +173,8 @@ export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function*
   supportedMimes: Iterable<string>,
 ) {
   const mime = part.mediaType.toLowerCase()
-  if (!HashSet.has(HashSet.fromIterable(supportedMimes), mime)) return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
+  if (!HashSet.has(HashSet.fromIterable(supportedMimes), mime))
+    return yield* invalidRequest(`${route} does not support media type ${part.mediaType}`)
 
   let base64: string
   if (typeof part.data !== "string") {
