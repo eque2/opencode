@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Option, Stream } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
 
 export const collectBoundedResponseBody = <E>(
@@ -7,12 +7,17 @@ export const collectBoundedResponseBody = <E>(
   tooLarge: () => E,
 ) =>
   Effect.gen(function* () {
-    const contentLength = response.headers["content-length"]
-    const parsedSize = contentLength ? Number.parseInt(contentLength, 10) : undefined
-    const declaredSize =
-      parsedSize !== undefined && Number.isSafeInteger(parsedSize) && parsedSize >= 0 ? parsedSize : undefined
-    if (declaredSize !== undefined && declaredSize > maximumBytes) return yield* Effect.fail(tooLarge())
-    let body = Buffer.allocUnsafe(Math.min(maximumBytes, declaredSize || 64 * 1024))
+    const declaredSize = Option.fromNullishOr(response.headers["content-length"]).pipe(
+      Option.filter((contentLength) => contentLength !== ""),
+      Option.map((contentLength) => Number.parseInt(contentLength, 10)),
+      Option.filter((size) => Number.isSafeInteger(size) && size >= 0),
+    )
+    if (Option.isSome(declaredSize) && declaredSize.value > maximumBytes) return yield* Effect.fail(tooLarge())
+    const initialSize = declaredSize.pipe(
+      Option.filter((size) => size > 0),
+      Option.getOrElse(() => 64 * 1024),
+    )
+    let body = Buffer.allocUnsafe(Math.min(maximumBytes, initialSize))
     let size = 0
     yield* Stream.runForEach(response.stream, (chunk) => {
       if (chunk.byteLength === 0) return Effect.void
