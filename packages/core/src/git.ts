@@ -134,7 +134,7 @@ export interface Interface {
     readonly ignored: (input: {
       repository: Repository
       paths: readonly RelativePath[]
-    }) => Effect.Effect<ReadonlySet<RelativePath>, OperationError>
+    }) => Effect.Effect<HashSet.HashSet<RelativePath>, OperationError>
   }
   readonly tree: {
     readonly capture: (input: {
@@ -499,7 +499,7 @@ const layer = Layer.effect(
       repository: Repository
       paths: readonly RelativePath[]
     }) {
-      if (!input.paths.length) return new Set<RelativePath>()
+      if (!input.paths.length) return HashSet.empty<RelativePath>()
       const result = yield* proc
         .run(
           ChildProcess.make("git", repositoryArgs(input.repository, ["check-ignore", "--no-index", "--stdin", "-z"]), {
@@ -525,7 +525,7 @@ const layer = Layer.effect(
           directory: input.repository.worktree,
           message: result.stderr.toString("utf8").trim() || "Failed to check ignored paths",
         })
-      return new Set(
+      return HashSet.fromIterable(
         result.stdout
           .toString("utf8")
           .split("\0")

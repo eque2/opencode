@@ -2,7 +2,7 @@ export * as Snapshot from "./snapshot"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, HashMap, Layer, Option, Predicate, Schema } from "effect"
+import { Context, Effect, HashMap, HashSet, Layer, Option, Predicate, Schema } from "effect"
 import { Config } from "./config"
 import { File } from "./file"
 import { FSUtil } from "./fs-util"
@@ -160,7 +160,7 @@ const layer = Layer.effect(
       const ignored = yield* git.index
         .ignored({ repository: source, paths: files })
         .pipe(Effect.mapError((cause) => failure("files", cause)))
-      return files.filter((file) => !ignored.has(file))
+      return files.filter((file) => !HashSet.has(ignored, file))
     })
 
     const diff = Effect.fn("Snapshot.diff")(function* (input: DiffInput) {
@@ -169,7 +169,7 @@ const layer = Layer.effect(
       const candidates = input.paths ?? files
       const paths = source
         ? yield* git.index.ignored({ repository: source, paths: files }).pipe(
-            Effect.map((ignored) => candidates.filter((file) => !ignored.has(file))),
+            Effect.map((ignored) => candidates.filter((file) => !HashSet.has(ignored, file))),
             Effect.mapError((cause) => failure("diff", cause)),
           )
         : candidates
