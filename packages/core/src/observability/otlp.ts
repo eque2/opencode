@@ -49,19 +49,19 @@ export interface Resource {
 }
 
 /** The OTEL resource. The ambient ConfigProvider copies process.env once, so each run reads a fresh env provider. */
-export const resource: Effect.Effect<Resource> = Effect.suspend(() =>
-  ResourceAttributes.parse(ConfigProvider.fromEnv()),
-).pipe(
-  Effect.orDie,
-  Effect.map((attributes) => ({
+export const resource: Effect.Effect<Resource> = Effect.all([
+  Effect.suspend(() => ResourceAttributes.parse(ConfigProvider.fromEnv())).pipe(Effect.orDie),
+  runID,
+]).pipe(
+  Effect.map(([attributes, id]) => ({
     serviceName: "opencode",
     serviceVersion: InstallationVersion,
     attributes: {
       ...attributes,
       "deployment.environment.name": InstallationChannel,
       "opencode.client": Flag.OPENCODE_CLIENT,
-      "opencode.run": runID,
-      "service.instance.id": runID,
+      "opencode.run": id,
+      "service.instance.id": id,
     },
   })),
 )
