@@ -1,5 +1,16 @@
 import { isAbsolute, join } from "node:path"
-import { Effect, FileSystem, PlatformError, Predicate, Schema, SchemaAST, SchemaRepresentation } from "effect"
+import {
+  Array as Arr,
+  Effect,
+  FileSystem,
+  HashSet,
+  MutableHashSet,
+  PlatformError,
+  Predicate,
+  Schema,
+  SchemaAST,
+  SchemaRepresentation,
+} from "effect"
 import { HttpMethod, type HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi"
 import { format } from "prettier"
@@ -120,10 +131,12 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
         ...inputFields(headers?.schema, "headers", name),
         ...payloads.flatMap((item) => inputFields(item.schema, "payload", name)),
       ]
-      const names = new Set<string>()
+      const names = MutableHashSet.empty<string>()
       for (const field of inputs) {
-        if (names.has(field.name)) throw new GenerationError({ reason: `Input field collision: ${field.name}` })
-        names.add(field.name)
+        if (MutableHashSet.has(names, field.name)) {
+          throw new GenerationError({ reason: `Input field collision: ${field.name}` })
+        }
+        MutableHashSet.add(names, field.name)
       }
 
       const schemaPaths: Array<readonly [string, Schema.Top]> = [
@@ -166,48 +179,46 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
             : HttpApiSchema.isNoContent(success.schema.ast)
               ? "void"
               : "value",
-          errors: [
-            ...new Set([
-              ...errorSchemas.flatMap((item) => {
-                const identifier = SchemaAST.resolveIdentifier(item.schema.ast)
-                return identifier === undefined ? [] : [identifier]
-              }),
-              "ClientError",
-            ]),
-          ],
+          errors: Arr.dedupe([
+            ...errorSchemas.flatMap((item) => {
+              const identifier = SchemaAST.resolveIdentifier(item.schema.ast)
+              return identifier === undefined ? [] : [identifier]
+            }),
+            "ClientError",
+          ]),
         },
       })
     },
   })
 
-  const modules = new Set(["client", "client-error", "index"])
+  const modules = MutableHashSet.make("client", "client-error", "index")
   const groups = Array.from(
     Map.groupBy(endpoints, (endpoint) => endpoint.group),
     ([identifier, endpoints], index) => {
-      if (new Set(endpoints.map((endpoint) => endpoint.sourceGroup)).size > 1) {
+      if (Arr.dedupe(endpoints.map((endpoint) => endpoint.sourceGroup)).length > 1) {
         throw new GenerationError({ reason: `Client group name collision: ${identifier}` })
       }
       const base = /^[A-Za-z0-9_-]+$/.test(identifier) ? identifier : `group-${index}`
       const module = uniqueModule(base, index, modules)
-      modules.add(module.toLowerCase())
+      MutableHashSet.add(modules, module.toLowerCase())
       return { identifier, sourceIdentifier: endpoints[0].sourceGroup, module, endpoints }
     },
   )
-  const publicNames = new Set<string>()
+  const publicNames = MutableHashSet.empty<string>()
   for (const group of groups) {
-    const endpointNames = new Set<string>()
+    const endpointNames = MutableHashSet.empty<string>()
     for (const endpoint of group.endpoints) {
-      if (endpointNames.has(endpoint.operation.name)) {
+      if (MutableHashSet.has(endpointNames, endpoint.operation.name)) {
         throw new GenerationError({
           reason: `Client endpoint name collision: ${group.identifier}.${endpoint.operation.name}`,
         })
       }
-      endpointNames.add(endpoint.operation.name)
+      MutableHashSet.add(endpointNames, endpoint.operation.name)
     }
     const names = group.endpoints[0]?.topLevel ? group.endpoints.map((item) => item.operation.name) : [group.identifier]
     for (const name of names) {
-      if (publicNames.has(name)) throw new GenerationError({ reason: `Client name collision: ${name}` })
-      publicNames.add(name)
+      if (MutableHashSet.has(publicNames, name)) throw new GenerationError({ reason: `Client name collision: ${name}` })
+      MutableHashSet.add(publicNames, name)
     }
   }
   return {
@@ -420,7 +431,7 @@ function renderImportedProjection(groups: ReadonlyArray<Group>, endpoints: Reado
       return `add(HttpApiGroup.make(${encodeJsonString(group.identifier)}${options})${group.endpoints.map((endpoint) => `.add(${endpoints[`${group.identifier}.${endpoint.endpoint.identifier}`]})`).join("")})`
     })
     .join(".")}\n\n`
-  return { imports: [...new Set(imports)], source }
+  return { imports: Arr.dedupe(imports), source }
 }
 
 function renderPromiseTypes(
@@ -490,7 +501,7 @@ function renderPromiseTypes(
   const json = operations.includes("JsonValue")
     ? "export type JsonValue = null | boolean | number | string | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue }"
     : ""
-  const imports = [...new Set(Object.values(outputTypes ?? {}).map((override) => override.import))]
+  const imports = Arr.dedupe(Object.values(outputTypes ?? {}).map((override) => override.import))
   return [...imports, json, ...errorTypes, operations].filter(Boolean).join("\n\n")
 }
 
@@ -522,7 +533,7 @@ function renderPromiseClient(groups: ReadonlyArray<Group>) {
         endpoint.headers === undefined ? undefined : `headers: ${part("headers")}`,
         endpoint.payloads.length === 0 ? undefined : `body: ${part("payload")}`,
       ].filter((value): value is string => value !== undefined)
-      const declaredStatuses = [...new Set(endpoint.errors.map((error) => error.status))]
+      const declaredStatuses = Arr.dedupe(endpoint.errors.map((error) => error.status))
       const descriptor = `{ method: ${encodeJsonString(endpoint.endpoint.method)}, path: ${path}${parts.length === 0 ? "" : `, ${parts.join(", ")}`}, successStatus: ${resolveHttpApiStatus(endpoint.successes[0].ast) ?? 200}, declaredStatuses: [${declaredStatuses.join(", ")}], empty: ${endpoint.operation.success === "void"} }`
       if (endpoint.operation.success === "stream") {
         const success = endpoint.successes[0]
@@ -572,14 +583,14 @@ function structuralType(schema: Schema.Top) {
   const references = new Map(
     document.references.nonRecursives.map((reference) => [reference.$ref, reference.code.Type]),
   )
-  const expand = (type: string, seen = new Set<string>()): string => {
+  const expand = (type: string, seen = HashSet.empty<string>()): string => {
     for (const [reference, value] of references) {
       const pattern = `(?<![A-Za-z0-9_$.'"])${reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_$.'"])`
       if (!new RegExp(pattern).test(type)) continue
-      if (seen.has(reference)) {
+      if (HashSet.has(seen, reference)) {
         throw new GenerationError({ reason: `Recursive Promise types are not implemented: ${reference}` })
       }
-      type = type.replace(new RegExp(pattern, "g"), `(${expand(value, new Set([...seen, reference]))})`)
+      type = type.replace(new RegExp(pattern, "g"), `(${expand(value, HashSet.add(seen, reference))})`)
     }
     return type
   }
@@ -590,24 +601,24 @@ function structuralType(schema: Schema.Top) {
 
 function promisePath(path: string, input: ReadonlyArray<InputField>) {
   if (path.includes("*")) throw new GenerationError({ reason: `Unsupported Promise path wildcard: ${path}` })
-  const fields = new Set(input.filter((field) => field.source === "params").map((field) => field.name))
+  const fields = HashSet.fromIterable(input.filter((field) => field.source === "params").map((field) => field.name))
   const segments = path.split(/(:[A-Za-z_][A-Za-z0-9_]*)/g).filter(Boolean)
   const template = segments
     .map((segment) => {
       if (!segment.startsWith(":")) return segment.replaceAll("`", "\\`")
       const name = segment.slice(1)
-      if (!fields.has(name)) throw new GenerationError({ reason: `Missing path parameter: ${name}` })
+      if (!HashSet.has(fields, name)) throw new GenerationError({ reason: `Missing path parameter: ${name}` })
       return `\${encodeURIComponent(input.${name})}`
     })
     .join("")
   return `\`${template}\``
 }
 
-function uniqueModule(base: string, index: number, modules: ReadonlySet<string>) {
-  if (!modules.has(base.toLowerCase())) return base
+function uniqueModule(base: string, index: number, modules: MutableHashSet.MutableHashSet<string>) {
+  if (!MutableHashSet.has(modules, base.toLowerCase())) return base
   const seed = `${base}-${index}`
   let suffix = 0
-  while (modules.has(`${seed}${suffix === 0 ? "" : `-${suffix}`}`.toLowerCase())) suffix++
+  while (MutableHashSet.has(modules, `${seed}${suffix === 0 ? "" : `-${suffix}`}`.toLowerCase())) suffix++
   return `${seed}${suffix === 0 ? "" : `-${suffix}`}`
 }
 
@@ -619,7 +630,7 @@ function normalizeTransport(
 ) {
   if (schema === undefined) return undefined
   if (isStreamSchema(schema)) return { schema, effectPortable: true } as const
-  if (!metadataPortable(schema.ast, new Set())) {
+  if (!metadataPortable(schema.ast, MutableHashSet.empty())) {
     throw new GenerationError({ reason: `Unportable schema: ${operation}.${source}` })
   }
   const decoded = Schema.toType(schema)
@@ -734,16 +745,16 @@ export function write(
   directory: string,
 ): Effect.Effect<void, GenerationError | PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
-    const paths = new Set<string>()
-    const normalizedPaths = new Set<string>()
+    const paths = MutableHashSet.empty<string>()
+    const normalizedPaths = MutableHashSet.empty<string>()
     for (const file of output.files) {
       if (!isSafeOutputPath(file.path))
         return yield* new GenerationError({ reason: `Unsafe output path: ${file.path}` })
       const path = file.path.toLowerCase()
-      if (normalizedPaths.has(path))
+      if (MutableHashSet.has(normalizedPaths, path))
         return yield* new GenerationError({ reason: `Duplicate output path: ${file.path}` })
-      normalizedPaths.add(path)
-      paths.add(file.path)
+      MutableHashSet.add(normalizedPaths, path)
+      MutableHashSet.add(paths, file.path)
     }
     const fs = yield* FileSystem.FileSystem
     yield* fs.makeDirectory(directory, { recursive: true })
@@ -758,7 +769,7 @@ export function write(
       return yield* new GenerationError({ reason: `Invalid generated file manifest: ${manifest}` })
     }
     yield* Effect.forEach(
-      previous.filter((path) => !paths.has(path)),
+      previous.filter((path) => !MutableHashSet.has(paths, path)),
       (path) => fs.remove(join(directory, path), { force: true }),
       { concurrency: 8, discard: true },
     )
@@ -835,15 +846,15 @@ function responseSchemas(schema: Schema.Top, path: string): Array<readonly [stri
 }
 
 function assertPortable(schema: Schema.Top, path: string, portable: Map<SchemaAST.AST, boolean>) {
-  const visiting = new Set<SchemaAST.AST>()
+  const visiting = MutableHashSet.empty<SchemaAST.AST>()
   const declaredError = declaredErrorFields(schema)
   const visit = (ast: SchemaAST.AST): boolean => {
     const cached = portable.get(ast)
     if (cached !== undefined) return cached
-    if (visiting.has(ast)) return true
-    visiting.add(ast)
+    if (MutableHashSet.has(visiting, ast)) return true
+    MutableHashSet.add(visiting, ast)
     const result = visitCurrent(ast)
-    visiting.delete(ast)
+    MutableHashSet.remove(visiting, ast)
     portable.set(ast, result)
     return result
   }
@@ -898,9 +909,9 @@ function representationPortable(value: unknown): boolean {
   return typeof id === "string" && id.startsWith("effect/schema/")
 }
 
-function metadataPortable(ast: SchemaAST.AST, seen: Set<SchemaAST.AST>): boolean {
-  if (seen.has(ast)) return true
-  seen.add(ast)
+function metadataPortable(ast: SchemaAST.AST, seen: MutableHashSet.MutableHashSet<SchemaAST.AST>): boolean {
+  if (MutableHashSet.has(seen, ast)) return true
+  MutableHashSet.add(seen, ast)
   if (!annotationsPortable(ast.annotations) || !checksPortable(ast.checks)) return false
   if ("encodingChecks" in ast && !checksPortable(ast.encodingChecks)) return false
   if (ast.encoding?.some((link) => !metadataPortable(link.to, seen))) return false
@@ -956,14 +967,14 @@ function codeDocumentPortable(schema: Schema.Top): boolean {
       const namespace = /import(?: type)? \* as ([A-Za-z_$][\w$]*)/.exec(item)?.[1]
       return namespace === undefined ? [] : [namespace]
     })
-    const references = new Set([
+    const references = HashSet.fromIterable([
       ...document.references.nonRecursives.map((reference) => reference.$ref),
       ...Object.keys(document.references.recursives),
       ...document.artifacts.flatMap((artifact) => (artifact._tag === "Import" ? [] : [artifact.identifier])),
     ])
     const portable = (runtime: string) =>
       runtime.startsWith("Schema.") ||
-      references.has(runtime) ||
+      HashSet.has(references, runtime) ||
       Array.from(references).some((reference) => runtime.startsWith(`${reference}.`)) ||
       namespaces.some((namespace) => runtime.startsWith(`${namespace}.`))
     return [
@@ -1066,12 +1077,12 @@ function streamEncodedDataSchema(schema: SseStreamSchema) {
 
 function streamEffectPortable(schema: Schema.Top) {
   if (!isStreamSchema(schema) || schema._tag === "StreamUint8Array" || schema.sseMode === "events") return true
-  return !hasEncoding(streamDataSchema(schema).ast, new Set())
+  return !hasEncoding(streamDataSchema(schema).ast, MutableHashSet.empty())
 }
 
-function hasEncoding(ast: SchemaAST.AST, seen: Set<SchemaAST.AST>): boolean {
-  if (seen.has(ast)) return false
-  seen.add(ast)
+function hasEncoding(ast: SchemaAST.AST, seen: MutableHashSet.MutableHashSet<SchemaAST.AST>): boolean {
+  if (MutableHashSet.has(seen, ast)) return false
+  MutableHashSet.add(seen, ast)
   if (ast.encoding !== undefined) return true
   if (SchemaAST.isDeclaration(ast)) return ast.typeParameters.some((item) => hasEncoding(item, seen))
   if (SchemaAST.isSuspend(ast)) return hasEncoding(ast.thunk(), seen)
