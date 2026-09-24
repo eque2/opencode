@@ -76,15 +76,7 @@ const headerDiffs = (expected: Record<string, string>, received: Record<string, 
     })
 
 export const requestDiff = (expected: RequestSnapshot, received: RequestSnapshot): ReadonlyArray<string> => {
-  const lines: string[] = []
-  if (expected.method !== received.method) {
-    lines.push("method:", `  expected ${expected.method}, received ${received.method}`)
-  }
-  if (expected.url !== received.url) {
-    lines.push("url:", `  expected ${expected.url}`, `  received ${received.url}`)
-  }
   const headers = headerDiffs(expected.headers, received.headers)
-  if (headers.length > 0) lines.push("headers:", ...headers.slice(0, 8))
   const expectedBody = jsonBody(expected.body)
   const receivedBody = jsonBody(received.body)
   const body =
@@ -93,8 +85,14 @@ export const requestDiff = (expected: RequestSnapshot, received: RequestSnapshot
       : expected.body === received.body
         ? []
         : [`  expected ${safeText(expected.body)}, received ${safeText(received.body)}`]
-  if (body.length > 0) lines.push("body:", ...body)
-  return lines
+  return [
+    ...(expected.method !== received.method
+      ? ["method:", `  expected ${expected.method}, received ${received.method}`]
+      : []),
+    ...(expected.url !== received.url ? ["url:", `  expected ${expected.url}`, `  received ${received.url}`] : []),
+    ...(headers.length > 0 ? ["headers:", ...headers.slice(0, 8)] : []),
+    ...(body.length > 0 ? ["body:", ...body] : []),
+  ]
 }
 
 export const selectSequential = (

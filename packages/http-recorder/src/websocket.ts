@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
+import { Array as Arr, Effect, Option, Ref, Scope, Semaphore, Stream, SynchronizedRef } from "effect"
 import type { Headers } from "effect/unstable/http"
 import * as CassetteService from "./cassette.js"
 import { canonicalizeJson, decodeJson, encodeJson, safeText } from "./matching.js"
@@ -96,19 +96,20 @@ export const makeWebSocketExecutor = <E>(
       return {
         open: (request) =>
           Effect.gen(function* () {
-            const events: WebSocketEvent[] = []
+            const events = yield* Ref.make<ReadonlyArray<WebSocketEvent>>([])
             const connection = yield* options.live.open(request)
             const closed = yield* Ref.make(false)
             const closeLock = yield* Semaphore.make(1)
             return {
               sendText: (message) =>
-                Effect.sync(() => events.push(redactEvent(textEvent("client", message)))).pipe(
+                Ref.update(events, (current) => Arr.append(current, redactEvent(textEvent("client", message)))).pipe(
                   Effect.andThen(connection.sendText(message)),
                 ),
               messages: connection.messages.pipe(
                 Stream.tap((message) =>
-                  Effect.sync(() =>
-                    events.push(
+                  Ref.update(events, (current) =>
+                    Arr.append(
+                      current,
                       typeof message === "string"
                         ? redactEvent(textEvent("server", message))
                         : {
@@ -128,7 +129,7 @@ export const makeWebSocketExecutor = <E>(
                   yield* options.cassette
                     .append(
                       options.name,
-                      { transport: "websocket", open: openSnapshot(request), events },
+                      { transport: "websocket", open: openSnapshot(request), events: yield* Ref.get(events) },
                       options.metadata,
                     )
                     .pipe(Effect.orDie)
