@@ -3,8 +3,10 @@ import {
   type LanguageModelV3,
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
+  type LanguageModelV3GenerateResult,
   type LanguageModelV3ProviderTool,
   type LanguageModelV3StreamPart,
+  type LanguageModelV3StreamResult,
   type SharedV3ProviderMetadata,
   type SharedV3Warning,
 } from "@ai-sdk/provider"
@@ -17,9 +19,9 @@ import {
   type ParseResult,
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import type { OpenAIConfig } from "./openai-config"
-import { openaiFailedResponseHandler } from "./openai-error"
+import { openaiFailedResponseHandler, ResponsesCallError } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema, ContainerID } from "./tool/code-interpreter"
 import { FileID, fileSearchOutputSchema } from "./tool/file-search"
 import { imageGenerationOutputSchema } from "./tool/image-generation"
@@ -259,7 +261,24 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     return this.config.provider
   }
 
-  private async getArgs({
+  doGenerate(options: LanguageModelV3CallOptions): Promise<LanguageModelV3GenerateResult> {
+    return runAtSdkBoundary(generateResponse(this.modelId, this.config, options))
+  }
+
+  doStream(options: LanguageModelV3CallOptions): Promise<LanguageModelV3StreamResult> {
+    return runAtSdkBoundary(streamResponse(this.modelId, this.config, options))
+  }
+}
+
+// The AI SDK reads its own error classes from a rejected call (APICallError.isRetryable drives its retries), so a
+// failed call rejects with the original cause.
+const runAtSdkBoundary = <A>(effect: Effect.Effect<A, ResponsesCallError>): Promise<A> =>
+  Effect.runPromise(Effect.mapError(effect, (error) => error.cause))
+
+const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
+  modelId: OpenAIResponsesModelId,
+  config: OpenAIConfig,
+  {
     maxOutputTokens,
     temperature,
     stopSequences,
@@ -273,1116 +292,1133 @@ export class OpenAIResponsesLanguageModel implements LanguageModelV3 {
     tools,
     toolChoice,
     responseFormat,
-  }: LanguageModelV3CallOptions) {
-    const warnings: SharedV3Warning[] = []
-    const modelConfig = getResponsesModelConfig(this.modelId)
+  }: LanguageModelV3CallOptions,
+) {
+  const warnings: SharedV3Warning[] = []
+  const modelConfig = getResponsesModelConfig(modelId)
 
-    if (topK != null) {
-      warnings.push({ type: "unsupported", feature: "topK" })
-    }
+  if (topK != null) {
+    warnings.push({ type: "unsupported", feature: "topK" })
+  }
 
-    if (seed != null) {
-      warnings.push({ type: "unsupported", feature: "seed" })
-    }
+  if (seed != null) {
+    warnings.push({ type: "unsupported", feature: "seed" })
+  }
 
-    if (presencePenalty != null) {
-      warnings.push({
-        type: "unsupported",
-        feature: "presencePenalty",
-      })
-    }
-
-    if (frequencyPenalty != null) {
-      warnings.push({
-        type: "unsupported",
-        feature: "frequencyPenalty",
-      })
-    }
-
-    if (stopSequences != null) {
-      warnings.push({ type: "unsupported", feature: "stopSequences" })
-    }
-
-    const openaiOptions = await parseProviderOptions({
-      provider: "copilot",
-      providerOptions,
-      schema: Schema.toStandardSchemaV1(openaiResponsesProviderOptionsSchema),
+  if (presencePenalty != null) {
+    warnings.push({
+      type: "unsupported",
+      feature: "presencePenalty",
     })
+  }
 
-    const { input, warnings: inputWarnings } = await convertToOpenAIResponsesInput({
-      prompt,
-      systemMessageMode: modelConfig.systemMessageMode,
-      fileIdPrefixes: this.config.fileIdPrefixes,
-      store: openaiOptions?.store ?? true,
-      hasLocalShellTool: hasOpenAITool("openai.local_shell"),
+  if (frequencyPenalty != null) {
+    warnings.push({
+      type: "unsupported",
+      feature: "frequencyPenalty",
     })
+  }
 
-    warnings.push(...inputWarnings)
+  if (stopSequences != null) {
+    warnings.push({ type: "unsupported", feature: "stopSequences" })
+  }
 
-    const strictJsonSchema = openaiOptions?.strictJsonSchema ?? false
+  const openaiOptions = yield* Effect.tryPromise({
+    try: () =>
+      parseProviderOptions({
+        provider: "copilot",
+        providerOptions,
+        schema: Schema.toStandardSchemaV1(openaiResponsesProviderOptionsSchema),
+      }),
+    catch: (cause) => new ResponsesCallError({ cause }),
+  })
 
-    let include: OpenAIResponsesIncludeOptions = openaiOptions?.include
+  const { input, warnings: inputWarnings } = yield* convertToOpenAIResponsesInput({
+    prompt,
+    systemMessageMode: modelConfig.systemMessageMode,
+    fileIdPrefixes: config.fileIdPrefixes,
+    store: openaiOptions?.store ?? true,
+    hasLocalShellTool: hasOpenAITool("openai.local_shell"),
+  })
 
-    function addInclude(key: OpenAIResponsesIncludeValue) {
-      include = include != null ? [...include, key] : [key]
-    }
+  warnings.push(...inputWarnings)
 
-    function hasOpenAITool(id: string) {
-      return tools?.find((tool) => tool.type === "provider" && tool.id === id) != null
-    }
+  const strictJsonSchema = openaiOptions?.strictJsonSchema ?? false
 
-    // when logprobs are requested, automatically include them:
-    const topLogprobs =
-      typeof openaiOptions?.logprobs === "number"
-        ? openaiOptions?.logprobs
-        : openaiOptions?.logprobs === true
-          ? TOP_LOGPROBS_MAX
-          : undefined
+  let include: OpenAIResponsesIncludeOptions = openaiOptions?.include
 
-    if (topLogprobs) {
-      addInclude("message.output_text.logprobs")
-    }
+  function addInclude(key: OpenAIResponsesIncludeValue) {
+    include = include != null ? [...include, key] : [key]
+  }
 
-    // when a web search tool is present, automatically include the sources:
-    const webSearchToolName = (
-      tools?.find(
-        (tool) =>
-          tool.type === "provider" && (tool.id === "openai.web_search" || tool.id === "openai.web_search_preview"),
-      ) as LanguageModelV3ProviderTool | undefined
-    )?.name
+  function hasOpenAITool(id: string) {
+    return tools?.find((tool) => tool.type === "provider" && tool.id === id) != null
+  }
 
-    if (webSearchToolName) {
-      addInclude("web_search_call.action.sources")
-    }
+  // when logprobs are requested, automatically include them:
+  const topLogprobs =
+    typeof openaiOptions?.logprobs === "number"
+      ? openaiOptions?.logprobs
+      : openaiOptions?.logprobs === true
+        ? TOP_LOGPROBS_MAX
+        : undefined
 
-    // when a code interpreter tool is present, automatically include the outputs:
-    if (hasOpenAITool("openai.code_interpreter")) {
-      addInclude("code_interpreter_call.outputs")
-    }
+  if (topLogprobs) {
+    addInclude("message.output_text.logprobs")
+  }
 
-    const baseArgs = {
-      model: this.modelId,
-      input,
-      temperature,
-      top_p: topP,
-      max_output_tokens: maxOutputTokens,
+  // when a web search tool is present, automatically include the sources:
+  const webSearchToolName = (
+    tools?.find(
+      (tool) =>
+        tool.type === "provider" && (tool.id === "openai.web_search" || tool.id === "openai.web_search_preview"),
+    ) as LanguageModelV3ProviderTool | undefined
+  )?.name
 
-      ...((responseFormat?.type === "json" || openaiOptions?.textVerbosity) && {
-        text: {
-          ...(responseFormat?.type === "json" && {
-            format:
-              responseFormat.schema != null
-                ? {
-                    type: "json_schema",
-                    strict: strictJsonSchema,
-                    name: responseFormat.name ?? "response",
-                    description: responseFormat.description,
-                    schema: responseFormat.schema,
-                  }
-                : { type: "json_object" },
+  if (webSearchToolName) {
+    addInclude("web_search_call.action.sources")
+  }
+
+  // when a code interpreter tool is present, automatically include the outputs:
+  if (hasOpenAITool("openai.code_interpreter")) {
+    addInclude("code_interpreter_call.outputs")
+  }
+
+  const baseArgs = {
+    model: modelId,
+    input,
+    temperature,
+    top_p: topP,
+    max_output_tokens: maxOutputTokens,
+
+    ...((responseFormat?.type === "json" || openaiOptions?.textVerbosity) && {
+      text: {
+        ...(responseFormat?.type === "json" && {
+          format:
+            responseFormat.schema != null
+              ? {
+                  type: "json_schema",
+                  strict: strictJsonSchema,
+                  name: responseFormat.name ?? "response",
+                  description: responseFormat.description,
+                  schema: responseFormat.schema,
+                }
+              : { type: "json_object" },
+        }),
+        ...(openaiOptions?.textVerbosity && {
+          verbosity: openaiOptions.textVerbosity,
+        }),
+      },
+    }),
+
+    // provider options:
+    max_tool_calls: openaiOptions?.maxToolCalls,
+    metadata: openaiOptions?.metadata,
+    parallel_tool_calls: openaiOptions?.parallelToolCalls,
+    previous_response_id: openaiOptions?.previousResponseId,
+    store: openaiOptions?.store,
+    user: openaiOptions?.user,
+    instructions: openaiOptions?.instructions,
+    service_tier: openaiOptions?.serviceTier,
+    include,
+    prompt_cache_key: openaiOptions?.promptCacheKey,
+    safety_identifier: openaiOptions?.safetyIdentifier,
+    top_logprobs: topLogprobs,
+
+    // model-specific settings:
+    ...(modelConfig.isReasoningModel &&
+      (openaiOptions?.reasoningEffort != null || openaiOptions?.reasoningSummary != null) && {
+        reasoning: {
+          ...(openaiOptions?.reasoningEffort != null && {
+            effort: openaiOptions.reasoningEffort,
           }),
-          ...(openaiOptions?.textVerbosity && {
-            verbosity: openaiOptions.textVerbosity,
+          ...(openaiOptions?.reasoningSummary != null && {
+            summary: openaiOptions.reasoningSummary,
           }),
         },
       }),
+    ...(modelConfig.requiredAutoTruncation && {
+      truncation: "auto",
+    }),
+  }
 
-      // provider options:
-      max_tool_calls: openaiOptions?.maxToolCalls,
-      metadata: openaiOptions?.metadata,
-      parallel_tool_calls: openaiOptions?.parallelToolCalls,
-      previous_response_id: openaiOptions?.previousResponseId,
-      store: openaiOptions?.store,
-      user: openaiOptions?.user,
-      instructions: openaiOptions?.instructions,
-      service_tier: openaiOptions?.serviceTier,
-      include,
-      prompt_cache_key: openaiOptions?.promptCacheKey,
-      safety_identifier: openaiOptions?.safetyIdentifier,
-      top_logprobs: topLogprobs,
-
-      // model-specific settings:
-      ...(modelConfig.isReasoningModel &&
-        (openaiOptions?.reasoningEffort != null || openaiOptions?.reasoningSummary != null) && {
-          reasoning: {
-            ...(openaiOptions?.reasoningEffort != null && {
-              effort: openaiOptions.reasoningEffort,
-            }),
-            ...(openaiOptions?.reasoningSummary != null && {
-              summary: openaiOptions.reasoningSummary,
-            }),
-          },
-        }),
-      ...(modelConfig.requiredAutoTruncation && {
-        truncation: "auto",
-      }),
-    }
-
-    if (modelConfig.isReasoningModel) {
-      // remove unsupported settings for reasoning models
-      // see https://platform.openai.com/docs/guides/reasoning#limitations
-      if (baseArgs.temperature != null) {
-        baseArgs.temperature = undefined
-        warnings.push({
-          type: "unsupported",
-          feature: "temperature",
-          details: "temperature is not supported for reasoning models",
-        })
-      }
-
-      if (baseArgs.top_p != null) {
-        baseArgs.top_p = undefined
-        warnings.push({
-          type: "unsupported",
-          feature: "topP",
-          details: "topP is not supported for reasoning models",
-        })
-      }
-    } else {
-      if (openaiOptions?.reasoningEffort != null) {
-        warnings.push({
-          type: "unsupported",
-          feature: "reasoningEffort",
-          details: "reasoningEffort is not supported for non-reasoning models",
-        })
-      }
-
-      if (openaiOptions?.reasoningSummary != null) {
-        warnings.push({
-          type: "unsupported",
-          feature: "reasoningSummary",
-          details: "reasoningSummary is not supported for non-reasoning models",
-        })
-      }
-    }
-
-    // Validate flex processing support
-    if (openaiOptions?.serviceTier === "flex" && !modelConfig.supportsFlexProcessing) {
+  if (modelConfig.isReasoningModel) {
+    // remove unsupported settings for reasoning models
+    // see https://platform.openai.com/docs/guides/reasoning#limitations
+    if (baseArgs.temperature != null) {
+      baseArgs.temperature = undefined
       warnings.push({
         type: "unsupported",
-        feature: "serviceTier",
-        details: "flex processing is only available for o3, o4-mini, and gpt-5 models",
+        feature: "temperature",
+        details: "temperature is not supported for reasoning models",
       })
-      // Remove from args if not supported
-      baseArgs.service_tier = undefined
     }
 
-    // Validate priority processing support
-    if (openaiOptions?.serviceTier === "priority" && !modelConfig.supportsPriorityProcessing) {
+    if (baseArgs.top_p != null) {
+      baseArgs.top_p = undefined
       warnings.push({
         type: "unsupported",
-        feature: "serviceTier",
-        details:
-          "priority processing is only available for supported models (gpt-4, gpt-5, gpt-5-mini, o3, o4-mini) and requires Enterprise access. gpt-5-nano is not supported",
+        feature: "topP",
+        details: "topP is not supported for reasoning models",
       })
-      // Remove from args if not supported
-      baseArgs.service_tier = undefined
+    }
+  } else {
+    if (openaiOptions?.reasoningEffort != null) {
+      warnings.push({
+        type: "unsupported",
+        feature: "reasoningEffort",
+        details: "reasoningEffort is not supported for non-reasoning models",
+      })
     }
 
-    const {
+    if (openaiOptions?.reasoningSummary != null) {
+      warnings.push({
+        type: "unsupported",
+        feature: "reasoningSummary",
+        details: "reasoningSummary is not supported for non-reasoning models",
+      })
+    }
+  }
+
+  // Validate flex processing support
+  if (openaiOptions?.serviceTier === "flex" && !modelConfig.supportsFlexProcessing) {
+    warnings.push({
+      type: "unsupported",
+      feature: "serviceTier",
+      details: "flex processing is only available for o3, o4-mini, and gpt-5 models",
+    })
+    // Remove from args if not supported
+    baseArgs.service_tier = undefined
+  }
+
+  // Validate priority processing support
+  if (openaiOptions?.serviceTier === "priority" && !modelConfig.supportsPriorityProcessing) {
+    warnings.push({
+      type: "unsupported",
+      feature: "serviceTier",
+      details:
+        "priority processing is only available for supported models (gpt-4, gpt-5, gpt-5-mini, o3, o4-mini) and requires Enterprise access. gpt-5-nano is not supported",
+    })
+    // Remove from args if not supported
+    baseArgs.service_tier = undefined
+  }
+
+  const {
+    tools: openaiTools,
+    toolChoice: openaiToolChoice,
+    toolWarnings,
+  } = prepareResponsesTools({
+    tools,
+    toolChoice,
+    strictJsonSchema,
+  })
+
+  return {
+    webSearchToolName,
+    args: {
+      ...baseArgs,
       tools: openaiTools,
-      toolChoice: openaiToolChoice,
-      toolWarnings,
-    } = prepareResponsesTools({
-      tools,
-      toolChoice,
-      strictJsonSchema,
-    })
-
-    return {
-      webSearchToolName,
-      args: {
-        ...baseArgs,
-        tools: openaiTools,
-        tool_choice: openaiToolChoice,
-      },
-      warnings: [...warnings, ...toolWarnings],
-    }
+      tool_choice: openaiToolChoice,
+    },
+    warnings: [...warnings, ...toolWarnings],
   }
+})
 
-  async doGenerate(options: LanguageModelV3CallOptions) {
-    const { args: body, warnings, webSearchToolName } = await this.getArgs(options)
-    const url = this.config.url({
-      path: "/responses",
-      modelId: this.modelId,
-    })
+const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
+  modelId: OpenAIResponsesModelId,
+  config: OpenAIConfig,
+  options: LanguageModelV3CallOptions,
+) {
+  const { args: body, warnings, webSearchToolName } = yield* getArgs(modelId, config, options)
+  const url = config.url({
+    path: "/responses",
+    modelId: modelId,
+  })
 
-    const {
-      responseHeaders,
-      value: response,
-      rawValue: rawResponse,
-    } = await postJsonToApi({
-      url,
-      headers: combineHeaders(this.config.headers(), options.headers),
-      body,
-      failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createJsonResponseHandler(Schema.toStandardSchemaV1(responsesResponseSchema)),
-      abortSignal: options.abortSignal,
-      fetch: this.config.fetch,
-    })
-
-    if (response.error) {
-      throw new APICallError({
-        message: response.error.message,
+  const {
+    responseHeaders,
+    value: response,
+    rawValue: rawResponse,
+  } = yield* Effect.tryPromise({
+    try: () =>
+      postJsonToApi({
         url,
-        requestBodyValues: body,
-        statusCode: 400,
-        responseHeaders,
-        responseBody: rawResponse as string,
-        isRetryable: false,
-      })
-    }
+        headers: combineHeaders(config.headers(), options.headers),
+        body,
+        failedResponseHandler: openaiFailedResponseHandler,
+        successfulResponseHandler: createJsonResponseHandler(Schema.toStandardSchemaV1(responsesResponseSchema)),
+        abortSignal: options.abortSignal,
+        fetch: config.fetch,
+      }),
+    catch: (cause) => new ResponsesCallError({ cause }),
+  })
 
-    const content: Array<LanguageModelV3Content> = []
-    const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
+  if (response.error) {
+    throw new APICallError({
+      message: response.error.message,
+      url,
+      requestBodyValues: body,
+      statusCode: 400,
+      responseHeaders,
+      responseBody: rawResponse as string,
+      isRetryable: false,
+    })
+  }
 
-    // flag that checks if there have been client-side tool calls (not executed by openai)
-    let hasFunctionCall = false
+  const content: Array<LanguageModelV3Content> = []
+  const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
 
-    // map response content to content array
-    for (const part of response.output) {
-      switch (part.type) {
-        case "reasoning": {
-          // when there are no summary parts, we need to add an empty reasoning part:
-          if (part.summary.length === 0) {
-            part.summary.push({ type: "summary_text", text: "" })
-          }
+  // flag that checks if there have been client-side tool calls (not executed by openai)
+  let hasFunctionCall = false
 
-          for (const summary of part.summary) {
-            content.push({
-              type: "reasoning" as const,
-              text: summary.text,
-              providerMetadata: {
-                copilot: {
-                  itemId: part.id,
-                  reasoningEncryptedContent: part.encrypted_content ?? null,
-                },
-              },
-            })
-          }
-          break
+  // map response content to content array
+  for (const part of response.output) {
+    switch (part.type) {
+      case "reasoning": {
+        // when there are no summary parts, we need to add an empty reasoning part:
+        if (part.summary.length === 0) {
+          part.summary.push({ type: "summary_text", text: "" })
         }
 
-        case "image_generation_call": {
+        for (const summary of part.summary) {
           content.push({
-            type: "tool-call",
-            toolCallId: part.id,
-            toolName: "image_generation",
-            input: "{}",
-            providerExecuted: true,
-          })
-
-          content.push({
-            type: "tool-result",
-            toolCallId: part.id,
-            toolName: "image_generation",
-            result: {
-              result: part.result,
-            } satisfies typeof imageGenerationOutputSchema.Type,
-          })
-
-          break
-        }
-
-        case "local_shell_call": {
-          content.push({
-            type: "tool-call",
-            toolCallId: part.call_id,
-            toolName: "local_shell",
-            input: JSON.stringify({ action: part.action } satisfies typeof localShellInputSchema.Type),
+            type: "reasoning" as const,
+            text: summary.text,
             providerMetadata: {
               copilot: {
                 itemId: part.id,
+                reasoningEncryptedContent: part.encrypted_content ?? null,
               },
             },
           })
-
-          break
         }
-
-        case "message": {
-          for (const contentPart of part.content) {
-            if (options.providerOptions?.copilot?.logprobs && contentPart.logprobs) {
-              logprobs.push(contentPart.logprobs)
-            }
-
-            content.push({
-              type: "text",
-              text: contentPart.text,
-              providerMetadata: {
-                copilot: {
-                  itemId: part.id,
-                },
-              },
-            })
-
-            for (const annotation of contentPart.annotations) {
-              if (annotation.type === "url_citation") {
-                content.push({
-                  type: "source",
-                  sourceType: "url",
-                  id: this.config.generateId?.() ?? generateId(),
-                  url: annotation.url,
-                  title: annotation.title,
-                })
-              } else if (annotation.type === "file_citation") {
-                content.push({
-                  type: "source",
-                  sourceType: "document",
-                  id: this.config.generateId?.() ?? generateId(),
-                  mediaType: "text/plain",
-                  title: annotation.quote ?? annotation.filename ?? "Document",
-                  filename: annotation.filename ?? annotation.file_id,
-                })
-              }
-            }
-          }
-
-          break
-        }
-
-        case "function_call": {
-          hasFunctionCall = true
-
-          content.push({
-            type: "tool-call",
-            toolCallId: part.call_id,
-            toolName: part.name,
-            input: part.arguments,
-            providerMetadata: {
-              copilot: {
-                itemId: part.id,
-              },
-            },
-          })
-          break
-        }
-
-        case "web_search_call": {
-          content.push({
-            type: "tool-call",
-            toolCallId: part.id,
-            toolName: webSearchToolName ?? "web_search",
-            input: JSON.stringify({ action: part.action }),
-            providerExecuted: true,
-          })
-
-          content.push({
-            type: "tool-result",
-            toolCallId: part.id,
-            toolName: webSearchToolName ?? "web_search",
-            result: { status: part.status },
-          })
-
-          break
-        }
-
-        case "computer_call": {
-          content.push({
-            type: "tool-call",
-            toolCallId: part.id,
-            toolName: "computer_use",
-            input: "",
-            providerExecuted: true,
-          })
-
-          content.push({
-            type: "tool-result",
-            toolCallId: part.id,
-            toolName: "computer_use",
-            result: {
-              type: "computer_use_tool_result",
-              status: part.status || "completed",
-            },
-          })
-          break
-        }
-
-        case "file_search_call": {
-          content.push({
-            type: "tool-call",
-            toolCallId: part.id,
-            toolName: "file_search",
-            input: "{}",
-            providerExecuted: true,
-          })
-
-          content.push({
-            type: "tool-result",
-            toolCallId: part.id,
-            toolName: "file_search",
-            result: {
-              queries: part.queries,
-              results:
-                part.results?.map((result) => ({
-                  attributes: result.attributes,
-                  fileId: result.file_id,
-                  filename: result.filename,
-                  score: result.score,
-                  text: result.text,
-                })) ?? null,
-            } satisfies typeof fileSearchOutputSchema.Type,
-          })
-          break
-        }
-
-        case "code_interpreter_call": {
-          content.push({
-            type: "tool-call",
-            toolCallId: part.id,
-            toolName: "code_interpreter",
-            input: JSON.stringify({
-              code: part.code,
-              containerId: part.container_id,
-            } satisfies typeof codeInterpreterInputSchema.Type),
-            providerExecuted: true,
-          })
-
-          content.push({
-            type: "tool-result",
-            toolCallId: part.id,
-            toolName: "code_interpreter",
-            result: {
-              outputs: part.outputs,
-            } satisfies typeof codeInterpreterOutputSchema.Type,
-          })
-          break
-        }
+        break
       }
-    }
 
-    const providerMetadata: SharedV3ProviderMetadata = {
-      copilot: { responseId: response.id },
-    }
+      case "image_generation_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.id,
+          toolName: "image_generation",
+          input: "{}",
+          providerExecuted: true,
+        })
 
-    if (logprobs.length > 0) {
-      providerMetadata.copilot.logprobs = logprobs
-    }
+        content.push({
+          type: "tool-result",
+          toolCallId: part.id,
+          toolName: "image_generation",
+          result: {
+            result: part.result,
+          } satisfies typeof imageGenerationOutputSchema.Type,
+        })
 
-    if (typeof response.service_tier === "string") {
-      providerMetadata.copilot.serviceTier = response.service_tier
-    }
+        break
+      }
 
-    return {
-      content,
-      finishReason: {
-        unified: mapOpenAIResponseFinishReason({
-          finishReason: response.incomplete_details?.reason,
-          hasFunctionCall,
-        }),
-        raw: response.incomplete_details?.reason,
-      },
-      usage: {
-        inputTokens: {
-          total: response.usage.input_tokens,
-          noCache:
-            response.usage.input_tokens_details?.cached_tokens != null
-              ? response.usage.input_tokens - response.usage.input_tokens_details.cached_tokens
-              : undefined,
-          cacheRead: response.usage.input_tokens_details?.cached_tokens ?? undefined,
-          cacheWrite: undefined,
-        },
-        outputTokens: {
-          total: response.usage.output_tokens,
-          text: undefined,
-          reasoning: response.usage.output_tokens_details?.reasoning_tokens ?? undefined,
-        },
-        raw: response.usage,
-      },
-      request: { body },
-      response: {
-        id: response.id,
-        timestamp: new Date(response.created_at * 1000),
-        modelId: response.model,
-        headers: responseHeaders,
-        body: rawResponse,
-      },
-      providerMetadata,
-      warnings,
+      case "local_shell_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.call_id,
+          toolName: "local_shell",
+          input: JSON.stringify({ action: part.action } satisfies typeof localShellInputSchema.Type),
+          providerMetadata: {
+            copilot: {
+              itemId: part.id,
+            },
+          },
+        })
+
+        break
+      }
+
+      case "message": {
+        for (const contentPart of part.content) {
+          if (options.providerOptions?.copilot?.logprobs && contentPart.logprobs) {
+            logprobs.push(contentPart.logprobs)
+          }
+
+          content.push({
+            type: "text",
+            text: contentPart.text,
+            providerMetadata: {
+              copilot: {
+                itemId: part.id,
+              },
+            },
+          })
+
+          for (const annotation of contentPart.annotations) {
+            if (annotation.type === "url_citation") {
+              content.push({
+                type: "source",
+                sourceType: "url",
+                id: config.generateId?.() ?? generateId(),
+                url: annotation.url,
+                title: annotation.title,
+              })
+            } else if (annotation.type === "file_citation") {
+              content.push({
+                type: "source",
+                sourceType: "document",
+                id: config.generateId?.() ?? generateId(),
+                mediaType: "text/plain",
+                title: annotation.quote ?? annotation.filename ?? "Document",
+                filename: annotation.filename ?? annotation.file_id,
+              })
+            }
+          }
+        }
+
+        break
+      }
+
+      case "function_call": {
+        hasFunctionCall = true
+
+        content.push({
+          type: "tool-call",
+          toolCallId: part.call_id,
+          toolName: part.name,
+          input: part.arguments,
+          providerMetadata: {
+            copilot: {
+              itemId: part.id,
+            },
+          },
+        })
+        break
+      }
+
+      case "web_search_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.id,
+          toolName: webSearchToolName ?? "web_search",
+          input: JSON.stringify({ action: part.action }),
+          providerExecuted: true,
+        })
+
+        content.push({
+          type: "tool-result",
+          toolCallId: part.id,
+          toolName: webSearchToolName ?? "web_search",
+          result: { status: part.status },
+        })
+
+        break
+      }
+
+      case "computer_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.id,
+          toolName: "computer_use",
+          input: "",
+          providerExecuted: true,
+        })
+
+        content.push({
+          type: "tool-result",
+          toolCallId: part.id,
+          toolName: "computer_use",
+          result: {
+            type: "computer_use_tool_result",
+            status: part.status || "completed",
+          },
+        })
+        break
+      }
+
+      case "file_search_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.id,
+          toolName: "file_search",
+          input: "{}",
+          providerExecuted: true,
+        })
+
+        content.push({
+          type: "tool-result",
+          toolCallId: part.id,
+          toolName: "file_search",
+          result: {
+            queries: part.queries,
+            results:
+              part.results?.map((result) => ({
+                attributes: result.attributes,
+                fileId: result.file_id,
+                filename: result.filename,
+                score: result.score,
+                text: result.text,
+              })) ?? null,
+          } satisfies typeof fileSearchOutputSchema.Type,
+        })
+        break
+      }
+
+      case "code_interpreter_call": {
+        content.push({
+          type: "tool-call",
+          toolCallId: part.id,
+          toolName: "code_interpreter",
+          input: JSON.stringify({
+            code: part.code,
+            containerId: part.container_id,
+          } satisfies typeof codeInterpreterInputSchema.Type),
+          providerExecuted: true,
+        })
+
+        content.push({
+          type: "tool-result",
+          toolCallId: part.id,
+          toolName: "code_interpreter",
+          result: {
+            outputs: part.outputs,
+          } satisfies typeof codeInterpreterOutputSchema.Type,
+        })
+        break
+      }
     }
   }
 
-  async doStream(options: LanguageModelV3CallOptions) {
-    const { args: body, warnings, webSearchToolName } = await this.getArgs(options)
+  const providerMetadata: SharedV3ProviderMetadata = {
+    copilot: { responseId: response.id },
+  }
 
-    const { responseHeaders, value: response } = await postJsonToApi({
-      url: this.config.url({
-        path: "/responses",
-        modelId: this.modelId,
+  if (logprobs.length > 0) {
+    providerMetadata.copilot.logprobs = logprobs
+  }
+
+  if (typeof response.service_tier === "string") {
+    providerMetadata.copilot.serviceTier = response.service_tier
+  }
+
+  return {
+    content,
+    finishReason: {
+      unified: mapOpenAIResponseFinishReason({
+        finishReason: response.incomplete_details?.reason,
+        hasFunctionCall,
       }),
-      headers: combineHeaders(this.config.headers(), options.headers),
-      body: {
-        ...body,
-        stream: true,
+      raw: response.incomplete_details?.reason,
+    },
+    usage: {
+      inputTokens: {
+        total: response.usage.input_tokens,
+        noCache:
+          response.usage.input_tokens_details?.cached_tokens != null
+            ? response.usage.input_tokens - response.usage.input_tokens_details.cached_tokens
+            : undefined,
+        cacheRead: response.usage.input_tokens_details?.cached_tokens ?? undefined,
+        cacheWrite: undefined,
       },
-      failedResponseHandler: openaiFailedResponseHandler,
-      successfulResponseHandler: createEventSourceResponseHandler(
-        Schema.toStandardSchemaV1(openaiResponsesChunkSchema),
-      ),
-      abortSignal: options.abortSignal,
-      fetch: this.config.fetch,
-    })
+      outputTokens: {
+        total: response.usage.output_tokens,
+        text: undefined,
+        reasoning: response.usage.output_tokens_details?.reasoning_tokens ?? undefined,
+      },
+      raw: response.usage,
+    },
+    request: { body },
+    response: {
+      id: response.id,
+      timestamp: new Date(response.created_at * 1000),
+      modelId: response.model,
+      headers: responseHeaders,
+      body: rawResponse,
+    },
+    providerMetadata,
+    warnings,
+  }
+})
 
-    // oxlint-disable-next-line no-this-alias -- needed for closure scope inside generator
-    const self = this
+const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
+  modelId: OpenAIResponsesModelId,
+  config: OpenAIConfig,
+  options: LanguageModelV3CallOptions,
+) {
+  const { args: body, warnings, webSearchToolName } = yield* getArgs(modelId, config, options)
 
-    let finishReason: {
-      unified: ReturnType<typeof mapOpenAIResponseFinishReason>
-      raw: string | undefined
-    } = {
-      unified: "other",
-      raw: undefined,
-    }
-    const usage: {
-      inputTokens: number | undefined
-      outputTokens: number | undefined
-      totalTokens: number | undefined
-      reasoningTokens: number | undefined
-      cachedInputTokens: number | undefined
-    } = {
-      inputTokens: undefined,
-      outputTokens: undefined,
-      totalTokens: undefined,
-      reasoningTokens: undefined,
-      cachedInputTokens: undefined,
-    }
-    const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
-    let responseId: string | null = null
-    const ongoingToolCalls: Record<
-      number,
-      | {
-          toolName: string
-          toolCallId: string
-          codeInterpreter?: {
-            containerId: typeof ContainerID.Type
-          }
+  const { responseHeaders, value: response } = yield* Effect.tryPromise({
+    try: () =>
+      postJsonToApi({
+        url: config.url({
+          path: "/responses",
+          modelId: modelId,
+        }),
+        headers: combineHeaders(config.headers(), options.headers),
+        body: {
+          ...body,
+          stream: true,
+        },
+        failedResponseHandler: openaiFailedResponseHandler,
+        successfulResponseHandler: createEventSourceResponseHandler(
+          Schema.toStandardSchemaV1(openaiResponsesChunkSchema),
+        ),
+        abortSignal: options.abortSignal,
+        fetch: config.fetch,
+      }),
+    catch: (cause) => new ResponsesCallError({ cause }),
+  })
+
+  let finishReason: {
+    unified: ReturnType<typeof mapOpenAIResponseFinishReason>
+    raw: string | undefined
+  } = {
+    unified: "other",
+    raw: undefined,
+  }
+  const usage: {
+    inputTokens: number | undefined
+    outputTokens: number | undefined
+    totalTokens: number | undefined
+    reasoningTokens: number | undefined
+    cachedInputTokens: number | undefined
+  } = {
+    inputTokens: undefined,
+    outputTokens: undefined,
+    totalTokens: undefined,
+    reasoningTokens: undefined,
+    cachedInputTokens: undefined,
+  }
+  const logprobs: Array<typeof LOGPROBS_SCHEMA.Type> = []
+  let responseId: string | null = null
+  const ongoingToolCalls: Record<
+    number,
+    | {
+        toolName: string
+        toolCallId: string
+        codeInterpreter?: {
+          containerId: typeof ContainerID.Type
         }
-      | undefined
-    > = {}
-
-    // flag that checks if there have been client-side tool calls (not executed by openai)
-    let hasFunctionCall = false
-
-    // Track reasoning by output_index instead of item_id
-    // GitHub Copilot rotates encrypted item IDs on every event
-    const activeReasoning: Record<
-      number,
-      {
-        canonicalId: string // the item.id from output_item.added
-        encryptedContent?: string | null
-        summaryParts: number[]
       }
-    > = {}
+    | undefined
+  > = {}
 
-    // Track current active reasoning output_index for correlating summary events
-    let currentReasoningOutputIndex: number | null = null
+  // flag that checks if there have been client-side tool calls (not executed by openai)
+  let hasFunctionCall = false
 
-    // Track a stable text part id for the current assistant message.
-    // Copilot may change item_id across text deltas; normalize to one id.
-    let currentTextId: string | null = null
+  // Track reasoning by output_index instead of item_id
+  // GitHub Copilot rotates encrypted item IDs on every event
+  const activeReasoning: Record<
+    number,
+    {
+      canonicalId: string // the item.id from output_item.added
+      encryptedContent?: string | null
+      summaryParts: number[]
+    }
+  > = {}
 
-    let serviceTier: string | undefined
+  // Track current active reasoning output_index for correlating summary events
+  let currentReasoningOutputIndex: number | null = null
 
-    return {
-      stream: response.pipeThrough(
-        new TransformStream<ParseResult<OpenAIResponsesChunk>, LanguageModelV3StreamPart>({
-          start(controller) {
-            controller.enqueue({ type: "stream-start", warnings })
-          },
+  // Track a stable text part id for the current assistant message.
+  // Copilot may change item_id across text deltas; normalize to one id.
+  let currentTextId: string | null = null
 
-          transform(chunk, controller) {
-            if (options.includeRawChunks) {
-              controller.enqueue({ type: "raw", rawValue: chunk.rawValue })
+  let serviceTier: string | undefined
+
+  return {
+    stream: response.pipeThrough(
+      new TransformStream<ParseResult<OpenAIResponsesChunk>, LanguageModelV3StreamPart>({
+        start(controller) {
+          controller.enqueue({ type: "stream-start", warnings })
+        },
+
+        transform(chunk, controller) {
+          if (options.includeRawChunks) {
+            controller.enqueue({ type: "raw", rawValue: chunk.rawValue })
+          }
+
+          // handle failed chunk parsing / validation:
+          if (!chunk.success) {
+            finishReason = {
+              unified: "error",
+              raw: undefined,
             }
+            controller.enqueue({ type: "error", error: chunk.error })
+            return
+          }
 
-            // handle failed chunk parsing / validation:
-            if (!chunk.success) {
-              finishReason = {
-                unified: "error",
-                raw: undefined,
+          const value = chunk.value
+
+          if (isResponseOutputItemAddedChunk(value)) {
+            if (value.item.type === "function_call") {
+              ongoingToolCalls[value.output_index] = {
+                toolName: value.item.name,
+                toolCallId: value.item.call_id,
               }
-              controller.enqueue({ type: "error", error: chunk.error })
-              return
+
+              controller.enqueue({
+                type: "tool-input-start",
+                id: value.item.call_id,
+                toolName: value.item.name,
+              })
+            } else if (value.item.type === "web_search_call") {
+              ongoingToolCalls[value.output_index] = {
+                toolName: webSearchToolName ?? "web_search",
+                toolCallId: value.item.id,
+              }
+
+              controller.enqueue({
+                type: "tool-input-start",
+                id: value.item.id,
+                toolName: webSearchToolName ?? "web_search",
+              })
+            } else if (value.item.type === "computer_call") {
+              ongoingToolCalls[value.output_index] = {
+                toolName: "computer_use",
+                toolCallId: value.item.id,
+              }
+
+              controller.enqueue({
+                type: "tool-input-start",
+                id: value.item.id,
+                toolName: "computer_use",
+              })
+            } else if (value.item.type === "code_interpreter_call") {
+              ongoingToolCalls[value.output_index] = {
+                toolName: "code_interpreter",
+                toolCallId: value.item.id,
+                codeInterpreter: {
+                  containerId: value.item.container_id,
+                },
+              }
+
+              controller.enqueue({
+                type: "tool-input-start",
+                id: value.item.id,
+                toolName: "code_interpreter",
+              })
+
+              controller.enqueue({
+                type: "tool-input-delta",
+                id: value.item.id,
+                delta: `{"containerId":"${value.item.container_id}","code":"`,
+              })
+            } else if (value.item.type === "file_search_call") {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: value.item.id,
+                toolName: "file_search",
+                input: "{}",
+                providerExecuted: true,
+              })
+            } else if (value.item.type === "image_generation_call") {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: value.item.id,
+                toolName: "image_generation",
+                input: "{}",
+                providerExecuted: true,
+              })
+            } else if (value.item.type === "message") {
+              // Start a stable text part for this assistant message
+              currentTextId = value.item.id
+              controller.enqueue({
+                type: "text-start",
+                id: value.item.id,
+                providerMetadata: {
+                  copilot: {
+                    itemId: value.item.id,
+                  },
+                },
+              })
+            } else if (isResponseOutputItemAddedReasoningChunk(value)) {
+              activeReasoning[value.output_index] = {
+                canonicalId: value.item.id,
+                encryptedContent: value.item.encrypted_content,
+                summaryParts: [0],
+              }
+              currentReasoningOutputIndex = value.output_index
+
+              controller.enqueue({
+                type: "reasoning-start",
+                id: `${value.item.id}:0`,
+                providerMetadata: {
+                  copilot: {
+                    itemId: value.item.id,
+                    reasoningEncryptedContent: value.item.encrypted_content ?? null,
+                  },
+                },
+              })
             }
+          } else if (isResponseOutputItemDoneChunk(value)) {
+            if (value.item.type === "function_call") {
+              ongoingToolCalls[value.output_index] = undefined
+              hasFunctionCall = true
 
-            const value = chunk.value
+              controller.enqueue({
+                type: "tool-input-end",
+                id: value.item.call_id,
+              })
 
-            if (isResponseOutputItemAddedChunk(value)) {
-              if (value.item.type === "function_call") {
-                ongoingToolCalls[value.output_index] = {
-                  toolName: value.item.name,
-                  toolCallId: value.item.call_id,
-                }
-
-                controller.enqueue({
-                  type: "tool-input-start",
-                  id: value.item.call_id,
-                  toolName: value.item.name,
-                })
-              } else if (value.item.type === "web_search_call") {
-                ongoingToolCalls[value.output_index] = {
-                  toolName: webSearchToolName ?? "web_search",
-                  toolCallId: value.item.id,
-                }
-
-                controller.enqueue({
-                  type: "tool-input-start",
-                  id: value.item.id,
-                  toolName: webSearchToolName ?? "web_search",
-                })
-              } else if (value.item.type === "computer_call") {
-                ongoingToolCalls[value.output_index] = {
-                  toolName: "computer_use",
-                  toolCallId: value.item.id,
-                }
-
-                controller.enqueue({
-                  type: "tool-input-start",
-                  id: value.item.id,
-                  toolName: "computer_use",
-                })
-              } else if (value.item.type === "code_interpreter_call") {
-                ongoingToolCalls[value.output_index] = {
-                  toolName: "code_interpreter",
-                  toolCallId: value.item.id,
-                  codeInterpreter: {
-                    containerId: value.item.container_id,
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: value.item.call_id,
+                toolName: value.item.name,
+                input: value.item.arguments,
+                providerMetadata: {
+                  copilot: {
+                    itemId: value.item.id,
                   },
-                }
+                },
+              })
+            } else if (value.item.type === "web_search_call") {
+              ongoingToolCalls[value.output_index] = undefined
 
-                controller.enqueue({
-                  type: "tool-input-start",
-                  id: value.item.id,
-                  toolName: "code_interpreter",
-                })
+              controller.enqueue({
+                type: "tool-input-end",
+                id: value.item.id,
+              })
 
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: value.item.id,
-                  delta: `{"containerId":"${value.item.container_id}","code":"`,
-                })
-              } else if (value.item.type === "file_search_call") {
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.id,
-                  toolName: "file_search",
-                  input: "{}",
-                  providerExecuted: true,
-                })
-              } else if (value.item.type === "image_generation_call") {
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.id,
-                  toolName: "image_generation",
-                  input: "{}",
-                  providerExecuted: true,
-                })
-              } else if (value.item.type === "message") {
-                // Start a stable text part for this assistant message
-                currentTextId = value.item.id
-                controller.enqueue({
-                  type: "text-start",
-                  id: value.item.id,
-                  providerMetadata: {
-                    copilot: {
-                      itemId: value.item.id,
-                    },
-                  },
-                })
-              } else if (isResponseOutputItemAddedReasoningChunk(value)) {
-                activeReasoning[value.output_index] = {
-                  canonicalId: value.item.id,
-                  encryptedContent: value.item.encrypted_content,
-                  summaryParts: [0],
-                }
-                currentReasoningOutputIndex = value.output_index
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: value.item.id,
+                toolName: "web_search",
+                input: JSON.stringify({ action: value.item.action }),
+                providerExecuted: true,
+              })
 
-                controller.enqueue({
-                  type: "reasoning-start",
-                  id: `${value.item.id}:0`,
-                  providerMetadata: {
-                    copilot: {
-                      itemId: value.item.id,
-                      reasoningEncryptedContent: value.item.encrypted_content ?? null,
-                    },
-                  },
-                })
-              }
-            } else if (isResponseOutputItemDoneChunk(value)) {
-              if (value.item.type === "function_call") {
-                ongoingToolCalls[value.output_index] = undefined
-                hasFunctionCall = true
-
-                controller.enqueue({
-                  type: "tool-input-end",
-                  id: value.item.call_id,
-                })
-
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.call_id,
-                  toolName: value.item.name,
-                  input: value.item.arguments,
-                  providerMetadata: {
-                    copilot: {
-                      itemId: value.item.id,
-                    },
-                  },
-                })
-              } else if (value.item.type === "web_search_call") {
-                ongoingToolCalls[value.output_index] = undefined
-
-                controller.enqueue({
-                  type: "tool-input-end",
-                  id: value.item.id,
-                })
-
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.id,
-                  toolName: "web_search",
-                  input: JSON.stringify({ action: value.item.action }),
-                  providerExecuted: true,
-                })
-
-                controller.enqueue({
-                  type: "tool-result",
-                  toolCallId: value.item.id,
-                  toolName: "web_search",
-                  result: { status: value.item.status },
-                })
-              } else if (value.item.type === "computer_call") {
-                ongoingToolCalls[value.output_index] = undefined
-
-                controller.enqueue({
-                  type: "tool-input-end",
-                  id: value.item.id,
-                })
-
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.id,
-                  toolName: "computer_use",
-                  input: "",
-                  providerExecuted: true,
-                })
-
-                controller.enqueue({
-                  type: "tool-result",
-                  toolCallId: value.item.id,
-                  toolName: "computer_use",
-                  result: {
-                    type: "computer_use_tool_result",
-                    status: value.item.status || "completed",
-                  },
-                })
-              } else if (value.item.type === "file_search_call") {
-                ongoingToolCalls[value.output_index] = undefined
-
-                controller.enqueue({
-                  type: "tool-result",
-                  toolCallId: value.item.id,
-                  toolName: "file_search",
-                  result: {
-                    queries: value.item.queries,
-                    results:
-                      value.item.results?.map((result) => ({
-                        attributes: result.attributes,
-                        fileId: result.file_id,
-                        filename: result.filename,
-                        score: result.score,
-                        text: result.text,
-                      })) ?? null,
-                  } satisfies typeof fileSearchOutputSchema.Type,
-                })
-              } else if (value.item.type === "code_interpreter_call") {
-                ongoingToolCalls[value.output_index] = undefined
-
-                controller.enqueue({
-                  type: "tool-result",
-                  toolCallId: value.item.id,
-                  toolName: "code_interpreter",
-                  result: {
-                    outputs: value.item.outputs,
-                  } satisfies typeof codeInterpreterOutputSchema.Type,
-                })
-              } else if (value.item.type === "image_generation_call") {
-                controller.enqueue({
-                  type: "tool-result",
-                  toolCallId: value.item.id,
-                  toolName: "image_generation",
-                  result: {
-                    result: value.item.result,
-                  } satisfies typeof imageGenerationOutputSchema.Type,
-                })
-              } else if (value.item.type === "local_shell_call") {
-                ongoingToolCalls[value.output_index] = undefined
-
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: value.item.call_id,
-                  toolName: "local_shell",
-                  input: JSON.stringify({
-                    action: {
-                      type: "exec",
-                      command: value.item.action.command,
-                      timeoutMs: value.item.action.timeout_ms,
-                      user: value.item.action.user,
-                      workingDirectory: value.item.action.working_directory,
-                      env: value.item.action.env,
-                    },
-                  } satisfies typeof localShellInputSchema.Type),
-                  providerMetadata: {
-                    copilot: { itemId: value.item.id },
-                  },
-                })
-              } else if (value.item.type === "message") {
-                if (currentTextId) {
-                  controller.enqueue({
-                    type: "text-end",
-                    id: currentTextId,
-                  })
-                  currentTextId = null
-                }
-              } else if (isResponseOutputItemDoneReasoningChunk(value)) {
-                const activeReasoningPart = activeReasoning[value.output_index]
-                if (activeReasoningPart) {
-                  for (const summaryIndex of activeReasoningPart.summaryParts) {
-                    controller.enqueue({
-                      type: "reasoning-end",
-                      id: `${activeReasoningPart.canonicalId}:${summaryIndex}`,
-                      providerMetadata: {
-                        copilot: {
-                          itemId: activeReasoningPart.canonicalId,
-                          reasoningEncryptedContent: value.item.encrypted_content ?? null,
-                        },
-                      },
-                    })
-                  }
-                  delete activeReasoning[value.output_index]
-                  if (currentReasoningOutputIndex === value.output_index) {
-                    currentReasoningOutputIndex = null
-                  }
-                }
-              }
-            } else if (isResponseFunctionCallArgumentsDeltaChunk(value)) {
-              const toolCall = ongoingToolCalls[value.output_index]
-
-              if (toolCall != null) {
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: toolCall.toolCallId,
-                  delta: value.delta,
-                })
-              }
-            } else if (isResponseImageGenerationCallPartialImageChunk(value)) {
               controller.enqueue({
                 type: "tool-result",
-                toolCallId: value.item_id,
+                toolCallId: value.item.id,
+                toolName: "web_search",
+                result: { status: value.item.status },
+              })
+            } else if (value.item.type === "computer_call") {
+              ongoingToolCalls[value.output_index] = undefined
+
+              controller.enqueue({
+                type: "tool-input-end",
+                id: value.item.id,
+              })
+
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: value.item.id,
+                toolName: "computer_use",
+                input: "",
+                providerExecuted: true,
+              })
+
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: value.item.id,
+                toolName: "computer_use",
+                result: {
+                  type: "computer_use_tool_result",
+                  status: value.item.status || "completed",
+                },
+              })
+            } else if (value.item.type === "file_search_call") {
+              ongoingToolCalls[value.output_index] = undefined
+
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: value.item.id,
+                toolName: "file_search",
+                result: {
+                  queries: value.item.queries,
+                  results:
+                    value.item.results?.map((result) => ({
+                      attributes: result.attributes,
+                      fileId: result.file_id,
+                      filename: result.filename,
+                      score: result.score,
+                      text: result.text,
+                    })) ?? null,
+                } satisfies typeof fileSearchOutputSchema.Type,
+              })
+            } else if (value.item.type === "code_interpreter_call") {
+              ongoingToolCalls[value.output_index] = undefined
+
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: value.item.id,
+                toolName: "code_interpreter",
+                result: {
+                  outputs: value.item.outputs,
+                } satisfies typeof codeInterpreterOutputSchema.Type,
+              })
+            } else if (value.item.type === "image_generation_call") {
+              controller.enqueue({
+                type: "tool-result",
+                toolCallId: value.item.id,
                 toolName: "image_generation",
                 result: {
-                  result: value.partial_image_b64,
+                  result: value.item.result,
                 } satisfies typeof imageGenerationOutputSchema.Type,
               })
-            } else if (isResponseCodeInterpreterCallCodeDeltaChunk(value)) {
-              const toolCall = ongoingToolCalls[value.output_index]
+            } else if (value.item.type === "local_shell_call") {
+              ongoingToolCalls[value.output_index] = undefined
 
-              if (toolCall != null) {
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: toolCall.toolCallId,
-                  // The delta is code, which is embedding in a JSON string.
-                  // To escape it, we use JSON.stringify and slice to remove the outer quotes.
-                  delta: JSON.stringify(value.delta).slice(1, -1),
-                })
-              }
-            } else if (isResponseCodeInterpreterCallCodeDoneChunk(value)) {
-              const toolCall = ongoingToolCalls[value.output_index]
-
-              if (toolCall != null) {
-                controller.enqueue({
-                  type: "tool-input-delta",
-                  id: toolCall.toolCallId,
-                  delta: '"}',
-                })
-
-                controller.enqueue({
-                  type: "tool-input-end",
-                  id: toolCall.toolCallId,
-                })
-
-                // immediately send the tool call after the input end:
-                controller.enqueue({
-                  type: "tool-call",
-                  toolCallId: toolCall.toolCallId,
-                  toolName: "code_interpreter",
-                  input: JSON.stringify({
-                    code: value.code,
-                    containerId: toolCall.codeInterpreter!.containerId,
-                  } satisfies typeof codeInterpreterInputSchema.Type),
-                  providerExecuted: true,
-                })
-              }
-            } else if (isResponseCreatedChunk(value)) {
-              responseId = value.response.id
               controller.enqueue({
-                type: "response-metadata",
-                id: value.response.id,
-                timestamp: new Date(value.response.created_at * 1000),
-                modelId: value.response.model,
-              })
-            } else if (isTextDeltaChunk(value)) {
-              // Ensure a text-start exists, and normalize deltas to a stable id
-              if (!currentTextId) {
-                currentTextId = value.item_id
-                controller.enqueue({
-                  type: "text-start",
-                  id: currentTextId,
-                  providerMetadata: {
-                    copilot: { itemId: value.item_id },
+                type: "tool-call",
+                toolCallId: value.item.call_id,
+                toolName: "local_shell",
+                input: JSON.stringify({
+                  action: {
+                    type: "exec",
+                    command: value.item.action.command,
+                    timeoutMs: value.item.action.timeout_ms,
+                    user: value.item.action.user,
+                    workingDirectory: value.item.action.working_directory,
+                    env: value.item.action.env,
                   },
+                } satisfies typeof localShellInputSchema.Type),
+                providerMetadata: {
+                  copilot: { itemId: value.item.id },
+                },
+              })
+            } else if (value.item.type === "message") {
+              if (currentTextId) {
+                controller.enqueue({
+                  type: "text-end",
+                  id: currentTextId,
                 })
+                currentTextId = null
               }
+            } else if (isResponseOutputItemDoneReasoningChunk(value)) {
+              const activeReasoningPart = activeReasoning[value.output_index]
+              if (activeReasoningPart) {
+                for (const summaryIndex of activeReasoningPart.summaryParts) {
+                  controller.enqueue({
+                    type: "reasoning-end",
+                    id: `${activeReasoningPart.canonicalId}:${summaryIndex}`,
+                    providerMetadata: {
+                      copilot: {
+                        itemId: activeReasoningPart.canonicalId,
+                        reasoningEncryptedContent: value.item.encrypted_content ?? null,
+                      },
+                    },
+                  })
+                }
+                delete activeReasoning[value.output_index]
+                if (currentReasoningOutputIndex === value.output_index) {
+                  currentReasoningOutputIndex = null
+                }
+              }
+            }
+          } else if (isResponseFunctionCallArgumentsDeltaChunk(value)) {
+            const toolCall = ongoingToolCalls[value.output_index]
 
+            if (toolCall != null) {
               controller.enqueue({
-                type: "text-delta",
-                id: currentTextId,
+                type: "tool-input-delta",
+                id: toolCall.toolCallId,
                 delta: value.delta,
               })
-
-              if (options.providerOptions?.copilot?.logprobs && value.logprobs) {
-                logprobs.push(value.logprobs)
-              }
-            } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
-              const activeItem =
-                currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
-
-              // the first reasoning start is pushed in isResponseOutputItemAddedReasoningChunk.
-              if (activeItem && value.summary_index > 0) {
-                activeItem.summaryParts.push(value.summary_index)
-
-                controller.enqueue({
-                  type: "reasoning-start",
-                  id: `${activeItem.canonicalId}:${value.summary_index}`,
-                  providerMetadata: {
-                    copilot: {
-                      itemId: activeItem.canonicalId,
-                      reasoningEncryptedContent: activeItem.encryptedContent ?? null,
-                    },
-                  },
-                })
-              }
-            } else if (isResponseReasoningSummaryTextDeltaChunk(value)) {
-              const activeItem =
-                currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
-
-              if (activeItem) {
-                controller.enqueue({
-                  type: "reasoning-delta",
-                  id: `${activeItem.canonicalId}:${value.summary_index}`,
-                  delta: value.delta,
-                  providerMetadata: {
-                    copilot: {
-                      itemId: activeItem.canonicalId,
-                    },
-                  },
-                })
-              }
-            } else if (isResponseFinishedChunk(value)) {
-              finishReason = {
-                unified: mapOpenAIResponseFinishReason({
-                  finishReason: value.response.incomplete_details?.reason,
-                  hasFunctionCall,
-                }),
-                raw: value.response.incomplete_details?.reason ?? undefined,
-              }
-              usage.inputTokens = value.response.usage.input_tokens
-              usage.outputTokens = value.response.usage.output_tokens
-              usage.totalTokens = value.response.usage.input_tokens + value.response.usage.output_tokens
-              usage.reasoningTokens = value.response.usage.output_tokens_details?.reasoning_tokens ?? undefined
-              usage.cachedInputTokens = value.response.usage.input_tokens_details?.cached_tokens ?? undefined
-              if (typeof value.response.service_tier === "string") {
-                serviceTier = value.response.service_tier
-              }
-            } else if (isResponseAnnotationAddedChunk(value)) {
-              if (value.annotation.type === "url_citation") {
-                controller.enqueue({
-                  type: "source",
-                  sourceType: "url",
-                  id: self.config.generateId?.() ?? generateId(),
-                  url: value.annotation.url,
-                  title: value.annotation.title,
-                })
-              } else if (value.annotation.type === "file_citation") {
-                controller.enqueue({
-                  type: "source",
-                  sourceType: "document",
-                  id: self.config.generateId?.() ?? generateId(),
-                  mediaType: "text/plain",
-                  title: value.annotation.quote ?? value.annotation.filename ?? "Document",
-                  filename: value.annotation.filename ?? value.annotation.file_id,
-                })
-              }
-            } else if (isErrorChunk(value)) {
-              controller.enqueue({ type: "error", error: value })
             }
-          },
+          } else if (isResponseImageGenerationCallPartialImageChunk(value)) {
+            controller.enqueue({
+              type: "tool-result",
+              toolCallId: value.item_id,
+              toolName: "image_generation",
+              result: {
+                result: value.partial_image_b64,
+              } satisfies typeof imageGenerationOutputSchema.Type,
+            })
+          } else if (isResponseCodeInterpreterCallCodeDeltaChunk(value)) {
+            const toolCall = ongoingToolCalls[value.output_index]
 
-          flush(controller) {
-            // Close any dangling text part
-            if (currentTextId) {
-              controller.enqueue({ type: "text-end", id: currentTextId })
-              currentTextId = null
+            if (toolCall != null) {
+              controller.enqueue({
+                type: "tool-input-delta",
+                id: toolCall.toolCallId,
+                // The delta is code, which is embedding in a JSON string.
+                // To escape it, we use JSON.stringify and slice to remove the outer quotes.
+                delta: JSON.stringify(value.delta).slice(1, -1),
+              })
             }
+          } else if (isResponseCodeInterpreterCallCodeDoneChunk(value)) {
+            const toolCall = ongoingToolCalls[value.output_index]
 
-            const providerMetadata: SharedV3ProviderMetadata = {
-              copilot: {
-                responseId,
-              },
+            if (toolCall != null) {
+              controller.enqueue({
+                type: "tool-input-delta",
+                id: toolCall.toolCallId,
+                delta: '"}',
+              })
+
+              controller.enqueue({
+                type: "tool-input-end",
+                id: toolCall.toolCallId,
+              })
+
+              // immediately send the tool call after the input end:
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: toolCall.toolCallId,
+                toolName: "code_interpreter",
+                input: JSON.stringify({
+                  code: value.code,
+                  containerId: toolCall.codeInterpreter!.containerId,
+                } satisfies typeof codeInterpreterInputSchema.Type),
+                providerExecuted: true,
+              })
             }
-
-            if (logprobs.length > 0) {
-              providerMetadata.copilot.logprobs = logprobs
-            }
-
-            if (serviceTier !== undefined) {
-              providerMetadata.copilot.serviceTier = serviceTier
+          } else if (isResponseCreatedChunk(value)) {
+            responseId = value.response.id
+            controller.enqueue({
+              type: "response-metadata",
+              id: value.response.id,
+              timestamp: new Date(value.response.created_at * 1000),
+              modelId: value.response.model,
+            })
+          } else if (isTextDeltaChunk(value)) {
+            // Ensure a text-start exists, and normalize deltas to a stable id
+            if (!currentTextId) {
+              currentTextId = value.item_id
+              controller.enqueue({
+                type: "text-start",
+                id: currentTextId,
+                providerMetadata: {
+                  copilot: { itemId: value.item_id },
+                },
+              })
             }
 
             controller.enqueue({
-              type: "finish",
-              finishReason,
-              usage: {
-                inputTokens: {
-                  total: usage.inputTokens,
-                  noCache:
-                    usage.inputTokens != null && usage.cachedInputTokens != null
-                      ? usage.inputTokens - usage.cachedInputTokens
-                      : undefined,
-                  cacheRead: usage.cachedInputTokens,
-                  cacheWrite: undefined,
-                },
-                outputTokens: {
-                  total: usage.outputTokens,
-                  text: undefined,
-                  reasoning: usage.reasoningTokens,
-                },
-                raw: {
-                  input_tokens: usage.inputTokens,
-                  output_tokens: usage.outputTokens,
-                  total_tokens: usage.totalTokens,
-                },
-              },
-              providerMetadata,
+              type: "text-delta",
+              id: currentTextId,
+              delta: value.delta,
             })
-          },
-        }),
-      ),
-      request: { body },
-      response: { headers: responseHeaders },
-    }
+
+            if (options.providerOptions?.copilot?.logprobs && value.logprobs) {
+              logprobs.push(value.logprobs)
+            }
+          } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
+            const activeItem =
+              currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
+
+            // the first reasoning start is pushed in isResponseOutputItemAddedReasoningChunk.
+            if (activeItem && value.summary_index > 0) {
+              activeItem.summaryParts.push(value.summary_index)
+
+              controller.enqueue({
+                type: "reasoning-start",
+                id: `${activeItem.canonicalId}:${value.summary_index}`,
+                providerMetadata: {
+                  copilot: {
+                    itemId: activeItem.canonicalId,
+                    reasoningEncryptedContent: activeItem.encryptedContent ?? null,
+                  },
+                },
+              })
+            }
+          } else if (isResponseReasoningSummaryTextDeltaChunk(value)) {
+            const activeItem =
+              currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
+
+            if (activeItem) {
+              controller.enqueue({
+                type: "reasoning-delta",
+                id: `${activeItem.canonicalId}:${value.summary_index}`,
+                delta: value.delta,
+                providerMetadata: {
+                  copilot: {
+                    itemId: activeItem.canonicalId,
+                  },
+                },
+              })
+            }
+          } else if (isResponseFinishedChunk(value)) {
+            finishReason = {
+              unified: mapOpenAIResponseFinishReason({
+                finishReason: value.response.incomplete_details?.reason,
+                hasFunctionCall,
+              }),
+              raw: value.response.incomplete_details?.reason ?? undefined,
+            }
+            usage.inputTokens = value.response.usage.input_tokens
+            usage.outputTokens = value.response.usage.output_tokens
+            usage.totalTokens = value.response.usage.input_tokens + value.response.usage.output_tokens
+            usage.reasoningTokens = value.response.usage.output_tokens_details?.reasoning_tokens ?? undefined
+            usage.cachedInputTokens = value.response.usage.input_tokens_details?.cached_tokens ?? undefined
+            if (typeof value.response.service_tier === "string") {
+              serviceTier = value.response.service_tier
+            }
+          } else if (isResponseAnnotationAddedChunk(value)) {
+            if (value.annotation.type === "url_citation") {
+              controller.enqueue({
+                type: "source",
+                sourceType: "url",
+                id: config.generateId?.() ?? generateId(),
+                url: value.annotation.url,
+                title: value.annotation.title,
+              })
+            } else if (value.annotation.type === "file_citation") {
+              controller.enqueue({
+                type: "source",
+                sourceType: "document",
+                id: config.generateId?.() ?? generateId(),
+                mediaType: "text/plain",
+                title: value.annotation.quote ?? value.annotation.filename ?? "Document",
+                filename: value.annotation.filename ?? value.annotation.file_id,
+              })
+            }
+          } else if (isErrorChunk(value)) {
+            controller.enqueue({ type: "error", error: value })
+          }
+        },
+
+        flush(controller) {
+          // Close any dangling text part
+          if (currentTextId) {
+            controller.enqueue({ type: "text-end", id: currentTextId })
+            currentTextId = null
+          }
+
+          const providerMetadata: SharedV3ProviderMetadata = {
+            copilot: {
+              responseId,
+            },
+          }
+
+          if (logprobs.length > 0) {
+            providerMetadata.copilot.logprobs = logprobs
+          }
+
+          if (serviceTier !== undefined) {
+            providerMetadata.copilot.serviceTier = serviceTier
+          }
+
+          controller.enqueue({
+            type: "finish",
+            finishReason,
+            usage: {
+              inputTokens: {
+                total: usage.inputTokens,
+                noCache:
+                  usage.inputTokens != null && usage.cachedInputTokens != null
+                    ? usage.inputTokens - usage.cachedInputTokens
+                    : undefined,
+                cacheRead: usage.cachedInputTokens,
+                cacheWrite: undefined,
+              },
+              outputTokens: {
+                total: usage.outputTokens,
+                text: undefined,
+                reasoning: usage.reasoningTokens,
+              },
+              raw: {
+                input_tokens: usage.inputTokens,
+                output_tokens: usage.outputTokens,
+                total_tokens: usage.totalTokens,
+              },
+            },
+            providerMetadata,
+          })
+        },
+      }),
+    ),
+    request: { body },
+    response: { headers: responseHeaders },
   }
-}
+})
 
 const textDeltaChunkSchema = Schema.Struct({
   type: Schema.Literal("response.output_text.delta"),

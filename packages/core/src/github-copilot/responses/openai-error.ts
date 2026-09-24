@@ -21,3 +21,11 @@ export const openaiFailedResponseHandler: ResponseHandler<APICallError> = create
   errorSchema: Schema.toStandardSchemaV1(openaiErrorDataSchema),
   errorToMessage: (data) => data.error.message,
 })
+
+/**
+ * A failed Copilot Responses call. The cause is the original AI SDK error (for example APICallError or an abort
+ * error): the language model rejects with it unchanged, because the AI SDK reads its own error classes.
+ */
+export class ResponsesCallError extends Schema.TaggedError<ResponsesCallError>()("CopilotResponses.CallError", {
+  cause: Schema.Defect(),
+}) {}

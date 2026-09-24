@@ -2,6 +2,7 @@ import { OpenAIResponsesLanguageModel } from "@opencode-ai/core/github-copilot/r
 import { convertToOpenAIResponsesInput } from "@opencode-ai/core/github-copilot/responses/convert-to-openai-responses-input"
 import { describe, test, expect, mock } from "bun:test"
 import type { LanguageModelV3Prompt } from "@ai-sdk/provider"
+import { Effect } from "effect"
 
 const TEST_PROMPT: LanguageModelV3Prompt = [{ role: "user", content: [{ type: "text", text: "Hello" }] }]
 
@@ -81,24 +82,26 @@ describe("doGenerate", () => {
 
 describe("convertToOpenAIResponsesInput", () => {
   test("echoes a stale tool-call itemId from the copilot namespace as the function_call id", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "call_1",
-              toolName: "bash",
-              input: { command: "ls" },
-              providerOptions: { copilot: { itemId: "fc_999" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "bash",
+                input: { command: "ls" },
+                providerOptions: { copilot: { itemId: "fc_999" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(input).toEqual([
       {
@@ -112,45 +115,49 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("omits the function_call id once the stale copilot itemId has been stripped", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool-call",
-              toolCallId: "call_1",
-              toolName: "bash",
-              input: { command: "ls" },
-              providerOptions: {},
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolCallId: "call_1",
+                toolName: "bash",
+                input: { command: "ls" },
+                providerOptions: {},
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect((input[0] as any).id).toBeUndefined()
   })
 
   test("preserves reasoning items keyed by the copilot namespace instead of dropping them", async () => {
-    const { input, warnings } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "reasoning",
-              text: "thinking...",
-              providerOptions: { copilot: { itemId: "rs_1", reasoningEncryptedContent: "enc_1" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input, warnings } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "thinking...",
+                providerOptions: { copilot: { itemId: "rs_1", reasoningEncryptedContent: "enc_1" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(warnings).toEqual([])
     expect(input).toEqual([
@@ -164,16 +171,18 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("drops reasoning items with no copilot itemId and warns, as before", async () => {
-    const { input, warnings } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "assistant",
-          content: [{ type: "reasoning", text: "thinking...", providerOptions: {} }],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input, warnings } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "assistant",
+            content: [{ type: "reasoning", text: "thinking...", providerOptions: {} }],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect(input).toEqual([])
     expect(warnings).toHaveLength(1)
@@ -183,23 +192,25 @@ describe("convertToOpenAIResponsesInput", () => {
   })
 
   test("reads imageDetail from the copilot namespace on user file parts", async () => {
-    const { input } = await convertToOpenAIResponsesInput({
-      prompt: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "file",
-              mediaType: "image/png",
-              data: "aGVsbG8=",
-              providerOptions: { copilot: { imageDetail: "high" } },
-            },
-          ],
-        },
-      ],
-      systemMessageMode: "system",
-      store: false,
-    })
+    const { input } = await Effect.runPromise(
+      convertToOpenAIResponsesInput({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "file",
+                mediaType: "image/png",
+                data: "aGVsbG8=",
+                providerOptions: { copilot: { imageDetail: "high" } },
+              },
+            ],
+          },
+        ],
+        systemMessageMode: "system",
+        store: false,
+      }),
+    )
 
     expect((input[0] as any).content[0].detail).toBe("high")
   })

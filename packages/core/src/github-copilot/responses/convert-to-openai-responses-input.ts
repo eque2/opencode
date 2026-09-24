@@ -5,8 +5,9 @@ import {
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
+import { ResponsesCallError } from "./openai-error"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
 
 const openaiResponsesReasoningProviderOptionsSchema = Schema.Struct({
@@ -25,7 +26,7 @@ function isFileId(data: string, prefixes?: readonly string[]): boolean {
   return prefixes.some((prefix) => data.startsWith(prefix))
 }
 
-export async function convertToOpenAIResponsesInput({
+export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convertToOpenAIResponsesInput")(function* ({
   prompt,
   systemMessageMode,
   fileIdPrefixes,
@@ -37,10 +38,7 @@ export async function convertToOpenAIResponsesInput({
   fileIdPrefixes?: readonly string[]
   store: boolean
   hasLocalShellTool?: boolean
-}): Promise<{
-  input: OpenAIResponsesInput
-  warnings: Array<SharedV3Warning>
-}> {
+}) {
   const input: OpenAIResponsesInput = []
   const warnings: Array<SharedV3Warning> = []
   const processedApprovalIds = new Set<string>()
@@ -190,10 +188,14 @@ export async function convertToOpenAIResponsesInput({
             }
 
             case "reasoning": {
-              const providerOptions = await parseProviderOptions({
-                provider: "copilot",
-                providerOptions: part.providerOptions,
-                schema: Schema.toStandardSchemaV1(openaiResponsesReasoningProviderOptionsSchema),
+              const providerOptions = yield* Effect.tryPromise({
+                try: () =>
+                  parseProviderOptions({
+                    provider: "copilot",
+                    providerOptions: part.providerOptions,
+                    schema: Schema.toStandardSchemaV1(openaiResponsesReasoningProviderOptionsSchema),
+                  }),
+                catch: (cause) => new ResponsesCallError({ cause }),
               })
 
               const reasoningId = providerOptions?.itemId
@@ -332,4 +334,4 @@ export async function convertToOpenAIResponsesInput({
   }
 
   return { input, warnings }
-}
+})
