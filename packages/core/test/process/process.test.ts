@@ -3,7 +3,7 @@ import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { Effect, Exit, Fiber, Stream } from "effect"
+import { Effect, Exit, Fiber, Predicate, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -20,7 +20,7 @@ const waitForFile = (file: string) =>
       try {
         return await fs.readFile(file, "utf8")
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+        if (!Predicate.hasProperty(error, "code") || error.code !== "ENOENT") throw error
         await new Promise<void>((resolve) => setTimeout(resolve, 10))
       }
     }

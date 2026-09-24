@@ -1,12 +1,12 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Layer, Queue } from "effect"
+import { Cause, Deferred, Effect, Exit, Layer, Queue, Schema } from "effect"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Location } from "@opencode-ai/core/location"
 import { Pty } from "@opencode-ai/core/pty"
-import type { PtyID } from "@opencode-ai/core/pty/schema"
+import { PtyID } from "@opencode-ai/core/pty/schema"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { location } from "../fixture/location"
 import { testEffect } from "../lib/effect"
@@ -26,16 +26,20 @@ const it = testEffect(
 )
 const ptyTest = process.platform === "win32" ? it.live.skip : it.live
 
+const isCreated = Schema.is(Pty.Event.Created.data)
+const isExited = Schema.is(Pty.Event.Exited.data)
+const isDeleted = Schema.is(Pty.Event.Deleted.data)
+
 const subscribePtyEvents = Effect.fn("PtySessionTest.subscribePtyEvents")(function* () {
   const source = yield* EventV2.Service
   const events = yield* Queue.unbounded<PtyEvent>()
   const unsubscribe = yield* source.listen((event) => {
-    if (event.type === Pty.Event.Created.type)
-      Queue.offerUnsafe(events, { type: "created", id: (event.data as typeof Pty.Event.Created.data.Type).info.id })
-    if (event.type === Pty.Event.Exited.type)
-      Queue.offerUnsafe(events, { type: "exited", id: (event.data as typeof Pty.Event.Exited.data.Type).id })
-    if (event.type === Pty.Event.Deleted.type)
-      Queue.offerUnsafe(events, { type: "deleted", id: (event.data as typeof Pty.Event.Deleted.data.Type).id })
+    if (event.type === Pty.Event.Created.type && isCreated(event.data))
+      Queue.offerUnsafe(events, { type: "created", id: event.data.info.id })
+    if (event.type === Pty.Event.Exited.type && isExited(event.data))
+      Queue.offerUnsafe(events, { type: "exited", id: event.data.id })
+    if (event.type === Pty.Event.Deleted.type && isDeleted(event.data))
+      Queue.offerUnsafe(events, { type: "deleted", id: event.data.id })
     return Effect.void
   })
   yield* Effect.addFinalizer(() => unsubscribe)
@@ -94,7 +98,7 @@ describe("pty", () => {
   it.live("returns typed not found errors for missing sessions", () =>
     Effect.gen(function* () {
       const pty = yield* Pty.Service
-      const id = "pty_missing" as PtyID
+      const id = PtyID.make("pty_missing")
 
       for (const result of [
         yield* pty.get(id).pipe(Effect.asVoid, Effect.exit),
