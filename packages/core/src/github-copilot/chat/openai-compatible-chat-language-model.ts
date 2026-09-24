@@ -133,25 +133,23 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
     tools,
   }: LanguageModelV3CallOptions) {
     return Effect.gen({ self: this }, function* () {
-      const warnings: SharedV3Warning[] = []
-
       // Parse provider options
       const compatibleOptions = Object.assign(
         (yield* parseCompatibleOptions("copilot", providerOptions)) ?? {},
         (yield* parseCompatibleOptions(this.providerOptionsName, providerOptions)) ?? {},
       )
 
-      if (topK != null) {
-        warnings.push({ type: "unsupported", feature: "topK" })
-      }
-
-      if (responseFormat?.type === "json" && responseFormat.schema != null && !this.supportsStructuredOutputs) {
-        warnings.push({
-          type: "unsupported",
-          feature: "responseFormat",
-          details: "JSON response format schema is only supported with structuredOutputs",
-        })
-      }
+      const topKWarnings: SharedV3Warning[] = topK != null ? [{ type: "unsupported", feature: "topK" }] : []
+      const responseFormatWarnings: SharedV3Warning[] =
+        responseFormat?.type === "json" && responseFormat.schema != null && !this.supportsStructuredOutputs
+          ? [
+              {
+                type: "unsupported",
+                feature: "responseFormat",
+                details: "JSON response format schema is only supported with structuredOutputs",
+              },
+            ]
+          : []
 
       const {
         tools: openaiTools,
@@ -211,7 +209,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           // thinking_budget
           thinking_budget: compatibleOptions.thinking_budget,
         },
-        warnings: [...warnings, ...toolWarnings],
+        warnings: [...topKWarnings, ...responseFormatWarnings, ...toolWarnings],
       }
     })
   }

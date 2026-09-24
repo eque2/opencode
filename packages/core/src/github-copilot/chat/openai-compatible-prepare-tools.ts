@@ -27,35 +27,27 @@ export function prepareTools({
   // when the tools array is empty, change it to undefined to prevent errors:
   tools = tools?.length ? tools : undefined
 
-  const toolWarnings: SharedV3Warning[] = []
-
   if (tools == null) {
-    return Effect.succeed({ tools: undefined, toolChoice: undefined, toolWarnings })
+    return Effect.succeed({ tools: undefined, toolChoice: undefined, toolWarnings: [] })
   }
 
-  const openaiCompatTools: Array<{
-    type: "function"
-    function: {
-      name: string
-      description: string | undefined
-      parameters: unknown
-    }
-  }> = []
-
-  for (const tool of tools) {
-    if (tool.type === "provider") {
-      toolWarnings.push({ type: "unsupported", feature: `tool type: ${tool.type}` })
-    } else {
-      openaiCompatTools.push({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema,
-        },
-      })
-    }
-  }
+  const toolWarnings = tools.flatMap((tool): SharedV3Warning[] =>
+    tool.type === "provider" ? [{ type: "unsupported", feature: `tool type: ${tool.type}` }] : [],
+  )
+  const openaiCompatTools = tools.flatMap((tool) =>
+    tool.type === "provider"
+      ? []
+      : [
+          {
+            type: "function" as const,
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema,
+            },
+          },
+        ],
+  )
 
   if (toolChoice == null) {
     return Effect.succeed({ tools: openaiCompatTools, toolChoice: undefined, toolWarnings })
