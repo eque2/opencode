@@ -1,4 +1,4 @@
-import { Array as Arr, Cause, Clock, Data, Effect, HashSet, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -244,12 +244,13 @@ const copyBounded = (
 
   // Sandbox value types (and their host counterparts, which a host tool may legitimately
   // return) serialize exactly as JSON.stringify would at the data boundary: Date/URL use
-  // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}.
+  // toJSON(), while RegExp/Map/Set/URLSearchParams have no JSON form beyond {}. An invalid
+  // date has no ISO form: DateTime.make yields None and the JSON value is null, as in toJSON().
   if (value instanceof SandboxDate) {
-    return Number.isFinite(value.time) ? new Date(value.time).toISOString() : null
+    return Option.getOrNull(Option.map(DateTime.make(value.time), DateTime.formatIso))
   }
   if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value.toISOString() : null
+    return Option.getOrNull(Option.map(DateTime.make(value), DateTime.formatIso))
   }
   if (value instanceof SandboxURL) return value.url.href
   if (value instanceof URL) return value.href
