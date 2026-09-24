@@ -273,14 +273,13 @@ const makeReplaySocket = (
                   if (Socket.isCloseEvent(message)) {
                     yield* Ref.set(state.closed, true)
                     yield* Deferred.done(current.changed, Exit.void)
-                    if (current.position !== state.interaction.events.length) {
-                      yield* Effect.die(
+                    if (current.position !== state.interaction.events.length)
+                      return yield* Effect.die(
                         new Error(
                           `WebSocket closed with unconsumed events: used ${current.position} of ${state.interaction.events.length}`,
                         ),
                       )
-                    }
-                    return
+                    return yield* Effect.void
                   }
                   const actual = redactEvent(encodeEvent("client", message), redactor)
                   yield* assertEvent(
@@ -294,6 +293,7 @@ const makeReplaySocket = (
                     changed: yield* Deferred.make<void>(),
                   })
                   yield* Deferred.done(current.changed, Exit.void)
+                  return yield* Effect.void
                 }),
               ),
           }),
