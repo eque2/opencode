@@ -1,7 +1,7 @@
 export * as SkillDiscovery from "./discovery"
 
 import path from "path"
-import { Context, Effect, Layer, Schedule, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schedule, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { FSUtil } from "../fs-util"
 import { Global } from "../global"
@@ -23,6 +23,9 @@ function isSafeSegment(value: string) {
   )
 }
 
+// decodeURIComponent throws a URIError for a malformed escape; such a segment is unsafe.
+const decodeSegment = Option.liftThrowable(decodeURIComponent)
+
 function isSafeRelativePath(value: string) {
   const segments = value.split("/")
   return (
@@ -34,21 +37,7 @@ function isSafeRelativePath(value: string) {
     !URL.canParse(value) &&
     !path.posix.isAbsolute(value) &&
     !path.win32.isAbsolute(value) &&
-    segments.every((segment) => {
-      try {
-        const decoded = decodeURIComponent(segment)
-        return (
-          decoded.length > 0 &&
-          decoded !== "." &&
-          decoded !== ".." &&
-          !decoded.includes("/") &&
-          !decoded.includes("\\") &&
-          !decoded.includes("\0")
-        )
-      } catch {
-        return false
-      }
-    })
+    segments.every((segment) => Option.exists(decodeSegment(segment), isSafeSegment))
   )
 }
 
@@ -128,13 +117,8 @@ const layer = Layer.effect(
             const skillUrl = new URL(`${encodeURIComponent(skill.name)}/`, source)
             const versionFile = path.join(root, ".opencode-version")
             const files = skill.files.map((file) => {
-              if (!isSafeRelativePath(file)) return undefined
-              let resource: URL
-              try {
-                resource = new URL(file, skillUrl)
-              } catch {
-                return undefined
-              }
+              if (!isSafeRelativePath(file) || !URL.canParse(file, skillUrl.href)) return undefined
+              const resource = new URL(file, skillUrl)
               if (resource.origin !== source.origin) return undefined
 
               const destination = path.resolve(root, file)
