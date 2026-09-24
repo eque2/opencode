@@ -497,7 +497,6 @@ function getColors(variant: ThemeVariant): ThemeColors {
     return {
       compact: false,
       neutral: variant.seeds.neutral,
-      ink: undefined,
       primary: variant.seeds.primary,
       accent: variant.seeds.info,
       success: variant.seeds.success,
