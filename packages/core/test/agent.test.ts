@@ -99,6 +99,40 @@ describe("AgentV2", () => {
     }),
   )
 
+  it.effect("selects the configured default, then build, then the first selectable agent", () =>
+    Effect.gen(function* () {
+      const agent = yield* AgentV2.Service
+      const id = (value: string) => AgentV2.ID.make(value)
+
+      expect(yield* agent.default()).toBeUndefined()
+      expect(yield* agent.select()).toEqual({ id: AgentV2.defaultID, info: undefined })
+
+      yield* agent.transform((editor) => {
+        editor.update(id("helper"), (info) => {
+          info.mode = "subagent"
+        })
+        editor.update(id("secret"), (info) => {
+          info.hidden = true
+        })
+        editor.update(id("writer"), (info) => {
+          info.mode = "primary"
+        })
+      })
+      expect((yield* agent.default())?.id).toBe(id("writer"))
+
+      yield* agent.transform((editor) => editor.update(id("build"), () => {}))
+      expect((yield* agent.default())?.id).toBe(id("build"))
+
+      yield* agent.transform((editor) => editor.default(id("helper")))
+      expect((yield* agent.default())?.id).toBe(id("build"))
+
+      yield* agent.transform((editor) => editor.default(id("writer")))
+      expect((yield* agent.default())?.id).toBe(id("writer"))
+      expect((yield* agent.resolve())?.id).toBe(id("writer"))
+      expect((yield* agent.select()).id).toBe(id("writer"))
+    }),
+  )
+
   it.effect("does not ambiently opt built-in agents into bash", () =>
     Effect.gen(function* () {
       const agent = yield* AgentV2.Service
