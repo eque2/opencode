@@ -25,7 +25,7 @@ const TableIsAlias = Symbol.for("drizzle:IsAlias")
 export const jitCompatCheck = Effect.fn("jitCompatCheck")(function* (isEnabled: boolean | undefined) {
   if (!isEnabled) return false
   return yield* Effect.try({
-    // oxlint-disable-next-line typescript-eslint/no-implied-eval -- deliberate probe: drizzle-orm makeJitQueryMapper builds its mappers with the Function constructor, and this checks that the runtime allows it
+    // oxlint-disable-next-line typescript-eslint/no-implied-eval -- (a) the probe must call the platform Function constructor, the construct drizzle-orm makeJitQueryMapper uses, to test that this runtime allows it; the source is a constant
     try: () => new Function("input", '"use strict"; return input;')(true) === true,
     catch: (cause) => new EffectDrizzleError({ message: "JIT query mappers are unavailable in this runtime", cause }),
   }).pipe(Effect.orElseSucceed(() => false))
