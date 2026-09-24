@@ -1,6 +1,6 @@
 export * as Event from "./event"
 
-import { Schema } from "effect"
+import { MutableHashMap, Option, Schema } from "effect"
 import { optional } from "./schema"
 import { ascending } from "./identifier"
 import { Location } from "./location"
@@ -76,18 +76,17 @@ export function inventory<const Definitions extends ReadonlyArray<Definition>>(.
 export function latest(definitions: ReadonlyArray<Definition>) {
   return readonlyMap(
     definitions.reduce((result, definition) => {
-      const existing = result.get(definition.type)
-      if (!existing) {
-        result.set(definition.type, definition)
-        return result
-      }
+      const found = MutableHashMap.get(result, definition.type)
+      if (Option.isNone(found)) return MutableHashMap.set(result, definition.type, definition)
+      const existing = found.value
       if (definition.durable && existing.durable && definition.durable.version !== existing.durable.version) {
-        if (definition.durable.version > existing.durable.version) result.set(definition.type, definition)
-        return result
+        return definition.durable.version > existing.durable.version
+          ? MutableHashMap.set(result, definition.type, definition)
+          : result
       }
       if (definition !== existing) throw new Error(`Duplicate latest event definition for ${definition.type}`)
       return result
-    }, new Map<string, Definition>()),
+    }, MutableHashMap.empty<string, Definition>()),
   )
 }
 
@@ -100,26 +99,28 @@ export function durable<const Definitions extends ReadonlyArray<Definition>>(def
     definitions.reduce((result, definition) => {
       if (!definition.durable) return result
       const key = versionedType(definition.type, definition.durable.version)
-      if (result.has(key)) throw new Error(`Duplicate durable event definition for ${key}`)
-      result.set(key, definition)
+      if (MutableHashMap.has(result, key)) throw new Error(`Duplicate durable event definition for ${key}`)
+      MutableHashMap.set(result, key, definition)
       return result
-    }, new Map<string, Definitions[number]>()),
+    }, MutableHashMap.empty<string, Definitions[number]>()),
   )
 }
 
-function readonlyMap<Key, Value>(map: Map<Key, Value>): ReadonlyMap<Key, Value> {
+// MutableHashMap keeps string keys in insertion order, which the OpenAPI event unions built from
+// `values()` depend on. The facade keeps the `ReadonlyMap` contract that callers read.
+function readonlyMap<Key, Value>(map: MutableHashMap.MutableHashMap<Key, Value>): ReadonlyMap<Key, Value> {
   const result: ReadonlyMap<Key, Value> = Object.freeze({
     get size() {
-      return map.size
+      return MutableHashMap.size(map)
     },
-    entries: () => map.entries(),
+    entries: () => Iterator.from(map),
     forEach: (callback: (value: Value, key: Key, map: ReadonlyMap<Key, Value>) => void, thisArg?: unknown) =>
-      map.forEach((value, key) => callback.call(thisArg, value, key, result)),
-    get: (key: Key) => map.get(key),
-    has: (key: Key) => map.has(key),
-    keys: () => map.keys(),
-    values: () => map.values(),
-    [Symbol.iterator]: () => map[Symbol.iterator](),
+      MutableHashMap.forEach(map, (value, key) => callback.call(thisArg, value, key, result)),
+    get: (key: Key) => Option.getOrUndefined(MutableHashMap.get(map, key)),
+    has: (key: Key) => MutableHashMap.has(map, key),
+    keys: () => Iterator.from(MutableHashMap.keys(map)),
+    values: () => Iterator.from(MutableHashMap.values(map)),
+    [Symbol.iterator]: () => Iterator.from(map),
   })
   return result
 }
