@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { Effect, HashSet, Schema, Stream } from "effect"
+import { Effect, HashSet, Predicate, Schema, Stream } from "effect"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { Headers, HttpClientRequest } from "effect/unstable/http"
 import {
@@ -211,9 +211,8 @@ export const toolResultText = (part: ToolResultPart) => {
   if (part.result.type === "text") return String(part.result.value)
   if (part.result.type === "error") {
     const value = part.result.value
-    const prototype =
-      typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value)
-    const structured = Array.isArray(value) || prototype === Object.prototype || prototype === null
+    const prototype = isRecord(value) && Object.getPrototypeOf(value)
+    const structured = Array.isArray(value) || prototype === Object.prototype || Predicate.isNull(prototype)
     return structured && isJson(value) ? encodeJson(value) : String(value)
   }
   return encodeJson(part.result.value)
@@ -223,7 +222,7 @@ export const errorText = (error: unknown) => {
   if (error instanceof Error) return error.message
   if (typeof error === "string") return error
   if (typeof error === "number" || typeof error === "boolean" || typeof error === "bigint") return String(error)
-  if (error === null) return "null"
+  if (Predicate.isNull(error)) return "null"
   if (error === undefined) return "undefined"
   return "Unknown stream error"
 }
