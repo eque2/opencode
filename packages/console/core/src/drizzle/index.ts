@@ -57,7 +57,7 @@ export namespace Database {
     return (input: Input) => use(async (tx) => callback(input, tx))
   }
 
-  export async function effect(effect: () => any | Promise<any>) {
+  export async function effect(effect: () => void | Promise<void>) {
     try {
       const { effects } = TransactionContext.use()
       effects.push(effect)
