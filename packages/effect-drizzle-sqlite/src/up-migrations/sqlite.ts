@@ -1,4 +1,7 @@
+import * as Effect from "effect/Effect"
+import * as Predicate from "effect/Predicate"
 import type { TablesRelationalConfig } from "drizzle-orm/_relations"
+import { EffectDrizzleError } from "drizzle-orm/effect-core/errors"
 import type { MigrationMeta } from "drizzle-orm/migrator"
 import type { AnyRelations } from "drizzle-orm/relations"
 import { type SQL, sql } from "drizzle-orm/sql/sql"
@@ -23,6 +26,12 @@ type SQLiteMigrationBackfillEntry = {
     | { column: "created_at"; value: number }
     | { column: "hash"; value: string }
 }
+
+const migrationUpgradeError = (cause: unknown) =>
+  new EffectDrizzleError({
+    message: Predicate.hasProperty(cause, "message") && Predicate.isString(cause.message) ? cause.message : String(cause),
+    cause,
+  })
 
 function unmatchedMigrationError(unmatched: SQLiteMigrationTableRow[]) {
   return new Error(
@@ -121,34 +130,42 @@ export function buildSQLiteMigrationBackfillStatements(
  * Version 0: Original schema (id, hash, created_at)
  * Version 1: Extended schema (id, hash, created_at, name, applied_at)
  */
-export function upgradeSyncIfNeeded(
+export const upgradeSyncIfNeeded = Effect.fn("upgradeSyncIfNeeded")(function* (
   migrationsTable: string,
   session: SQLiteSession<"sync", unknown, Record<string, unknown>, AnyRelations, TablesRelationalConfig>,
   localMigrations: MigrationMeta[],
-): UpgradeResult {
-  const tableExists = session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`)
+) {
+  const tableExists = yield* Effect.try({
+    try: () => session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`),
+    catch: migrationUpgradeError,
+  })
 
   if (tableExists.length === 0) {
-    return { newDb: true }
+    return { newDb: true } satisfies UpgradeResult
   }
 
   // Table exists, check table shape
-  const rows = session.all<{ column_name: string }>(
-    sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`,
-  )
+  const rows = yield* Effect.try({
+    try: () =>
+      session.all<{ column_name: string }>(sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`),
+    catch: migrationUpgradeError,
+  })
 
   const version = GET_VERSION_FOR.sqlite(rows.map((r) => r.column_name))
 
   for (let v = version; v < MIGRATIONS_TABLE_VERSIONS.sqlite; v++) {
     const upgradeFn = upgradeSyncFunctions[v]
     if (!upgradeFn) {
-      throw new Error(`No upgrade path from migration table version ${v} to ${v + 1}`)
+      return yield* new EffectDrizzleError({
+        message: `No upgrade path from migration table version ${v} to ${v + 1}`,
+        cause: { version: v },
+      })
     }
-    upgradeFn(migrationsTable, session, localMigrations)
+    yield* upgradeFn(migrationsTable, session, localMigrations)
   }
 
-  return { newDb: false }
-}
+  return { newDb: false } satisfies UpgradeResult
+})
 
 const upgradeSyncFunctions: Record<
   number,
@@ -156,7 +173,7 @@ const upgradeSyncFunctions: Record<
     migrationsTable: string,
     session: SQLiteSession<"sync", unknown, Record<string, unknown>, AnyRelations, TablesRelationalConfig>,
     localMigrations: MigrationMeta[],
-  ) => void
+  ) => Effect.Effect<void, EffectDrizzleError>
 > = {
   /**
    * Upgrade from version 0 to version 1:
@@ -167,20 +184,32 @@ const upgradeSyncFunctions: Record<
    * Not implemented for now -> If hash matching fails, fall back to serial id ordering
    * 5. Create extra column and backfill names for matched migrations
    */
-  0: (migrationsTable, session, localMigrations) => {
-    const table = sql`${sql.identifier(migrationsTable)}`
-    const dbRows = session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`)
-    const statements = buildSQLiteMigrationBackfillStatements(
-      migrationsTable,
-      prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-    )
+  0: (migrationsTable, session, localMigrations) =>
+    Effect.gen(function* () {
+      const table = sql`${sql.identifier(migrationsTable)}`
+      const dbRows = yield* Effect.try({
+        try: () => session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
+        catch: migrationUpgradeError,
+      })
+      const statements = yield* Effect.try({
+        try: () =>
+          buildSQLiteMigrationBackfillStatements(
+            migrationsTable,
+            prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+          ),
+        catch: migrationUpgradeError,
+      })
 
-    session.transaction((tx) => {
-      for (const statement of statements) {
-        tx.run(statement)
-      }
-    })
-  },
+      yield* Effect.try({
+        try: () =>
+          session.transaction((tx) => {
+            for (const statement of statements) {
+              tx.run(statement)
+            }
+          }),
+        catch: migrationUpgradeError,
+      })
+    }),
 }
 
 /**
@@ -189,40 +218,50 @@ const upgradeSyncFunctions: Record<
  * Version 0: Original schema (id, hash, created_at)
  * Version 1: Extended schema (id, hash, created_at, name, applied_at)
  */
-export async function upgradeAsyncIfNeeded(
+export const upgradeAsyncIfNeeded = Effect.fn("upgradeAsyncIfNeeded")(function* (
   migrationsTable: string,
   db: AsyncSQLiteDatabaseWithSession,
   localMigrations: MigrationMeta[],
-): Promise<UpgradeResult> {
+) {
   // Check if the table exists at all
-  const tableExists = await db.session.all(
-    sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`,
-  )
+  const tableExists = yield* Effect.tryPromise({
+    try: () => db.session.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${migrationsTable}`),
+    catch: migrationUpgradeError,
+  })
 
   if (tableExists.length === 0) {
-    return { newDb: true }
+    return { newDb: true } satisfies UpgradeResult
   }
 
-  const rows = await db.session.all<{ column_name: string }>(
-    sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`,
-  )
+  const rows = yield* Effect.tryPromise({
+    try: () =>
+      db.session.all<{ column_name: string }>(sql`SELECT name as column_name FROM pragma_table_info(${migrationsTable})`),
+    catch: migrationUpgradeError,
+  })
 
   const version = GET_VERSION_FOR.sqlite(rows.map((r) => r.column_name))
 
   for (let v = version; v < MIGRATIONS_TABLE_VERSIONS.sqlite; v++) {
     const upgradeFn = upgradeAsyncFunctions[v]
     if (!upgradeFn) {
-      throw new Error(`No upgrade path from migration table version ${v} to ${v + 1}`)
+      return yield* new EffectDrizzleError({
+        message: `No upgrade path from migration table version ${v} to ${v + 1}`,
+        cause: { version: v },
+      })
     }
-    await upgradeFn(migrationsTable, db, localMigrations)
+    yield* upgradeFn(migrationsTable, db, localMigrations)
   }
 
-  return { newDb: false }
-}
+  return { newDb: false } satisfies UpgradeResult
+})
 
 const upgradeAsyncFunctions: Record<
   number,
-  (migrationsTable: string, db: AsyncSQLiteDatabaseWithSession, localMigrations: MigrationMeta[]) => Promise<void>
+  (
+    migrationsTable: string,
+    db: AsyncSQLiteDatabaseWithSession,
+    localMigrations: MigrationMeta[],
+  ) => Effect.Effect<void, EffectDrizzleError>
 > = {
   /**
    * Upgrade from version 0 to version 1:
@@ -233,20 +272,37 @@ const upgradeAsyncFunctions: Record<
    * Not implemented for now -> If hash matching fails, fall back to serial id ordering
    * 5. Create extra column and backfill names for matched migrations
    */
-  0: async (migrationsTable, db, localMigrations) => {
-    const table = sql`${sql.identifier(migrationsTable)}`
-    const dbRows = await db.session.all<SQLiteMigrationTableRow>(
-      sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`,
-    )
-    const statements = buildSQLiteMigrationBackfillStatements(
-      migrationsTable,
-      prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-    )
+  0: (migrationsTable, db, localMigrations) =>
+    Effect.gen(function* () {
+      const table = sql`${sql.identifier(migrationsTable)}`
+      const dbRows = yield* Effect.tryPromise({
+        try: () =>
+          db.session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
+        catch: migrationUpgradeError,
+      })
+      const statements = yield* Effect.try({
+        try: () =>
+          buildSQLiteMigrationBackfillStatements(
+            migrationsTable,
+            prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+          ),
+        catch: migrationUpgradeError,
+      })
 
-    await db.transaction(async (tx) => {
-      for (const statement of statements) {
-        await tx.run(statement)
-      }
-    })
-  },
+      // drizzle-orm's async transaction takes a Promise-returning callback, so the
+      // statements run as one Effect that is bridged into that Promise.
+      yield* Effect.tryPromise({
+        try: () =>
+          db.transaction((tx) =>
+            Effect.runPromise(
+              Effect.forEach(
+                statements,
+                (statement) => Effect.tryPromise({ try: () => tx.run(statement), catch: migrationUpgradeError }),
+                { discard: true },
+              ),
+            ),
+          ),
+        catch: migrationUpgradeError,
+      })
+    }),
 }
