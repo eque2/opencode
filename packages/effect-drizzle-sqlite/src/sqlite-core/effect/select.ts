@@ -176,7 +176,7 @@ export class SQLiteEffectSelectBase<
     withList: Subquery[] | undefined
     distinct: boolean | undefined
   }) {
-    // eslint-disable-next-line effect/no-undefined-use-option -- drizzle-orm SQLiteSelectQueryBuilderBase requires `session: SQLiteSession | undefined` and only stores it; the SQLiteEffectSession is not a SQLiteSession, so it lives in effectSession
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) drizzle-orm SQLiteSelectQueryBuilderBase constructor declares the required key session: SQLiteSession | undefined and only stores it; SQLiteEffectSession is not a SQLiteSession, so the base gets undefined and the Effect session lives in effectSession
     super({ ...config, session: undefined })
     this.effectSession = config.session
   }

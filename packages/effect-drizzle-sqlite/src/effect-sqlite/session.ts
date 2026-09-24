@@ -107,7 +107,7 @@ export class EffectSQLiteSession<TRelations extends AnyRelations> extends SQLite
   }
 
   private executeTransactionStatement(connection: Effect.Success<SqlClient["reserve"]>, query: string) {
-    // eslint-disable-next-line effect/no-undefined-use-option -- effect/unstable/sql SqlConnection.executeUnprepared requires transformRows (fn | undefined); undefined means "no row transform", as in Effect's own SqlClient
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) effect/unstable/sql SqlConnection.Connection.executeUnprepared declares transformRows as a function or undefined and accepts no Option; undefined means no row transform, as Effect's own SqlClient passes for transaction control
     return connection.executeUnprepared(query, [], undefined).pipe(Effect.asVoid)
   }
 
