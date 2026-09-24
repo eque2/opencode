@@ -621,24 +621,7 @@ export type EventTuiPromptAppend = {
 export type EventTuiCommandExecute = {
   type: "tui.command.execute"
   properties: {
-    command:
-      | (
-          | "session.list"
-          | "session.new"
-          | "session.share"
-          | "session.interrupt"
-          | "session.compact"
-          | "session.page.up"
-          | "session.page.down"
-          | "session.half.page.up"
-          | "session.half.page.down"
-          | "session.first"
-          | "session.last"
-          | "prompt.clear"
-          | "prompt.submit"
-          | "agent.cycle"
-        )
-      | string
+    command: string
   }
 }
 
@@ -1005,27 +988,7 @@ export type AgentConfig = {
     doom_loop?: "ask" | "allow" | "deny"
     external_directory?: "ask" | "allow" | "deny"
   }
-  [key: string]:
-    | unknown
-    | string
-    | number
-    | {
-        [key: string]: boolean
-      }
-    | boolean
-    | ("subagent" | "primary" | "all")
-    | {
-        edit?: "ask" | "allow" | "deny"
-        bash?:
-          | ("ask" | "allow" | "deny")
-          | {
-              [key: string]: "ask" | "allow" | "deny"
-            }
-        webfetch?: "ask" | "allow" | "deny"
-        doom_loop?: "ask" | "allow" | "deny"
-        external_directory?: "ask" | "allow" | "deny"
-      }
-    | undefined
+  [key: string]: unknown
 }
 
 export type ProviderConfig = {
@@ -1093,7 +1056,7 @@ export type ProviderConfig = {
      * Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.
      */
     timeout?: number | false
-    [key: string]: unknown | string | boolean | (number | false) | undefined
+    [key: string]: unknown
   }
 }
 
