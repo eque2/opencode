@@ -76,7 +76,6 @@ export class SQLiteEffectDatabase<
   }
 
   $with: WithBuilder = (alias: string, selection?: ColumnsSelection) => {
-    const self = this
     const as = (
       qb:
         | TypedQueryBuilder<ColumnsSelection | undefined>
@@ -84,7 +83,7 @@ export class SQLiteEffectDatabase<
         | ((qb: QueryBuilder) => TypedQueryBuilder<ColumnsSelection | undefined> | SQL),
     ) => {
       if (typeof qb === "function") {
-        qb = qb(new QueryBuilder(self.dialect))
+        qb = qb(new QueryBuilder(this.dialect))
       }
 
       return new Proxy(
@@ -110,7 +109,8 @@ export class SQLiteEffectDatabase<
   }
 
   with(...queries: WithSubquery[]) {
-    const self = this
+    const session = this.session
+    const dialect = this.dialect
 
     function select(): SQLiteEffectSelectBuilder<undefined, TRunResult, TEffectHKT>
     function select<TSelection extends SelectedFields>(
@@ -121,8 +121,8 @@ export class SQLiteEffectDatabase<
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
         fields,
-        session: self.session,
-        dialect: self.dialect,
+        session,
+        dialect,
         withList: queries,
       })
     }
@@ -136,8 +136,8 @@ export class SQLiteEffectDatabase<
     ): SQLiteEffectSelectBuilder<SelectedFields | undefined, TRunResult, TEffectHKT> {
       return new SQLiteEffectSelectBuilder({
         fields,
-        session: self.session,
-        dialect: self.dialect,
+        session,
+        dialect,
         withList: queries,
         distinct: true,
       })
@@ -146,19 +146,19 @@ export class SQLiteEffectDatabase<
     function update<TTable extends SQLiteTable>(
       table: TTable,
     ): SQLiteEffectUpdateBuilder<TTable, TRunResult, TEffectHKT> {
-      return new SQLiteEffectUpdateBuilder(table, self.session, self.dialect, queries)
+      return new SQLiteEffectUpdateBuilder(table, session, dialect, queries)
     }
 
     function insert<TTable extends SQLiteTable>(
       into: TTable,
     ): SQLiteEffectInsertBuilder<TTable, TRunResult, TEffectHKT> {
-      return new SQLiteEffectInsertBuilder(into, self.session, self.dialect, queries)
+      return new SQLiteEffectInsertBuilder(into, session, dialect, queries)
     }
 
     function delete_<TTable extends SQLiteTable>(
       from: TTable,
     ): SQLiteEffectDeleteBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
-      return new SQLiteEffectDeleteBase(from, self.session, self.dialect, queries)
+      return new SQLiteEffectDeleteBase(from, session, dialect, queries)
     }
 
     return { select, selectDistinct, update, insert, delete: delete_ }
