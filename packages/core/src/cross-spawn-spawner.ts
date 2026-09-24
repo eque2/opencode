@@ -1,4 +1,4 @@
-import type * as Arr from "effect/Array"
+import * as Arr from "effect/Array"
 import { NodeSink, NodeStream } from "@effect/platform-node"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
@@ -49,29 +49,19 @@ const toTag = (err: NodeJS.ErrnoException): PlatformError.SystemErrorTag => {
   }
 }
 
-const flatten = (command: ChildProcess.Command) => {
-  const commands: Array<ChildProcess.StandardCommand> = []
-  const opts: Array<ChildProcess.PipeOptions> = []
-
-  const walk = (cmd: ChildProcess.Command): void => {
-    switch (cmd._tag) {
-      case "StandardCommand":
-        commands.push(cmd)
-        return
-      case "PipedCommand":
-        walk(cmd.left)
-        opts.push(cmd.options)
-        walk(cmd.right)
-        return
-    }
-  }
-
-  walk(command)
-  if (commands.length === 0) throw new Error("flatten produced empty commands array")
-  const [head, ...tail] = commands
+// A pipeline in order: every standard command, and the pipe options between neighbours.
+const flatten = (
+  command: ChildProcess.Command,
+): {
+  readonly commands: Arr.NonEmptyReadonlyArray<ChildProcess.StandardCommand>
+  readonly opts: ReadonlyArray<ChildProcess.PipeOptions>
+} => {
+  if (command._tag === "StandardCommand") return { commands: [command], opts: [] }
+  const left = flatten(command.left)
+  const right = flatten(command.right)
   return {
-    commands: [head, ...tail] as Arr.NonEmptyReadonlyArray<ChildProcess.StandardCommand>,
-    opts,
+    commands: Arr.appendAll(left.commands, right.commands),
+    opts: [...left.opts, command.options, ...right.opts],
   }
 }
 
