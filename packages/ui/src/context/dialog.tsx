@@ -51,7 +51,6 @@ function init() {
     const closed = current.id
     if (timer.current !== undefined) {
       clearTimeout(timer.current)
-      timer.current = undefined
     }
 
     timer.current = setTimeout(() => {
