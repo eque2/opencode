@@ -6,6 +6,7 @@ import {
   LLMEvent,
   Usage,
   type CacheHint,
+  type ContentPart,
   type FinishReason,
   type JsonSchema,
   type LLMRequest,
@@ -13,6 +14,7 @@ import {
   type ProviderMetadata,
   type ReasoningPart,
   type ToolCallPart,
+  type ToolContent,
   type ToolDefinition,
   type ToolResultPart,
 } from "../schema"
@@ -265,28 +267,24 @@ const lowerToolCall = (part: ToolCallPart): BedrockToolUseBlock => ({
   },
 })
 
+const lowerToolResultItem = Effect.fn("BedrockConverse.lowerToolResultItem")(function* (item: ToolContent) {
+  if (item.type === "text") return { text: item.text }
+  const media = yield* BedrockMedia.lower({
+    type: "media",
+    mediaType: item.mime,
+    data: item.uri,
+    filename: item.name,
+  })
+  if (!("image" in media))
+    return yield* ProviderShared.invalidRequest("Bedrock Converse only supports image media in tool results")
+  return media
+})
+
 const lowerToolResultContent = Effect.fn("BedrockConverse.lowerToolResultContent")(function* (part: ToolResultPart) {
   if (part.result.type === "text" || part.result.type === "error")
     return [{ text: ProviderShared.toolResultText(part) }]
   if (part.result.type === "json") return [{ json: part.result.value }]
-
-  const content: Array<Schema.Schema.Type<typeof BedrockToolResultContentItem>> = []
-  for (const item of part.result.value) {
-    if (item.type === "text") {
-      content.push({ text: item.text })
-      continue
-    }
-    const media = yield* BedrockMedia.lower({
-      type: "media",
-      mediaType: item.mime,
-      data: item.uri,
-      filename: item.name,
-    })
-    if (!("image" in media))
-      return yield* ProviderShared.invalidRequest("Bedrock Converse only supports image media in tool results")
-    content.push(media)
-  }
-  return content
+  return yield* Effect.forEach(part.result.value, lowerToolResultItem)
 })
 
 const lowerToolResult = Effect.fn("BedrockConverse.lowerToolResult")(function* (part: ToolResultPart) {
@@ -299,83 +297,96 @@ const lowerToolResult = Effect.fn("BedrockConverse.lowerToolResult")(function* (
   } satisfies BedrockToolResultBlock
 })
 
+const lowerUserPart = Effect.fn("BedrockConverse.lowerUserPart")(function* (
+  breakpoints: BedrockCache.Breakpoints,
+  part: ContentPart,
+) {
+  if (!ProviderShared.supportsContent(part, ["text", "media"]))
+    return yield* ProviderShared.unsupportedContent("Bedrock Converse", "user", ["text", "media"])
+  if (part.type === "text") return textWithCache(breakpoints, part.text, part.cache)
+  return [yield* BedrockMedia.lower(part)]
+})
+
+const lowerAssistantPart = Effect.fn("BedrockConverse.lowerAssistantPart")(function* (
+  breakpoints: BedrockCache.Breakpoints,
+  part: ContentPart,
+) {
+  if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
+    return yield* ProviderShared.unsupportedContent("Bedrock Converse", "assistant", ["text", "reasoning", "tool-call"])
+  if (part.type === "text") return textWithCache(breakpoints, part.text, part.cache)
+  if (part.type === "reasoning")
+    return [
+      {
+        reasoningContent: {
+          reasoningText: { text: part.text, signature: reasoningSignature(part) },
+        },
+      },
+    ]
+  return [lowerToolCall(part)]
+})
+
+const lowerToolPart = Effect.fn("BedrockConverse.lowerToolPart")(function* (
+  breakpoints: BedrockCache.Breakpoints,
+  part: ContentPart,
+) {
+  if (!ProviderShared.supportsContent(part, ["tool-result"]))
+    return yield* ProviderShared.unsupportedContent("Bedrock Converse", "tool", ["tool-result"])
+  const result = yield* lowerToolResult(part)
+  const cachePoint = BedrockCache.block(breakpoints, part.cache)
+  return cachePoint ? [result, cachePoint] : [result]
+})
+
+// A chronological system update lowers to user text. It joins a directly
+// preceding user turn instead of opening a second consecutive user turn.
+interface LoweredMessage {
+  readonly message: BedrockMessage
+  readonly joinsPreviousUser: boolean
+}
+
+const lowerMessage = Effect.fn("BedrockConverse.lowerMessage")(function* (
+  breakpoints: BedrockCache.Breakpoints,
+  message: LLMRequest["messages"][number],
+) {
+  if (message.role === "system") {
+    const part = yield* ProviderShared.wrappedSystemUpdate("Bedrock Converse", message)
+    return {
+      message: { role: "user", content: textWithCache(breakpoints, part.text, part.cache) },
+      joinsPreviousUser: true,
+    } satisfies LoweredMessage
+  }
+  if (message.role === "user") {
+    const content = yield* Effect.forEach(message.content, (part) => lowerUserPart(breakpoints, part))
+    return { message: { role: "user", content: content.flat() }, joinsPreviousUser: false } satisfies LoweredMessage
+  }
+  if (message.role === "assistant") {
+    const content = yield* Effect.forEach(message.content, (part) => lowerAssistantPart(breakpoints, part))
+    return {
+      message: { role: "assistant", content: content.flat() },
+      joinsPreviousUser: false,
+    } satisfies LoweredMessage
+  }
+  const content = yield* Effect.forEach(message.content, (part) => lowerToolPart(breakpoints, part))
+  return { message: { role: "user", content: content.flat() }, joinsPreviousUser: false } satisfies LoweredMessage
+})
+
+const appendMessage = (
+  messages: ReadonlyArray<BedrockMessage>,
+  lowered: LoweredMessage,
+): ReadonlyArray<BedrockMessage> => {
+  const previous = messages.at(-1)
+  if (lowered.joinsPreviousUser && previous?.role === "user" && lowered.message.role === "user")
+    return [...messages.slice(0, -1), { role: "user", content: [...previous.content, ...lowered.message.content] }]
+  return [...messages, lowered.message]
+}
+
+const noMessages: ReadonlyArray<BedrockMessage> = []
+
 const lowerMessages = Effect.fn("BedrockConverse.lowerMessages")(function* (
   request: LLMRequest,
   breakpoints: BedrockCache.Breakpoints,
 ) {
-  const messages: BedrockMessage[] = []
-
-  for (const message of request.messages) {
-    if (message.role === "system") {
-      const part = yield* ProviderShared.wrappedSystemUpdate("Bedrock Converse", message)
-      const content = textWithCache(breakpoints, part.text, part.cache)
-      const previous = messages.at(-1)
-      if (previous?.role === "user")
-        messages[messages.length - 1] = { role: "user", content: [...previous.content, ...content] }
-      else messages.push({ role: "user", content })
-      continue
-    }
-
-    if (message.role === "user") {
-      const content: BedrockUserBlock[] = []
-      for (const part of message.content) {
-        if (!ProviderShared.supportsContent(part, ["text", "media"]))
-          return yield* ProviderShared.unsupportedContent("Bedrock Converse", "user", ["text", "media"])
-        if (part.type === "text") {
-          content.push(...textWithCache(breakpoints, part.text, part.cache))
-          continue
-        }
-        if (part.type === "media") {
-          content.push(yield* BedrockMedia.lower(part))
-          continue
-        }
-      }
-      messages.push({ role: "user", content })
-      continue
-    }
-
-    if (message.role === "assistant") {
-      const content: BedrockAssistantBlock[] = []
-      for (const part of message.content) {
-        if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
-          return yield* ProviderShared.unsupportedContent("Bedrock Converse", "assistant", [
-            "text",
-            "reasoning",
-            "tool-call",
-          ])
-        if (part.type === "text") {
-          content.push(...textWithCache(breakpoints, part.text, part.cache))
-          continue
-        }
-        if (part.type === "reasoning") {
-          content.push({
-            reasoningContent: {
-              reasoningText: { text: part.text, signature: reasoningSignature(part) },
-            },
-          })
-          continue
-        }
-        if (part.type === "tool-call") {
-          content.push(lowerToolCall(part))
-          continue
-        }
-      }
-      messages.push({ role: "assistant", content })
-      continue
-    }
-
-    const content: BedrockUserBlock[] = []
-    for (const part of message.content) {
-      if (!ProviderShared.supportsContent(part, ["tool-result"]))
-        return yield* ProviderShared.unsupportedContent("Bedrock Converse", "tool", ["tool-result"])
-      content.push(yield* lowerToolResult(part))
-      const cachePoint = BedrockCache.block(breakpoints, part.cache)
-      if (cachePoint) content.push(cachePoint)
-    }
-    messages.push({ role: "user", content })
-  }
-
-  return messages
+  const lowered = yield* Effect.forEach(request.messages, (message) => lowerMessage(breakpoints, message))
+  return lowered.reduce(appendMessage, noMessages)
 })
 
 // System prompts share the cache-point convention: emit the text block, then

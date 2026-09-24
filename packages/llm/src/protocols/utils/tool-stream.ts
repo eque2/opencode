@@ -83,16 +83,11 @@ const appendTool = <K extends StreamKey>(
   key: K,
   tool: PendingTool,
   text: string,
-): AppendOutcome<K> => {
-  const events: LLMEvent[] = []
-  if (!tools[key]) events.push(inputStart(tool))
-  if (text.length > 0) events.push(inputDelta(tool, text))
-  return {
-    tools: withTool(tools, key, tool),
-    tool,
-    events,
-  }
-}
+): AppendOutcome<K> => ({
+  tools: withTool(tools, key, tool),
+  tool,
+  events: [...(tools[key] ? [] : [inputStart(tool)]), ...(text.length > 0 ? [inputDelta(tool, text)] : [])],
+})
 
 export const isError = <K extends StreamKey>(result: AppendOutcome<K> | LLMError): result is LLMError =>
   result instanceof LLMError
