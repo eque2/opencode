@@ -161,6 +161,16 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
   return options
 }
 
+// SDK instances are cached by the JSON text of the provider, the model API and the SDK options. The
+// fetch override is a function, so it is left out, as JSON.stringify did; encoding through the API
+// schema also leaves out absent optional fields such as an undefined `url`.
+const SDKKey = Schema.Struct({
+  providerID: ProviderV2.ID,
+  api: ModelV2.Api,
+  options: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "AISDK.SDKKey" })
+const encodeSDKKey = Schema.encodeSync(Schema.fromJsonString(SDKKey))
+
 export class InitError extends Schema.TaggedError<InitError>()("AISDK.InitError", {
   providerID: ProviderV2.ID,
   cause: Schema.Defect(),
@@ -252,10 +262,10 @@ export const locationLayer = Layer.effect(
           })
 
         const options = prepareOptions(model, model.api.package)
-        const sdkKey = JSON.stringify({
+        const sdkKey = encodeSDKKey({
           providerID: model.providerID,
           api: model.api,
-          options,
+          options: Record.remove(options, "fetch"),
         })
         const cached = MutableHashMap.get(sdks, sdkKey)
         const sdk = Option.isSome(cached)
