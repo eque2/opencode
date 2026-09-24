@@ -2,7 +2,19 @@ export * as AISDK from "./aisdk"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Cause, Context, Duration, Effect, Layer, Option, Predicate, Record, Schema, Scope } from "effect"
+import {
+  Cause,
+  Context,
+  Duration,
+  Effect,
+  Layer,
+  MutableHashMap,
+  Option,
+  Predicate,
+  Record,
+  Schema,
+  Scope,
+} from "effect"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
@@ -179,8 +191,8 @@ export const locationLayer = Layer.effect(
   Effect.gen(function* () {
     let sdkHooks: ((event: SDKEvent) => Effect.Effect<void> | void)[] = []
     let languageHooks: ((event: LanguageEvent) => Effect.Effect<void> | void)[] = []
-    const languages = new Map<string, LanguageModelV3>()
-    const sdks = new Map<string, SDK>()
+    const languages = MutableHashMap.empty<string, LanguageModelV3>()
+    const sdks = MutableHashMap.empty<string, SDK>()
 
     const register = <Event>(
       hooks: () => ((event: Event) => Effect.Effect<void> | void)[],
@@ -225,8 +237,8 @@ export const locationLayer = Layer.effect(
       runLanguage: (event) => run(languageHooks, event),
       language: Effect.fn("AISDK.language")(function* (model) {
         const key = `${model.providerID}/${model.id}/${model.request.variant ?? "default"}`
-        const existing = languages.get(key)
-        if (existing) return existing
+        const existing = MutableHashMap.get(languages, key)
+        if (Option.isSome(existing)) return existing.value
         if (model.api.type !== "aisdk")
           return yield* new InitError({
             providerID: model.providerID,
@@ -239,20 +251,22 @@ export const locationLayer = Layer.effect(
           api: model.api,
           options,
         })
-        const sdk =
-          sdks.get(sdkKey) ??
-          (yield* service.runSDK({ model, package: model.api.package, options }).pipe(initError(model.providerID))).sdk
+        const cached = MutableHashMap.get(sdks, sdkKey)
+        const sdk = Option.isSome(cached)
+          ? cached.value
+          : (yield* service.runSDK({ model, package: model.api.package, options }).pipe(initError(model.providerID)))
+              .sdk
         if (!sdk)
           return yield* new InitError({
             providerID: model.providerID,
             cause: new Error("No AISDK provider plugin returned an SDK"),
           })
-        sdks.set(sdkKey, sdk)
+        MutableHashMap.set(sdks, sdkKey, sdk)
         const result = yield* service.runLanguage({ model, sdk, options }).pipe(initError(model.providerID))
         const language = yield* Effect.sync(() => result.language ?? sdk.languageModel(model.api.id)).pipe(
           initError(model.providerID),
         )
-        languages.set(key, language)
+        MutableHashMap.set(languages, key, language)
         return language
       }),
     })
