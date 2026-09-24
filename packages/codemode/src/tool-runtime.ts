@@ -497,14 +497,14 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   const visible = visibleDefinitions(tools)
   const described = visible.map(({ description }) => description)
 
-  const namespaces = new Map<string, Array<ToolDescription>>()
-  for (const tool of described) {
+  const namespaceOf = (tool: ToolDescription) => {
     const [namespace = tool.path] = tool.path.split(".")
-    const group = namespaces.get(namespace) ?? []
-    group.push(tool)
-    namespaces.set(namespace, group)
+    return namespace
   }
-  const ordered = [...namespaces].sort(([left], [right]) => left.localeCompare(right))
+  // Namespaces in first-seen order, then sorted; each group keeps the declaration order.
+  const ordered = Arr.dedupe(described.map(namespaceOf))
+    .sort((left, right) => left.localeCompare(right))
+    .map((namespace) => ({ namespace, group: described.filter((tool) => namespaceOf(tool) === namespace) }))
 
   // Select which signatures fit the budget before emitting, so the list can state
   // exactly how comprehensive it is. Round-robin fairness: in each round (namespaces
@@ -512,11 +512,12 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
   // next-cheapest line against the shared budget; a namespace whose next line does not
   // fit is done - the others keep going - so every namespace gets some representation
   // before any namespace gets everything.
-  const selections = ordered.map(([namespace, group]) => {
+  const selections = ordered.map(({ namespace, group }) => {
     // Picked descriptions keep their identity: `includes` below matches the exact entries.
     const picked: ReadonlyArray<ToolDescription> = []
     return {
       namespace,
+      group,
       picked,
       queue: [...group].sort(
         (left, right) =>
@@ -539,9 +540,6 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
     }
     active = stillActive
   }
-  const shown = new Map<string, ReadonlyArray<ToolDescription>>(
-    selections.map(({ namespace, picked }) => [namespace, picked]),
-  )
   const totalShown = selections.reduce((total, { picked }) => total + picked.length, 0)
   const complete = totalShown === described.length
 
@@ -622,8 +620,7 @@ export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBu
         : `## Available tools (PARTIAL - ${totalShown} of ${described.length} shown; find the rest with tools.$codemode.search)`,
       "",
     )
-    for (const [namespace, group] of ordered) {
-      const picked = shown.get(namespace)!
+    for (const { namespace, group, picked } of selections) {
       const count = `${group.length} tool${group.length === 1 ? "" : "s"}`
       // Annotate only when a namespace is not fully shown, so a comprehensive
       // namespace reads cleanly and a truncated one is unambiguous.
