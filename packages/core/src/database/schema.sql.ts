@@ -1,10 +1,11 @@
+import { DateTime } from "effect"
 import { integer } from "drizzle-orm/sqlite-core"
 
 export const Timestamps = {
   time_created: integer()
     .notNull()
-    .$default(() => Date.now()),
+    .$default(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
   time_updated: integer()
     .notNull()
-    .$onUpdate(() => Date.now()),
+    .$onUpdate(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
 }
