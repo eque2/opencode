@@ -8,7 +8,6 @@ import { AbsolutePath, RelativePath } from "../schema"
 import { WorkspaceV2 } from "../workspace"
 import { SessionSchema } from "./schema"
 import { SessionTable } from "./sql"
-import { SessionMessage } from "./message"
 
 export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.Info {
   return SessionSchema.Info.make({
@@ -41,7 +40,8 @@ export function fromRow(row: typeof SessionTable.$inferSelect): SessionSchema.In
       ...(row.workspace_id ? { workspaceID: WorkspaceV2.ID.make(row.workspace_id) } : {}),
     }),
     ...(row.path ? { subpath: RelativePath.make(row.path) } : {}),
-    ...(row.revert ? { revert: { ...row.revert, messageID: SessionMessage.ID.make(row.revert.messageID) } } : {}),
+    // The column holds a Revert.State; Info.make validates its message ID brand.
+    ...(row.revert ? { revert: row.revert } : {}),
     time: {
       created: DateTime.makeUnsafe(row.time_created),
       updated: DateTime.makeUnsafe(row.time_updated),
