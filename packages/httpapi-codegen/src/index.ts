@@ -1064,7 +1064,8 @@ function generationPortable(generation: unknown): boolean {
 }
 
 function codeDocumentPortable(schema: Schema.Top): boolean {
-  try {
+  // SchemaRepresentation throws for a schema it cannot represent; that schema is not portable.
+  return Result.try(() => {
     const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
     const imports = document.artifacts.flatMap((artifact) =>
       artifact._tag === "Import" ? [artifact.importDeclaration] : [],
@@ -1089,9 +1090,7 @@ function codeDocumentPortable(schema: Schema.Top): boolean {
       ...document.references.nonRecursives.map((reference) => reference.code),
       ...Object.values(document.references.recursives),
     ].every((code) => portable(code.runtime))
-  } catch {
-    return false
-  }
+  }).pipe(Result.getOrElse(() => false))
 }
 
 function annotationsPortable(annotations: Schema.Annotations.Annotations | undefined) {
