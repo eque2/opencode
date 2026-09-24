@@ -258,7 +258,7 @@ export function inserted(column: string) {
 function errorText(cause: unknown): string {
   if (cause instanceof Error) return `${cause.message} ${errorText((cause as { cause?: unknown }).cause)}`
   if (typeof cause === "object" && cause)
-    return Object.values(cause as Record<string, unknown>)
+    return Object.values(cause)
       .map(errorText)
       .join(" ")
   return String(cause)
