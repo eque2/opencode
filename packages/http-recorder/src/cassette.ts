@@ -1,4 +1,18 @@
-import { Context, DateTime, Effect, FileSystem, HashMap, Layer, Option, Ref, Result, Schema, Semaphore } from "effect"
+import { NodeCrypto } from "@effect/platform-node"
+import {
+  Context,
+  Crypto,
+  DateTime,
+  Effect,
+  FileSystem,
+  HashMap,
+  Layer,
+  Option,
+  Ref,
+  Result,
+  Schema,
+  Semaphore,
+} from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
@@ -88,6 +102,7 @@ export const fileSystem = (
     Service,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
+      const cryptoService = yield* Crypto.Crypto
       const directory = options.directory ?? DEFAULT_RECORDINGS_DIR
       const recorded = yield* Ref.make(
         HashMap.empty<
@@ -136,7 +151,7 @@ export const fileSystem = (
               yield* failIfUnsafe(name, findings)
               const target = yield* pathFor(name)
               yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.orDie)
-              const temporary = `${target}.${crypto.randomUUID()}.tmp`
+              const temporary = `${target}.${yield* cryptoService.randomUUIDv4.pipe(Effect.orDie)}.tmp`
               yield* fs.writeFileString(temporary, formatCassette(cassette)).pipe(
                 Effect.flatMap(() => fs.rename(temporary, target)),
                 Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.catch(() => Effect.void))),
@@ -172,7 +187,7 @@ export const fileSystem = (
           ),
       })
     }),
-  )
+  ).pipe(Layer.provide(NodeCrypto.layer))
 
 export const memory = (initial: Record<string, ReadonlyArray<Interaction>> = {}): Layer.Layer<Service> =>
   Layer.sync(Service, () => {
