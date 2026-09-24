@@ -1,17 +1,15 @@
 export function memo<T>(fn: () => T, cleanup?: (input: T) => Promise<void>) {
-  let value: T | undefined
-  let loaded = false
+  let state: { loaded: false } | { loaded: true; value: T } = { loaded: false }
 
   const result = (): T => {
-    if (loaded) return value as T
-    loaded = true
-    value = fn()
-    return value as T
+    if (state.loaded) return state.value
+    const value = fn()
+    state = { loaded: true, value }
+    return value
   }
   result.reset = async () => {
-    if (cleanup && value) await cleanup(value)
-    loaded = false
-    value = undefined
+    if (cleanup && state.loaded && state.value) await cleanup(state.value)
+    state = { loaded: false }
   }
 
   return result
