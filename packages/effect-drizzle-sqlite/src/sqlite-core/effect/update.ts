@@ -274,6 +274,7 @@ export class SQLiteEffectUpdateBase<
       const tableName = getTableLikeName(table)
 
       if (typeof tableName === "string" && this.config.joins.some((join) => join.alias === tableName)) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (leftJoin() / innerJoin()) returns synchronously; its contract throws at build time
         throw new EffectDrizzleBuilderError({ message: `Alias "${tableName}" is already used in this query` })
       }
 

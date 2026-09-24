@@ -51,6 +51,7 @@ export function orderSelectedFields<TColumn extends Column>(
 
 export function mapUpdateSet<TTable extends SQLiteTable>(table: TTable, values: SQLiteUpdateSetSource<TTable>) {
   const entries = Object.entries(values).filter(([, value]) => value !== undefined)
+  // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (update set() / onConflictDoUpdate()) returns synchronously; its contract throws at build time
   if (entries.length === 0) throw new EffectDrizzleBuilderError({ message: "No values to set" })
 
   return Object.fromEntries(
