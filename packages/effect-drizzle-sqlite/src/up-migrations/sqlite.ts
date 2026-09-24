@@ -96,7 +96,7 @@ export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationB
       toApply.push({
         name: matched.value.name,
         selector:
-          dbRow.id !== null
+          Predicate.isNotNull(dbRow.id)
             ? { column: "id", value: dbRow.id }
             : Option.isSome(matchedByMillis)
               ? { column: "created_at", value: dbRow.created_at }
