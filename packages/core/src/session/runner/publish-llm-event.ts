@@ -67,6 +67,9 @@ const settledOutput = (value: ToolOutput | undefined, result: ToolResultValue): 
   return { structured: record(settled.structured), content: settled.content }
 }
 
+/** A provider stream that breaks the event grammar is a defect, not a recoverable failure. */
+const ensure = (holds: boolean, violation: string): Effect.Effect<void> => (holds ? Effect.void : Effect.die(violation))
+
 type ToolCallState = {
   readonly assistantMessageID: SessionMessage.ID
   readonly name: string
@@ -189,7 +192,7 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
     readonly id: SessionMessage.ToolCallID
     readonly name: string
   }) {
-    if (MutableHashMap.has(tools, event.id)) return yield* Effect.die(`Duplicate tool input start: ${event.id}`)
+    yield* ensure(!MutableHashMap.has(tools, event.id), `Duplicate tool input start: ${event.id}`)
     const assistantMessageID = yield* startAssistant()
     MutableHashMap.set(tools, event.id, {
       assistantMessageID,
@@ -214,9 +217,8 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
     readonly name: string
   }) {
     const tool = yield* recordedTool(event.id, `Tool input end before start: ${event.id}`)
-    if (tool.name !== event.name)
-      return yield* Effect.die(`Tool input name changed for ${event.id}: ${tool.name} -> ${event.name}`)
-    if (tool.inputEnded) return yield* Effect.die(`Duplicate tool input end: ${event.id}`)
+    yield* ensure(tool.name === event.name, `Tool input name changed for ${event.id}: ${tool.name} -> ${event.name}`)
+    yield* ensure(!tool.inputEnded, `Duplicate tool input end: ${event.id}`)
     yield* toolInput.end(event.id)
   })
 
@@ -330,9 +332,8 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
       case "tool-input-delta": {
         const callID = SessionMessage.ToolCallID.make(event.id)
         const tool = yield* recordedTool(callID, `Tool input delta before start: ${callID}`)
-        if (tool.name !== event.name)
-          return yield* Effect.die(`Tool input name changed for ${callID}: ${tool.name} -> ${event.name}`)
-        if (tool.inputEnded) return yield* Effect.die(`Tool input delta after end: ${callID}`)
+        yield* ensure(tool.name === event.name, `Tool input name changed for ${callID}: ${tool.name} -> ${event.name}`)
+        yield* ensure(!tool.inputEnded, `Tool input delta after end: ${callID}`)
         yield* toolInput.append(callID, event.text)
         yield* events.publish(SessionEvent.Tool.Input.Delta, {
           sessionID: input.sessionID,
@@ -351,9 +352,8 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
         if (!MutableHashMap.has(tools, callID)) yield* startToolInput({ id: callID, name: event.name })
         const tool = yield* recordedTool(callID, `Tool call before start: ${callID}`)
         if (!tool.inputEnded) yield* endToolInput({ id: callID, name: event.name })
-        if (tool.name !== event.name)
-          return yield* Effect.die(`Tool call name changed for ${callID}: ${tool.name} -> ${event.name}`)
-        if (tool.called) return yield* Effect.die(`Duplicate tool call: ${callID}`)
+        yield* ensure(tool.name === event.name, `Tool call name changed for ${callID}: ${tool.name} -> ${event.name}`)
+        yield* ensure(!tool.called, `Duplicate tool call: ${callID}`)
         tool.called = true
         tool.providerExecuted = event.providerExecuted === true
         tool.providerMetadata = event.providerMetadata
@@ -374,12 +374,12 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
       case "tool-result": {
         const callID = SessionMessage.ToolCallID.make(event.id)
         const tool = yield* recordedTool(callID, `Tool result before call: ${callID}`)
-        if (!tool.called) return yield* Effect.die(`Tool result before call: ${callID}`)
-        if (tool.name !== event.name)
-          return yield* Effect.die(`Tool result name changed for ${callID}: ${tool.name} -> ${event.name}`)
+        yield* ensure(tool.called, `Tool result before call: ${callID}`)
+        yield* ensure(tool.name === event.name, `Tool result name changed for ${callID}: ${tool.name} -> ${event.name}`)
         if (tool.settled) {
-          if (event.result.type === "error") return
-          return yield* Effect.die(`Duplicate tool result: ${callID}`)
+          // A late error for an already settled call is ignored; a second result is a defect.
+          yield* ensure(event.result.type === "error", `Duplicate tool result: ${callID}`)
+          return
         }
         tool.settled = true
         const result = settledOutput(event.output, event.result)
@@ -414,10 +414,9 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
       case "tool-error": {
         const callID = SessionMessage.ToolCallID.make(event.id)
         const tool = yield* recordedTool(callID, `Tool error before call: ${callID}`)
-        if (!tool.called) return yield* Effect.die(`Tool error before call: ${callID}`)
-        if (tool.name !== event.name)
-          return yield* Effect.die(`Tool error name changed for ${callID}: ${tool.name} -> ${event.name}`)
-        if (tool.settled) return yield* Effect.die(`Duplicate tool error: ${callID}`)
+        yield* ensure(tool.called, `Tool error before call: ${callID}`)
+        yield* ensure(tool.name === event.name, `Tool error name changed for ${callID}: ${tool.name} -> ${event.name}`)
+        yield* ensure(!tool.settled, `Duplicate tool error: ${callID}`)
         tool.settled = true
         yield* events.publish(SessionEvent.Tool.Failed, {
           sessionID: input.sessionID,
@@ -435,7 +434,7 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
       case "step-finish":
         yield* flush()
         assistantActive = false
-        if (stepSettlement) return yield* Effect.die("Duplicate step finish")
+        yield* ensure(stepSettlement === undefined, "Duplicate step finish")
         stepSettlement = { finish: event.reason, tokens: tokens(event.usage) }
         return
       case "finish":
