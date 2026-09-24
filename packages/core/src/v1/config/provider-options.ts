@@ -52,7 +52,7 @@ const openai: Lowerer = {
     const result = snake(options)
     if (options.reasoningEffort !== undefined || options.reasoningSummary !== undefined) {
       result.reasoning = {
-        ...(isRecord(result.reasoning) ? result.reasoning : {}),
+        ...(Predicate.isObject(result.reasoning) ? result.reasoning : {}),
         ...(options.reasoningEffort !== undefined ? { effort: options.reasoningEffort } : {}),
         ...(options.reasoningSummary !== undefined ? { summary: options.reasoningSummary } : {}),
       }
@@ -60,7 +60,7 @@ const openai: Lowerer = {
       delete result.reasoning_summary
     }
     if (options.textVerbosity !== undefined) {
-      result.text = { ...(isRecord(result.text) ? result.text : {}), verbosity: options.textVerbosity }
+      result.text = { ...(Predicate.isObject(result.text) ? result.text : {}), verbosity: options.textVerbosity }
       delete result.text_verbosity
     }
     return result
@@ -91,8 +91,8 @@ const anthropic: Lowerer = {
       delete result.effort
       delete result.task_budget
     }
-    if (isRecord(options.metadata) && options.metadata.userId !== undefined) {
-      result.metadata = { ...(isRecord(result.metadata) ? result.metadata : {}), user_id: options.metadata.userId }
+    if (Predicate.isObject(options.metadata) && options.metadata.userId !== undefined) {
+      result.metadata = { ...(Predicate.isObject(result.metadata) ? result.metadata : {}), user_id: options.metadata.userId }
     }
     return result
   },
@@ -180,7 +180,7 @@ function direct(options: Options, extraKeys: ReadonlyArray<string> = []): Provid
 }
 
 function body(input: unknown) {
-  if (!isRecord(input)) return undefined
+  if (!Predicate.isObject(input)) return undefined
   return { ...input }
 }
 
@@ -190,7 +190,7 @@ function snake(options: Options) {
 
 function snakeValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(snakeValue)
-  if (!isRecord(value)) return value
+  if (!Predicate.isObject(value)) return value
   return Object.fromEntries(Object.entries(value).map(([key, value]) => [snakeKey(key), snakeValue(value)]))
 }
 
@@ -211,7 +211,7 @@ function pick(options: Options, keys: ReadonlyArray<string>) {
 }
 
 function headers(input: unknown) {
-  if (!isRecord(input)) return undefined
+  if (!Predicate.isObject(input)) return undefined
   return Object.fromEntries(
     Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
   )
@@ -237,8 +237,4 @@ function string(input: unknown): Option.Option<string> {
 
 function bearer(input: unknown) {
   return Option.map(string(input), (token) => `Bearer ${token}`)
-}
-
-function isRecord(input: unknown): input is Record<string, unknown> {
-  return typeof input === "object" && input !== null && !Array.isArray(input)
 }

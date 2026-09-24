@@ -1,6 +1,6 @@
 export * as ConfigMigrateV1 from "./migrate"
 
-import { HashSet } from "effect"
+import { HashSet, Predicate } from "effect"
 import { ConfigV1 } from "./config"
 import { ConfigAgentV1 } from "./agent"
 import { ConfigMCPV1 } from "./mcp"
@@ -29,7 +29,8 @@ const keys = HashSet.make(
 )
 
 export function isV1(input: unknown) {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) return false
+  // Predicate.isObject accepts a non-null object that is not an array.
+  if (!Predicate.isObject(input)) return false
   return Object.keys(input).some((key) => HashSet.has(keys, key))
 }
 
