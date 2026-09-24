@@ -1,6 +1,7 @@
 import { isAbsolute, join } from "node:path"
 import {
   Array as Arr,
+  Chunk,
   Effect,
   FileSystem,
   HashSet,
@@ -97,7 +98,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
     readonly omitEndpoints?: ReadonlySet<string>
   },
 ): Contract {
-  const endpoints: Array<Endpoint> = []
+  let endpoints = Chunk.empty<Endpoint>()
   const portable = MutableHashMap.empty<SchemaAST.AST, boolean>()
 
   HttpApi.reflect(api, {
@@ -111,8 +112,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
         throw new GenerationError({ reason: `Client middleware requires adapter: ${required.key}` })
       }
 
-      const successSchemas = Array.from(endpoint.success)
-      if (successSchemas.length === 0) successSchemas.push(HttpApiSchema.NoContent)
+      const successSchemas = endpoint.success.size === 0 ? [HttpApiSchema.NoContent] : Array.from(endpoint.success)
       if (successSchemas.length > 1) throw new GenerationError({ reason: `Multiple success schemas: ${name}` })
 
       const params = normalizeTransport(endpoint.params, "params", endpoint, name)
@@ -157,7 +157,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
         for (const [path, schema] of schemaPaths) assertPortable(schema, path, portable)
       }
 
-      endpoints.push({
+      endpoints = Chunk.append(endpoints, {
         group: groupName,
         sourceGroup: group.identifier,
         topLevel: group.topLevel,
@@ -1107,9 +1107,8 @@ function hasEncoding(ast: SchemaAST.AST, seen: MutableHashSet.MutableHashSet<Sch
 }
 
 function renderGroup(group: Group, groupIndex: number) {
-  const slots: Array<Slot> = []
-  const adapters: Array<string> = []
-  const endpointSources = group.endpoints.map((operation, endpointIndex) => {
+  let slots = Chunk.empty<Slot>()
+  const renderedEndpoints = group.endpoints.map((operation, endpointIndex) => {
     const {
       endpoint,
       errors,
@@ -1171,16 +1170,17 @@ function renderGroup(group: Group, groupIndex: number) {
     const rawCall = `raw[${encodeJsonString(endpoint.identifier)}]({ ${request} })`
     const mapped = `${rawCall}.pipe(Effect.mapError(map${prefix}Error)${operation.unwrapData ? ", Effect.map((value) => value.data)" : ""})`
     const inputDeclaration = operation.operation.inputMode === "none" ? "" : `type ${prefix}Input = { ${inputType} }\n`
-    adapters.push(
-      `${inputDeclaration}const ${prefix}DeclaredError = ${declaredSchema}\nconst map${prefix}Error = (error: unknown) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : Schema.is(${prefix}DeclaredError)(error) ? error : new ClientError({ cause: error })\nconst ${prefix} = (raw: RawGroup) => (${argument}) => ${operation.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(map${prefix}Error), Effect.map((stream) => stream.pipe(Stream.mapError(map${prefix}Error)))))` : mapped}`,
-    )
-    return `HttpApiEndpoint.make(${encodeJsonString(endpoint.method)})(${encodeJsonString(endpoint.identifier)}, ${encodeJsonString(endpoint.path)}, { ${options.join(", ")} })`
+    const adapter = `${inputDeclaration}const ${prefix}DeclaredError = ${declaredSchema}\nconst map${prefix}Error = (error: unknown) => HttpClientError.isHttpClientError(error) || Schema.isSchemaError(error) || Sse.Retry.is(error) ? new ClientError({ cause: error }) : Schema.is(${prefix}DeclaredError)(error) ? error : new ClientError({ cause: error })\nconst ${prefix} = (raw: RawGroup) => (${argument}) => ${operation.operation.success === "stream" ? `Stream.unwrap(${rawCall}.pipe(Effect.mapError(map${prefix}Error), Effect.map((stream) => stream.pipe(Stream.mapError(map${prefix}Error)))))` : mapped}`
+    return {
+      source: `HttpApiEndpoint.make(${encodeJsonString(endpoint.method)})(${encodeJsonString(endpoint.identifier)}, ${encodeJsonString(endpoint.path)}, { ${options.join(", ")} })`,
+      adapter,
+    }
   })
 
   function addSlot(schema: Schema.Top | undefined, name: string) {
     if (schema === undefined) return undefined
     const slot = { name, schema }
-    slots.push(slot)
+    slots = Chunk.append(slots, slot)
     return slot
   }
 
@@ -1204,9 +1204,9 @@ function renderGroup(group: Group, groupIndex: number) {
     }
   }
 
-  const declarations = renderSchemas(slots)
-  const groupSource = `HttpApiGroup.make(${encodeJsonString(group.identifier)}, { topLevel: ${group.endpoints[0]?.topLevel ?? false} })${endpointSources.map((endpoint) => `.add(${endpoint})`).join("")}`
-  const usesHttpApiSchema = endpointSources.some((source) => source.includes("HttpApiSchema."))
+  const declarations = renderSchemas(Chunk.toReadonlyArray(slots))
+  const groupSource = `HttpApiGroup.make(${encodeJsonString(group.identifier)}, { topLevel: ${group.endpoints[0]?.topLevel ?? false} })${renderedEndpoints.map((endpoint) => `.add(${endpoint.source})`).join("")}`
+  const usesHttpApiSchema = renderedEndpoints.some((endpoint) => endpoint.source.includes("HttpApiSchema."))
   const methods = group.endpoints
     .map((item, index) => `${encodeJsonString(item.operation.name)}: Endpoint${index}(raw)`)
     .join(", ")
@@ -1214,7 +1214,7 @@ function renderGroup(group: Group, groupIndex: number) {
     ? `HttpApiClient.Client<typeof Group${groupIndex}>`
     : `HttpApiClient.Client.Group<typeof Group${groupIndex}, never, never>`
   const usesStream = group.endpoints.some((item) => item.operation.success === "stream")
-  return `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect, Schema${usesStream ? ", Stream" : ""} } from "effect"\nimport { Sse } from "effect/unstable/encoding"\nimport { HttpClientError } from "effect/unstable/http"\nimport { HttpApiClient, HttpApiEndpoint, HttpApiGroup${usesHttpApiSchema ? ", HttpApiSchema" : ""} } from "effect/unstable/httpapi"\nimport { ClientError } from "./client-error"\n\n${declarations}\n\nexport const Group${groupIndex} = ${groupSource}\n\ntype RawGroup = ${rawGroup}\n\n${adapters.join("\n\n")}\n\nexport const adaptGroup${groupIndex} = (raw: RawGroup) => ({ ${methods} })\n`
+  return `// Generated by @opencode-ai/httpapi-codegen. Do not edit.\nimport { Effect, Schema${usesStream ? ", Stream" : ""} } from "effect"\nimport { Sse } from "effect/unstable/encoding"\nimport { HttpClientError } from "effect/unstable/http"\nimport { HttpApiClient, HttpApiEndpoint, HttpApiGroup${usesHttpApiSchema ? ", HttpApiSchema" : ""} } from "effect/unstable/httpapi"\nimport { ClientError } from "./client-error"\n\n${declarations}\n\nexport const Group${groupIndex} = ${groupSource}\n\ntype RawGroup = ${rawGroup}\n\n${renderedEndpoints.map((endpoint) => endpoint.adapter).join("\n\n")}\n\nexport const adaptGroup${groupIndex} = (raw: RawGroup) => ({ ${methods} })\n`
 }
 
 function renderSchemas(slots: ReadonlyArray<Slot>) {
