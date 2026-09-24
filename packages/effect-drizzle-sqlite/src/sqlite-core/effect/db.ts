@@ -281,7 +281,7 @@ export const withReplicas = <
   const transaction: Q["transaction"] = (...args: [any]) => primary.transaction(...args)
 
   return {
-    // oxlint-disable-next-line typescript-eslint/no-misused-spread -- drizzle-orm withReplicas returns a plain object with the primary's own fields (session, dialect, $client, _); every prototype method is re-added below
+    // oxlint-disable-next-line typescript-eslint/no-misused-spread -- (a) drizzle-orm withReplicas returns SQLiteWithReplicas<Q>, a plain object with every own field of the primary (session, dialect, $client, _, and any a subclass adds); each prototype method is re-added below, as upstream does
     ...primary,
     update,
     insert,
