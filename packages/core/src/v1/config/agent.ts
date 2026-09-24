@@ -3,6 +3,7 @@ export * as ConfigAgentV1 from "./agent"
 import { HashSet, Schema, SchemaGetter } from "effect"
 import { PositiveInt } from "../../schema"
 import { ConfigPermissionV1 } from "./permission"
+import { ConfigProviderV1 } from "./provider"
 
 const Color = Schema.Union([
   Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/)),
@@ -27,7 +28,7 @@ const AgentSchema = Schema.StructWithRest(
     hidden: Schema.optional(Schema.Boolean).annotate({
       description: "Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)",
     }),
-    options: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+    options: Schema.optional(ConfigProviderV1.Options),
     color: Schema.optional(Color).annotate({
       description: "Hex color code (e.g., #FF5733) or theme color (e.g., primary)",
     }),
@@ -37,7 +38,8 @@ const AgentSchema = Schema.StructWithRest(
     maxSteps: Schema.optional(PositiveInt).annotate({ description: "@deprecated Use 'steps' field instead." }),
     permission: Schema.optional(ConfigPermissionV1.Info),
   }),
-  [Schema.Record(Schema.String, Schema.Any)],
+  // Unknown agent keys are provider options too: normalize moves them into `options`.
+  [ConfigProviderV1.Options],
 )
 
 const KNOWN_KEYS = HashSet.make(

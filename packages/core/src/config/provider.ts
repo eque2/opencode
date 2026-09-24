@@ -4,9 +4,16 @@ import { Schema } from "effect"
 import { ProviderV2 } from "../provider"
 import { ModelV2 } from "../model"
 
+// Request body fields merge into the catalog request body that @opencode-ai/plugin v2 aisdk
+// hooks expose as Record<string, any>. ConfigMigrateV1 fills it from the V1 option bags
+// (ConfigProviderV1.Options, Schema.Any) and agent files add gray-matter YAML values, so
+// Schema.Json rejects valid inputs ("Expected JSON value" in the V1 migration test).
+// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin v2 aisdk hook options are Record<string, any>; the body carries migrated V1 Schema.Any option bags
+const Body = Schema.Record(Schema.String, Schema.Unknown)
+
 export class Request extends Schema.Class<Request>("ConfigV2.Provider.Request")({
   headers: Schema.Record(Schema.String, Schema.String).pipe(Schema.optional),
-  body: Schema.Record(Schema.String, Schema.Unknown).pipe(Schema.optional),
+  body: Body.pipe(Schema.optional),
 }) {}
 
 class Cache extends Schema.Class<Cache>("ConfigV2.Model.Cost.Cache")({
