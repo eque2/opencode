@@ -49,7 +49,7 @@ export interface SystemContext {
 export const SourceSnapshot = Schema.Struct({
   value: Schema.Json,
   removed: Schema.optional(Schema.NonEmptyString),
-})
+}).annotate({ identifier: "SystemContext.SourceSnapshot" })
 export type SourceSnapshot = typeof SourceSnapshot.Type
 
 /** Durable structured comparison state for one active context generation. */

@@ -10,7 +10,7 @@ import { SystemContext } from "../system-context/index"
 const Summary = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
-})
+}).annotate({ identifier: "SkillGuidance.Summary" })
 type Summary = typeof Summary.Type
 
 const render = (skills: ReadonlyArray<Summary>) =>

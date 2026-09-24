@@ -34,7 +34,7 @@ const Frontmatter = Schema.Struct({
   name: Schema.String.pipe(Schema.optional),
   description: Schema.String.pipe(Schema.optional),
   slash: Schema.Boolean.pipe(Schema.optional),
-})
+}).annotate({ identifier: "SkillV2.Frontmatter" })
 const decodeFrontmatter = Schema.decodeUnknownOption(Frontmatter)
 
 export type Data = {
