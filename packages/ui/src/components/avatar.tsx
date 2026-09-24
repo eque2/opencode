@@ -2,7 +2,8 @@ import { type ComponentProps, splitProps, Show } from "solid-js"
 
 const segmenter =
   typeof Intl !== "undefined" && "Segmenter" in Intl
-    ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+    ? // ECMA-402 defaults to the runtime default locale and to "grapheme" granularity.
+      new Intl.Segmenter()
     : undefined
 
 function first(value: string) {
