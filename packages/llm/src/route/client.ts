@@ -21,6 +21,7 @@ import {
   LLMError as LLMErrorClass,
   PreparedRequest,
   ProviderID,
+  RequestID,
   mergeGenerationOptions,
   mergeHttpOptions,
   mergeProviderOptions,
@@ -375,7 +376,7 @@ const prepareWith = Effect.fn("LLMClient.prepare")(function* (request: LLMReques
   const compiled = yield* compile(request)
 
   return new PreparedRequest({
-    id: compiled.request.id ?? "request",
+    id: RequestID.make(compiled.request.id ?? "request"),
     route: compiled.route.id,
     protocol: compiled.route.protocol,
     model: compiled.request.model,
