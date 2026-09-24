@@ -70,6 +70,11 @@ export interface Config {
   readonly parallelApiKey?: string
 }
 
+/** An MCP search call failed before it returned a usable body. */
+export class SearchError extends Schema.TaggedError<SearchError>()("WebSearchTool.SearchError", {
+  message: Schema.String,
+}) {}
+
 export class ConfigService extends Context.Service<ConfigService, Config>()("@opencode/v2/WebSearchConfig") {}
 
 /** Isolates the retained product environment contract from the generic tool implementation. */
@@ -176,13 +181,13 @@ const callMcp = <F extends Schema.Struct.Fields>(
       const body = yield* collectBoundedResponseBody(
         response,
         MAX_RESPONSE_BYTES,
-        () => new Error(`${tool} response exceeded ${MAX_RESPONSE_BYTES} bytes`),
+        () => new SearchError({ message: `${tool} response exceeded ${MAX_RESPONSE_BYTES} bytes` }),
       )
       return yield* parseResponse(body.toString("utf8"))
     }).pipe(
       Effect.timeoutOrElse({
         duration: Duration.seconds(25),
-        orElse: () => Effect.fail(new Error(`${tool} request timed out`)),
+        orElse: () => Effect.fail(new SearchError({ message: `${tool} request timed out` })),
       }),
     )
   })
