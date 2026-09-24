@@ -1,9 +1,10 @@
 import type { FileContent } from "@opencode-ai/sdk/v2"
+import { HashSet } from "effect"
 
 export type MediaKind = "image" | "audio" | "svg"
 
-const imageExtensions = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "tif", "tiff", "heic"])
-const audioExtensions = new Set(["mp3", "wav", "ogg", "m4a", "aac", "flac", "opus"])
+const imageExtensions = HashSet.make("png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "tif", "tiff", "heic")
+const audioExtensions = HashSet.make("mp3", "wav", "ogg", "m4a", "aac", "flac", "opus")
 
 type MediaValue = unknown
 
@@ -36,8 +37,8 @@ export function fileExtension(path: string | undefined) {
 export function mediaKindFromPath(path: string | undefined): MediaKind | undefined {
   const ext = fileExtension(path)
   if (ext === "svg") return "svg"
-  if (imageExtensions.has(ext)) return "image"
-  if (audioExtensions.has(ext)) return "audio"
+  if (HashSet.has(imageExtensions, ext)) return "image"
+  if (HashSet.has(audioExtensions, ext)) return "audio"
 }
 
 export function isBinaryContent(value: MediaValue) {

@@ -20,6 +20,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { type SelectedLineRange } from "@pierre/diffs"
 import { Dynamic } from "solid-js/web"
+import { HashSet } from "effect"
 import { mediaKindFromPath } from "../pierre/media"
 import { cloneSelectedLineRange, previewSelectedLines } from "../pierre/selection-bridge"
 import { createLineCommentController } from "./line-comment-annotations"
@@ -209,11 +210,11 @@ export const SessionReview = (props: SessionReviewProps) => {
     const root = scroll.getBoundingClientRect()
     const top = root.top - REVIEW_MOUNT_MARGIN
     const bottom = root.bottom + REVIEW_MOUNT_MARGIN
-    const openSet = new Set(open())
+    const openSet = HashSet.fromIterable(open())
     const next: Record<string, boolean> = {}
 
     for (const [file, el] of nodes) {
-      if (!openSet.has(file)) continue
+      if (!HashSet.has(openSet, file)) continue
       const rect = el.getBoundingClientRect()
       if (rect.bottom < top || rect.top > bottom) continue
       next[file] = true

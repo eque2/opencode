@@ -2,6 +2,7 @@ import { type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs"
 import { createEffect, createMemo, createSignal, onCleanup, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { render as renderSolid } from "solid-js/web"
+import { HashSet } from "effect"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { createHoverCommentUtility } from "../pierre/comment-hover"
 import { cloneSelectedLineRange, formatSelectedLineLabel, lineInSelectedRange } from "../pierre/selection-bridge"
@@ -153,9 +154,9 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
   }
 
   const reconcile = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotations: A[]) => {
-    const next = new Set(annotations.map((annotation) => annotation.metadata.key))
+    const next = HashSet.fromIterable(annotations.map((annotation) => annotation.metadata.key))
     for (const [key, node] of nodes) {
-      if (next.has(key)) continue
+      if (HashSet.has(next, key)) continue
       node.dispose()
       nodes.delete(key)
     }
