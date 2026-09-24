@@ -19,10 +19,19 @@ const addPlugin = Effect.fn(function* () {
 })
 
 function fakeSelectorSdk(calls: string[]) {
-  const make = (method: string) => (id: string) => {
-    calls.push(`${method}:${id}`)
-    return { modelId: id, provider: method, specificationVersion: "v3" } as unknown as LanguageModelV3
-  }
+  const make =
+    (method: string) =>
+    (id: string): LanguageModelV3 => {
+      calls.push(`${method}:${id}`)
+      return {
+        specificationVersion: "v3",
+        provider: method,
+        modelId: id,
+        supportedUrls: {},
+        doGenerate: () => Promise.reject(new Error("the fake language model does not generate")),
+        doStream: () => Promise.reject(new Error("the fake language model does not stream")),
+      }
+    }
   return {
     responses: make("responses"),
     messages: make("messages"),
