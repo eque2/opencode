@@ -1,4 +1,4 @@
-import { Data } from "effect"
+import { Data, Effect, Option, Predicate } from "effect"
 import type { SafeObject } from "../tool-runtime.js"
 import type { SandboxURL } from "../values.js"
 
@@ -165,38 +165,45 @@ export const unsupportedSyntax = (kind: string, node: AstNode): InterpreterRunti
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null
 
-export const asNode = (value: unknown, context: string): AstNode => {
-  if (!isRecord(value) || typeof value.type !== "string") {
-    throw new InterpreterRuntimeError(`Invalid AST node while reading ${context}.`)
-  }
-  return value as AstNode
-}
+export const isAstNode = (value: unknown): value is AstNode => isRecord(value) && typeof value.type === "string"
 
-export const getArray = (node: AstNode, key: string): Array<unknown> => {
+export const asNode = (value: unknown, context: string): Effect.Effect<AstNode, InterpreterRuntimeError> =>
+  isAstNode(value)
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Invalid AST node while reading ${context}.`))
+
+export const getArray = (node: AstNode, key: string): Effect.Effect<Array<unknown>, InterpreterRuntimeError> => {
   const value = node[key]
-  if (!Array.isArray(value)) throw new InterpreterRuntimeError(`Expected '${key}' to be an array.`, node)
-  return value
+  return Array.isArray(value)
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be an array.`, node))
 }
 
-export const getString = (node: AstNode, key: string): string => {
+export const getString = (node: AstNode, key: string): Effect.Effect<string, InterpreterRuntimeError> => {
   const value = node[key]
-  if (typeof value !== "string") throw new InterpreterRuntimeError(`Expected '${key}' to be a string.`, node)
-  return value
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be a string.`, node))
 }
 
-export const getBoolean = (node: AstNode, key: string): boolean => {
+export const getBoolean = (node: AstNode, key: string): Effect.Effect<boolean, InterpreterRuntimeError> => {
   const value = node[key]
-  if (typeof value !== "boolean") throw new InterpreterRuntimeError(`Expected '${key}' to be a boolean.`, node)
-  return value
+  return typeof value === "boolean"
+    ? Effect.succeed(value)
+    : Effect.fail(new InterpreterRuntimeError(`Expected '${key}' to be a boolean.`, node))
 }
 
-export const getOptionalNode = (node: AstNode, key: string): AstNode | undefined => {
+// An absent child (a missing key, or null as acorn writes it) is Option.none.
+export const getOptionalNode = (
+  node: AstNode,
+  key: string,
+): Effect.Effect<Option.Option<AstNode>, InterpreterRuntimeError> => {
   const value = node[key]
-  if (value === undefined || value === null) return undefined
-  return asNode(value, key)
+  return Predicate.isNullish(value) ? Effect.succeedNone : Effect.asSome(asNode(value, key))
 }
 
-export const getNode = (node: AstNode, key: string): AstNode => asNode(node[key], key)
+export const getNode = (node: AstNode, key: string): Effect.Effect<AstNode, InterpreterRuntimeError> =>
+  asNode(node[key], key)
 
 export const sourceLocation = (node: AstNode): { readonly line: number; readonly column: number } => ({
   line: Math.max(1, (node.loc?.start.line ?? 2) - 1),
