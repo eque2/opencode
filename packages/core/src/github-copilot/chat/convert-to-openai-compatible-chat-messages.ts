@@ -13,7 +13,7 @@ import type {
   OpenAICompatibleToolMessage,
 } from "./openai-compatible-api-types"
 import { convertToBase64 } from "@ai-sdk/provider-utils"
-import { Effect, Predicate, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 
 export class UnsupportedRoleError extends Schema.TaggedError<UnsupportedRoleError>()(
   "GithubCopilot.UnsupportedRoleError",
@@ -29,6 +29,10 @@ type OpenAIMetadata = ReturnType<typeof getOpenAIMetadata>
 // The AI SDK types tool-call input as unknown and tool output values as JSONValue, whose objects
 // may hold undefined members. The codec writes the same text as JSON.stringify, which drops them.
 const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
+// An assistant turn without text (tool calls or reasoning only) sends `content: null`.
+// Code holds the joined text as an Option and the codec writes the JSON null.
+const encodeAssistantContent = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))
 
 function getOpenAIMetadata(message: { providerOptions?: SharedV3ProviderOptions }) {
   return message?.providerOptions?.copilot ?? {}
@@ -160,7 +164,7 @@ const convertAssistantMessage = Effect.fnUntraced(function* (content: AssistantC
 
   const assistant: OpenAICompatibleMessage = {
     role: "assistant",
-    content: text || null,
+    content: encodeAssistantContent(text.length > 0 ? Option.some(text) : Option.none()),
     tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     reasoning_text: reasoningOpaque ? reasoningText : undefined,
     reasoning_opaque: reasoningOpaque,

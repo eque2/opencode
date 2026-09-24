@@ -1,5 +1,5 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 
 export function prepareTools({
   tools,
@@ -27,7 +27,7 @@ export function prepareTools({
   // when the tools array is empty, change it to undefined to prevent errors:
   tools = tools?.length ? tools : undefined
 
-  if (tools == null) {
+  if (Predicate.isNullish(tools)) {
     return Effect.succeed({ tools: undefined, toolChoice: undefined, toolWarnings: [] })
   }
 
@@ -49,7 +49,7 @@ export function prepareTools({
         ],
   )
 
-  if (toolChoice == null) {
+  if (Predicate.isNullish(toolChoice)) {
     return Effect.succeed({ tools: openaiCompatTools, toolChoice: undefined, toolWarnings })
   }
 

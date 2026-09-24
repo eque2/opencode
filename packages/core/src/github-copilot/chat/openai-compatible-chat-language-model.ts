@@ -21,7 +21,7 @@ import {
   postJsonToApi,
   type ResponseHandler,
 } from "@ai-sdk/provider-utils"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { convertToOpenAICompatibleChatMessages } from "./convert-to-openai-compatible-chat-messages"
 import { getResponseMetadata } from "./get-response-metadata"
 import { mapOpenAICompatibleFinishReason } from "./map-openai-compatible-finish-reason"
@@ -59,6 +59,15 @@ const providerOptionsSchema = Schema.toStandardSchemaV1(openaiCompatibleProvider
 // The request args hold undefined-valued settings and JSON schemas typed outside Schema.Json.
 // The codec writes the same text as JSON.stringify, which drops the undefined members.
 const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
+// The finish event's raw usage is OpenAI wire JSON, where an absent count is `null`.
+// Code holds each count as an Option and the codec writes the null.
+const RawStreamUsage = Schema.Struct({
+  prompt_tokens: Schema.OptionFromNullOr(Schema.Number),
+  completion_tokens: Schema.OptionFromNullOr(Schema.Number),
+  total_tokens: Schema.OptionFromNullOr(Schema.Number),
+}).annotate({ identifier: "GithubCopilot.RawStreamUsage" })
+const encodeRawStreamUsage = Schema.encodeSync(RawStreamUsage)
 
 /**
  * A failure from an AI SDK helper: provider option parsing, the HTTP request with its
@@ -139,9 +148,13 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         (yield* parseCompatibleOptions(this.providerOptionsName, providerOptions)) ?? {},
       )
 
-      const topKWarnings: SharedV3Warning[] = topK != null ? [{ type: "unsupported", feature: "topK" }] : []
+      const topKWarnings: SharedV3Warning[] = Predicate.isNotNullish(topK)
+        ? [{ type: "unsupported", feature: "topK" }]
+        : []
       const responseFormatWarnings: SharedV3Warning[] =
-        responseFormat?.type === "json" && responseFormat.schema != null && !this.supportsStructuredOutputs
+        responseFormat?.type === "json" &&
+        Predicate.isNotNullish(responseFormat.schema) &&
+        !this.supportsStructuredOutputs
           ? [
               {
                 type: "unsupported",
@@ -176,7 +189,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
           presence_penalty: presencePenalty,
           response_format:
             responseFormat?.type === "json"
-              ? this.supportsStructuredOutputs && responseFormat.schema != null
+              ? this.supportsStructuredOutputs && Predicate.isNotNullish(responseFormat.schema)
                 ? {
                     type: "json_schema",
                     json_schema: {
@@ -252,7 +265,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
       // text content:
       const text = choice.message.content
-      if (text != null && text.length > 0) {
+      if (Predicate.isNotNullish(text) && text.length > 0) {
         content.push({
           type: "text",
           text,
@@ -264,7 +277,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
       // reasoning content (Copilot uses reasoning_text):
       const reasoning = choice.message.reasoning_text
-      if (reasoning != null && reasoning.length > 0) {
+      if (Predicate.isNotNullish(reasoning) && reasoning.length > 0) {
         content.push({
           type: "reasoning",
           text: reasoning,
@@ -276,7 +289,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
       }
 
       // tool calls:
-      if (choice.message.tool_calls != null) {
+      if (Predicate.isNotNullish(choice.message.tool_calls)) {
         for (const toolCall of choice.message.tool_calls) {
           content.push({
             type: "tool-call",
@@ -300,11 +313,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
         ...extractedMetadata,
       }
       const completionTokenDetails = responseBody.usage?.completion_tokens_details
-      if (completionTokenDetails?.accepted_prediction_tokens != null) {
+      if (Predicate.isNotNullish(completionTokenDetails?.accepted_prediction_tokens)) {
         providerMetadata[this.providerOptionsName].acceptedPredictionTokens =
           completionTokenDetails?.accepted_prediction_tokens
       }
-      if (completionTokenDetails?.rejected_prediction_tokens != null) {
+      if (Predicate.isNotNullish(completionTokenDetails?.rejected_prediction_tokens)) {
         providerMetadata[this.providerOptionsName].rejectedPredictionTokens =
           completionTokenDetails?.rejected_prediction_tokens
       }
@@ -463,7 +476,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 })
               }
 
-              if (value.usage != null) {
+              if (Predicate.isNotNullish(value.usage)) {
                 const {
                   prompt_tokens,
                   completion_tokens,
@@ -475,41 +488,40 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 usage.promptTokens = prompt_tokens ?? undefined
                 usage.completionTokens = completion_tokens ?? undefined
                 usage.totalTokens = total_tokens ?? undefined
-                if (completion_tokens_details?.reasoning_tokens != null) {
+                if (Predicate.isNotNullish(completion_tokens_details?.reasoning_tokens)) {
                   usage.completionTokensDetails.reasoningTokens = completion_tokens_details?.reasoning_tokens
                 }
-                if (completion_tokens_details?.accepted_prediction_tokens != null) {
+                if (Predicate.isNotNullish(completion_tokens_details?.accepted_prediction_tokens)) {
                   usage.completionTokensDetails.acceptedPredictionTokens =
                     completion_tokens_details?.accepted_prediction_tokens
                 }
-                if (completion_tokens_details?.rejected_prediction_tokens != null) {
+                if (Predicate.isNotNullish(completion_tokens_details?.rejected_prediction_tokens)) {
                   usage.completionTokensDetails.rejectedPredictionTokens =
                     completion_tokens_details?.rejected_prediction_tokens
                 }
-                if (prompt_tokens_details?.cached_tokens != null) {
+                if (Predicate.isNotNullish(prompt_tokens_details?.cached_tokens)) {
                   usage.promptTokensDetails.cachedTokens = prompt_tokens_details?.cached_tokens
                 }
               }
 
               const choice = value.choices[0]
 
-              if (choice?.finish_reason != null) {
+              if (Predicate.isNotNullish(choice?.finish_reason)) {
                 finishReason = {
                   unified: mapOpenAICompatibleFinishReason(choice.finish_reason),
                   raw: choice.finish_reason ?? undefined,
                 }
               }
 
-              if (choice?.delta == null) {
+              const delta = choice?.delta
+              if (Predicate.isNullish(delta)) {
                 return
               }
-
-              const delta = choice.delta
 
               // Capture reasoning_opaque for Copilot multi-turn reasoning.
               // An invalid chunk errors the stream through its controller, as a throw from transform did.
               if (delta.reasoning_opaque) {
-                if (reasoningOpaque != null) {
+                if (Predicate.isNotNullish(reasoningOpaque)) {
                   controller.error(
                     new InvalidResponseDataError({
                       data: delta,
@@ -568,7 +580,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 })
               }
 
-              if (delta.tool_calls != null) {
+              if (Predicate.isNotNullish(delta.tool_calls)) {
                 // If reasoning was active and we're starting tool calls, end reasoning first
                 // This handles the case where reasoning goes directly to tool calls with no content
                 if (isActiveReasoning) {
@@ -582,8 +594,8 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 for (const toolCallDelta of delta.tool_calls) {
                   const index = toolCallDelta.index
 
-                  if (toolCalls[index] == null) {
-                    if (toolCallDelta.id == null) {
+                  if (Predicate.isNullish(toolCalls[index])) {
+                    if (Predicate.isNullish(toolCallDelta.id)) {
                       controller.error(
                         new InvalidResponseDataError({
                           data: toolCallDelta,
@@ -593,7 +605,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                       return
                     }
 
-                    if (toolCallDelta.function?.name == null) {
+                    if (Predicate.isNullish(toolCallDelta.function.name)) {
                       controller.error(
                         new InvalidResponseDataError({
                           data: toolCallDelta,
@@ -621,33 +633,31 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
 
                     const toolCall = toolCalls[index]
 
-                    if (toolCall.function?.name != null && toolCall.function?.arguments != null) {
-                      // send delta if the argument text has already started:
-                      if (toolCall.function.arguments.length > 0) {
-                        controller.enqueue({
-                          type: "tool-input-delta",
-                          id: toolCall.id,
-                          delta: toolCall.function.arguments,
-                        })
-                      }
+                    // send delta if the argument text has already started:
+                    if (toolCall.function.arguments.length > 0) {
+                      controller.enqueue({
+                        type: "tool-input-delta",
+                        id: toolCall.id,
+                        delta: toolCall.function.arguments,
+                      })
+                    }
 
-                      // check if tool call is complete
-                      // (some providers send the full tool call in one chunk):
-                      if (isParsableJson(toolCall.function.arguments)) {
-                        controller.enqueue({
-                          type: "tool-input-end",
-                          id: toolCall.id,
-                        })
+                    // check if tool call is complete
+                    // (some providers send the full tool call in one chunk):
+                    if (isParsableJson(toolCall.function.arguments)) {
+                      controller.enqueue({
+                        type: "tool-input-end",
+                        id: toolCall.id,
+                      })
 
-                        controller.enqueue({
-                          type: "tool-call",
-                          toolCallId: toolCall.id ?? generateId(),
-                          toolName: toolCall.function.name,
-                          input: toolCall.function.arguments,
-                          providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
-                        })
-                        toolCall.hasFinished = true
-                      }
+                      controller.enqueue({
+                        type: "tool-call",
+                        toolCallId: toolCall.id ?? generateId(),
+                        toolName: toolCall.function.name,
+                        input: toolCall.function.arguments,
+                        providerMetadata: reasoningOpaque ? { copilot: { reasoningOpaque } } : undefined,
+                      })
+                      toolCall.hasFinished = true
                     }
 
                     continue
@@ -660,9 +670,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                     continue
                   }
 
-                  if (toolCallDelta.function?.arguments != null) {
-                    toolCall.function.arguments += toolCallDelta.function?.arguments ?? ""
-                  }
+                  toolCall.function.arguments += toolCallDelta.function.arguments ?? ""
 
                   // send delta
                   controller.enqueue({
@@ -672,11 +680,7 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                   })
 
                   // check if tool call is complete
-                  if (
-                    toolCall.function?.name != null &&
-                    toolCall.function?.arguments != null &&
-                    isParsableJson(toolCall.function.arguments)
-                  ) {
+                  if (isParsableJson(toolCall.function.arguments)) {
                     controller.enqueue({
                       type: "tool-input-end",
                       id: toolCall.id,
@@ -730,11 +734,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 ...(reasoningOpaque ? { copilot: { reasoningOpaque } } : {}),
                 ...metadataExtractor?.buildMetadata(),
               }
-              if (usage.completionTokensDetails.acceptedPredictionTokens != null) {
+              if (Predicate.isNotNullish(usage.completionTokensDetails.acceptedPredictionTokens)) {
                 providerMetadata[providerOptionsName].acceptedPredictionTokens =
                   usage.completionTokensDetails.acceptedPredictionTokens
               }
-              if (usage.completionTokensDetails.rejectedPredictionTokens != null) {
+              if (Predicate.isNotNullish(usage.completionTokensDetails.rejectedPredictionTokens)) {
                 providerMetadata[providerOptionsName].rejectedPredictionTokens =
                   usage.completionTokensDetails.rejectedPredictionTokens
               }
@@ -757,11 +761,11 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                     text: undefined,
                     reasoning: usage.completionTokensDetails.reasoningTokens,
                   },
-                  raw: {
-                    prompt_tokens: usage.promptTokens ?? null,
-                    completion_tokens: usage.completionTokens ?? null,
-                    total_tokens: usage.totalTokens ?? null,
-                  },
+                  raw: encodeRawStreamUsage({
+                    prompt_tokens: Option.fromUndefinedOr(usage.promptTokens),
+                    completion_tokens: Option.fromUndefinedOr(usage.completionTokens),
+                    total_tokens: Option.fromUndefinedOr(usage.totalTokens),
+                  }),
                 },
                 providerMetadata,
               })
