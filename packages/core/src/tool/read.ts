@@ -1,7 +1,7 @@
 export * as ReadTool from "./read"
 
 import { ToolFailure } from "@opencode-ai/llm"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, HashSet, Layer, Schema } from "effect"
 import { makeLocationNode } from "../effect/app-node"
 import { FileSystem } from "../filesystem"
 import { Image } from "../image"
@@ -14,7 +14,7 @@ import { Tool } from "./tool"
 import { Tools } from "./tools"
 
 export const name = "read"
-const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const SUPPORTED_IMAGE_MIMES = HashSet.make("image/jpeg", "image/png", "image/gif", "image/webp")
 const LocationInput = Schema.Struct({
   path: Schema.String,
   offset: ReadToolFileSystem.PageInput.fields.offset.annotate({
@@ -43,7 +43,11 @@ const layer = Layer.effectDiscard(
           input: Input,
           output: Output,
           toModelOutput: ({ input, output }) => {
-            if (!("encoding" in output) || output.encoding !== "base64" || !SUPPORTED_IMAGE_MIMES.has(output.mime))
+            if (
+              !("encoding" in output) ||
+              output.encoding !== "base64" ||
+              !HashSet.has(SUPPORTED_IMAGE_MIMES, output.mime)
+            )
               return []
             return [
               { type: "text", text: "Image read successfully" },
@@ -83,7 +87,11 @@ const layer = Layer.effectDiscard(
                 offset: input.offset,
                 limit: input.limit,
               })
-              if ("encoding" in content && content.encoding === "base64" && SUPPORTED_IMAGE_MIMES.has(content.mime)) {
+              if (
+                "encoding" in content &&
+                content.encoding === "base64" &&
+                HashSet.has(SUPPORTED_IMAGE_MIMES, content.mime)
+              ) {
                 return yield* image
                   .normalize(resource, { ...content, encoding: "base64" })
                   .pipe(Effect.catchTag("Image.ResizerUnavailableError", () => Effect.succeed(content)))

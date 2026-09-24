@@ -2,7 +2,7 @@ export * as ReadToolFileSystem from "./read-filesystem"
 
 import path from "path"
 import { pathToFileURL } from "url"
-import { Array, Context, Effect, Layer, Option, Schema } from "effect"
+import { Array, Context, Effect, HashSet, Layer, Option, Schema } from "effect"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { makeLocationNode } from "../effect/app-node"
@@ -102,7 +102,7 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ReadToolFileSystem") {}
 
-const extensions = new Set([
+const extensions = HashSet.make(
   ".zip",
   ".tar",
   ".gz",
@@ -131,7 +131,7 @@ const extensions = new Set([
   ".wasm",
   ".pyc",
   ".pyo",
-])
+)
 const startsWith = (bytes: Uint8Array, prefix: number[]) => prefix.every((value, index) => bytes[index] === value)
 const imageMime = (bytes: Uint8Array) => {
   if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png"
@@ -141,7 +141,7 @@ const imageMime = (bytes: Uint8Array) => {
     return "image/webp"
 }
 const binary = (resource: string, bytes: Uint8Array) => {
-  if (extensions.has(path.extname(resource).toLowerCase())) return true
+  if (HashSet.has(extensions, path.extname(resource).toLowerCase())) return true
   if (bytes.length === 0) return false
   let nonPrintable = 0
   for (const byte of bytes) {
@@ -213,7 +213,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
           mime,
         }
       }
-      if (startsWith(first, [0x25, 0x50, 0x44, 0x46]) || extensions.has(path.extname(resource).toLowerCase()))
+      if (startsWith(first, [0x25, 0x50, 0x44, 0x46]) || HashSet.has(extensions, path.extname(resource).toLowerCase()))
         return yield* Effect.fail(new BinaryFileError({ resource }))
       const paged = info.size > MAX_READ_BYTES || page.offset !== undefined || page.limit !== undefined
       if (!paged) {
