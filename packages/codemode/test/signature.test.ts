@@ -3,6 +3,14 @@ import { Effect, Schema } from "effect"
 import { CodeMode, Tool } from "../src/index.js"
 import { inputTypeScript, jsonSchemaToTypeScript, outputTypeScript } from "../src/tool-schema.js"
 
+// Decodes a `tools.$codemode.search` result returned by a program.
+const decodeSearchPage = Schema.decodeUnknownSync(
+  Schema.Struct({
+    items: Schema.Array(Schema.Struct({ path: Schema.String, signature: Schema.String })),
+    remaining: Schema.Number,
+  }),
+)
+
 // A raw JSON Schema tool in the shape an MCP adapter produces: render-only input schema
 // whose property descriptions and constraints must surface as JSDoc in pretty signatures.
 const listIssues = Tool.make({
@@ -347,7 +355,7 @@ describe("JSDoc signatures in catalogs and search results", () => {
     )
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error("search failed")
-    return result.value as { items: Array<{ path: string; signature: string }>; remaining: number }
+    return decodeSearchPage(result.value)
   }
 
   test("a raw JSON Schema (MCP-style) tool's result signature carries field JSDoc and tags", async () => {
@@ -442,7 +450,7 @@ describe("non-identifier tool paths", () => {
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error("search failed")
 
-    const value = result.value as { items: Array<{ path: string; signature: string }> }
+    const value = decodeSearchPage(result.value)
     expect(value.items[0]?.path).toBe('tools.context7["resolve-library-id"]')
     expect(value.items[0]?.signature).toContain('tools.context7["resolve-library-id"](input: {')
   })
