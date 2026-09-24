@@ -10,6 +10,7 @@ import { Subquery } from "drizzle-orm/subquery"
 import { Table } from "drizzle-orm/table"
 import type { UpdateSet } from "drizzle-orm/utils"
 import { ViewBaseConfig } from "drizzle-orm/view-common"
+import { EffectDrizzleBuilderError } from "./errors"
 
 const TableSymbol = (
   Table as unknown as {
@@ -50,7 +51,7 @@ export function orderSelectedFields<TColumn extends Column>(
 
 export function mapUpdateSet<TTable extends SQLiteTable>(table: TTable, values: SQLiteUpdateSetSource<TTable>) {
   const entries = Object.entries(values).filter(([, value]) => value !== undefined)
-  if (entries.length === 0) throw new Error("No values to set")
+  if (entries.length === 0) throw new EffectDrizzleBuilderError({ message: "No values to set" })
 
   return Object.fromEntries(
     entries.map(([key, value]) => [

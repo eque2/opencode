@@ -26,6 +26,7 @@ import { SQLiteViewBase } from "drizzle-orm/sqlite-core/view-base"
 import { Subquery } from "drizzle-orm/subquery"
 import { type Assume, getTableColumns } from "drizzle-orm/utils"
 import { getViewSelectedFieldsRuntime, orderSelectedFields } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectSelectPrepare<
@@ -220,7 +221,9 @@ export class SQLiteEffectSelectBase<
   /** @internal */
   _prepare(isOneTimeQuery = true): SQLiteEffectSelectPrepare<this, TEffectHKT> {
     if (!this.session) {
-      throw new Error("Cannot execute a query on a query builder. Please use a database instance instead.")
+      throw new EffectDrizzleBuilderError({
+        message: "Cannot execute a query on a query builder. Please use a database instance instead.",
+      })
     }
     const session = this.session as unknown as SQLiteEffectSession<TEffectHKT, TRunResult, any>
     const query = session[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](

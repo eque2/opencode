@@ -23,6 +23,7 @@ import {
   mapUpdateSet,
   orderSelectedFields,
 } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectUpdateWithout<
@@ -273,7 +274,7 @@ export class SQLiteEffectUpdateBase<
       const tableName = getTableLikeName(table)
 
       if (typeof tableName === "string" && this.config.joins.some((join) => join.alias === tableName)) {
-        throw new Error(`Alias "${tableName}" is already used in this query`)
+        throw new EffectDrizzleBuilderError({ message: `Alias "${tableName}" is already used in this query` })
       }
 
       if (typeof on === "function") {

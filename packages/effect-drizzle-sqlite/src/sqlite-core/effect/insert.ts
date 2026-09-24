@@ -22,6 +22,7 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
 import { QueryBuilder } from "drizzle-orm/sqlite-core/query-builders/query-builder"
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core/query-builders/update"
 import { getTableColumnsRuntime, mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
+import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectInsertWithout<
@@ -149,7 +150,7 @@ export class SQLiteEffectInsertBuilder<
   ): SQLiteEffectInsertBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
     values = Array.isArray(values) ? values : [values]
     if (values.length === 0) {
-      throw new Error("values() must be called with at least one value")
+      throw new EffectDrizzleBuilderError({ message: "values() must be called with at least one value" })
     }
     const mappedValues = values.map((entry) => {
       const result: Record<string, Param | SQL> = {}
@@ -183,9 +184,10 @@ export class SQLiteEffectInsertBuilder<
     const select = typeof selectQuery === "function" ? selectQuery(new QueryBuilder()) : selectQuery
 
     if (!is(select, SQL) && !haveSameKeys(getTableColumnsRuntime(this.table), select._.selectedFields)) {
-      throw new Error(
-        "Insert select error: selected fields are not the same or are in a different order compared to the table definition",
-      )
+      throw new EffectDrizzleBuilderError({
+        message:
+          "Insert select error: selected fields are not the same or are in a different order compared to the table definition",
+      })
     }
 
     return new SQLiteEffectInsertBase(this.table, select, this.session, this.dialect, this.withList, true)
@@ -272,9 +274,10 @@ export class SQLiteEffectInsertBase<
 
   onConflictDoUpdate(config: SQLiteEffectInsertOnConflictDoUpdateConfig<this>): this {
     if (config.where && (config.targetWhere || config.setWhere)) {
-      throw new Error(
-        'You cannot use both "where" and "targetWhere"/"setWhere" at the same time - "where" is deprecated, use "targetWhere" or "setWhere" instead.',
-      )
+      throw new EffectDrizzleBuilderError({
+        message:
+          'You cannot use both "where" and "targetWhere"/"setWhere" at the same time - "where" is deprecated, use "targetWhere" or "setWhere" instead.',
+      })
     }
 
     if (!this.config.onConflict) this.config.onConflict = []
