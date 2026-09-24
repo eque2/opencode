@@ -2,6 +2,7 @@ import { parse } from "acorn"
 import {
   Array as Arr,
   Cause,
+  Chunk,
   Clock,
   DateTime,
   Effect,
@@ -2319,12 +2320,14 @@ class Interpreter<R> {
     return this.formatConsoleValue(value, new WeakSet(), 0)
   }
 
+  // Evaluates call arguments left to right; each argument contributes one value, or all the
+  // items of a spread argument.
   private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> {
-    return Effect.gen({ self: this }, function* () {
-      const args: Array<unknown> = []
-      for (const [index, arg] of argNodes.entries()) {
-        const argNode = yield* asNode(arg, `arguments[${index}]`)
-        if (argNode.type === "SpreadElement") {
+    return Effect.map(
+      Effect.forEach(argNodes, (arg, index) =>
+        Effect.gen({ self: this }, function* () {
+          const argNode = yield* asNode(arg, `arguments[${index}]`)
+          if (argNode.type !== "SpreadElement") return [yield* this.evaluateExpression(argNode)]
           const spread = yield* this.evaluateExpression(yield* getNode(argNode, "argument"))
           const items = spreadItems(spread)
           if (items === undefined)
@@ -2332,13 +2335,11 @@ class Interpreter<R> {
               "Spread arguments require an array, string, Map, or Set in CodeMode.",
               argNode,
             )
-          args.push(...items)
-        } else {
-          args.push(yield* this.evaluateExpression(argNode))
-        }
-      }
-      return args
-    })
+          return items
+        }),
+      ),
+      (groups) => groups.flat(),
+    )
   }
 
   // Promise.* over ordinary runtime values. Combinators accept ANY array (or spreadable
@@ -2381,11 +2382,7 @@ class Interpreter<R> {
         const settles = items.map((item) =>
           item instanceof SandboxPromise ? this.settlePromise(item, node) : Effect.succeed(item),
         )
-        return Effect.gen(function* () {
-          const values: Array<unknown> = []
-          for (const settle of settles) values.push(yield* settle)
-          return values
-        })
+        return Effect.all(settles)
       }
       case "allSettled": {
         const observations = items.map((item) =>
@@ -2393,20 +2390,17 @@ class Interpreter<R> {
             ? Effect.map(this.observePromise(item), (exit) => ({ promise: item as SandboxPromise | undefined, exit }))
             : Effect.succeed({ promise: undefined as SandboxPromise | undefined, exit: Exit.succeed(item as unknown) }),
         )
-        return Effect.gen(function* () {
-          const outcomes: Array<unknown> = []
-          for (const observation of observations) {
-            const { exit, promise } = yield* observation
+        return Effect.forEach(observations, (observation) =>
+          Effect.flatMap(observation, ({ exit, promise }): Effect.Effect<SafeObject, unknown> => {
             if (Exit.isSuccess(exit)) {
-              outcomes.push(
+              return Effect.succeed(
                 Object.assign(Object.create(null) as SafeObject, { status: "fulfilled", value: exit.value }),
               )
-              continue
             }
             const raceInterrupted = promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)
             if (Cause.hasInterruptsOnly(exit.cause) && !raceInterrupted) {
               // Execution teardown (timeout/host interruption), not a program-level rejection.
-              return yield* Effect.failCause(exit.cause)
+              return Effect.failCause(exit.cause)
             }
             const thrown = raceInterrupted
               ? new InterpreterRuntimeError(
@@ -2414,15 +2408,14 @@ class Interpreter<R> {
                   node,
                 )
               : Cause.squash(exit.cause)
-            outcomes.push(
+            return Effect.succeed(
               Object.assign(Object.create(null) as SafeObject, {
                 status: "rejected",
                 reason: caughtErrorValue(thrown),
               }),
             )
-          }
-          return outcomes
-        })
+          }),
+        )
       }
     }
 
@@ -2546,7 +2539,7 @@ class Interpreter<R> {
   ): Effect.Effect<unknown, unknown, R> {
     return Effect.gen({ self: this }, function* () {
       const apply = yield* this.applyCollectionCallback(args[1], `String.${name}`, node)
-      const matches: Array<{ readonly match: string; readonly offset: number; readonly args: Array<unknown> }> = []
+      let matches = Chunk.empty<{ readonly match: string; readonly offset: number; readonly args: Array<unknown> }>()
       // The host replace drives `collect` synchronously; an impossible callback shape is
       // recorded and reported once the host call returns.
       let invalidMatch = false
@@ -2566,7 +2559,7 @@ class Interpreter<R> {
           }
           callbackArgs[callbackArgs.length - 1] = safeGroups
         }
-        matches.push({ match, offset, args: callbackArgs })
+        matches = Chunk.append(matches, { match, offset, args: callbackArgs })
         return match
       }
 
@@ -2916,26 +2909,15 @@ class Interpreter<R> {
       // self-extend the loop - matching JS, where elements appended during iteration are not visited.
       const items = target.slice()
       switch (name) {
-        case "map": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) values.push(yield* apply([item, index, items]))
-          return values
-        }
+        case "map":
+          return yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
         case "flatMap": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) {
-            const mapped = yield* apply([item, index, items])
-            if (Array.isArray(mapped)) values.push(...mapped)
-            else values.push(mapped)
-          }
-          return values
+          const mapped = yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
+          return mapped.flatMap((value) => (Array.isArray(value) ? value : [value]))
         }
         case "filter": {
-          const values: Array<unknown> = []
-          for (const [index, item] of items.entries()) {
-            if (yield* apply([item, index, items])) values.push(item)
-          }
-          return values
+          const keep = yield* Effect.forEach(items, (item, index) => apply([item, index, items]))
+          return items.filter((_, index) => keep[index])
         }
         case "find":
           for (const [index, item] of items.entries()) {
@@ -3116,17 +3098,16 @@ class Interpreter<R> {
     })
   }
 
+  // Evaluates array elements left to right; each element contributes one value, or all the
+  // items of a spread element. An elided element (`[1, , 3]`) contributes undefined.
   private evaluateArrayExpression(node: AstNode): Effect.Effect<Array<unknown>, unknown, R> {
     return Effect.gen({ self: this }, function* () {
       const elements = yield* getArray(node, "elements")
-      const values: Array<unknown> = []
-      for (const elementValue of elements) {
-        if (elementValue === null) {
-          values.push(undefined)
-          continue
-        }
-        const element = yield* asNode(elementValue, "elements")
-        if (element.type === "SpreadElement") {
+      const groups = yield* Effect.forEach(elements, (elementValue) =>
+        Effect.gen({ self: this }, function* () {
+          if (elementValue === null) return [undefined]
+          const element = yield* asNode(elementValue, "elements")
+          if (element.type !== "SpreadElement") return [yield* this.evaluateExpression(element)]
           const spread = yield* this.evaluateExpression(yield* getNode(element, "argument"))
           const items = spreadItems(spread)
           if (items === undefined)
@@ -3134,12 +3115,10 @@ class Interpreter<R> {
               "Array spread requires an array, string, Map, or Set in CodeMode.",
               element,
             )
-          values.push(...items)
-        } else {
-          values.push(yield* this.evaluateExpression(element))
-        }
-      }
-      return values
+          return items
+        }),
+      )
+      return groups.flat()
     })
   }
 
