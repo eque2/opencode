@@ -158,10 +158,14 @@ export type ToolCallPart = Schema.Schema.Type<typeof toolCallPartSchema>
 const makeToolCallPart = SchemaParser.make(toolCallPartSchema)
 
 export const ToolCallPart = Object.assign(toolCallPartSchema, {
-  /** Build a tool-call part from a plain string id; the JSON fields accept any value and are validated here. */
+  /**
+   * Build a tool-call part from a plain string id. The input becomes the JSON that a provider receives, and the
+   * JSON fields are validated here.
+   */
   make: (
     input: Omit<Schema.Struct.MakeIn<typeof toolCallPartSchema.fields>, "type" | "id"> & { readonly id: string },
-  ): ToolCallPart => makeToolCallPart({ type: "tool-call", ...input, id: ToolCallID.make(input.id) }),
+  ): ToolCallPart =>
+    makeToolCallPart({ type: "tool-call", ...input, id: ToolCallID.make(input.id), input: toWireJson(input.input) }),
 })
 
 export const ToolResultPart = Object.assign(

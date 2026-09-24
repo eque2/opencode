@@ -9,6 +9,7 @@ import {
   Model,
   ModelID,
   ProviderID,
+  ToolCallPart,
   ToolOutput,
   ToolResultValue,
   Usage,
@@ -77,6 +78,13 @@ describe("llm schema", () => {
       value: { at: "1970-01-01T00:00:00.000Z" },
     })
     expect(() => ToolResultValue.make(1n)).toThrow()
+  })
+
+  test("tool-call parts hold the JSON input that a provider receives", () => {
+    expect(
+      ToolCallPart.make({ id: "call_1", name: "lookup", input: { query: "q", limit: undefined } }).input,
+    ).toStrictEqual({ query: "q" })
+    expect(() => ToolCallPart.make({ id: "call_1", name: "lookup", input: 1n })).toThrow()
   })
 })
 
