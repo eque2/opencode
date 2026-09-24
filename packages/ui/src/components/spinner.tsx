@@ -1,18 +1,18 @@
-import { Random } from "effect"
+import { HashSet, Random } from "effect"
 import { ComponentProps, For } from "solid-js"
 
 // Module setup runs outside any fiber, so the delays come straight from the default Random service.
 const random = Random.Random.defaultValue()
-const outerIndices = new Set([1, 2, 4, 7, 8, 11, 13, 14])
-const cornerIndices = new Set([0, 3, 12, 15])
+const outerIndices = HashSet.fromIterable([1, 2, 4, 7, 8, 11, 13, 14])
+const cornerIndices = HashSet.fromIterable([0, 3, 12, 15])
 const squares = Array.from({ length: 16 }, (_, i) => ({
   id: i,
   x: (i % 4) * 4,
   y: Math.floor(i / 4) * 4,
   delay: random.nextDoubleUnsafe() * 1.5,
   duration: 1 + random.nextDoubleUnsafe() * 1,
-  outer: outerIndices.has(i),
-  corner: cornerIndices.has(i),
+  outer: HashSet.has(outerIndices, i),
+  corner: HashSet.has(cornerIndices, i),
 })).map((square) => ({
   ...square,
   style: square.corner
