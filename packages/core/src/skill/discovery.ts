@@ -51,6 +51,12 @@ class Index extends Schema.Class<Index>("SkillDiscovery.Index")({
   skills: Schema.Array(IndexSkill),
 }) {}
 
+interface SkillFile {
+  readonly url: string
+  readonly destination: string
+  readonly file: string
+}
+
 export interface Interface {
   readonly pull: (url: string) => Effect.Effect<AbsolutePath[]>
 }
@@ -93,15 +99,16 @@ const layer = Layer.effect(
           HttpClientRequest.acceptJson,
           http.execute,
           Effect.flatMap(HttpClientResponse.schemaBodyJson(Index)),
+          Effect.map(Option.some),
           Effect.catch((error) =>
-            Effect.logError("failed to fetch skill index", { url: index, error }).pipe(Effect.as(undefined)),
+            Effect.logError("failed to fetch skill index", { url: index, error }).pipe(Effect.as(Option.none())),
           ),
         )
-        if (!data) return []
+        if (Option.isNone(data)) return []
 
         const sourceRoot = path.resolve(global.cache, "skills", Bun.hash(base).toString(16))
         return yield* Effect.forEach(
-          data.skills.flatMap((skill) => {
+          data.value.skills.flatMap((skill) => {
             if (!isSafeSegment(skill.name)) {
               return []
             }
@@ -116,37 +123,45 @@ const layer = Layer.effect(
 
             const skillUrl = new URL(`${encodeURIComponent(skill.name)}/`, source)
             const versionFile = path.join(root, ".opencode-version")
-            const files = skill.files.map((file) => {
-              if (!isSafeRelativePath(file) || !URL.canParse(file, skillUrl.href)) return undefined
-              const resource = new URL(file, skillUrl)
-              if (resource.origin !== source.origin) return undefined
+            // One unsafe file rejects the whole skill.
+            const files = Option.all(
+              skill.files.map((file): Option.Option<SkillFile> => {
+                if (!isSafeRelativePath(file) || !URL.canParse(file, skillUrl.href)) return Option.none()
+                const resource = new URL(file, skillUrl)
+                if (resource.origin !== source.origin) return Option.none()
 
-              const destination = path.resolve(root, file)
-              if (!FSUtil.contains(root, destination) || destination === root) return undefined
-              return {
-                url: resource.href,
-                destination,
-                file,
-              }
-            })
-            if (files.some((file) => file === undefined)) {
+                const destination = path.resolve(root, file)
+                if (!FSUtil.contains(root, destination) || destination === root) return Option.none()
+                return Option.some({
+                  url: resource.href,
+                  destination,
+                  file,
+                })
+              }),
+            )
+            if (Option.isNone(files)) {
               return []
             }
-            return [{ skill, root, versionFile, files: files as { url: string; destination: string; file: string }[] }]
+            return [{ skill, root, versionFile, files: files.value }]
           }),
           ({ skill, root, versionFile, files }) =>
             Effect.gen(function* () {
-              const version = skill.version
-              const current =
-                version === undefined
-                  ? undefined
-                  : yield* fs.readFileStringSafe(versionFile).pipe(Effect.catch(() => Effect.succeed(undefined)))
-              if (version === undefined || current === version) {
+              // Some(version) when the index names a version that the cached copy does not have.
+              const pending = yield* Option.match(Option.fromUndefinedOr(skill.version), {
+                onNone: () => Effect.succeed(Option.none<string>()),
+                onSome: (version) =>
+                  fs.readFileStringSafe(versionFile).pipe(
+                    Effect.map((current) => (current === version ? Option.none<string>() : Option.some(version))),
+                    Effect.catch(() => Effect.succeed(Option.some(version))),
+                  ),
+              })
+              if (Option.isNone(pending)) {
                 yield* Effect.forEach(files, (file) => download(file.url, file.destination), {
                   concurrency: fileConcurrency,
                   discard: true,
                 })
               } else {
+                const version = pending.value
                 const token = crypto.randomUUID()
                 const staging = `${root}.tmp-${token}`
                 const backup = `${root}.old-${token}`
