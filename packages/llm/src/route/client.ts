@@ -90,17 +90,25 @@ export interface RoutePatch<Body, Prepared> extends RouteDefaultsInput {
 
 type RouteMappedModelInput = RouteModelInput | RouteRoutedModelInput
 
-const makeRouteModel = (route: AnyRoute, mapped: RouteMappedModelInput) => {
-  const provider = route.provider ?? ("provider" in mapped ? mapped.provider : undefined)
-  if (!provider) throw new Error(`Route.model(${route.id}) requires a provider`)
-  if (!endpointBaseURL(route.endpoint))
-    throw new Error(`Route.model(${route.id}) requires an endpoint baseURL — configure it on the route first`)
-  return Model.make({
+// The route provider wins over the model input provider. An empty id counts as
+// absent, as the old truthiness check did.
+const routeProvider = (route: AnyRoute, mapped: RouteMappedModelInput) =>
+  Option.fromNullishOr(route.provider).pipe(
+    Option.orElse(() => ("provider" in mapped ? Option.some(mapped.provider) : Option.none())),
+    Option.filter((provider) => provider.length > 0),
+  )
+
+// A `Model` cannot exist without a provider, so `Route.model` stays a
+// synchronous constructor that fails with a typed `LLMError`. The endpoint
+// baseURL check runs in `compile`, where it fails the Effect instead.
+const makeRouteModel = (route: AnyRoute, mapped: RouteMappedModelInput) =>
+  Model.make({
     ...mapped,
-    provider,
+    provider: Option.getOrThrowWith(routeProvider(route, mapped), () =>
+      ProviderShared.invalidRequest(`Route.model(${route.id}) requires a provider`),
+    ),
     route,
   })
-}
 
 const mergeRouteDefaults = (base: RouteDefaults | undefined, patch: RouteDefaultsInput): RouteDefaults => {
   const headers = mergeHeaders(base?.headers, patch.headers)
@@ -118,9 +126,6 @@ const mergeRouteDefaults = (base: RouteDefaults | undefined, patch: RouteDefault
     ),
   }
 }
-
-const endpointBaseURL = <Body>(endpoint: Endpoint<Body>) =>
-  typeof endpoint.baseURL === "string" ? endpoint.baseURL : undefined
 
 const mergeHeaders = (...items: ReadonlyArray<Record<string, string> | undefined>) => {
   const entries = items.flatMap((item) =>
@@ -344,6 +349,10 @@ export function make<Body, Prepared, Frame, Event, State>(
 const compile = Effect.fn("LLM.compile")(function* (request: LLMRequest) {
   const resolved = applyCachePolicy(resolveRequestOptions(request))
   const route = resolved.model.route
+  if (!route.endpoint.baseURL)
+    return yield* ProviderShared.invalidRequest(
+      `Route ${route.id} requires an endpoint baseURL — configure it on the route first`,
+    )
 
   const body = yield* route.body
     .from(resolved)

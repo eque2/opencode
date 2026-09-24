@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Queue, Stream } from "effect"
+import { Cause, Context, Effect, Layer, Option, Queue, Stream } from "effect"
 import { Headers } from "effect/unstable/http"
 import { LLMError, TransportReason } from "../../schema"
 import * as HttpTransport from "./http"
@@ -101,25 +101,30 @@ const waitOpen = (ws: globalThis.WebSocket, input: WebSocketRequest) => {
   })
 }
 
+const webSocketProtocol = (protocol: string) => {
+  if (protocol === "https:") return Option.some("wss:")
+  if (protocol === "http:") return Option.some("ws:")
+  return Option.none<string>()
+}
+
 const webSocketUrl = (value: string) =>
-  Effect.try({
-    try: () => {
-      const url = new URL(value)
-      if (url.protocol === "https:") {
-        url.protocol = "wss:"
-        return url.toString()
-      }
-      if (url.protocol === "http:") {
-        url.protocol = "ws:"
-        return url.toString()
-      }
-      throw new Error(`Unsupported WebSocket URL protocol ${url.protocol}`)
-    },
-    catch: (error) =>
-      transportError("prepare", error instanceof Error ? error.message : "Invalid WebSocket URL", {
+  Effect.gen(function* () {
+    const url = yield* Effect.try({
+      try: () => new URL(value),
+      catch: (error) =>
+        transportError("prepare", error instanceof Error ? error.message : "Invalid WebSocket URL", {
+          url: value,
+          kind: "websocket",
+        }),
+    })
+    const protocol = webSocketProtocol(url.protocol)
+    if (Option.isNone(protocol))
+      return yield* transportError("prepare", `Unsupported WebSocket URL protocol ${url.protocol}`, {
         url: value,
         kind: "websocket",
-      }),
+      })
+    url.protocol = protocol.value
+    return url.toString()
   })
 
 export const open = (input: WebSocketRequest) =>
