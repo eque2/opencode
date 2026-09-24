@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { CodeMode, OpenAPI, Tool } from "../src/index.js"
 import { inputTypeScript, outputTypeScript } from "../src/tool-schema.js"
@@ -14,12 +14,14 @@ type Recorded = {
   readonly body: unknown
 }
 
+const decodeDocument = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))
+
 const opencodeSpec = async (): Promise<Document> => {
-  return Bun.file(new URL("./fixtures/opencode-v2-openapi.json", import.meta.url)).json() as Promise<Document>
+  return decodeDocument(await Bun.file(new URL("./fixtures/opencode-v2-openapi.json", import.meta.url)).json())
 }
 
 const happyPathSpec = async (): Promise<Document> => {
-  return Bun.file(new URL("./fixtures/openapi-happy-path.json", import.meta.url)).json() as Promise<Document>
+  return decodeDocument(await Bun.file(new URL("./fixtures/openapi-happy-path.json", import.meta.url)).json())
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
