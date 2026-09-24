@@ -1,7 +1,7 @@
 export * as PermissionV2 from "./permission"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect as EffectRuntime, Exit, Layer, Option, Schema } from "effect"
+import { Context, Deferred, Effect as EffectRuntime, Exit, Layer, MutableHashMap, Option, Schema } from "effect"
 import { Permission } from "@opencode-ai/schema/permission"
 import { EventV2 } from "./event"
 import { Location } from "./location"
@@ -114,15 +114,19 @@ const layer = Layer.effect(
     const agents = yield* AgentV2.Service
     const sessions = yield* SessionStore.Service
     const saved = yield* PermissionSaved.Service
-    const pending = new Map<ID, Pending>()
+    const pending = MutableHashMap.empty<ID, Pending>()
 
     yield* EffectRuntime.addFinalizer(() =>
-      EffectRuntime.forEach(pending.values(), (item) => Deferred.fail(item.deferred, new DeclinedError()), {
-        discard: true,
-      }).pipe(
+      EffectRuntime.forEach(
+        MutableHashMap.values(pending),
+        (item) => Deferred.fail(item.deferred, new DeclinedError()),
+        {
+          discard: true,
+        },
+      ).pipe(
         EffectRuntime.ensuring(
           EffectRuntime.sync(() => {
-            pending.clear()
+            MutableHashMap.clear(pending)
           }),
         ),
       ),
@@ -178,11 +182,12 @@ const layer = Layer.effect(
         EffectRuntime.gen(function* () {
           const deferred = yield* Deferred.make<void, DeclinedError | CorrectedError>()
           const item = { request, agent, deferred }
-          if (pending.has(request.id)) return yield* EffectRuntime.die(`Duplicate pending permission ID: ${request.id}`)
-          pending.set(request.id, item)
+          if (MutableHashMap.has(pending, request.id))
+            return yield* EffectRuntime.die(`Duplicate pending permission ID: ${request.id}`)
+          MutableHashMap.set(pending, request.id, item)
           yield* events
             .publish(Event.Asked, request)
-            .pipe(EffectRuntime.onError(() => EffectRuntime.sync(() => pending.delete(request.id))))
+            .pipe(EffectRuntime.onError(() => EffectRuntime.sync(() => MutableHashMap.remove(pending, request.id))))
           return item
         }),
       )
@@ -209,7 +214,7 @@ const layer = Layer.effect(
             EffectRuntime.catchTag("PermissionV2.DeclinedError", (error) => EffectRuntime.die(error)),
             EffectRuntime.ensuring(
               EffectRuntime.sync(() => {
-                pending.delete(item.request.id)
+                MutableHashMap.remove(pending, item.request.id)
               }),
             ),
           )
@@ -217,10 +222,8 @@ const layer = Layer.effect(
       ),
     )
 
-    const lookup = (requestID: ID) => {
-      const existing = pending.get(requestID)
-      return existing ? EffectRuntime.succeed(existing) : EffectRuntime.fail(new NotFoundError({ requestID }))
-    }
+    const lookup = (requestID: ID) =>
+      EffectRuntime.fromOption(MutableHashMap.get(pending, requestID), () => new NotFoundError({ requestID }))
 
     // A rejection also declines every other pending request of the same Session.
     const rejectSession = EffectRuntime.fnUntraced(function* (existing: Pending, input: ReplyInput) {
@@ -228,7 +231,7 @@ const layer = Layer.effect(
         existing.deferred,
         input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
       )
-      pending.delete(input.requestID)
+      MutableHashMap.remove(pending, input.requestID)
       for (const [id, item] of pending) {
         if (item.request.sessionID !== existing.request.sessionID) continue
         yield* events.publish(Event.Replied, {
@@ -237,7 +240,7 @@ const layer = Layer.effect(
           reply: "reject",
         })
         yield* Deferred.fail(item.deferred, new DeclinedError())
-        pending.delete(id)
+        MutableHashMap.remove(pending, id)
       }
     })
 
@@ -266,7 +269,7 @@ const layer = Layer.effect(
           reply: "always",
         })
         yield* Deferred.done(item.deferred, Exit.void)
-        pending.delete(id)
+        MutableHashMap.remove(pending, id)
       }
     })
 
@@ -279,7 +282,7 @@ const layer = Layer.effect(
         })
       }
       yield* Deferred.done(existing.deferred, Exit.void)
-      pending.delete(input.requestID)
+      MutableHashMap.remove(pending, input.requestID)
       if (input.reply === "always" && existing.request.save?.length) yield* approveCovered()
     })
 
@@ -298,15 +301,18 @@ const layer = Layer.effect(
     )
 
     const list = EffectRuntime.fn("PermissionV2.list")(function* () {
-      return Array.from(pending.values(), (item) => item.request)
+      return Array.from(MutableHashMap.values(pending), (item) => item.request)
     })
 
     const get = EffectRuntime.fn("PermissionV2.get")(function* (id: ID) {
-      return pending.get(id)?.request
+      // The Interface reports a request that is not pending as undefined.
+      return Option.getOrUndefined(Option.map(MutableHashMap.get(pending, id), (item) => item.request))
     })
 
     const forSession = EffectRuntime.fn("PermissionV2.forSession")(function* (sessionID: SessionV2.ID) {
-      return Array.from(pending.values(), (item) => item.request).filter((request) => request.sessionID === sessionID)
+      return Array.from(MutableHashMap.values(pending), (item) => item.request).filter(
+        (request) => request.sessionID === sessionID,
+      )
     })
 
     return Service.of({ ask, assert, reply, get, forSession, list })
