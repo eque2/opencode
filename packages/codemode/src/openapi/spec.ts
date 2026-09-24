@@ -1,3 +1,4 @@
+import { Array as Arr, HashSet } from "effect"
 import { fromSchemaOpenApi3_0, fromSchemaOpenApi3_1 } from "effect/JsonSchema"
 import type { JsonSchema } from "../tool.js"
 import { isBlockedMember } from "../tool-runtime.js"
@@ -11,9 +12,9 @@ import type {
   SecurityScheme,
 } from "./types.js"
 
-export const methods = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"])
+export const methods = HashSet.make("get", "put", "post", "delete", "options", "head", "patch", "trace")
 const parameterLocations = ["path", "query", "header"] as const
-const ignoredHeaderParameters = new Set(["accept", "content-type", "authorization"])
+const ignoredHeaderParameters = HashSet.make("accept", "content-type", "authorization")
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -29,18 +30,18 @@ export const own = <T>(record: Readonly<Record<string, T>>, key: string): T | un
   Object.hasOwn(record, key) ? record[key] : undefined
 
 export const resolve = (document: Document, value: unknown): unknown => {
-  const next = (current: unknown, seen: ReadonlySet<string>): unknown => {
+  const next = (current: unknown, seen: HashSet.HashSet<string>): unknown => {
     if (!isRecord(current)) return current
     const ref = nonEmptyString(current.$ref)
-    if (ref === undefined || !ref.startsWith("#/") || seen.has(ref)) return current
+    if (ref === undefined || !ref.startsWith("#/") || HashSet.has(seen, ref)) return current
     const target = ref
       .slice(2)
       .split("/")
       .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
       .reduce<unknown>((item, segment) => (isRecord(item) ? own(item, segment) : undefined), document)
-    return target === undefined ? current : next(target, new Set([...seen, ref]))
+    return target === undefined ? current : next(target, HashSet.add(seen, ref))
   }
-  return next(value, new Set())
+  return next(value, HashSet.empty())
 }
 
 const projectSchema = (document: Document, value: unknown): JsonSchema => {
@@ -129,7 +130,7 @@ const operationParameters = (
     if (location !== "path" && location !== "query" && location !== "header") {
       return { ok: false, reason: `parameter '${name}' uses unsupported location '${location}'` }
     }
-    if (location === "header" && ignoredHeaderParameters.has(name.toLowerCase())) continue
+    if (location === "header" && HashSet.has(ignoredHeaderParameters, name.toLowerCase())) continue
     if (resolved.schema === undefined && resolved.content === undefined) {
       return { ok: false, reason: `parameter '${name}' declares neither schema nor content` }
     }
@@ -212,7 +213,7 @@ const operationBody = (
       },
     }
   }
-  const requiredProperties = new Set(
+  const requiredProperties = HashSet.fromIterable(
     Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === "string") : [],
   )
   return {
@@ -221,7 +222,7 @@ const operationBody = (
       fields: Object.entries(schema.properties).map(([name, value]) => ({
         name,
         location: "body" as const,
-        required: required && requiredProperties.has(name),
+        required: required && HashSet.has(requiredProperties, name),
         schema: projectSchema(document, value),
         style: undefined,
         explode: undefined,
@@ -242,26 +243,29 @@ export const operationInput = (
   if (!requestBody.ok) return requestBody
   const fields = [...parameters.value, ...requestBody.value.fields]
 
-  const conflicts = new Set(
-    [...Map.groupBy(fields, (field) => field.name)]
-      .filter(([, matches]) => new Set(matches.map((field) => field.location)).size > 1)
-      .map(([name]) => name),
+  // A name declared in more than one location is prefixed with its location.
+  const conflicts = HashSet.fromIterable(
+    fields
+      .filter((field) => fields.some((other) => other.name === field.name && other.location !== field.location))
+      .map((field) => field.name),
   )
-  const used = new Set<string>()
+  const named = fields.reduce<{ readonly used: HashSet.HashSet<string>; readonly fields: ReadonlyArray<InputField> }>(
+    (state, field) => {
+      const visibleName = isBlockedMember(field.name) ? `${field.name}_2` : field.name
+      const base = HashSet.has(conflicts, field.name) ? `${field.location}_${visibleName}` : visibleName
+      const next = (index: number): string => {
+        const candidate = index === 1 ? base : `${base}_${index}`
+        return HashSet.has(state.used, candidate) ? next(index + 1) : candidate
+      }
+      const inputName = next(1)
+      return { used: HashSet.add(state.used, inputName), fields: Arr.append(state.fields, { ...field, inputName }) }
+    },
+    { used: HashSet.empty(), fields: [] },
+  )
   return {
     ok: true,
     value: {
-      fields: fields.map((field) => {
-        const visibleName = isBlockedMember(field.name) ? `${field.name}_2` : field.name
-        const base = conflicts.has(field.name) ? `${field.location}_${visibleName}` : visibleName
-        const next = (index: number): string => {
-          const candidate = index === 1 ? base : `${base}_${index}`
-          return used.has(candidate) ? next(index + 1) : candidate
-        }
-        const inputName = next(1)
-        used.add(inputName)
-        return { ...field, inputName }
-      }),
+      fields: named.fields,
       body: requestBody.value.body,
     },
   }
@@ -378,15 +382,17 @@ export const operationPath = (
   method: string,
   path: string,
   operation: Record<string, unknown>,
-  used: ReadonlySet<string>,
-  namespaces: ReadonlySet<string>,
+  used: HashSet.HashSet<string>,
+  namespaces: HashSet.HashSet<string>,
 ): ReadonlyArray<string> => {
   const raw = nonEmptyString(operation.operationId)
   const segments = (raw === undefined ? [fallbackOperationId(method, path)] : raw.split(".")).map(
     sanitizeOperationSegment,
   )
   if (isOperationPathAvailable(segments, used, namespaces)) return segments
-  const conflict = segments.slice(0, -1).findIndex((_, index) => used.has(segments.slice(0, index + 1).join(".")))
+  const conflict = segments
+    .slice(0, -1)
+    .findIndex((_, index) => HashSet.has(used, segments.slice(0, index + 1).join(".")))
   if (conflict >= 0 && conflict + 1 < segments.length) {
     const collapsed = segments.flatMap((segment, index) => {
       if (index === conflict) {
@@ -407,12 +413,12 @@ export const operationPath = (
 
 const isOperationPathAvailable = (
   segments: ReadonlyArray<string>,
-  used: ReadonlySet<string>,
-  namespaces: ReadonlySet<string>,
+  used: HashSet.HashSet<string>,
+  namespaces: HashSet.HashSet<string>,
 ): boolean => {
   const key = segments.join(".")
-  if (used.has(key) || namespaces.has(key)) return false
-  return segments.slice(0, -1).every((_, index) => !used.has(segments.slice(0, index + 1).join(".")))
+  if (HashSet.has(used, key) || HashSet.has(namespaces, key)) return false
+  return segments.slice(0, -1).every((_, index) => !HashSet.has(used, segments.slice(0, index + 1).join(".")))
 }
 
 export const specServerUrl = (source: Record<string, unknown>): Parsed<string> => {
@@ -472,7 +478,7 @@ export const operationSecurityRequirements = (
   )
   if (parsed.value.length === 0 || supported.length > 0) return { ok: true, value: supported }
 
-  const names = [...new Set(parsed.value.flatMap((requirement) => Object.keys(requirement)))]
+  const names = Arr.dedupe(parsed.value.flatMap((requirement) => Object.keys(requirement)))
   const cookieScheme = names.find((name) => {
     const definition = own(schemes, name)
     return definition?.type === "apiKey" && definition.in === "cookie"

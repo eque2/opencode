@@ -1,3 +1,4 @@
+import { HashSet } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import { make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
@@ -42,15 +43,15 @@ export const fromSpec = (options: Options): Result => {
   const defaultSecurity = securityRequirements(document.security)
   const definitions = componentDefinitions(document)
   const paths = isRecord(document.paths) ? document.paths : {}
-  const used = new Set<string>()
-  const namespaces = new Set<string>()
+  let used = HashSet.empty<string>()
+  let namespaces = HashSet.empty<string>()
   const skipped: Array<Skipped> = []
   const tools = Object.create(null) as Tools
 
   for (const [path, pathValue] of Object.entries(paths)) {
     if (!isRecord(pathValue)) continue
     for (const [method, operationValue] of Object.entries(pathValue)) {
-      if (!methods.has(method) || !isRecord(operationValue)) continue
+      if (!HashSet.has(methods, method) || !isRecord(operationValue)) continue
       const segments = operationPath(method, path, operationValue, used, namespaces)
       const operation: Operation = {
         operationId: nonEmptyString(operationValue.operationId),
@@ -97,8 +98,10 @@ export const fromSpec = (options: Options): Result => {
         auth: options.auth,
         headers: options.headers ?? {},
       }
-      used.add(segments.join("."))
-      for (const index of segments.slice(0, -1).keys()) namespaces.add(segments.slice(0, index + 1).join("."))
+      used = HashSet.add(used, segments.join("."))
+      for (const index of segments.slice(0, -1).keys()) {
+        namespaces = HashSet.add(namespaces, segments.slice(0, index + 1).join("."))
+      }
       setTool(
         tools,
         segments,

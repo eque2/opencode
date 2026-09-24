@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Stream } from "effect"
+import { Array as Arr, Effect, Option, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
 import { isRecord, own } from "./spec.js"
@@ -147,7 +147,7 @@ const resolveAuth = (plan: Plan): Effect.Effect<AppliedAuth, unknown> =>
 
     return yield* Effect.fail(
       toolError(
-        `${plan.operation.method} ${plan.operation.path} requires authentication; no credential available for: ${[...new Set(unavailable)].join(", ")}.`,
+        `${plan.operation.method} ${plan.operation.path} requires authentication; no credential available for: ${Arr.dedupe(unavailable).join(", ")}.`,
       ),
     )
   })
