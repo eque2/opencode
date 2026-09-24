@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { Show } from "solid-js"
 import * as mod from "./tabs-v2"
 import type { TabsV2Props } from "./tabs-v2"
@@ -124,7 +125,7 @@ export const Pill = {
         <mod.TabsV2.Trigger value="second">Second</mod.TabsV2.Trigger>
         <mod.TabsV2.Trigger value="third">
           Closable
-          <mod.TabsV2.CloseButton onClick={() => console.log("Close tab-3")} />
+          <mod.TabsV2.CloseButton onClick={() => Effect.runFork(Effect.logInfo("Close tab-3"))} />
         </mod.TabsV2.Trigger>
       </mod.TabsV2.List>
       <mod.TabsV2.Content value="first">
@@ -152,7 +153,7 @@ export const Closable = {
         <mod.TabsV2.Trigger value="tab-1">
           Tab 1
           <Show when={true}>
-            <mod.TabsV2.CloseButton onClick={() => console.log("Close tab-1")} />
+            <mod.TabsV2.CloseButton onClick={() => Effect.runFork(Effect.logInfo("Close tab-1"))} />
           </Show>
         </mod.TabsV2.Trigger>
         <mod.TabsV2.Trigger value="tab-2">Tab 2</mod.TabsV2.Trigger>
