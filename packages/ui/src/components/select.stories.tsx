@@ -53,6 +53,7 @@ export default {
   argTypes: {
     triggerVariant: {
       control: "select",
+      // eslint-disable-next-line effect/no-undefined-use-option -- Storybook args API: undefined unsets an arg
       options: ["settings", undefined],
     },
   },

@@ -54,6 +54,7 @@ export const Basic = {
       control: "select",
       options: ["first", "second", "none"],
       mapping: {
+        // eslint-disable-next-line effect/no-undefined-use-option -- Storybook args API: undefined unsets an arg
         none: undefined,
       },
     },
