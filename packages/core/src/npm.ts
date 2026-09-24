@@ -273,14 +273,14 @@ export const node = makeGlobalNode({
 
 const { runPromise } = makeRuntime(Service, LayerNode.compile(node))
 
-export async function install(...args: Parameters<Interface["install"]>) {
+export function install(...args: Parameters<Interface["install"]>) {
   return runPromise((svc) => svc.install(...args))
 }
 
-export async function add(...args: Parameters<Interface["add"]>) {
+export function add(...args: Parameters<Interface["add"]>) {
   return runPromise((svc) => svc.add(...args))
 }
 
-export async function which(...args: Parameters<Interface["which"]>) {
+export function which(...args: Parameters<Interface["which"]>) {
   return runPromise((svc) => svc.which(...args))
 }
