@@ -1,5 +1,5 @@
 import { Array as Arr, Effect, Option, Predicate, Schema, Stream } from "effect"
-import { Headers, HttpClient, HttpClientRequest, HttpClientResponse, type HttpMethod } from "effect/unstable/http"
+import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { ToolError, toolError } from "../tool-error.js"
 import { isRecord, own } from "./spec.js"
 import type { AppliedAuth, Credential, Plan, SecurityScheme } from "./types.js"
@@ -71,7 +71,7 @@ const buildRequest = (
       return yield* Effect.fail(toolError(`Missing required ${label} '${missing.inputName}'.`))
     }
 
-    let request = HttpClientRequest.make(plan.operation.method as HttpMethod.HttpMethod)(url)
+    let request = HttpClientRequest.make(plan.method)(url)
     for (const field of plan.fields) {
       if (field.location !== "query") continue
       const item = own(input, field.inputName)

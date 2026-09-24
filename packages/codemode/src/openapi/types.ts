@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient, type HttpMethod } from "effect/unstable/http"
 import type { Definition, JsonSchema } from "../tool.js"
 
 /** A parsed OpenAPI 3.x document. YAML must be parsed by the host. */
@@ -98,6 +98,8 @@ export type SecurityRequirement = Readonly<Record<string, ReadonlyArray<string>>
 
 export type Plan = {
   readonly operation: Operation
+  /** The request method; the same value as `operation.method`, narrowed for the HTTP client. */
+  readonly method: HttpMethod.HttpMethod
   readonly url: string
   readonly fields: ReadonlyArray<InputField>
   readonly body: Option.Option<Body>

@@ -1,5 +1,5 @@
 import { HashSet, Option } from "effect"
-import { HttpClient } from "effect/unstable/http"
+import { HttpClient, HttpMethod } from "effect/unstable/http"
 import { isDefinition, make, type Definition } from "../tool.js"
 import { invoke } from "./runtime.js"
 import {
@@ -52,11 +52,12 @@ export const fromSpec = (options: Options): Result => {
   for (const [path, pathValue] of Object.entries(paths)) {
     if (!isRecord(pathValue)) continue
     for (const [method, operationValue] of Object.entries(pathValue)) {
-      if (!HashSet.has(methods, method) || !isRecord(operationValue)) continue
+      const httpMethod = method.toUpperCase()
+      if (!HashSet.has(methods, method) || !HttpMethod.isHttpMethod(httpMethod) || !isRecord(operationValue)) continue
       const segments = operationPath(method, path, operationValue, used, namespaces)
       const operation: Operation = {
         operationId: Option.getOrUndefined(nonEmptyString(operationValue.operationId)),
-        method: method.toUpperCase(),
+        method: httpMethod,
         path,
         summary: Option.getOrUndefined(nonEmptyString(operationValue.summary)),
         description: Option.getOrUndefined(nonEmptyString(operationValue.description)),
@@ -91,6 +92,7 @@ export const fromSpec = (options: Options): Result => {
       }
       const plan = {
         operation,
+        method: httpMethod,
         url: `${resolvedBaseUrl.value.replace(/\/+$/, "")}${path}`,
         fields: input.fields,
         body: input.body,
