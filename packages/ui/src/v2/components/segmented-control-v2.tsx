@@ -1,3 +1,4 @@
+import { Equivalence, Option } from "effect"
 import {
   createContext,
   createMemo,
@@ -16,7 +17,7 @@ import "./segmented-control-v2.css"
 type OnChange = (value: string | null) => void
 
 type SegmentedControlContextValue = {
-  selected: Accessor<string | null>
+  selected: Accessor<Option.Option<string>>
   groupDisabled: Accessor<boolean>
   select: (value: string) => void
   clearIfAllowed: (value: string) => void
@@ -24,6 +25,9 @@ type SegmentedControlContextValue = {
 }
 
 const SegmentedControlContext = createContext<SegmentedControlContextValue>()
+
+// Keeps the signal from notifying when the same selection is set again, as a plain string signal did.
+const sameSelection = Option.makeEquivalence(Equivalence.strictEqual<string>())
 
 function useSegmentedControlContext() {
   const ctx = useContext(SegmentedControlContext)
@@ -61,22 +65,22 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
     "ref",
   ])
 
-  const [internal, setInternal] = createSignal(local.defaultValue ?? null)
+  const [internal, setInternal] = createSignal(Option.fromNullishOr(local.defaultValue), { equals: sameSelection })
 
-  const selected = createMemo(() => (isControlled() ? (local.value ?? null) : internal()))
+  const selected = createMemo(() => (isControlled() ? Option.fromNullishOr(local.value) : internal()))
 
-  const setSelected = (next: string | null) => {
+  const setSelected = (next: Option.Option<string>) => {
     if (!isControlled()) setInternal(next)
-    local.onChange?.(next)
+    local.onChange?.(Option.getOrNull(next))
   }
 
   const select = (value: string) => {
-    setSelected(value)
+    setSelected(Option.some(value))
   }
 
   const clearIfAllowed = (value: string) => {
-    if (!local.allowDeselect || selected() !== value) return
-    setSelected(null)
+    if (!local.allowDeselect || !Option.contains(selected(), value)) return
+    setSelected(Option.none())
   }
 
   const focusNext = (from: HTMLButtonElement, direction: 1 | -1) => {
@@ -149,7 +153,7 @@ export function SegmentedControlItemV2(props: SegmentedControlItemV2Props) {
   ])
   const ctx = useSegmentedControlContext()
 
-  const pressed = createMemo(() => ctx.selected() === local.value)
+  const pressed = createMemo(() => Option.contains(ctx.selected(), local.value))
   const disabled = createMemo(() => ctx.groupDisabled() || local.disabled)
 
   const onClick: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> = (e) => {
