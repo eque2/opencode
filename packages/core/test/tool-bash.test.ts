@@ -3,8 +3,8 @@ import { realpathSync } from "node:fs"
 import path from "path"
 import { describe, expect, test } from "bun:test"
 import { ToolCallID } from "@opencode-ai/llm"
-import { Effect, Layer } from "effect"
-import { ChildProcess } from "effect/unstable/process"
+import { Effect, Layer, Stream } from "effect"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { Config } from "@opencode-ai/core/config"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -64,13 +64,15 @@ const permission = Layer.succeed(
 const appProcess = Layer.succeed(
   AppProcess.Service,
   AppProcess.Service.of({
+    ...ChildProcessSpawner.make(() => Effect.die("unused")),
     run: (command: ChildProcess.Command, options?: AppProcess.RunOptions) =>
       Effect.suspend(() => {
         if (command._tag !== "StandardCommand") throw new Error("expected standard command")
         runs.push({ command: command.command, cwd: command.options.cwd, shell: command.options.shell, options })
         return runFailure ? Effect.fail(runFailure) : Effect.succeed(result)
       }),
-  } as unknown as AppProcess.Interface),
+    runStream: () => Stream.die("unused"),
+  }),
 )
 const config = Layer.succeed(
   Config.Service,
