@@ -96,9 +96,8 @@ export const ToolOutput = Object.assign(
           return { structured: {}, content: [{ type: "text", text: toolResultText(result.value) }] }
         case "content":
           return { structured: {}, content: result.value }
-        case "error":
-          return undefined
       }
+      return undefined
     },
     toResultValue: (output: ToolOutput): ToolResultValue => {
       if (output.content.length === 0) return { type: "json", value: output.structured }
