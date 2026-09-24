@@ -1,4 +1,4 @@
-import { Effect, Option, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, Option, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -78,6 +78,7 @@ const OpenAIChatMessage = Schema.Union([
   Schema.Struct({ role: Schema.Literal("tool"), tool_call_id: Schema.String, content: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("role"))
 type OpenAIChatMessage = Schema.Schema.Type<typeof OpenAIChatMessage>
+type OpenAIChatUserContentPart = Schema.Schema.Type<typeof OpenAIChatUserContent>
 
 const OpenAIChatToolChoice = Schema.Union([
   Schema.Literals(["auto", "none", "required"]),
@@ -234,25 +235,11 @@ const encodeAssistantContent = Schema.encodeSync(Schema.OptionFromNullOr(Schema.
 const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(function* (
   message: OpenAIChatRequestMessage,
 ) {
-  const content: TextPart[] = []
-  const reasoning: ReasoningPart[] = []
-  const toolCalls: OpenAIChatAssistantToolCall[] = []
-  for (const part of message.content) {
-    if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
-      return yield* ProviderShared.unsupportedContent("OpenAI Chat", "assistant", ["text", "reasoning", "tool-call"])
-    if (part.type === "text") {
-      content.push(part)
-      continue
-    }
-    if (part.type === "reasoning") {
-      reasoning.push(part)
-      continue
-    }
-    if (part.type === "tool-call") {
-      toolCalls.push(lowerToolCall(part))
-      continue
-    }
-  }
+  if (!message.content.every((part) => ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"])))
+    return yield* ProviderShared.unsupportedContent("OpenAI Chat", "assistant", ["text", "reasoning", "tool-call"])
+  const content = message.content.filter((part): part is TextPart => part.type === "text")
+  const reasoning = message.content.filter((part): part is ReasoningPart => part.type === "reasoning")
+  const toolCalls = message.content.filter((part): part is ToolCallPart => part.type === "tool-call").map(lowerToolCall)
   const reasoningContent =
     reasoning.length > 0
       ? Option.some(reasoning.map((part) => part.text).join(""))
@@ -270,27 +257,35 @@ const lowerAssistantMessage = Effect.fn("OpenAIChat.lowerAssistantMessage")(func
   }
 })
 
-const lowerToolMessages = Effect.fn("OpenAIChat.lowerToolMessages")(function* (message: OpenAIChatRequestMessage) {
-  const messages: OpenAIChatMessage[] = []
-  const images: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
-  for (const part of message.content) {
-    if (!ProviderShared.supportsContent(part, ["tool-result"]))
-      return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
-    if (part.result.type !== "content") {
-      messages.push({ role: "tool", tool_call_id: part.id, content: ProviderShared.toolResultText(part) })
-      continue
+// One tool result lowers to one `tool` message. Image files cannot sit in a
+// tool message, so they come back separately for a following user message.
+const lowerToolResult = Effect.fn("OpenAIChat.lowerToolResult")(function* (
+  part: OpenAIChatRequestMessage["content"][number],
+) {
+  if (!ProviderShared.supportsContent(part, ["tool-result"]))
+    return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
+  if (part.result.type !== "content")
+    return {
+      message: { role: "tool" as const, tool_call_id: part.id, content: ProviderShared.toolResultText(part) },
+      images: [],
     }
-    const content: ReadonlyArray<ToolContent> = part.result.value
-    const text = content.filter((item) => item.type === "text").map((item) => item.text)
-    messages.push({ role: "tool", tool_call_id: part.id, content: text.join("\n") })
-    const files = content.filter((item) => item.type === "file")
-    images.push(
-      ...(yield* Effect.forEach(files, (item) =>
-        lowerMedia({ type: "media", mediaType: item.mime, data: item.uri, filename: item.name }),
-      )),
-    )
+  const content: ReadonlyArray<ToolContent> = part.result.value
+  const text = content.filter((item) => item.type === "text").map((item) => item.text)
+  const files = content.filter((item) => item.type === "file")
+  return {
+    message: { role: "tool" as const, tool_call_id: part.id, content: text.join("\n") },
+    images: yield* Effect.forEach(files, (item) =>
+      lowerMedia({ type: "media", mediaType: item.mime, data: item.uri, filename: item.name }),
+    ),
   }
-  return { messages, images }
+})
+
+const lowerToolMessages = Effect.fn("OpenAIChat.lowerToolMessages")(function* (message: OpenAIChatRequestMessage) {
+  const lowered = yield* Effect.forEach(message.content, lowerToolResult)
+  return {
+    messages: lowered.map((result) => result.message),
+    images: lowered.flatMap((result) => result.images),
+  }
 })
 
 const lowerMessage = Effect.fn("OpenAIChat.lowerMessage")(function* (message: OpenAIChatRequestMessage) {
@@ -299,41 +294,56 @@ const lowerMessage = Effect.fn("OpenAIChat.lowerMessage")(function* (message: Op
   return (yield* lowerToolMessages(message)).messages
 })
 
+// A wrapped chronological system update joins a directly preceding user
+// message; otherwise it becomes its own user message.
+const appendSystemUpdate = (
+  messages: ReadonlyArray<OpenAIChatMessage>,
+  text: string,
+): ReadonlyArray<OpenAIChatMessage> => {
+  const previous = messages.at(-1)
+  if (previous?.role === "user" && typeof previous.content === "string")
+    return Arr.append(messages.slice(0, -1), { role: "user", content: `${previous.content}\n${text}` })
+  if (previous?.role === "user" && Array.isArray(previous.content))
+    return Arr.append(messages.slice(0, -1), {
+      role: "user",
+      content: [...previous.content, { type: "text", text }],
+    })
+  return Arr.append(messages, { role: "user", content: text })
+}
+
 const lowerMessages = Effect.fn("OpenAIChat.lowerMessages")(function* (request: LLMRequest) {
-  const system: OpenAIChatMessage[] =
+  let messages: ReadonlyArray<OpenAIChatMessage> =
     request.system.length === 0 ? [] : [{ role: "system", content: ProviderShared.joinText(request.system) }]
-  const messages = [...system]
-  const pendingImages: Array<Schema.Schema.Type<typeof OpenAIChatUserContent>> = []
+  // Tool-result images wait here and flush as one user message before the
+  // next non-tool turn, so parallel tool messages stay contiguous.
+  let pendingImages: ReadonlyArray<OpenAIChatUserContentPart> = []
   const flushImages = () => {
-    if (pendingImages.length === 0) return
-    messages.push({ role: "user", content: pendingImages.splice(0) })
+    if (pendingImages.length > 0) messages = Arr.append(messages, { role: "user", content: pendingImages })
+    pendingImages = []
   }
   for (const message of request.messages) {
     if (message.role === "system") {
       const part = yield* ProviderShared.wrappedSystemUpdate("OpenAI Chat", message)
       if (pendingImages.length > 0) {
-        messages.push({ role: "user", content: [...pendingImages.splice(0), { type: "text", text: part.text }] })
+        messages = Arr.append(messages, {
+          role: "user",
+          content: Arr.append(pendingImages, { type: "text", text: part.text }),
+        })
+        pendingImages = []
         continue
       }
-      const previous = messages.at(-1)
-      if (previous?.role === "user" && typeof previous.content === "string")
-        messages[messages.length - 1] = { role: "user", content: `${previous.content}\n${part.text}` }
-      else if (previous?.role === "user" && Array.isArray(previous.content))
-        messages[messages.length - 1] = {
-          role: "user",
-          content: [...previous.content, { type: "text", text: part.text }],
-        }
-      else messages.push({ role: "user", content: part.text })
+      messages = appendSystemUpdate(messages, part.text)
       continue
     }
     if (message.role === "tool") {
       const lowered = yield* lowerToolMessages(message)
-      messages.push(...lowered.messages)
-      pendingImages.push(...lowered.images)
+      messages = Arr.appendAll(messages, lowered.messages)
+      pendingImages = Arr.appendAll(pendingImages, lowered.images)
       continue
     }
     flushImages()
-    messages.push(...(yield* lowerMessage(message)))
+    const lowered: ReadonlyArray<OpenAIChatMessage> = yield* lowerMessage(message)
+    messages = Arr.appendAll(messages, lowered)
   }
   flushImages()
   return messages
