@@ -41,7 +41,7 @@ type RawMatchData = (typeof RawMatch.Type)["data"]
 // Each --json line is one ripgrep record; only "match" records decode as RawMatch.
 const decodeRecord = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
-export class Error extends Schema.TaggedError<Error>()("Ripgrep.Error", {
+export class SearchError extends Schema.TaggedError<SearchError>()("Ripgrep.Error", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
@@ -80,14 +80,14 @@ export interface GrepInput {
 }
 
 export interface Interface {
-  readonly find: (input: FindInput) => Effect.Effect<readonly Entry[], Error>
-  readonly glob: (input: GlobInput) => Effect.Effect<readonly Entry[], Error>
-  readonly grep: (input: GrepInput) => Effect.Effect<readonly Match[], Error | InvalidPatternError>
+  readonly find: (input: FindInput) => Effect.Effect<readonly Entry[], SearchError>
+  readonly glob: (input: GlobInput) => Effect.Effect<readonly Entry[], SearchError>
+  readonly grep: (input: GrepInput) => Effect.Effect<readonly Match[], SearchError | InvalidPatternError>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/Ripgrep") {}
 
-const failure = (message: string, cause?: unknown) => new Error({ message, cause })
+const failure = (message: string, cause?: unknown) => new SearchError({ message, cause })
 
 const isInvalidPattern = (stderr: string) =>
   stderr.includes("regex parse error") || stderr.includes("error parsing regex")
@@ -104,7 +104,7 @@ const layer = Layer.effect(
       readonly limit: number
       readonly signal?: AbortSignal
       /** Parses one output line; None skips a line that carries no row. */
-      readonly parse: (line: string) => Effect.Effect<Option.Option<A>, Error>
+      readonly parse: (line: string) => Effect.Effect<Option.Option<A>, SearchError>
       readonly pattern?: string
       readonly onItem?: (item: A) => Effect.Effect<void>
     }) => {
@@ -149,7 +149,7 @@ const layer = Layer.effect(
       const abortable = input.signal ? program.pipe(Effect.raceFirst(waitForAbort(input.signal))) : program
       return abortable.pipe(
         Effect.mapError((cause) =>
-          cause instanceof Error || cause instanceof InvalidPatternError
+          cause instanceof SearchError || cause instanceof InvalidPatternError
             ? cause
             : failure("ripgrep execution failed", cause),
         ),
