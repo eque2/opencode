@@ -175,7 +175,7 @@ function ipPrefix(ip: string | undefined) {
   const tailParts = tail !== undefined ? tail.split(":") : []
   const missing = 8 - headParts.length - tailParts.length
   if (missing < 0) return undefined
-  const full = [...headParts, ...new Array(missing).fill("0"), ...tailParts]
+  const full = [...headParts, ...Array.from({ length: missing }, () => "0"), ...tailParts]
   if (full.length !== 8) return undefined
 
   const prefix = full
