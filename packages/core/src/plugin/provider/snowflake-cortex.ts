@@ -98,14 +98,18 @@ export const SnowflakeCortexPlugin = define({
           Option.orElse(() => stringOption(evt.options.apiKey)),
           Option.filter(Str.isNonEmpty),
         )
-        const upstream = typeof evt.options.fetch === "function" ? (evt.options.fetch as FetchLike) : undefined
+        const upstream = typeof evt.options.fetch === "function" ? evt.options.fetch : fetch
         if (evt.options.includeUsage !== false) evt.options.includeUsage = true
         const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
         evt.sdk = mod.createOpenAICompatible({
           ...evt.options,
+          // Name the two settings that the SDK type requires; both come from the host's SDK options.
+          name: evt.options.name,
+          baseURL: evt.options.baseURL,
           ...Option.match(token, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
-          fetch: cortexFetch(upstream) as typeof fetch,
-        } as any)
+          // The SDK fetch setting is typeof fetch, which includes Bun's preconnect helper.
+          fetch: Object.assign(cortexFetch(upstream), { preconnect: fetch.preconnect }),
+        })
       }),
     )
   }),
