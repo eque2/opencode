@@ -227,14 +227,15 @@ const layer = Layer.effectDiscard(
           .get()
           .pipe(Effect.orDie)
         if (!stored) return yield* Effect.die(new SessionAlreadyProjected())
-        if (event.data.info.workspaceID) {
-          yield* db
-            .update(WorkspaceTable)
-            .set({ time_used: Date.now() })
-            .where(eq(WorkspaceTable.id, event.data.info.workspaceID))
-            .run()
-            .pipe(Effect.orDie)
-        }
+        const workspaceID = event.data.info.workspaceID
+        return yield* workspaceID
+          ? db
+              .update(WorkspaceTable)
+              .set({ time_used: Date.now() })
+              .where(eq(WorkspaceTable.id, workspaceID))
+              .run()
+              .pipe(Effect.orDie, Effect.asVoid)
+          : Effect.void
       }),
     )
     yield* events.project(SessionV1.Event.Updated, (event) =>
@@ -362,13 +363,13 @@ const layer = Layer.effectDiscard(
           timeCreated: event.data.timestamp,
           promotedSeq: event.durable.seq,
         })
-        yield* run(db, event)
+        return yield* run(db, event)
       }),
     )
     yield* events.project(SessionEvent.PromptAdmitted, (event) =>
       Effect.gen(function* () {
         if (event.durable === undefined) return yield* Effect.die("Durable Session event is missing aggregate sequence")
-        yield* SessionInput.projectAdmitted(db, {
+        return yield* SessionInput.projectAdmitted(db, {
           admittedSeq: event.durable.seq,
           id: event.data.messageID,
           sessionID: event.data.sessionID,
@@ -450,12 +451,12 @@ const layer = Layer.effectDiscard(
           )
           .run()
           .pipe(Effect.orDie)
-        yield* db
+        return yield* db
           .update(SessionTable)
           .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
           .where(eq(SessionTable.id, event.data.sessionID))
           .run()
-          .pipe(Effect.orDie)
+          .pipe(Effect.orDie, Effect.asVoid)
       }),
     )
   }),

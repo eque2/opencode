@@ -203,7 +203,7 @@ const layer = Layer.effect(
               rules: relevant(input, result.rules),
             })
           }
-          if (result.effect === "allow") return
+          if (result.effect === "allow") return yield* EffectRuntime.void
           const item = yield* create(request(input), input.agent)
           return yield* restore(Deferred.await(item.deferred)).pipe(
             EffectRuntime.catchTag("PermissionV2.DeclinedError", (error) => EffectRuntime.die(error)),
@@ -217,72 +217,82 @@ const layer = Layer.effect(
       ),
     )
 
+    const lookup = (requestID: ID) => {
+      const existing = pending.get(requestID)
+      return existing ? EffectRuntime.succeed(existing) : EffectRuntime.fail(new NotFoundError({ requestID }))
+    }
+
+    // A rejection also declines every other pending request of the same Session.
+    const rejectSession = EffectRuntime.fnUntraced(function* (existing: Pending, input: ReplyInput) {
+      yield* Deferred.fail(
+        existing.deferred,
+        input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
+      )
+      pending.delete(input.requestID)
+      for (const [id, item] of pending) {
+        if (item.request.sessionID !== existing.request.sessionID) continue
+        yield* events.publish(Event.Replied, {
+          sessionID: item.request.sessionID,
+          requestID: item.request.id,
+          reply: "reject",
+        })
+        yield* Deferred.fail(item.deferred, new DeclinedError())
+        pending.delete(id)
+      }
+    })
+
+    // Newly saved rules can allow other pending requests; approve each one they cover.
+    const approveCovered = EffectRuntime.fnUntraced(function* () {
+      const rememberedRules = yield* savedRules()
+      for (const [id, item] of pending) {
+        const input = { ...item.request }
+        const configuredRules = yield* configured(item.request.sessionID, item.agent).pipe(
+          EffectRuntime.map(Option.some),
+          EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeedNone),
+        )
+        if (Option.isNone(configuredRules)) continue
+        const rules = configuredRules.value
+        if (denied(input, rules)) continue
+        const effective = [...rules, ...rememberedRules]
+        if (
+          !item.request.resources.every(
+            (resource) => evaluate(item.request.action, resource, effective).effect === "allow",
+          )
+        )
+          continue
+        yield* events.publish(Event.Replied, {
+          sessionID: item.request.sessionID,
+          requestID: item.request.id,
+          reply: "always",
+        })
+        yield* Deferred.done(item.deferred, Exit.void)
+        pending.delete(id)
+      }
+    })
+
+    const approve = EffectRuntime.fnUntraced(function* (existing: Pending, input: ReplyInput) {
+      if (input.reply === "always" && existing.request.save?.length) {
+        yield* saved.add({
+          projectID: location.project.id,
+          action: existing.request.action,
+          resources: existing.request.save,
+        })
+      }
+      yield* Deferred.done(existing.deferred, Exit.void)
+      pending.delete(input.requestID)
+      if (input.reply === "always" && existing.request.save?.length) yield* approveCovered()
+    })
+
     const reply = EffectRuntime.fn("PermissionV2.reply")((input: ReplyInput) =>
       EffectRuntime.uninterruptible(
         EffectRuntime.gen(function* () {
-          const existing = pending.get(input.requestID)
-          if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+          const existing = yield* lookup(input.requestID)
           yield* events.publish(Event.Replied, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
             reply: input.reply,
           })
-
-          if (input.reply === "reject") {
-            yield* Deferred.fail(
-              existing.deferred,
-              input.message ? new CorrectedError({ feedback: input.message }) : new DeclinedError(),
-            )
-            pending.delete(input.requestID)
-            for (const [id, item] of pending) {
-              if (item.request.sessionID !== existing.request.sessionID) continue
-              yield* events.publish(Event.Replied, {
-                sessionID: item.request.sessionID,
-                requestID: item.request.id,
-                reply: "reject",
-              })
-              yield* Deferred.fail(item.deferred, new DeclinedError())
-              pending.delete(id)
-            }
-            return
-          }
-
-          if (input.reply === "always" && existing.request.save?.length) {
-            yield* saved.add({
-              projectID: location.project.id,
-              action: existing.request.action,
-              resources: existing.request.save,
-            })
-          }
-          yield* Deferred.done(existing.deferred, Exit.void)
-          pending.delete(input.requestID)
-          if (input.reply !== "always" || !existing.request.save?.length) return
-
-          const rememberedRules = yield* savedRules()
-          for (const [id, item] of pending) {
-            const input = { ...item.request }
-            const configuredRules = yield* configured(item.request.sessionID, item.agent).pipe(
-              EffectRuntime.map(Option.some),
-              EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeedNone),
-            )
-            if (Option.isNone(configuredRules)) continue
-            const rules = configuredRules.value
-            if (denied(input, rules)) continue
-            const effective = [...rules, ...rememberedRules]
-            if (
-              !item.request.resources.every(
-                (resource) => evaluate(item.request.action, resource, effective).effect === "allow",
-              )
-            )
-              continue
-            yield* events.publish(Event.Replied, {
-              sessionID: item.request.sessionID,
-              requestID: item.request.id,
-              reply: "always",
-            })
-            yield* Deferred.done(item.deferred, Exit.void)
-            pending.delete(id)
-          }
+          yield* input.reply === "reject" ? rejectSession(existing, input) : approve(existing, input)
         }),
       ),
     )

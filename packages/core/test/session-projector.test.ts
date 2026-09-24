@@ -227,7 +227,7 @@ describe("SessionProjector", () => {
         prompt: Prompt.make({ text: "promote me" }),
         delivery: "steer",
       })
-      if (!admitted) return yield* Effect.die("Prompt admission failed")
+      expect(admitted).toMatchObject({ id, sessionID, delivery: "steer" })
 
       const event = yield* events.publish(SessionEvent.Prompted, {
         sessionID,

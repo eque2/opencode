@@ -163,7 +163,7 @@ const replace = Effect.fnUntraced(function* (
     .returning({ sessionID: SessionContextEpochTable.session_id })
     .get()
     .pipe(Effect.orDie)
-  if (!updated) return yield* Effect.die("Context Epoch not found")
+  return yield* updated ? Effect.void : Effect.die("Context Epoch not found")
 })
 
 const advance = Effect.fnUntraced(function* (
@@ -178,5 +178,5 @@ const advance = Effect.fnUntraced(function* (
     .returning({ sessionID: SessionContextEpochTable.session_id })
     .get()
     .pipe(Effect.orDie)
-  if (!updated) return yield* Effect.die("Context Epoch not found")
+  return yield* updated ? Effect.void : Effect.die("Context Epoch not found")
 })

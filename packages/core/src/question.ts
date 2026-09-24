@@ -109,11 +109,15 @@ const layer = Layer.effect(
       ),
     )
 
+    const lookup = (requestID: ID) => {
+      const existing = pending.get(requestID)
+      return existing ? Effect.succeed(existing) : Effect.fail(new NotFoundError({ requestID }))
+    }
+
     const reply = Effect.fn("QuestionV2.reply")((input: ReplyInput) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          const existing = pending.get(input.requestID)
-          if (!existing) return yield* new NotFoundError({ requestID: input.requestID })
+          const existing = yield* lookup(input.requestID)
           yield* events.publish(Event.Replied, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,
@@ -128,8 +132,7 @@ const layer = Layer.effect(
     const reject = Effect.fn("QuestionV2.reject")((requestID: ID) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
-          const existing = pending.get(requestID)
-          if (!existing) return yield* new NotFoundError({ requestID })
+          const existing = yield* lookup(requestID)
           yield* events.publish(Event.Rejected, {
             sessionID: existing.request.sessionID,
             requestID: existing.request.id,

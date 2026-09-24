@@ -116,7 +116,7 @@ export const projectAdmitted = Effect.fn("SessionInput.projectAdmitted")(functio
     .returning({ id: SessionInputTable.id })
     .get()
     .pipe(Effect.orDie)
-  if (!stored) return yield* Effect.die(new LifecycleConflict({ id: input.id }))
+  return yield* stored ? Effect.void : Effect.die(new LifecycleConflict({ id: input.id }))
 })
 
 export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(function* (
@@ -143,20 +143,18 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
     .returning()
     .get()
     .pipe(Effect.orDie)
-  if (updated) {
-    const stored = fromRow(updated)
-    if (!matchesProjection(stored, input)) return yield* Effect.die(new LifecycleConflict({ id: input.id }))
-    return
-  }
+  if (updated)
+    return yield* matchesProjection(fromRow(updated), input)
+      ? Effect.void
+      : Effect.die(new LifecycleConflict({ id: input.id }))
 
   const stored = yield* find(db, input.id)
-  if (Option.isSome(stored)) {
-    if (!matchesProjection(stored.value, input) || stored.value.promotedSeq !== input.promotedSeq)
-      return yield* Effect.die(new LifecycleConflict({ id: input.id }))
-    return
-  }
+  if (Option.isSome(stored))
+    return yield* matchesProjection(stored.value, input) && stored.value.promotedSeq === input.promotedSeq
+      ? Effect.void
+      : Effect.die(new LifecycleConflict({ id: input.id }))
 
-  yield* db
+  return yield* db
     .insert(SessionInputTable)
     .values({
       id: input.id,
@@ -168,7 +166,7 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
       time_created: DateTime.toEpochMillis(input.timeCreated),
     })
     .run()
-    .pipe(Effect.orDie)
+    .pipe(Effect.orDie, Effect.asVoid)
 })
 
 export const hasPending = Effect.fn("SessionInput.hasPending")(function* (
