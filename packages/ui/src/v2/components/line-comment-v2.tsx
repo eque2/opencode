@@ -1,3 +1,4 @@
+import { Effect, Predicate } from "effect"
 import { For, Show, createSignal, onMount, splitProps, type ComponentProps, type JSX } from "solid-js"
 import { FileIcon } from "../../components/file-icon"
 import { useI18n } from "../../context/i18n"
@@ -153,12 +154,17 @@ export function LineCommentEditorV2(props: LineCommentEditorV2Props) {
   }
 
   const mention = useFilteredList<{ path: string }>({
-    items: async (query) => {
-      if (!local.mention) return []
-      if (!query.trim()) return []
-      const paths = await local.mention.items(query)
-      return paths.map((path) => ({ path }))
-    },
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const source = local.mention
+          if (!source) return []
+          if (!query.trim()) return []
+          const found = source.items(query)
+          const paths = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          return paths.map((path) => ({ path }))
+        }),
+      ),
     key: (item) => item.path,
     filterKeys: ["path"],
     skipFilter: () => true,

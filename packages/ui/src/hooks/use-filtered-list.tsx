@@ -1,4 +1,4 @@
-import { Array, Record } from "effect"
+import { Array, Effect, Predicate, Record } from "effect"
 import fuzzysort from "fuzzysort"
 import { createEffect, createMemo, createResource, on } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -39,18 +39,21 @@ export function useFilteredList<T>(props: FilteredListProps<T>) {
       filter: store.filter,
       items: typeof props.items === "function" ? props.items(store.filter) : props.items,
     }),
-    async ({ filter, items }) => {
-      const query = filter ?? ""
-      const needle = query.toLowerCase()
-      const all = (await items) || []
-      const groups = Array.map(
-        Record.toEntries(
-          Array.groupBy(needle ? search(all, needle) : all, (x) => (props.groupBy ? props.groupBy(x) : "")),
-        ),
-        ([k, v]) => ({ category: k, items: props.sortBy ? v.sort(props.sortBy) : v }),
-      )
-      return props.sortGroupsBy ? groups.sort(props.sortGroupsBy) : groups
-    },
+    ({ filter, items }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const query = filter ?? ""
+          const needle = query.toLowerCase()
+          const all = (Predicate.isPromiseLike(items) ? yield* Effect.promise(() => items) : items) || []
+          const groups = Array.map(
+            Record.toEntries(
+              Array.groupBy(needle ? search(all, needle) : all, (x) => (props.groupBy ? props.groupBy(x) : "")),
+            ),
+            ([k, v]) => ({ category: k, items: props.sortBy ? v.sort(props.sortBy) : v }),
+          )
+          return props.sortGroupsBy ? groups.sort(props.sortGroupsBy) : groups
+        }),
+      ),
     { initialValue: empty },
   )
 

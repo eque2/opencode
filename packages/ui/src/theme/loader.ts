@@ -1,6 +1,14 @@
+import { Data, Effect } from "effect"
 import type { DesktopTheme, ResolvedTheme, ResolvedV2Theme } from "./types"
 import { resolveThemeVariant, themeToCss } from "./resolve"
 import { resolveThemeVariantV2, themeV2ToCss } from "./v2/resolve"
+import { isDesktopTheme } from "./validate"
+
+/** Raised by loadThemeFromUrl. The `message` text is what Promise consumers see. */
+class ThemeLoadError extends Data.TaggedError("ThemeLoadError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 
 let activeTheme: DesktopTheme | null = null
 const THEME_STYLE_ID = "opencode-theme"
@@ -75,12 +83,25 @@ html[data-theme="${themeId}"] {
 `
 }
 
-export async function loadThemeFromUrl(url: string): Promise<DesktopTheme> {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to load theme from ${url}: ${response.statusText}`)
-  }
-  return response.json()
+/** Rejects with ThemeLoadError when the request fails, the response is not ok, or the JSON is not a DesktopTheme. */
+export function loadThemeFromUrl(url: string): Promise<DesktopTheme> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const response = yield* Effect.tryPromise({
+        try: () => fetch(url),
+        catch: (cause) => new ThemeLoadError({ message: `Failed to load theme from ${url}`, cause }),
+      })
+      if (!response.ok) {
+        return yield* new ThemeLoadError({ message: `Failed to load theme from ${url}: ${response.statusText}` })
+      }
+      const json: unknown = yield* Effect.tryPromise({
+        try: () => response.json(),
+        catch: (cause) => new ThemeLoadError({ message: `Failed to read theme JSON from ${url}`, cause }),
+      })
+      if (isDesktopTheme(json)) return json
+      return yield* new ThemeLoadError({ message: `Theme from ${url} does not match the DesktopTheme type` })
+    }),
+  )
 }
 
 export function getActiveTheme(): DesktopTheme | null {
