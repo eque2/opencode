@@ -1,6 +1,6 @@
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Effect, Schema } from "effect"
+import { Effect, Encoding, Schema } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { errorRef } from "./error-ref"
@@ -14,11 +14,13 @@ const Cursor = Schema.Struct({
   direction: Schema.Union([Schema.Literal("previous"), Schema.Literal("next")]),
 }).annotate({ identifier: "SessionMessagesCursor" })
 
+const CursorJson = Schema.fromJsonString(Cursor)
+const encodeCursorJson = Schema.encodeSync(CursorJson)
 const decodeCursor = Schema.decodeUnknownSync(Cursor)
 
 const cursor = {
   encode(message: SessionMessage.Message, order: "asc" | "desc", direction: "previous" | "next") {
-    return Buffer.from(JSON.stringify({ id: message.id, order, direction })).toString("base64url")
+    return Encoding.encodeBase64Url(encodeCursorJson({ id: message.id, order, direction }))
   },
   decode(input: string) {
     return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
