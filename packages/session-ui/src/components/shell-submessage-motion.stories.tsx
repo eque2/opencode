@@ -1,7 +1,9 @@
 // @ts-nocheck
-import { createEffect, onCleanup } from "solid-js"
+import { Effect } from "effect"
+import { createEffect } from "solid-js"
 import { createStore } from "solid-js/store"
 import { BasicTool } from "./basic-tool"
+import { createFiberSlot } from "./fiber-slot"
 import { animate } from "motion"
 
 export default {
@@ -157,20 +159,17 @@ export const Playground = {
     const blur = () => state.blur
     const fadeEase = () => state.fadeEase
     const auto = () => state.auto
-    let replayTimer
-    let autoTimer
+    // Each slot holds one timer fiber. A restart, Stop and the story cleanup interrupt it.
+    const replayTimer = createFiberSlot()
+    const autoTimer = createFiberSlot()
 
     const replay = () => {
       setState("show", false)
-      if (replayTimer) clearTimeout(replayTimer)
-      replayTimer = setTimeout(() => {
-        setState("show", true)
-      }, 50)
+      replayTimer.run(Effect.sleep("50 millis").pipe(Effect.andThen(Effect.sync(() => setState("show", true)))))
     }
 
     const stopAuto = () => {
-      if (autoTimer) clearInterval(autoTimer)
-      autoTimer = undefined
+      autoTimer.interrupt()
       setState("auto", false)
     }
 
@@ -180,13 +179,9 @@ export const Playground = {
         return
       }
       setState("auto", true)
-      autoTimer = setInterval(replay, 2200)
+      // Wait first, then replay, forever: the same cadence as setInterval(replay, 2200).
+      autoTimer.run(Effect.sync(replay).pipe(Effect.delay("2200 millis"), Effect.forever))
     }
-
-    onCleanup(() => {
-      if (replayTimer) clearTimeout(replayTimer)
-      if (autoTimer) clearInterval(autoTimer)
-    })
 
     return (
       <div
