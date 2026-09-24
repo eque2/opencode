@@ -35,13 +35,13 @@ export const PATH = "/messages"
 const AnthropicCacheControl = Schema.Struct({
   type: Schema.tag("ephemeral"),
   ttl: Schema.optional(Schema.Literals(["5m", "1h"])),
-})
+}).annotate({ identifier: "AnthropicMessages.CacheControl" })
 
 const AnthropicTextBlock = Schema.Struct({
   type: Schema.tag("text"),
   text: Schema.String,
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.TextBlock" })
 type AnthropicTextBlock = Schema.Schema.Type<typeof AnthropicTextBlock>
 
 const AnthropicImageBlock = Schema.Struct({
@@ -52,7 +52,7 @@ const AnthropicImageBlock = Schema.Struct({
     data: Schema.String,
   }),
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ImageBlock" })
 type AnthropicImageBlock = Schema.Schema.Type<typeof AnthropicImageBlock>
 
 const AnthropicThinkingBlock = Schema.Struct({
@@ -60,7 +60,7 @@ const AnthropicThinkingBlock = Schema.Struct({
   thinking: Schema.String,
   signature: Schema.optional(Schema.String),
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ThinkingBlock" })
 
 const AnthropicToolUseBlock = Schema.Struct({
   type: Schema.tag("tool_use"),
@@ -68,7 +68,7 @@ const AnthropicToolUseBlock = Schema.Struct({
   name: Schema.String,
   input: Schema.Unknown,
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ToolUseBlock" })
 type AnthropicToolUseBlock = Schema.Schema.Type<typeof AnthropicToolUseBlock>
 
 const AnthropicServerToolUseBlock = Schema.Struct({
@@ -77,7 +77,7 @@ const AnthropicServerToolUseBlock = Schema.Struct({
   name: Schema.String,
   input: Schema.Unknown,
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ServerToolUseBlock" })
 type AnthropicServerToolUseBlock = Schema.Schema.Type<typeof AnthropicServerToolUseBlock>
 
 // Server tool result blocks: web_search_tool_result, code_execution_tool_result,
@@ -97,7 +97,7 @@ const AnthropicServerToolResultBlock = Schema.Struct({
   tool_use_id: Schema.String,
   content: Schema.Unknown,
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ServerToolResultBlock" })
 type AnthropicServerToolResultBlock = Schema.Schema.Type<typeof AnthropicServerToolResultBlock>
 
 // Anthropic accepts either a plain string or an ordered array of text/image
@@ -114,7 +114,7 @@ const AnthropicToolResultBlock = Schema.Struct({
   content: Schema.Union([Schema.String, Schema.Array(AnthropicToolResultContent)]),
   is_error: Schema.optional(Schema.Boolean),
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.ToolResultBlock" })
 
 const AnthropicUserBlock = Schema.Union([AnthropicTextBlock, AnthropicImageBlock, AnthropicToolResultBlock])
 type AnthropicUserBlock = Schema.Schema.Type<typeof AnthropicUserBlock>
@@ -140,7 +140,7 @@ const AnthropicTool = Schema.Struct({
   description: Schema.String,
   input_schema: JsonObject,
   cache_control: Schema.optional(AnthropicCacheControl),
-})
+}).annotate({ identifier: "AnthropicMessages.Tool" })
 type AnthropicTool = Schema.Schema.Type<typeof AnthropicTool>
 
 const AnthropicToolChoice = Schema.Union([
@@ -151,7 +151,7 @@ const AnthropicToolChoice = Schema.Union([
 const AnthropicThinking = Schema.Struct({
   type: Schema.tag("enabled"),
   budget_tokens: Schema.Number,
-})
+}).annotate({ identifier: "AnthropicMessages.Thinking" })
 
 const AnthropicBodyFields = {
   model: Schema.String,
@@ -167,7 +167,7 @@ const AnthropicBodyFields = {
   stop_sequences: optionalArray(Schema.String),
   thinking: Schema.optional(AnthropicThinking),
 }
-const AnthropicMessagesBody = Schema.Struct(AnthropicBodyFields)
+const AnthropicMessagesBody = Schema.Struct(AnthropicBodyFields).annotate({ identifier: "AnthropicMessages.Body" })
 export type AnthropicMessagesBody = Schema.Schema.Type<typeof AnthropicMessagesBody>
 
 const AnthropicUsage = Schema.Struct({
@@ -175,7 +175,7 @@ const AnthropicUsage = Schema.Struct({
   output_tokens: Schema.optional(Schema.Number),
   cache_creation_input_tokens: optionalNull(Schema.Number),
   cache_read_input_tokens: optionalNull(Schema.Number),
-})
+}).annotate({ identifier: "AnthropicMessages.Usage" })
 type AnthropicUsage = Schema.Schema.Type<typeof AnthropicUsage>
 
 const AnthropicStreamBlock = Schema.Struct({
@@ -191,7 +191,7 @@ const AnthropicStreamBlock = Schema.Struct({
   // server_tool_use id in `tool_use_id`.
   tool_use_id: Schema.optional(Schema.String),
   content: Schema.optional(Schema.Unknown),
-})
+}).annotate({ identifier: "AnthropicMessages.StreamBlock" })
 
 const AnthropicStreamDelta = Schema.Struct({
   type: Schema.optional(Schema.String),
@@ -201,7 +201,7 @@ const AnthropicStreamDelta = Schema.Struct({
   signature: Schema.optional(Schema.String),
   stop_reason: optionalNull(Schema.String),
   stop_sequence: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "AnthropicMessages.StreamDelta" })
 
 const AnthropicEvent = Schema.Struct({
   type: Schema.String,
@@ -217,7 +217,7 @@ const AnthropicEvent = Schema.Struct({
   error: Schema.optional(
     Schema.Struct({ type: Schema.optional(Schema.String), message: Schema.optional(Schema.String) }),
   ),
-})
+}).annotate({ identifier: "AnthropicMessages.Event" })
 type AnthropicEvent = Schema.Schema.Type<typeof AnthropicEvent>
 
 interface ParserState {

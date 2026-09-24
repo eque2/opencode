@@ -33,14 +33,14 @@ const GeminiTextPart = Schema.Struct({
   text: Schema.String,
   thought: Schema.optional(Schema.Boolean),
   thoughtSignature: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "Gemini.TextPart" })
 
 const GeminiInlineDataPart = Schema.Struct({
   inlineData: Schema.Struct({
     mimeType: Schema.String,
     data: Schema.String,
   }),
-})
+}).annotate({ identifier: "Gemini.InlineDataPart" })
 
 const GeminiFunctionCallPart = Schema.Struct({
   functionCall: Schema.Struct({
@@ -48,14 +48,14 @@ const GeminiFunctionCallPart = Schema.Struct({
     args: Schema.Unknown,
   }),
   thoughtSignature: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "Gemini.FunctionCallPart" })
 
 const GeminiFunctionResponsePart = Schema.Struct({
   functionResponse: Schema.Struct({
     name: Schema.String,
     response: Schema.Unknown,
   }),
-})
+}).annotate({ identifier: "Gemini.FunctionResponsePart" })
 
 const GeminiContentPart = Schema.Union([
   GeminiTextPart,
@@ -67,34 +67,34 @@ const GeminiContentPart = Schema.Union([
 const GeminiContent = Schema.Struct({
   role: Schema.Literals(["user", "model"]),
   parts: Schema.Array(GeminiContentPart),
-})
+}).annotate({ identifier: "Gemini.Content" })
 type GeminiContent = Schema.Schema.Type<typeof GeminiContent>
 
 const GeminiSystemInstruction = Schema.Struct({
   parts: Schema.Array(Schema.Struct({ text: Schema.String })),
-})
+}).annotate({ identifier: "Gemini.SystemInstruction" })
 
 const GeminiFunctionDeclaration = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   parameters: Schema.optional(JsonObject),
-})
+}).annotate({ identifier: "Gemini.FunctionDeclaration" })
 
 const GeminiTool = Schema.Struct({
   functionDeclarations: Schema.Array(GeminiFunctionDeclaration),
-})
+}).annotate({ identifier: "Gemini.Tool" })
 
 const GeminiToolConfig = Schema.Struct({
   functionCallingConfig: Schema.Struct({
     mode: Schema.Literals(["AUTO", "NONE", "ANY"]),
     allowedFunctionNames: optionalArray(Schema.String),
   }),
-})
+}).annotate({ identifier: "Gemini.ToolConfig" })
 
 const GeminiThinkingConfig = Schema.Struct({
   thinkingBudget: Schema.optional(Schema.Number),
   includeThoughts: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "Gemini.ThinkingConfig" })
 
 const GeminiGenerationConfig = Schema.Struct({
   maxOutputTokens: Schema.optional(Schema.Number),
@@ -103,7 +103,7 @@ const GeminiGenerationConfig = Schema.Struct({
   topK: Schema.optional(Schema.Number),
   stopSequences: optionalArray(Schema.String),
   thinkingConfig: Schema.optional(GeminiThinkingConfig),
-})
+}).annotate({ identifier: "Gemini.GenerationConfig" })
 
 const GeminiBodyFields = {
   contents: Schema.Array(GeminiContent),
@@ -112,7 +112,7 @@ const GeminiBodyFields = {
   toolConfig: Schema.optional(GeminiToolConfig),
   generationConfig: Schema.optional(GeminiGenerationConfig),
 }
-const GeminiBody = Schema.Struct(GeminiBodyFields)
+const GeminiBody = Schema.Struct(GeminiBodyFields).annotate({ identifier: "Gemini.Body" })
 export type GeminiBody = Schema.Schema.Type<typeof GeminiBody>
 
 const GeminiUsage = Schema.Struct({
@@ -121,18 +121,18 @@ const GeminiUsage = Schema.Struct({
   promptTokenCount: Schema.optional(Schema.Number),
   candidatesTokenCount: Schema.optional(Schema.Number),
   totalTokenCount: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "Gemini.Usage" })
 type GeminiUsage = Schema.Schema.Type<typeof GeminiUsage>
 
 const GeminiCandidate = Schema.Struct({
   content: Schema.optional(GeminiContent),
   finishReason: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "Gemini.Candidate" })
 
 const GeminiEvent = Schema.Struct({
   candidates: optionalArray(GeminiCandidate),
   usageMetadata: Schema.optional(GeminiUsage),
-})
+}).annotate({ identifier: "Gemini.Event" })
 type GeminiEvent = Schema.Schema.Type<typeof GeminiEvent>
 
 interface ParserState {
