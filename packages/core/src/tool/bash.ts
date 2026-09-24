@@ -2,7 +2,7 @@ export * as BashTool from "./bash"
 
 import path from "path"
 import { ToolFailure } from "@opencode-ai/llm"
-import { Array as Arr, Duration, Effect, Layer, Option, Schema } from "effect"
+import { Array as Arr, Config as EffectConfig, ConfigProvider, Duration, Effect, Layer, Option, Schema } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { Config } from "../config"
 import { makeLocationNode } from "../effect/app-node"
@@ -52,7 +52,20 @@ export class NotDirectoryError extends Schema.TaggedError<NotDirectoryError>()("
   message: Schema.String,
 }) {}
 
-const defaultShell = () => (process.platform === "win32" ? (process.env.COMSPEC ?? "cmd.exe") : "/bin/sh")
+const comspec = EffectConfig.String("COMSPEC").pipe(EffectConfig.withDefault("cmd.exe"))
+
+/**
+ * Picks /bin/sh on POSIX, and COMSPEC or cmd.exe on Windows.
+ *
+ * The ambient ConfigProvider copies process.env once per process, so each call reads a fresh
+ * environment snapshot, as the former `process.env.COMSPEC` read did. Empty strings stay values.
+ * A defaulted String config cannot fail, so a ConfigError here is a defect.
+ */
+const defaultShell = Effect.suspend(() =>
+  process.platform === "win32"
+    ? comspec.parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }))
+    : Effect.succeed("/bin/sh"),
+).pipe(Effect.orDie)
 
 const modelOutput = (output: Output) => {
   const warnings = output.warnings?.length
@@ -164,7 +177,7 @@ const layer = Layer.effectDiscard(
               const entries = yield* config.entries()
               const shell =
                 Object.assign({}, ...entries.flatMap((entry) => (entry.type === "document" ? [entry.info] : [])))
-                  .shell ?? defaultShell()
+                  .shell ?? (yield* defaultShell)
               const command = ChildProcess.make(input.command, [], {
                 cwd: target.canonical,
                 shell,
