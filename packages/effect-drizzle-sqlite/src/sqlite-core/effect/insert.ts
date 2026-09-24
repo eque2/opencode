@@ -153,7 +153,7 @@ export class SQLiteEffectInsertBuilder<
   ): SQLiteEffectInsertBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
     values = Array.isArray(values) ? values : [values]
     if (values.length === 0) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (values()) returns synchronously; its contract throws at build time
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBuilder.values() declares a synchronous builder return, which this adapter mirrors; the empty-values check throws at build time, as upstream does
       throw new EffectDrizzleBuilderError({ message: "values() must be called with at least one value" })
     }
     const mappedValues = values.map((entry) => {
@@ -187,7 +187,7 @@ export class SQLiteEffectInsertBuilder<
     const select = typeof selectQuery === "function" ? selectQuery(new QueryBuilder()) : selectQuery
 
     if (!is(select, SQL) && !haveSameKeys(getTableColumns(this.table), select._.selectedFields)) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (select()) returns synchronously; its contract throws at build time
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBuilder.select() declares a synchronous builder return, which this adapter mirrors; the field-order check throws at build time, as upstream does
       throw new EffectDrizzleBuilderError({
         message:
           "Insert select error: selected fields are not the same or are in a different order compared to the table definition",
@@ -272,7 +272,7 @@ export class SQLiteEffectInsertBase<
 
   onConflictDoUpdate(config: SQLiteEffectInsertOnConflictDoUpdateConfig<this>): this {
     if (config.where && (config.targetWhere || config.setWhere)) {
-      // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (onConflictDoUpdate()) returns synchronously; its contract throws at build time
+      // eslint-disable-next-line effect/no-throw-use-effect -- (a) drizzle-orm SQLiteInsertBase.onConflictDoUpdate() declares a synchronous `this` return, which this adapter mirrors; the where/targetWhere conflict check throws at build time, as upstream does
       throw new EffectDrizzleBuilderError({
         message:
           'You cannot use both "where" and "targetWhere"/"setWhere" at the same time - "where" is deprecated, use "targetWhere" or "setWhere" instead.',
