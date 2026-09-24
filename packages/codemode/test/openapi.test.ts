@@ -904,41 +904,42 @@ describe("OpenAPI.fromSpec", () => {
       required,
       content: { "application/json": { schema } },
     })
+    const bodies: ReadonlyArray<readonly [string, ReturnType<typeof body>]> = [
+      [
+        "optional",
+        body(
+          {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            additionalProperties: false,
+          },
+          false,
+        ),
+      ],
+      ["dictionary", body({ type: "object", additionalProperties: { type: "string" } })],
+      [
+        "composed",
+        body({
+          type: "object",
+          allOf: [{ type: "object", properties: { name: { type: "string" } }, required: ["name"] }],
+          additionalProperties: false,
+        }),
+      ],
+      [
+        "nullable",
+        body({
+          type: ["object", "null"],
+          properties: { name: { type: "string" } },
+          additionalProperties: false,
+        }),
+      ],
+    ]
     const spec = {
       openapi: "3.1.0",
       info: { title: "bodies", version: "1.0.0" },
       paths: Object.fromEntries(
-        [
-          [
-            "optional",
-            body(
-              {
-                type: "object",
-                properties: { name: { type: "string" } },
-                required: ["name"],
-                additionalProperties: false,
-              },
-              false,
-            ),
-          ],
-          ["dictionary", body({ type: "object", additionalProperties: { type: "string" } })],
-          [
-            "composed",
-            body({
-              type: "object",
-              allOf: [{ type: "object", properties: { name: { type: "string" } }, required: ["name"] }],
-              additionalProperties: false,
-            }),
-          ],
-          [
-            "nullable",
-            body({
-              type: ["object", "null"],
-              properties: { name: { type: "string" } },
-              additionalProperties: false,
-            }),
-          ],
-        ].map(([name, requestBody]) => [
+        bodies.map(([name, requestBody]) => [
           `/body/${name}`,
           {
             post: {
