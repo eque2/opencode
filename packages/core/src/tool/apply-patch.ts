@@ -89,10 +89,11 @@ const layer = Layer.effectDiscard(
                   callID: context.toolCallID,
                 }
                 if (!input.patchText.trim()) return yield* new ToolFailure({ message: "patchText is required" })
-                const hunks = yield* Effect.try({
-                  try: () => Patch.parse(input.patchText),
-                  catch: (cause) => new ToolFailure({ message: `apply_patch verification failed: ${String(cause)}` }),
-                })
+                const hunks = yield* Effect.fromResult(Patch.parse(input.patchText)).pipe(
+                  Effect.mapError(
+                    (error) => new ToolFailure({ message: `apply_patch verification failed: ${error.message}` }),
+                  ),
+                )
                 if (hunks.length === 0) return yield* new ToolFailure({ message: "patch rejected: empty patch" })
                 const move = hunks.find((hunk) => hunk.type === "update" && hunk.movePath !== undefined)
                 if (move) return yield* new ToolFailure({ message: "apply_patch moves are not supported yet" })
@@ -143,7 +144,7 @@ const layer = Layer.effectDiscard(
                       prepared.push({ ...hunk, target, before, after: "" })
                       return
                     }
-                    const update = Patch.derive(hunk.path, hunk.chunks, original)
+                    const update = yield* Effect.fromResult(Patch.derive(hunk.path, hunk.chunks, original))
                     prepared.push({
                       ...hunk,
                       target,

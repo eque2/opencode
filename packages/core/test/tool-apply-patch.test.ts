@@ -323,6 +323,32 @@ describe("ApplyPatchTool", () => {
     ),
   )
 
+  it.live("rejects an update whose expected lines do not match as a tool failure", () =>
+    Effect.acquireUseRelease(
+      Effect.promise(() => tmpdir()),
+      (tmp) => {
+        reset()
+        const target = path.join(tmp.path, "update.txt")
+        return Effect.promise(() => fs.writeFile(target, "present\n")).pipe(
+          Effect.andThen(
+            withTool(tmp.path, (registry) =>
+              Effect.gen(function* () {
+                expect(
+                  yield* executeTool(
+                    registry,
+                    call("*** Begin Patch\n*** Update File: update.txt\n@@\n-missing\n+after\n*** End Patch"),
+                  ),
+                ).toEqual({ type: "error", value: "Unable to apply patch at update.txt" })
+                expect(yield* Effect.promise(() => fs.readFile(target, "utf8"))).toBe("present\n")
+              }),
+            ),
+          ),
+        )
+      },
+      (tmp) => Effect.promise(() => tmp[Symbol.asyncDispose]()),
+    ),
+  )
+
   it.live("rejects add hunks targeting an existing file without replacing it", () =>
     Effect.acquireUseRelease(
       Effect.promise(() => tmpdir()),
