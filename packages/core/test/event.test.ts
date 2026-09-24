@@ -124,7 +124,7 @@ describe("EventV2", () => {
   )
 
   it.effect("selects the latest durable definition independent of declaration order", () =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       const latest = EventV2.define({
         type: "test.out-of-order",
         durable: { version: 2, aggregate: "id" },
@@ -136,8 +136,10 @@ describe("EventV2", () => {
         schema: { id: Schema.String },
       })
 
-      expect(Event.latest([latest, historical]).get("test.out-of-order")).toBe(latest)
-      expect(Event.latest([historical, latest]).get("test.out-of-order")).toBe(latest)
+      const forward = yield* Effect.fromResult(Event.latest([latest, historical]))
+      const reversed = yield* Effect.fromResult(Event.latest([historical, latest]))
+      expect(forward.get("test.out-of-order")).toBe(latest)
+      expect(reversed.get("test.out-of-order")).toBe(latest)
     }),
   )
 
