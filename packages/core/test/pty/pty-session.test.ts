@@ -65,7 +65,7 @@ const waitForEvents = (events: Queue.Queue<PtyEvent>, id: PtyID, count: number) 
   }).pipe(
     Effect.timeoutOrElse({
       duration: "5 seconds",
-      orElse: () => Effect.fail(new Error("timeout waiting for pty events")),
+      orElse: () => Effect.fail(new Cause.TimeoutError("timeout waiting for pty events")),
     }),
   )
 
@@ -90,7 +90,8 @@ const waitForOutput = (output: Queue.Queue<string>, text: string) =>
   }).pipe(
     Effect.timeoutOrElse({
       duration: "5 seconds",
-      orElse: () => Effect.fail(new Error(`timeout waiting for output containing ${JSON.stringify(text)}`)),
+      orElse: () =>
+        Effect.fail(new Cause.TimeoutError(`timeout waiting for output containing ${JSON.stringify(text)}`)),
     }),
   )
 
