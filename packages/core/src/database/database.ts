@@ -2,9 +2,9 @@ export * as Database from "./database"
 
 import { EffectDrizzleSqlite } from "@opencode-ai/effect-drizzle-sqlite"
 import { layer as sqliteLayer } from "#sqlite"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 import { Global } from "../global"
-import { Flag, truthy } from "../flag/flag"
+import { FlagConfig, truthyConfig } from "../flag/flag"
 import { isAbsolute, join } from "path"
 import { DatabaseMigration } from "./migration"
 import { InstallationChannel } from "../installation/version"
@@ -40,14 +40,21 @@ export function layerFromPath(filename: string) {
   return layer.pipe(Layer.provide(sqliteLayer({ filename })))
 }
 
-export function path() {
-  if (Flag.OPENCODE_DB) {
-    if (Flag.OPENCODE_DB === ":memory:" || isAbsolute(Flag.OPENCODE_DB)) return Flag.OPENCODE_DB
-    return join(Global.Path.data, Flag.OPENCODE_DB)
+/**
+ * The database file. OPENCODE_DB wins when set: ":memory:", an absolute path, or a file name under the data
+ * directory. Otherwise the release channels and OPENCODE_DISABLE_CHANNEL_DB share opencode.db, and each other
+ * channel has its own file. Both variables are optional, so a ConfigError is a defect.
+ */
+export const path: Effect.Effect<string> = Effect.gen(function* () {
+  const configured = yield* FlagConfig.OPENCODE_DB
+  if (Option.isSome(configured)) {
+    const file = configured.value
+    if (file === ":memory:" || isAbsolute(file)) return file
+    return join(Global.Path.data, file)
   }
-  if (["latest", "beta", "prod"].includes(InstallationChannel) || truthy("OPENCODE_DISABLE_CHANNEL_DB"))
+  if (["latest", "beta", "prod"].includes(InstallationChannel) || (yield* truthyConfig("OPENCODE_DISABLE_CHANNEL_DB")))
     return join(Global.Path.data, "opencode.db")
   return join(Global.Path.data, `opencode-${InstallationChannel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`)
-}
+}).pipe(Effect.orDie)
 
-export const node = makeGlobalNode({ service: Service, layer: layerFromPath(path()), deps: [] })
+export const node = makeGlobalNode({ service: Service, layer: Layer.unwrap(Effect.map(path, layerFromPath)), deps: [] })
