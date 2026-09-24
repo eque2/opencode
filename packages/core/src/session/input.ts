@@ -1,7 +1,7 @@
 export * as SessionInput from "./input"
 
 import { and, asc, eq, isNull, lte } from "drizzle-orm"
-import { DateTime, Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Predicate, Schema } from "effect"
 import { Admitted, Delivery } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
 import type { EventV2 } from "../event"
@@ -26,7 +26,7 @@ const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted =>
     prompt: decodePrompt(row.prompt),
     delivery: row.delivery,
     timeCreated: DateTime.makeUnsafe(row.time_created),
-    ...(row.promoted_seq === null ? {} : { promotedSeq: row.promoted_seq }),
+    ...(Predicate.isNotNull(row.promoted_seq) ? { promotedSeq: row.promoted_seq } : {}),
   })
 
 export const find = Effect.fn("SessionInput.find")(function* (db: DatabaseService, id: SessionMessage.ID) {

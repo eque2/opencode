@@ -36,7 +36,7 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
   return {
     id: info.id,
     project_id: info.projectID,
-    workspace_id: info.workspaceID ?? null,
+    workspace_id: Option.getOrNull(Option.fromNullishOr(info.workspaceID)),
     parent_id: info.parentID,
     slug: info.slug,
     directory: info.directory,
@@ -57,7 +57,12 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     tokens_reasoning: (info.tokens ?? { reasoning: 0 }).reasoning,
     tokens_cache_read: (info.tokens ?? { cache: { read: 0 } }).cache.read,
     tokens_cache_write: (info.tokens ?? { cache: { write: 0 } }).cache.write,
-    revert: info.revert ? { ...info.revert, messageID: SessionMessage.ID.make(info.revert.messageID) } : null,
+    revert: Option.getOrNull(
+      Option.map(Option.fromNullishOr(info.revert), (revert) => ({
+        ...revert,
+        messageID: SessionMessage.ID.make(revert.messageID),
+      })),
+    ),
     ...(info.permission ? { permission: [...info.permission] } : {}),
     time_created: info.time.created,
     time_updated: info.time.updated,
@@ -103,6 +108,21 @@ function applyUsage(
         .run()
         .pipe(Effect.orDie, Effect.asVoid),
   })
+}
+
+// session.revert holds the staged revert, or SQL NULL while no revert is staged.
+function writeRevert(
+  db: DatabaseService,
+  sessionID: SessionEvent.Event["data"]["sessionID"],
+  revert: Option.Option<NonNullable<(typeof SessionTable.$inferInsert)["revert"]>>,
+  timestamp: DateTime.Utc,
+) {
+  return db
+    .update(SessionTable)
+    .set({ revert: Option.getOrNull(revert), time_updated: DateTime.toEpochMillis(timestamp) })
+    .where(eq(SessionTable.id, sessionID))
+    .run()
+    .pipe(Effect.orDie, Effect.asVoid)
 }
 
 function run(db: DatabaseService, event: SessionEvent.Event) {
@@ -248,7 +268,11 @@ const layer = Layer.effectDiscard(
           .set({
             directory: event.data.location.directory,
             path: event.data.subdirectory,
-            workspace_id: event.data.location.workspaceID ? WorkspaceV2.ID.make(event.data.location.workspaceID) : null,
+            workspace_id: Option.getOrNull(
+              Option.map(Option.fromNullishOr(event.data.location.workspaceID), (workspaceID) =>
+                WorkspaceV2.ID.make(workspaceID),
+              ),
+            ),
             time_updated: DateTime.toEpochMillis(event.data.timestamp),
           })
           .where(eq(SessionTable.id, event.data.sessionID))
@@ -390,26 +414,18 @@ const layer = Layer.effectDiscard(
     // yield* events.project(SessionEvent.Retried, (event) => run(db, event))
     yield* events.project(SessionEvent.Compaction.Ended, (event) => run(db, event))
     yield* events.project(SessionEvent.RevertEvent.Staged, (event) =>
-      db
-        .update(SessionTable)
-        .set({
-          revert: {
-            ...event.data.revert,
-            ...(event.data.revert.files ? { files: [...event.data.revert.files] } : {}),
-          },
-          time_updated: DateTime.toEpochMillis(event.data.timestamp),
-        })
-        .where(eq(SessionTable.id, event.data.sessionID))
-        .run()
-        .pipe(Effect.orDie, Effect.asVoid),
+      writeRevert(
+        db,
+        event.data.sessionID,
+        Option.some({
+          ...event.data.revert,
+          ...(event.data.revert.files ? { files: [...event.data.revert.files] } : {}),
+        }),
+        event.data.timestamp,
+      ),
     )
     yield* events.project(SessionEvent.RevertEvent.Cleared, (event) =>
-      db
-        .update(SessionTable)
-        .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
-        .where(eq(SessionTable.id, event.data.sessionID))
-        .run()
-        .pipe(Effect.orDie, Effect.asVoid),
+      writeRevert(db, event.data.sessionID, Option.none(), event.data.timestamp),
     )
     yield* events.project(SessionEvent.RevertEvent.Committed, (event) =>
       Effect.gen(function* () {
@@ -442,12 +458,7 @@ const layer = Layer.effectDiscard(
           )
           .run()
           .pipe(Effect.orDie)
-        return yield* db
-          .update(SessionTable)
-          .set({ revert: null, time_updated: DateTime.toEpochMillis(event.data.timestamp) })
-          .where(eq(SessionTable.id, event.data.sessionID))
-          .run()
-          .pipe(Effect.orDie, Effect.asVoid)
+        return yield* writeRevert(db, event.data.sessionID, Option.none(), event.data.timestamp)
       }),
     )
   }),
