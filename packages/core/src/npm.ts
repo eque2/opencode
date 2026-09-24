@@ -79,6 +79,12 @@ const PackageLock = Schema.Struct({
   packages: Schema.optional(Schema.Struct({ "": Schema.optional(DependencyFields) })),
 }).annotate({ identifier: "Npm.PackageLock" })
 
+// The package.json `bin` field: one executable path, or a map from command name to path.
+const PackageBin = Schema.Struct({
+  bin: Schema.optional(Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)])),
+}).annotate({ identifier: "Npm.PackageBin" })
+
+const decodePackageBin = Schema.decodeUnknownOption(PackageBin)
 const decodeDependencyFields = Schema.decodeUnknownOption(DependencyFields)
 const decodePackageLock = Schema.decodeUnknownOption(PackageLock)
 
@@ -213,18 +219,18 @@ const layer = Layer.effect(
         if (bin) return files.includes(bin) ? Option.some(bin) : Option.none<string>()
         if (files.length === 1) return Option.some(files[0])
 
-        const pkgJson = yield* afs.readJson(path.join(dir, "node_modules", pkg, "package.json")).pipe(Effect.option)
+        const pkgJson = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "node_modules", pkg, "package.json")).pipe(Effect.option),
+          decodePackageBin,
+        )
 
-        if (Option.isSome(pkgJson)) {
-          const parsed = pkgJson.value as { bin?: string | Record<string, string> }
-          if (parsed?.bin) {
-            const unscoped = pkg.startsWith("@") ? pkg.split("/")[1] : pkg
-            const parsedBin = parsed.bin
-            if (typeof parsedBin === "string") return Option.some(unscoped)
-            const keys = Object.keys(parsedBin)
-            if (keys.length === 1) return Option.some(keys[0])
-            return parsedBin[unscoped] ? Option.some(unscoped) : Option.some(keys[0])
-          }
+        if (Option.isSome(pkgJson) && pkgJson.value.bin) {
+          const unscoped = pkg.startsWith("@") ? pkg.split("/")[1] : pkg
+          const parsedBin = pkgJson.value.bin
+          if (typeof parsedBin === "string") return Option.some(unscoped)
+          const keys = Object.keys(parsedBin)
+          if (keys.length === 1) return Option.some(keys[0])
+          return parsedBin[unscoped] ? Option.some(unscoped) : Option.some(keys[0])
         }
 
         return Option.some(files[0])
