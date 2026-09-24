@@ -1,4 +1,4 @@
-import { Config, Effect, Redacted, Schema } from "effect"
+import { Config, Effect, Predicate, Redacted, Schema } from "effect"
 import { Headers } from "effect/unstable/http"
 import { AuthenticationReason, InvalidRequestReason, LLMError, type LLMRequest } from "../schema"
 
@@ -37,8 +37,7 @@ export interface Auth {
   readonly pipe: <A>(f: (self: Auth) => A) => A
 }
 
-export const isAuth = (input: unknown): input is Auth =>
-  typeof input === "object" && input !== null && "apply" in input && typeof input.apply === "function"
+export const isAuth = (input: unknown): input is Auth => Predicate.isObject(input) && Predicate.isFunction(input.apply)
 
 const credential = (load: Effect.Effect<Redacted.Redacted, CredentialError>): Credential => {
   const self: Credential = {
