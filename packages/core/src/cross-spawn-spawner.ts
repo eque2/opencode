@@ -65,23 +65,34 @@ const flatten = (
   }
 }
 
-const toPlatformError = (
+const systemError = (
   method: string,
-  err: NodeJS.ErrnoException,
   command: ChildProcess.Command,
+  reason: {
+    readonly tag: PlatformError.SystemErrorTag
+    readonly syscall?: string
+    readonly description?: string
+    readonly cause?: unknown
+  },
 ): PlatformError.PlatformError => {
   const cmd = flatten(command)
     .commands.map((x) => `${x.command} ${x.args.join(" ")}`)
     .join(" | ")
+  const { tag, ...detail } = reason
   return PlatformError.systemError({
-    _tag: toTag(err),
+    _tag: tag,
     module: "ChildProcess",
     method,
     pathOrDescriptor: cmd,
-    syscall: err.syscall,
-    cause: err,
+    ...detail,
   })
 }
+
+const toPlatformError = (
+  method: string,
+  err: NodeJS.ErrnoException,
+  command: ChildProcess.Command,
+): PlatformError.PlatformError => systemError(method, command, { tag: toTag(err), syscall: err.syscall, cause: err })
 
 type ExitSignal = Deferred.Deferred<readonly [code: number | null, signal: NodeJS.Signals | null]>
 
@@ -307,7 +318,7 @@ export const make = Effect.gen(function* () {
   ) =>
     Effect.suspend(() => {
       if (proc.kill(signal)) return Effect.void
-      return Effect.fail(toPlatformError("kill", new Error("Failed to kill child process"), command))
+      return Effect.fail(systemError("kill", command, { tag: "Unknown", description: "Failed to kill child process" }))
     })
 
   const timeout =
@@ -406,11 +417,10 @@ export const make = Effect.gen(function* () {
             exitCode: Effect.flatMap(Deferred.await(signal), ([code, signal]) => {
               if (Predicate.isNotNull(code)) return Effect.succeed(ExitCode(code))
               return Effect.fail(
-                toPlatformError(
-                  "exitCode",
-                  new Error(`Process interrupted due to receipt of signal: '${signal}'`),
-                  command,
-                ),
+                systemError("exitCode", command, {
+                  tag: "Unknown",
+                  description: `Process interrupted due to receipt of signal: '${signal}'`,
+                }),
               )
             }),
             kill: (opts?: ChildProcess.KillOptions) => {
