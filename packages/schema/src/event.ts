@@ -50,7 +50,7 @@ export function define<
   }
   readonly schema: Fields
 }) {
-  const data = Schema.Struct(input.schema)
+  const data = Schema.Struct(input.schema).annotate({ identifier: `Event.${input.type}.Data` })
   return Schema.Struct({
     id: ID,
     metadata: optional(Schema.JsonObject),
