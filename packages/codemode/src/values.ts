@@ -30,9 +30,9 @@ export class SandboxRegExp {
   }
 }
 
-// The sandbox Map follows JS Map semantics: SameValueZero keys (object keys by identity, 0 and -0
-// as one key) and insertion order. Effect HashMap and MutableHashMap compare plain-object keys
-// structurally and keep 0 and -0 apart; HashMap also has no insertion order.
+// The sandbox Map follows JS Map semantics: SameValueZero keys (object and array keys by identity)
+// and insertion order. Effect HashMap and MutableHashMap compare plain-object and array keys
+// structurally, so two distinct `{}` keys become one entry; HashMap also has no insertion order.
 export class SandboxMap {
   // eslint-disable-next-line effect/no-map-use-hashmap -- (b) the sandbox Map holds program values under JS SameValueZero identity and insertion order, which Effect HashMap does not keep
   readonly map = new Map<unknown, unknown>()
