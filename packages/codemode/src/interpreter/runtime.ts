@@ -145,11 +145,10 @@ const parseProgram = (code: string): Effect.Effect<ProgramNode, unknown> =>
     const diagnostic = transpiled.diagnostics?.find((item) => item.category === DiagnosticCategory.Error)
 
     if (diagnostic) {
-      return yield* new InterpreterRuntimeError(
-        `Failed to parse TypeScript: ${flattenDiagnosticMessageText(diagnostic.messageText, "\n")}`,
-        undefined,
-        "ParseError",
-      )
+      return yield* InterpreterRuntimeError.make({
+        message: `Failed to parse TypeScript: ${flattenDiagnosticMessageText(diagnostic.messageText, "\n")}`,
+        kind: "ParseError",
+      })
     }
 
     const bodyStart = transpiled.outputText.indexOf("{") + 1
@@ -168,7 +167,7 @@ const parseProgram = (code: string): Effect.Effect<ProgramNode, unknown> =>
         }),
       catch: (error) => {
         const diagnostic = normalizeError(error)
-        return new InterpreterRuntimeError(diagnostic.message, undefined, diagnostic.kind)
+        return InterpreterRuntimeError.make({ message: diagnostic.message, kind: diagnostic.kind })
       },
     })
 
@@ -367,6 +366,9 @@ const isWritableUrlProperty = (key: UrlPropertyName): key is WritableUrlProperty
 // promiseStatics holds PromiseMethodName values; read as a set of strings it can test any key.
 const promiseStaticNames: ReadonlySet<string> = promiseStatics
 const isPromiseMethodName = (key: string): key is PromiseMethodName => promiseStaticNames.has(key)
+
+// An unknown property of a string, number, array or sandbox value reads as undefined, as in JS.
+const unknownPropertyRead = new ComputedValue(undefined)
 
 // Copies each named binding (as a fresh binding object) from one scope into another: a `for`
 // loop gives every iteration its own copies of the loop variables, then writes them back.
@@ -764,7 +766,9 @@ class Interpreter<R> {
   // ToolRuntime.make like invokeTool: the interpreter never holds the tree itself.
   private readonly toolKeys: (path: ReadonlyArray<string>) => ReadonlyArray<string>
   private readonly logs: Array<string>
-  private lastValue: unknown
+  // The value of the most recent expression statement: a program without `return` completes
+  // with it, as a script does.
+  private lastValue: Option.Option<unknown> = Option.none()
   // Caps how many eagerly forked tool calls run at once (the parallel-call concurrency cap).
   private readonly callPermits: Semaphore.Semaphore
   // Fiber-backed promises whose settlement no program construct has observed yet. Successful
@@ -782,7 +786,6 @@ class Interpreter<R> {
     this.invokeTool = invokeTool
     this.toolKeys = toolKeys
     this.logs = logs
-    this.lastValue = undefined
     this.callPermits = Semaphore.makeUnsafe(TOOL_CALL_CONCURRENCY)
     MutableHashMap.set(globalScope, "tools", { mutable: false, value: new ToolReference([]) })
     MutableHashMap.set(globalScope, "Promise", { mutable: false, value: promiseNamespace })
@@ -834,14 +837,12 @@ class Interpreter<R> {
     return this.withScope(
       Effect.gen({ self: this }, function* () {
         yield* this.hoistFunctions(program.body)
-        let value: unknown = undefined
-        let returned = false
+        let returned: Option.Option<unknown> = Option.none()
         for (const statement of program.body) {
           const result = yield* this.evaluateStatement(statement)
 
           if (result.kind === "return") {
-            value = result.value
-            returned = true
+            returned = Option.some(result.value)
             break
           }
 
@@ -850,10 +851,11 @@ class Interpreter<R> {
           }
 
           if (result.kind === "value") {
-            this.lastValue = result.value
+            this.lastValue = Option.some(result.value)
           }
         }
-        if (!returned) value = this.lastValue
+        // The completion value: the returned value, else the last expression statement's value.
+        let value = Option.getOrUndefined(Option.orElse(returned, () => this.lastValue))
 
         // The program body runs inside an implicit async function, so a returned promise
         // resolves before crossing the data boundary - `return tools.ns.tool(...)` works
@@ -886,12 +888,13 @@ class Interpreter<R> {
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return Effect.void
           const failure = normalizeError(Cause.squash(exit.cause))
           return Effect.fail(
-            new InterpreterRuntimeError(
-              `Unhandled rejection from an un-awaited tool call: ${failure.message}`,
-              undefined,
-              failure.kind,
-              ["Await tool calls - `const result = await tools.ns.tool(...)` - so failures can be caught and handled."],
-            ),
+            InterpreterRuntimeError.make({
+              message: `Unhandled rejection from an un-awaited tool call: ${failure.message}`,
+              kind: failure.kind,
+              suggestions: [
+                "Await tool calls - `const result = await tools.ns.tool(...)` - so failures can be caught and handled.",
+              ],
+            }),
           )
         }),
       { discard: true },
@@ -929,11 +932,14 @@ class Interpreter<R> {
   // `await promise`: succeed with the fulfilled value or re-raise the failure so try/catch
   // observes it exactly like a synchronous throw at the await site.
   private settlePromise(promise: SandboxPromise, node?: AstNode): Effect.Effect<unknown, unknown> {
-    return Effect.flatMap(this.observePromise(promise), (exit) => this.unwrapPromiseExit(promise, exit, node))
+    return Effect.flatMap(this.observePromise(promise), (exit) =>
+      this.unwrapPromiseExit(Option.some(promise), exit, node),
+    )
   }
 
+  // `promise` is the settled promise, or None for a plain value taking part in Promise.race.
   private unwrapPromiseExit(
-    promise: SandboxPromise | undefined,
+    promise: Option.Option<SandboxPromise>,
     exit: Exit.Exit<unknown, unknown>,
     node?: AstNode,
   ): Effect.Effect<unknown, unknown> {
@@ -941,7 +947,7 @@ class Interpreter<R> {
     // A call Promise.race interrupted after losing settles as a catchable program failure;
     // any other interruption is execution teardown (timeout/host) and must keep propagating
     // as interruption rather than becoming program-visible data.
-    if (promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)) {
+    if (Option.exists(promise, (settled) => settled.interrupted) && Cause.hasInterruptsOnly(exit.cause)) {
       return Effect.fail(
         new InterpreterRuntimeError(
           "This tool call was interrupted because another value settled a Promise.race first.",
@@ -960,14 +966,13 @@ class Interpreter<R> {
         )
       case "VariableDeclaration":
         return Effect.map(this.evaluateVariableDeclaration(node), (): StatementResult => ({ kind: "none" }))
+      // `return;` returns undefined.
       case "ReturnStatement":
         return Effect.flatMap(getOptionalNode(node, "argument"), (argumentNode) =>
-          Option.isSome(argumentNode)
-            ? Effect.map(
-                this.evaluateExpression(argumentNode.value),
-                (value): StatementResult => ({ kind: "return", value }),
-              )
-            : Effect.succeed<StatementResult>({ kind: "return", value: undefined }),
+          Effect.map(
+            this.evaluateOptional(argumentNode),
+            (value): StatementResult => ({ kind: "return", value: Option.getOrUndefined(value) }),
+          ),
         )
       case "BlockStatement":
         return this.evaluateBlock(node)
@@ -1013,7 +1018,7 @@ class Interpreter<R> {
           const result = yield* this.evaluateStatement(statement)
 
           if (result.kind === "value") {
-            this.lastValue = result.value
+            this.lastValue = Option.some(result.value)
             continue
           }
 
@@ -1111,7 +1116,7 @@ class Interpreter<R> {
             const result = yield* this.evaluateStatement(yield* asNode(statementValue, "consequent"))
             if (result.kind === "break") return { kind: "none" } satisfies StatementResult
             if (result.kind === "return" || result.kind === "continue") return result
-            if (result.kind === "value") this.lastValue = result.value
+            if (result.kind === "value") this.lastValue = Option.some(result.value)
           }
         }
         return { kind: "none" } satisfies StatementResult
@@ -1140,7 +1145,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          this.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
       }
 
@@ -1169,7 +1174,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          this.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
       } while (yield* this.evaluateExpression(testNode))
 
@@ -1224,7 +1229,7 @@ class Interpreter<R> {
           }
 
           if (result.kind === "value") {
-            this.lastValue = result.value
+            this.lastValue = Option.some(result.value)
           }
 
           if (iterationScope) {
@@ -1310,7 +1315,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          this.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
 
         if (result.kind === "continue") {
@@ -1405,7 +1410,7 @@ class Interpreter<R> {
         }
 
         if (result.kind === "value") {
-          this.lastValue = result.value
+          this.lastValue = Option.some(result.value)
         }
 
         if (result.kind === "continue") {
@@ -1501,7 +1506,8 @@ class Interpreter<R> {
             }
 
             const init = yield* getOptionalNode(declaration, "init")
-            const value = Option.isSome(init) ? yield* this.evaluateExpression(init.value) : undefined
+            // `let x;` binds undefined.
+            const value = Option.getOrUndefined(yield* this.evaluateOptional(init))
             return yield* this.declarePattern(yield* getNode(declaration, "id"), value, kind !== "const", declaration)
           }),
         { discard: true },
@@ -1596,6 +1602,14 @@ class Interpreter<R> {
         yield* this.declarePattern(element, value[index], mutable, pattern)
       }
       return yield* Effect.void
+    })
+  }
+
+  // Evaluates an optional expression: None when the syntax omits it (`return;`, `let x;`).
+  private evaluateOptional(node: Option.Option<AstNode>): Effect.Effect<Option.Option<unknown>, unknown, R> {
+    return Option.match(node, {
+      onNone: () => Effect.succeedNone,
+      onSome: (expression) => Effect.asSome(this.evaluateExpression(expression)),
     })
   }
 
@@ -1761,17 +1775,15 @@ class Interpreter<R> {
     return Effect.gen(function* () {
       const target = new SandboxMap()
       if (Predicate.isNullish(init)) return target
-      const entries = Array.isArray(init)
-        ? init
-        : init instanceof SandboxMap
-          ? Array.from(init.map.entries(), ([key, item]): Array<unknown> => [key, item])
-          : undefined
-      if (entries === undefined) {
+      if (!Array.isArray(init) && !(init instanceof SandboxMap)) {
         return yield* new InterpreterRuntimeError(
           "new Map(...) expects an array of [key, value] pairs, a Map, or no argument.",
           node,
         )
       }
+      const entries = Array.isArray(init)
+        ? init
+        : Array.from(init.map.entries(), ([key, item]): Array<unknown> => [key, item])
       for (const pair of entries) {
         if (!Array.isArray(pair)) {
           return yield* new InterpreterRuntimeError("new Map(...) expects [key, value] pairs.", node)
@@ -1786,16 +1798,14 @@ class Interpreter<R> {
     return Effect.gen(function* () {
       const target = new SandboxSet()
       if (Predicate.isNullish(init)) return target
+      if (!Array.isArray(init) && !(init instanceof SandboxSet) && typeof init !== "string") {
+        return yield* new InterpreterRuntimeError("new Set(...) expects an array, Set, string, or no argument.", node)
+      }
       const items = Array.isArray(init)
         ? init
         : init instanceof SandboxSet
           ? Array.from(init.set.values())
-          : typeof init === "string"
-            ? Array.from(init)
-            : undefined
-      if (items === undefined) {
-        return yield* new InterpreterRuntimeError("new Set(...) expects an array, Set, string, or no argument.", node)
-      }
+          : Array.from(init)
       for (const item of items) target.set.add(item)
       return target
     })
@@ -1810,12 +1820,12 @@ class Interpreter<R> {
         ).as("TypeError")
       }
       const input = urlArgument(args[0], "new URL input")
-      const base = args[1] === undefined ? undefined : urlArgument(args[1], "new URL base")
+      const base = Option.map(Option.fromUndefinedOr(args[1]), (value) => urlArgument(value, "new URL base"))
       return yield* Effect.try({
-        try: () => new SandboxURL(new URL(input, base)),
+        try: () => new SandboxURL(new URL(input, Option.getOrUndefined(base))),
         catch: () =>
           new InterpreterRuntimeError(
-            `new URL(...) received an invalid URL${base === undefined ? "" : " or base URL"}.`,
+            `new URL(...) received an invalid URL${Option.isNone(base) ? "" : " or base URL"}.`,
             node,
           ).as("TypeError"),
       })
@@ -2300,7 +2310,7 @@ class Interpreter<R> {
     const data = boundedData(value, "console.table argument")
     const columns = this.consoleTableColumns(columnsArgument)
     const rows = this.consoleTableRows(data, columns)
-    const keys = columns ?? Arr.dedupe(rows.flatMap((row) => Object.keys(row.values)))
+    const keys = Option.getOrElse(columns, () => Arr.dedupe(rows.flatMap((row) => Object.keys(row.values))))
     const header = ["(index)", ...keys].join("\t")
     return [
       header,
@@ -2308,16 +2318,16 @@ class Interpreter<R> {
     ].join("\n")
   }
 
-  private consoleTableColumns(value: unknown): ReadonlyArray<string> | undefined {
-    if (value === undefined) return undefined
-    if (containsRuntimeReference(value)) return undefined
+  // The explicit column list of console.table(data, columns); None shows every column.
+  private consoleTableColumns(value: unknown): Option.Option<ReadonlyArray<string>> {
+    if (value === undefined || containsRuntimeReference(value)) return Option.none()
     const columns = copyOut(copyIn(value, "console.table columns"), true)
-    return Array.isArray(columns) ? columns.map((column) => String(column)) : undefined
+    return Array.isArray(columns) ? Option.some(columns.map((column) => String(column))) : Option.none()
   }
 
   private consoleTableRows(
     data: unknown,
-    columns: ReadonlyArray<string> | undefined,
+    columns: Option.Option<ReadonlyArray<string>>,
   ): Array<{ readonly index: string; readonly values: Record<string, unknown> }> {
     if (Array.isArray(data)) {
       return data.map((item, index) => ({ index: String(index), values: this.consoleTableValues(item, columns) }))
@@ -2328,10 +2338,10 @@ class Interpreter<R> {
     return [{ index: "0", values: { Value: data } }]
   }
 
-  private consoleTableValues(value: unknown, columns: ReadonlyArray<string> | undefined): Record<string, unknown> {
+  private consoleTableValues(value: unknown, columns: Option.Option<ReadonlyArray<string>>): Record<string, unknown> {
     if (Predicate.isObject(value) && !isSandboxValue(value)) {
       const source = value
-      if (columns !== undefined) return Object.fromEntries(columns.map((column) => [column, source[column]]))
+      if (Option.isSome(columns)) return Object.fromEntries(columns.value.map((column) => [column, source[column]]))
       return Object.fromEntries(Object.entries(source))
     }
     return { Value: value }
@@ -2410,15 +2420,16 @@ class Interpreter<R> {
       case "allSettled": {
         const observations = items.map((item) =>
           item instanceof SandboxPromise
-            ? Effect.map(this.observePromise(item), (exit) => ({ promise: item as SandboxPromise | undefined, exit }))
-            : Effect.succeed({ promise: undefined as SandboxPromise | undefined, exit: Exit.succeed(item as unknown) }),
+            ? Effect.map(this.observePromise(item), (exit) => ({ promise: Option.some(item), exit }))
+            : Effect.succeed({ promise: Option.none<SandboxPromise>(), exit: Exit.succeed<unknown>(item) }),
         )
         return Effect.forEach(observations, (observation) =>
           Effect.flatMap(observation, ({ exit, promise }): Effect.Effect<SafeObject, unknown> => {
             if (Exit.isSuccess(exit)) {
               return Effect.succeed(Object.assign(makeSafeObject(), { status: "fulfilled", value: exit.value }))
             }
-            const raceInterrupted = promise?.interrupted === true && Cause.hasInterruptsOnly(exit.cause)
+            const raceInterrupted =
+              Option.exists(promise, (settled) => settled.interrupted) && Cause.hasInterruptsOnly(exit.cause)
             if (Cause.hasInterruptsOnly(exit.cause) && !raceInterrupted) {
               // Execution teardown (timeout/host interruption), not a program-level rejection.
               return Effect.failCause(exit.cause)
@@ -2465,7 +2476,7 @@ class Interpreter<R> {
       }
       const winningItem = items[winner.index]
       return yield* this.unwrapPromiseExit(
-        winningItem instanceof SandboxPromise ? winningItem : undefined,
+        winningItem instanceof SandboxPromise ? Option.some(winningItem) : Option.none(),
         winner.exit,
         node,
       )
@@ -2483,7 +2494,7 @@ class Interpreter<R> {
         const paramScope = yield* this.currentScope()
         for (const parameter of fn.parameters) {
           for (const name of yield* collectPatternNames(parameter)) {
-            MutableHashMap.set(paramScope, name, { mutable: true, value: undefined, initialized: false })
+            MutableHashMap.set(paramScope, name, { mutable: true, initialized: false })
           }
         }
         for (const [index, parameter] of fn.parameters.entries()) {
@@ -2496,7 +2507,10 @@ class Interpreter<R> {
 
         if (fn.body.type === "BlockStatement") {
           const result = yield* this.evaluateStatement(fn.body)
-          return result.kind === "return" || result.kind === "value" ? result.value : undefined
+          // A body that completes without `return` returns undefined.
+          const completion =
+            result.kind === "return" || result.kind === "value" ? Option.some(result.value) : Option.none()
+          return Option.getOrUndefined(completion)
         }
 
         return yield* this.evaluateExpression(fn.body)
@@ -3054,9 +3068,11 @@ class Interpreter<R> {
       })
     }
     // Per spec, undefined elements sort to the end and the comparator is never called on them.
+    // Holes count as undefined elements: Array.from reads them as undefined, while filter skips
+    // them when it collects the defined elements.
     const defined = target.filter((item) => item !== undefined)
-    const undefinedCount = target.length - defined.length
-    return Effect.map(mergeSort(defined), (items) => [...items, ...Array(undefinedCount).fill(undefined)])
+    const undefinedItems = Array.from(target).filter(Predicate.isUndefined)
+    return Effect.map(mergeSort(defined), (items) => [...items, ...undefinedItems])
   }
 
   private evaluateObjectExpression(node: AstNode): Effect.Effect<Record<string, unknown>, unknown, R> {
@@ -3262,13 +3278,13 @@ class Interpreter<R> {
         // instead of throwing - so defensive access like `result?.login ?? result` on a JSON-string
         // tool result doesn't crash. (Optional chaining only guards null/undefined receivers, so a
         // real string still reaches here.) Only the method allowlist above yields callables.
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       if (typeof objectValue === "number") {
         if (typeof key === "string" && numberMethods.has(key)) return new IntrinsicReference(objectValue, key)
         // Unknown property on a number reads as `undefined`, matching JS, rather than throwing.
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       // Number / String expose a small allowlist of statics; everything else stays opaque.
@@ -3284,24 +3300,24 @@ class Interpreter<R> {
       // `undefined`, consistent with unknown-property reads on strings/numbers/arrays.
       if (objectValue instanceof SandboxDate) {
         if (typeof key === "string" && dateMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxRegExp) {
         if (typeof key === "string" && isRegExpProperty(key)) {
           return new ComputedValue(objectValue.regex[key])
         }
         if (typeof key === "string" && regexpMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxMap) {
         if (key === "size") return new ComputedValue(objectValue.map.size)
         if (typeof key === "string" && mapMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxSet) {
         if (key === "size") return new ComputedValue(objectValue.set.size)
         if (typeof key === "string" && setMethods.has(key)) return new IntrinsicReference(objectValue, key)
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxURL) {
         if (key === "searchParams") {
@@ -3311,14 +3327,14 @@ class Interpreter<R> {
         if (typeof key === "string" && isUrlProperty(key)) {
           return { kind: "url", target: objectValue, key } satisfies MemberReference
         }
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
       if (objectValue instanceof SandboxURLSearchParams) {
         if (key === "size") return new ComputedValue(objectValue.params.size)
         if (typeof key === "string" && urlSearchParamsMethods.has(key)) {
           return new IntrinsicReference(objectValue, key)
         }
-        return new ComputedValue(undefined)
+        return unknownPropertyRead
       }
 
       // Any property access on a promise is a confused program (`p.then(...)`, `p.value`);
@@ -3370,7 +3386,7 @@ class Interpreter<R> {
           }
           // Unknown property on an array reads as `undefined`, matching JS (`[1,2].foo === undefined`),
           // instead of throwing - so defensive access under optional chaining behaves as expected.
-          return new ComputedValue(undefined)
+          return unknownPropertyRead
         }
         return { kind: "array", target: objectValue, key } satisfies MemberReference
       }

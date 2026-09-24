@@ -23,9 +23,11 @@ export type ProgramNode = AstNode & {
   body: Array<AstNode>
 }
 
+// A named binding. A parameter slot seeded before its default runs (initialized: false, the
+// JS temporal dead zone) has no value yet.
 export type Binding = {
   mutable: boolean
-  value: unknown
+  value?: unknown
   initialized?: boolean
 }
 
@@ -168,6 +170,16 @@ export class InterpreterRuntimeError extends Data.TaggedError("InterpreterRuntim
     suggestions?: ReadonlyArray<string>,
   ) {
     super({ message, kind, ...(node ? { node } : {}), ...(suggestions ? { suggestions } : {}) })
+  }
+
+  // Named-field form, so a caller without an AST node does not pass a placeholder for it.
+  static make(fields: {
+    readonly message: string
+    readonly node?: AstNode
+    readonly kind?: DiagnosticKind
+    readonly suggestions?: ReadonlyArray<string>
+  }): InterpreterRuntimeError {
+    return new InterpreterRuntimeError(fields.message, fields.node, fields.kind, fields.suggestions)
   }
 
   as(errorName: string): this {
