@@ -67,6 +67,28 @@ const resolveEntryPoint = (name: string, dir: string): EntryPoint => ({
 // npm-package-arg throws for a spec it cannot parse, which gives None.
 const parsePackageSpec = Option.liftThrowable(npa)
 
+// The dependency fields that package.json and the root package-lock.json entry share. Only the names matter.
+const DependencyFields = Schema.Struct({
+  dependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  peerDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  optionalDependencies: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+}).annotate({ identifier: "Npm.DependencyFields" })
+
+const PackageLock = Schema.Struct({
+  packages: Schema.optional(Schema.Struct({ "": Schema.optional(DependencyFields) })),
+}).annotate({ identifier: "Npm.PackageLock" })
+
+const decodeDependencyFields = Schema.decodeUnknownOption(DependencyFields)
+const decodePackageLock = Schema.decodeUnknownOption(PackageLock)
+
+const dependencyNames = (fields: typeof DependencyFields.Type) => [
+  ...Object.keys(fields.dependencies ?? {}),
+  ...Object.keys(fields.devDependencies ?? {}),
+  ...Object.keys(fields.peerDependencies ?? {}),
+  ...Object.keys(fields.optionalDependencies ?? {}),
+]
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -152,33 +174,27 @@ const layer = Layer.effect(
         return
 
       yield* Effect.gen(function* () {
-        const pkg = yield* afs.readJson(path.join(dir, "package.json")).pipe(Effect.orElseSucceed(() => ({})))
-        const lock = yield* afs.readJson(path.join(dir, "package-lock.json")).pipe(Effect.orElseSucceed(() => ({})))
+        const pkg = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "package.json")).pipe(Effect.option),
+          decodeDependencyFields,
+        )
+        const lock = Option.flatMap(
+          yield* afs.readJson(path.join(dir, "package-lock.json")).pipe(Effect.option),
+          decodePackageLock,
+        )
 
-        const pkgAny = pkg as any
-        const lockAny = lock as any
-        const declared = new Set([
-          ...Object.keys(pkgAny?.dependencies || {}),
-          ...Object.keys(pkgAny?.devDependencies || {}),
-          ...Object.keys(pkgAny?.peerDependencies || {}),
-          ...Object.keys(pkgAny?.optionalDependencies || {}),
-          ...(input?.add || []).map((pkg) => pkg.name),
-        ])
+        const declared = [
+          ...Option.match(pkg, { onNone: () => [], onSome: dependencyNames }),
+          ...(input?.add ?? []).map((item) => item.name),
+        ]
+        const locked = HashSet.fromIterable(
+          lock.pipe(
+            Option.flatMapNullishOr((file) => file.packages?.[""]),
+            Option.match({ onNone: () => [], onSome: dependencyNames }),
+          ),
+        )
 
-        const root = lockAny?.packages?.[""] || {}
-        const locked = new Set([
-          ...Object.keys(root?.dependencies || {}),
-          ...Object.keys(root?.devDependencies || {}),
-          ...Object.keys(root?.peerDependencies || {}),
-          ...Object.keys(root?.optionalDependencies || {}),
-        ])
-
-        for (const name of declared) {
-          if (!locked.has(name)) {
-            yield* reify({ dir, add })
-            return
-          }
-        }
+        if (declared.some((name) => !HashSet.has(locked, name))) yield* reify({ dir, add })
       }).pipe(Effect.withSpan("Npm.checkDirty"))
 
       return
