@@ -1,4 +1,4 @@
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Data, Effect, Schema } from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -118,19 +118,20 @@ export class ToolReference {
  */
 const MAX_VALUE_DEPTH = 32
 
-export class ToolRuntimeError extends Error {
-  constructor(
-    readonly kind:
-      | "UnknownTool"
-      | "InvalidToolInput"
-      | "InvalidToolOutput"
-      | "InvalidDataValue"
-      | "ToolCallLimitExceeded",
-    message: string,
-    readonly suggestions: ReadonlyArray<string> = [],
-  ) {
-    super(message)
-    this.name = "ToolRuntimeError"
+type ToolRuntimeErrorKind =
+  | "UnknownTool"
+  | "InvalidToolInput"
+  | "InvalidToolOutput"
+  | "InvalidDataValue"
+  | "ToolCallLimitExceeded"
+
+export class ToolRuntimeError extends Data.TaggedError("ToolRuntimeError")<{
+  readonly kind: ToolRuntimeErrorKind
+  readonly message: string
+  readonly suggestions: ReadonlyArray<string>
+}> {
+  constructor(kind: ToolRuntimeErrorKind, message: string, suggestions: ReadonlyArray<string> = []) {
+    super({ kind, message, suggestions })
   }
 }
 
