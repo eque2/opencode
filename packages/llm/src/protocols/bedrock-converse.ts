@@ -249,7 +249,7 @@ const lowerToolChoice = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
     tool: (name) => ({ tool: { name } }) as const,
   })
 
-const bedrockMetadata = (metadata: Record<string, unknown>): ProviderMetadata => ({ bedrock: metadata })
+const bedrockMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ bedrock: metadata })
 
 const reasoningSignature = (part: ReasoningPart) => {
   const bedrock = part.providerMetadata?.bedrock
