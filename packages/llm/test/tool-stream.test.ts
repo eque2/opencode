@@ -6,19 +6,25 @@ import { it } from "./lib/effect"
 
 const ADAPTER = "test-route"
 
+// Lift an append result into Effect so a stream-grammar error fails the test.
+const appended = <K extends string | number>(result: ToolStream.AppendOutcome<K> | LLMError) =>
+  ToolStream.isError(result) ? Effect.fail(result) : Effect.succeed(result)
+
 describe("ToolStream", () => {
   it.effect("starts from OpenAI-style deltas and finalizes parsed input", () =>
     Effect.gen(function* () {
-      const first = ToolStream.appendOrStart(
-        ADAPTER,
-        ToolStream.empty<number>(),
-        0,
-        { id: "call_1", name: "lookup", text: '{"query"' },
-        "missing tool",
+      const first = yield* appended(
+        ToolStream.appendOrStart(
+          ADAPTER,
+          ToolStream.empty<number>(),
+          0,
+          { id: "call_1", name: "lookup", text: '{"query"' },
+          "missing tool",
+        ),
       )
-      if (ToolStream.isError(first)) return yield* first
-      const second = ToolStream.appendOrStart(ADAPTER, first.tools, 0, { text: ':"weather"}' }, "missing tool")
-      if (ToolStream.isError(second)) return yield* second
+      const second = yield* appended(
+        ToolStream.appendOrStart(ADAPTER, first.tools, 0, { text: ':"weather"}' }, "missing tool"),
+      )
       const finished = yield* ToolStream.finish(ADAPTER, second.tools, 0)
 
       expect(first.events).toEqual([
