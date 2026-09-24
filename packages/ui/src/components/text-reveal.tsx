@@ -31,9 +31,14 @@ export function TextReveal(props: {
   growOnly?: boolean
   truncate?: boolean
 }) {
-  const [state, setState] = createStore({
+  const [state, setState] = createStore<{
+    cur: string | undefined
+    old?: string
+    width: string
+    ready: boolean
+    swapping: boolean
+  }>({
     cur: props.text,
-    old: undefined as string | undefined,
     width: "auto",
     ready: false,
     swapping: false,
