@@ -2,6 +2,7 @@ import { parseDiffFromFile, parsePatchFiles, type FileDiffMetadata } from "@pier
 import { parsePatch } from "diff"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
+import { Iterable, MutableHashMap, Option } from "effect"
 
 type LegacyDiff = {
   file: string
@@ -26,7 +27,8 @@ export type ViewDiff = {
 }
 
 const diffCacheLimit = 16
-const patchFileDiffCache = new Map<string, FileDiffMetadata>()
+// String keys keep insertion order, so the first key is the least recently used entry.
+const patchFileDiffCache = MutableHashMap.empty<string, FileDiffMetadata>()
 
 export function resolveFileDiff(diff: DiffSource) {
   if (typeof diff.patch === "string") return fileDiffFromPatch(diff.file, diff.patch)
@@ -54,11 +56,11 @@ export function text(diff: ViewDiff, side: "deletions" | "additions") {
 
 function fileDiffFromPatch(file: string, patch: string) {
   const key = `${file}\0${patch}`
-  const hit = patchFileDiffCache.get(key)
-  if (hit) {
-    patchFileDiffCache.delete(key)
-    patchFileDiffCache.set(key, hit)
-    return hit
+  const hit = MutableHashMap.get(patchFileDiffCache, key)
+  if (Option.isSome(hit)) {
+    MutableHashMap.remove(patchFileDiffCache, key)
+    MutableHashMap.set(patchFileDiffCache, key, hit.value)
+    return hit.value
   }
 
   const contents = completePatchContents(patch)
@@ -66,8 +68,12 @@ function fileDiffFromPatch(file: string, patch: string) {
   const value = contents
     ? fileDiffFromContent(file, contents.before, contents.after)
     : ((input ? parsePatchFiles(input)[0]?.files[0] : undefined) ?? emptyFileDiff(file))
-  patchFileDiffCache.set(key, value)
-  while (patchFileDiffCache.size > diffCacheLimit) patchFileDiffCache.delete(patchFileDiffCache.keys().next().value!)
+  MutableHashMap.set(patchFileDiffCache, key, value)
+  while (MutableHashMap.size(patchFileDiffCache) > diffCacheLimit) {
+    const oldest = Iterable.head(MutableHashMap.keys(patchFileDiffCache))
+    if (Option.isNone(oldest)) break
+    MutableHashMap.remove(patchFileDiffCache, oldest.value)
+  }
   return value
 }
 
