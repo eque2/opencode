@@ -32,6 +32,7 @@ const FieldContext = createContext<FieldContextValue>()
 function useField() {
   const ctx = useContext(FieldContext)
   if (!ctx) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
     throw new Error("Field subcomponents must be used within <Field>")
   }
   return ctx

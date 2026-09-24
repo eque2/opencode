@@ -26,6 +26,7 @@ const SegmentedControlContext = createContext<SegmentedControlContextValue>()
 
 function useSegmentedControlContext() {
   const ctx = useContext(SegmentedControlContext)
+  // eslint-disable-next-line effect/no-throw-use-effect -- Solid useContext hook must return synchronously and throw outside its provider
   if (!ctx) throw new Error("SegmentedControlItemV2 must be used inside SegmentedControlV2")
   return ctx
 }
