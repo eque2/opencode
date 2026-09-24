@@ -1,4 +1,7 @@
+import * as Arr from "effect/Array"
 import * as Effect from "effect/Effect"
+import * as HashMap from "effect/HashMap"
+import * as Option from "effect/Option"
 import * as Predicate from "effect/Predicate"
 import type { TablesRelationalConfig } from "drizzle-orm/_relations"
 import { EffectDrizzleError } from "drizzle-orm/effect-core/errors"
@@ -52,15 +55,15 @@ export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationB
   const sortedLocalMigrations = [...localMigrations].sort((a, b) =>
     a.folderMillis !== b.folderMillis ? a.folderMillis - b.folderMillis : (a.name ?? "").localeCompare(b.name ?? ""),
   )
-  const byMillis = new Map<number, MigrationMeta[]>()
-  const byHash = new Map<string, MigrationMeta>()
-  for (const migration of sortedLocalMigrations) {
-    if (!byMillis.has(migration.folderMillis)) {
-      byMillis.set(migration.folderMillis, [])
-    }
-    byMillis.get(migration.folderMillis)!.push(migration)
-    byHash.set(migration.hash, migration)
-  }
+  // Each folderMillis group keeps the sorted order; for a repeated hash the last migration wins.
+  const byMillis = HashMap.fromIterable(
+    Object.values(Arr.groupBy(sortedLocalMigrations, (migration) => String(migration.folderMillis))).map(
+      (group): readonly [number, Arr.NonEmptyArray<MigrationMeta>] => [group[0].folderMillis, group],
+    ),
+  )
+  const byHash = HashMap.fromIterable(
+    sortedLocalMigrations.map((migration): readonly [string, MigrationMeta] => [migration.hash, migration]),
+  )
 
   const toApply: SQLiteMigrationBackfillEntry[] = []
   const unmatched: SQLiteMigrationTableRow[] = []
@@ -68,14 +71,15 @@ export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationB
   for (const dbRow of dbRows) {
     const stringified = String(dbRow.created_at)
     const millis = Number(stringified.substring(0, stringified.length - 3) + "000")
-    const candidates = byMillis.get(millis)
+    const candidates = Option.getOrUndefined(HashMap.get(byMillis, millis))
 
     const matchedByMillis = candidates?.length === 1 ? candidates[0] : undefined
     const matchedByCandidateHash =
       candidates && candidates.length > 1
         ? candidates.find((candidate) => candidate.hash && dbRow.hash && candidate.hash === dbRow.hash)
         : undefined
-    const matchedByHash = matchedByMillis || matchedByCandidateHash ? undefined : byHash.get(dbRow.hash)
+    const matchedByHash =
+      matchedByMillis || matchedByCandidateHash ? undefined : Option.getOrUndefined(HashMap.get(byHash, dbRow.hash))
     const matched = matchedByMillis ?? matchedByCandidateHash ?? matchedByHash
 
     if (matched) {
