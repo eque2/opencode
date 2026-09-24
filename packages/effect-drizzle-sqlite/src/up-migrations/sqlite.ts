@@ -34,20 +34,21 @@ const migrationUpgradeError = (cause: unknown) =>
   })
 
 function unmatchedMigrationError(unmatched: SQLiteMigrationTableRow[]) {
-  return new Error(
-    `While upgrading your database migrations table we found ${unmatched.length} (${unmatched
+  return new EffectDrizzleError({
+    message: `While upgrading your database migrations table we found ${unmatched.length} (${unmatched
       .map((it) => `[id: ${it.id}, created_at: ${it.created_at}]`)
       .join(
         ", ",
       )}) migrations in the database that do not match any local migration. This means that some migrations were applied to the database but are missing from the local environment`,
-  )
+    cause: { unmatched },
+  })
 }
 
 /** @internal */
-export function prepareSQLiteMigrationBackfill(
+export const prepareSQLiteMigrationBackfill = Effect.fn("prepareSQLiteMigrationBackfill")(function* (
   dbRows: SQLiteMigrationTableRow[],
   localMigrations: MigrationMeta[],
-): SQLiteMigrationBackfillEntry[] {
+) {
   const sortedLocalMigrations = [...localMigrations].sort((a, b) =>
     a.folderMillis !== b.folderMillis ? a.folderMillis - b.folderMillis : (a.name ?? "").localeCompare(b.name ?? ""),
   )
@@ -94,11 +95,11 @@ export function prepareSQLiteMigrationBackfill(
   }
 
   if (unmatched.length > 0) {
-    throw unmatchedMigrationError(unmatched)
+    return yield* unmatchedMigrationError(unmatched)
   }
 
   return toApply
-}
+})
 
 /** @internal */
 export function buildSQLiteMigrationBackfillStatements(
@@ -191,14 +192,10 @@ const upgradeSyncFunctions: Record<
         try: () => session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
         catch: migrationUpgradeError,
       })
-      const statements = yield* Effect.try({
-        try: () =>
-          buildSQLiteMigrationBackfillStatements(
-            migrationsTable,
-            prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-          ),
-        catch: migrationUpgradeError,
-      })
+      const statements = buildSQLiteMigrationBackfillStatements(
+        migrationsTable,
+        yield* prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+      )
 
       yield* Effect.try({
         try: () =>
@@ -280,14 +277,10 @@ const upgradeAsyncFunctions: Record<
           db.session.all<SQLiteMigrationTableRow>(sql`SELECT id, hash, created_at FROM ${table} ORDER BY id ASC`),
         catch: migrationUpgradeError,
       })
-      const statements = yield* Effect.try({
-        try: () =>
-          buildSQLiteMigrationBackfillStatements(
-            migrationsTable,
-            prepareSQLiteMigrationBackfill(dbRows, localMigrations),
-          ),
-        catch: migrationUpgradeError,
-      })
+      const statements = buildSQLiteMigrationBackfillStatements(
+        migrationsTable,
+        yield* prepareSQLiteMigrationBackfill(dbRows, localMigrations),
+      )
 
       // drizzle-orm's async transaction takes a Promise-returning callback, so the
       // statements run as one Effect that is bridged into that Promise.
