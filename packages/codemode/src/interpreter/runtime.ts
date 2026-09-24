@@ -1053,25 +1053,33 @@ class Interpreter<R> {
   // Function declarations are hoisted: bound in their scope before the body runs, so a
   // program can call a helper defined further down (matching JavaScript).
   private hoistFunctions(statements: Array<unknown>): Effect.Effect<void, InterpreterRuntimeError> {
-    return Effect.gen({ self: this }, function* () {
-      for (const statementValue of statements) {
-        if (!isAstNode(statementValue) || statementValue.type !== "FunctionDeclaration") continue
-        const name = yield* getString(yield* getNode(statementValue, "id"), "name")
-        yield* this.declare(name, yield* this.createFunction(statementValue), true, statementValue)
-      }
-    })
+    const declarations = statements.filter(
+      (statement): statement is AstNode => isAstNode(statement) && statement.type === "FunctionDeclaration",
+    )
+    if (declarations.length === 0) return Effect.void
+    return Effect.forEach(
+      declarations,
+      (declaration) =>
+        Effect.gen({ self: this }, function* () {
+          const name = yield* getString(yield* getNode(declaration, "id"), "name")
+          return yield* this.declare(name, yield* this.createFunction(declaration), true, declaration)
+        }),
+      { discard: true },
+    )
   }
 
   private evaluateIfStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
-    return Effect.gen({ self: this }, function* () {
-      const testNode = yield* getNode(node, "test")
-      const consequentNode = yield* getNode(node, "consequent")
-      const alternateNode = yield* getOptionalNode(node, "alternate")
-
-      if (yield* this.evaluateExpression(testNode)) return yield* this.evaluateStatement(consequentNode)
-      if (Option.isSome(alternateNode)) return yield* this.evaluateStatement(alternateNode.value)
-      return { kind: "none" } satisfies StatementResult
-    })
+    return Effect.flatMap(getNode(node, "test"), (testNode) =>
+      Effect.flatMap(getNode(node, "consequent"), (consequentNode) =>
+        Effect.flatMap(getOptionalNode(node, "alternate"), (alternateNode) =>
+          Effect.flatMap(this.evaluateExpression(testNode), (test) => {
+            if (test) return this.evaluateStatement(consequentNode)
+            if (Option.isSome(alternateNode)) return this.evaluateStatement(alternateNode.value)
+            return Effect.succeed<StatementResult>({ kind: "none" })
+          }),
+        ),
+      ),
+    )
   }
 
   private evaluateSwitchStatement(node: AstNode): Effect.Effect<StatementResult, unknown, R> {
@@ -2356,23 +2364,25 @@ class Interpreter<R> {
   // Evaluates call arguments left to right; each argument contributes one value, or all the
   // items of a spread argument.
   private evaluateCallArguments(argNodes: Array<unknown>): Effect.Effect<Array<unknown>, unknown, R> {
-    return Effect.map(
-      Effect.forEach(argNodes, (arg, index) =>
-        Effect.gen({ self: this }, function* () {
-          const argNode = yield* asNode(arg, `arguments[${index}]`)
-          if (argNode.type !== "SpreadElement") return [yield* this.evaluateExpression(argNode)]
-          const spread = yield* this.evaluateExpression(yield* getNode(argNode, "argument"))
-          const items = spreadItems(spread)
-          if (items === undefined)
-            return yield* new InterpreterRuntimeError(
-              "Spread arguments require an array, string, Map, or Set in CodeMode.",
-              argNode,
-            )
-          return items
-        }),
-      ),
-      (groups) => groups.flat(),
-    )
+    return Effect.gen({ self: this }, function* () {
+      let args = Chunk.empty<unknown>()
+      for (const [index, arg] of argNodes.entries()) {
+        const argNode = yield* asNode(arg, `arguments[${index}]`)
+        if (argNode.type !== "SpreadElement") {
+          args = Chunk.append(args, yield* this.evaluateExpression(argNode))
+          continue
+        }
+        const spread = yield* this.evaluateExpression(yield* getNode(argNode, "argument"))
+        const items = spreadItems(spread)
+        if (items === undefined)
+          return yield* new InterpreterRuntimeError(
+            "Spread arguments require an array, string, Map, or Set in CodeMode.",
+            argNode,
+          )
+        args = Chunk.appendAll(args, Chunk.fromIterable(items))
+      }
+      return Chunk.toArray(args)
+    })
   }
 
   // Promise.* over ordinary runtime values. Combinators accept ANY array (or spreadable
@@ -3142,22 +3152,27 @@ class Interpreter<R> {
   private evaluateArrayExpression(node: AstNode): Effect.Effect<Array<unknown>, unknown, R> {
     return Effect.gen({ self: this }, function* () {
       const elements = yield* getArray(node, "elements")
-      const groups = yield* Effect.forEach(elements, (elementValue) =>
-        Effect.gen({ self: this }, function* () {
-          if (Predicate.isNull(elementValue)) return [undefined]
-          const element = yield* asNode(elementValue, "elements")
-          if (element.type !== "SpreadElement") return [yield* this.evaluateExpression(element)]
-          const spread = yield* this.evaluateExpression(yield* getNode(element, "argument"))
-          const items = spreadItems(spread)
-          if (items === undefined)
-            return yield* new InterpreterRuntimeError(
-              "Array spread requires an array, string, Map, or Set in CodeMode.",
-              element,
-            )
-          return items
-        }),
-      )
-      return groups.flat()
+      let values = Chunk.empty<unknown>()
+      for (const elementValue of elements) {
+        if (Predicate.isNull(elementValue)) {
+          values = Chunk.append(values, undefined)
+          continue
+        }
+        const element = yield* asNode(elementValue, "elements")
+        if (element.type !== "SpreadElement") {
+          values = Chunk.append(values, yield* this.evaluateExpression(element))
+          continue
+        }
+        const spread = yield* this.evaluateExpression(yield* getNode(element, "argument"))
+        const items = spreadItems(spread)
+        if (items === undefined)
+          return yield* new InterpreterRuntimeError(
+            "Array spread requires an array, string, Map, or Set in CodeMode.",
+            element,
+          )
+        values = Chunk.appendAll(values, Chunk.fromIterable(items))
+      }
+      return Chunk.toArray(values)
     })
   }
 
@@ -3542,21 +3557,21 @@ class Interpreter<R> {
   }
 
   private getIdentifierValue(name: string, node: AstNode): Effect.Effect<unknown, InterpreterRuntimeError> {
-    return Effect.gen({ self: this }, function* () {
+    return Effect.suspend(() => {
       const binding = this.resolveBinding(name)
 
       if (Option.isNone(binding)) {
-        return yield* new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
+        return Effect.fail(new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError"))
       }
 
       // A parameter default that forward-references a later (not-yet-bound) parameter - JS TDZ.
       if (binding.value.initialized === false) {
-        return yield* new InterpreterRuntimeError(`Cannot access '${name}' before initialization.`, node).as(
-          "ReferenceError",
+        return Effect.fail(
+          new InterpreterRuntimeError(`Cannot access '${name}' before initialization.`, node).as("ReferenceError"),
         )
       }
 
-      return binding.value.value
+      return Effect.succeed(binding.value.value)
     })
   }
 
@@ -3565,19 +3580,19 @@ class Interpreter<R> {
     value: unknown,
     node: AstNode,
   ): Effect.Effect<unknown, InterpreterRuntimeError> {
-    return Effect.gen({ self: this }, function* () {
+    return Effect.suspend(() => {
       const binding = this.resolveBinding(name)
 
       if (Option.isNone(binding)) {
-        return yield* new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError")
+        return Effect.fail(new InterpreterRuntimeError(`Unknown identifier '${name}'.`, node).as("ReferenceError"))
       }
 
       if (!binding.value.mutable) {
-        return yield* new InterpreterRuntimeError(`Cannot assign to constant '${name}'.`, node).as("TypeError")
+        return Effect.fail(new InterpreterRuntimeError(`Cannot assign to constant '${name}'.`, node).as("TypeError"))
       }
 
       binding.value.value = value
-      return value
+      return Effect.succeed(value)
     })
   }
 
