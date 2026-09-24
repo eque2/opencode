@@ -16,26 +16,30 @@ import { ConfigV1 } from "../../v1/config/config"
 const defaultServer = "https://opencode.ai/console"
 const clientID = "opencode-cli"
 const methodID = Integration.MethodID.make("device")
-const RemoteResponse = Schema.Struct({ config: ConfigV1.Info })
+const RemoteResponse = Schema.Struct({ config: ConfigV1.Info }).annotate({
+  identifier: "OpencodePlugin.RemoteResponse",
+})
 const Device = Schema.Struct({
   device_code: Schema.String,
   user_code: Schema.String,
   verification_uri_complete: Schema.String,
   expires_in: Schema.Number,
   interval: Schema.Number,
-})
+}).annotate({ identifier: "OpencodePlugin.Device" })
 const Token = Schema.Struct({
   access_token: Schema.String,
   refresh_token: Schema.String,
   expires_in: Schema.Number,
-})
-const TokenPending = Schema.Struct({ error: Schema.String })
+}).annotate({ identifier: "OpencodePlugin.Token" })
+const TokenPending = Schema.Struct({ error: Schema.String }).annotate({ identifier: "OpencodePlugin.TokenPending" })
 const DeviceToken = Schema.Union([Token, TokenPending])
+const UserID = Schema.String.pipe(Schema.brand("OpencodePlugin.UserID"))
+const OrgID = Schema.String.pipe(Schema.brand("OpencodePlugin.OrgID"))
+const User = Schema.Struct({ id: UserID, email: Schema.String }).annotate({ identifier: "OpencodePlugin.User" })
+const Org = Schema.Struct({ id: OrgID, name: Schema.String }).annotate({ identifier: "OpencodePlugin.Org" })
 // The ambient ConfigProvider copies process.env once per process; read a fresh env
 // provider on each reload so a key set at run time still counts.
 const apiKeyFromEnv = Config.option(Config.Redacted("OPENCODE_API_KEY"))
-const User = Schema.Struct({ id: Schema.String, email: Schema.String })
-const Org = Schema.Struct({ id: Schema.String, name: Schema.String })
 
 function oauth(http: HttpClient.HttpClient) {
   return {
