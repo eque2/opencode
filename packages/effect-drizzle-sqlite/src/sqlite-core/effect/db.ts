@@ -261,7 +261,7 @@ export const withReplicas = <
   primary: Q,
   replicas: [Q, ...Q[]],
   getReplica: (replicas: Q[]) => Q = () =>
-    // eslint-disable-next-line effect/no-effect-runsync-unguarded -- drizzle-orm withReplicas getReplica is a synchronous (replicas) => Q callback
+    // eslint-disable-next-line effect/no-effect-runsync-unguarded -- (a) drizzle-orm withReplicas declares getReplica?: (replicas: Q[]) => Q, a synchronous callback, so this default is a sync boundary; runSync runs only the pure Random.nextIntBetween
     Effect.runSync(
       Random.nextIntBetween(0, replicas.length, { halfOpen: true }).pipe(Effect.map((index) => replicas[index])),
     ),
