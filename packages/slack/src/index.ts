@@ -1,6 +1,14 @@
-import { App, type AllMiddlewareArgs, type SlackCommandMiddlewareArgs, type SlackEventMiddlewareArgs } from "@slack/bolt"
+import {
+  App,
+  type AllMiddlewareArgs,
+  type SayFn,
+  type SlackCommandMiddlewareArgs,
+  type SlackEventMiddlewareArgs,
+} from "@slack/bolt"
 import { createOpencode, type Event, type ToolPart } from "@opencode-ai/sdk"
-import { Config, Effect, Option, Redacted, Schema, Stream } from "effect"
+import { Config, Effect, MutableHashMap, Option, Redacted, Schema, Stream } from "effect"
+
+type Session = { client: any; server: any; sessionId: string; channel: string; thread: string }
 
 class SlackBotError extends Schema.TaggedError<SlackBotError>()("SlackBotError", {
   operation: Schema.String,
@@ -52,7 +60,8 @@ const main = Effect.gen(function* () {
   )
   yield* Effect.logInfo("✅ Opencode server ready")
 
-  const sessions = new Map<string, { client: any; server: any; sessionId: string; channel: string; thread: string }>()
+  // Bolt listeners run concurrently and share this mutable map.
+  const sessions = MutableHashMap.empty<string, Session>()
 
   const handleToolUpdate = Effect.fn("Slack.handleToolUpdate")(function* (
     part: ToolPart,
@@ -75,7 +84,7 @@ const main = Effect.gen(function* () {
     const part = event.properties.part
     if (part.type !== "tool") return
     // Find the session for this tool update
-    for (const [_sessionKey, session] of sessions.entries()) {
+    for (const session of MutableHashMap.values(sessions)) {
       if (session.sessionId === part.sessionID) {
         // Tool updates post in the background so that the event stream does not wait on Slack.
         yield* Effect.forkDetach(handleToolUpdate(part, session.channel, session.thread))
@@ -100,6 +109,50 @@ const main = Effect.gen(function* () {
     yield* Effect.promise(() => next())
   })
 
+  const createSession = Effect.fn("Slack.createSession")(function* (
+    sessionKey: string,
+    channel: string,
+    thread: string,
+    say: SayFn,
+  ) {
+    yield* Effect.logInfo("🆕 Creating new opencode session...")
+    const { client, server } = opencode
+
+    const createResult = yield* attempt("session.create", () =>
+      client.session.create({
+        body: { title: `Slack thread ${thread}` },
+      }),
+    )
+
+    if (createResult.error) {
+      yield* Effect.logError("❌ Failed to create session:", createResult.error)
+      yield* attempt("say", () =>
+        say({
+          text: "Sorry, I had trouble creating a session. Please try again.",
+          thread_ts: thread,
+        }),
+      )
+      return Option.none<Session>()
+    }
+
+    yield* Effect.logInfo("✅ Created opencode session:", createResult.data.id)
+
+    const session: Session = { client, server, sessionId: createResult.data.id, channel, thread }
+    MutableHashMap.set(sessions, sessionKey, session)
+
+    const shareResult = yield* attempt("session.share", () =>
+      client.session.share({ path: { id: createResult.data.id } }),
+    )
+    if (!shareResult.error && shareResult.data) {
+      const sessionUrl = shareResult.data.share?.url
+      yield* Effect.logInfo("🔗 Session shared:", sessionUrl)
+      yield* attempt("chat.postMessage", () =>
+        app.client.chat.postMessage({ channel, thread_ts: thread, text: sessionUrl }),
+      )
+    }
+    return Option.some(session)
+  })
+
   const handleMessage = Effect.fn("Slack.handleMessage")(function* ({
     message,
     say,
@@ -117,45 +170,12 @@ const main = Effect.gen(function* () {
     const thread = message.thread_ts || message.ts
     const sessionKey = `${channel}-${thread}`
 
-    let session = sessions.get(sessionKey)
-
-    if (!session) {
-      yield* Effect.logInfo("🆕 Creating new opencode session...")
-      const { client, server } = opencode
-
-      const createResult = yield* attempt("session.create", () =>
-        client.session.create({
-          body: { title: `Slack thread ${thread}` },
-        }),
-      )
-
-      if (createResult.error) {
-        yield* Effect.logError("❌ Failed to create session:", createResult.error)
-        yield* attempt("say", () =>
-          say({
-            text: "Sorry, I had trouble creating a session. Please try again.",
-            thread_ts: thread,
-          }),
-        )
-        return
-      }
-
-      yield* Effect.logInfo("✅ Created opencode session:", createResult.data.id)
-
-      session = { client, server, sessionId: createResult.data.id, channel, thread }
-      sessions.set(sessionKey, session)
-
-      const shareResult = yield* attempt("session.share", () =>
-        client.session.share({ path: { id: createResult.data.id } }),
-      )
-      if (!shareResult.error && shareResult.data) {
-        const sessionUrl = shareResult.data.share?.url
-        yield* Effect.logInfo("🔗 Session shared:", sessionUrl)
-        yield* attempt("chat.postMessage", () =>
-          app.client.chat.postMessage({ channel, thread_ts: thread, text: sessionUrl }),
-        )
-      }
-    }
+    const found = yield* Option.match(MutableHashMap.get(sessions, sessionKey), {
+      onNone: () => createSession(sessionKey, channel, thread, say),
+      onSome: (existing) => Effect.succeed(Option.some(existing)),
+    })
+    if (Option.isNone(found)) return
+    const session = found.value
 
     yield* Effect.logInfo("📝 Sending to opencode:", message.text)
     // session.client is untyped, so the prompt result stays untyped as before.
