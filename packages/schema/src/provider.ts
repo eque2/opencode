@@ -28,14 +28,14 @@ export const AISDK = Schema.Struct({
   type: Schema.Literal("aisdk"),
   package: Schema.String,
   url: Schema.String.pipe(optional),
-  settings: Schema.Record(Schema.String, Schema.Unknown).pipe(optional),
+  settings: Schema.JsonObject.pipe(optional),
 }).annotate({ identifier: "Provider.AISDK" })
 
 export interface Native extends Schema.Schema.Type<typeof Native> {}
 export const Native = Schema.Struct({
   type: Schema.Literal("native"),
   url: Schema.String.pipe(optional),
-  settings: Schema.Record(Schema.String, Schema.Unknown),
+  settings: Schema.JsonObject,
 }).annotate({ identifier: "Provider.Native" })
 
 export const Api = Schema.Union([AISDK, Native])

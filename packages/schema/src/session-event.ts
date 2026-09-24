@@ -315,7 +315,7 @@ export namespace Tool {
     schema: {
       ...ToolBase,
       tool: Schema.String,
-      input: Schema.Record(Schema.String, Schema.Unknown),
+      input: Schema.JsonObject,
       provider: Schema.Struct({
         executed: Schema.Boolean,
         metadata: ProviderMetadata.pipe(optional),
@@ -333,7 +333,7 @@ export namespace Tool {
     ...options,
     schema: {
       ...ToolBase,
-      structured: Schema.Record(Schema.String, Schema.Unknown),
+      structured: Schema.JsonObject,
       content: Schema.Array(ToolContent),
     },
   })
@@ -344,10 +344,10 @@ export namespace Tool {
     ...options,
     schema: {
       ...ToolBase,
-      structured: Schema.Record(Schema.String, Schema.Unknown),
+      structured: Schema.JsonObject,
       content: Schema.Array(ToolContent),
       outputPaths: Schema.Array(Schema.String).pipe(optional),
-      result: Schema.Unknown.pipe(optional),
+      result: Schema.Json.pipe(optional),
       provider: Schema.Struct({
         executed: Schema.Boolean,
         metadata: ProviderMetadata.pipe(optional),
@@ -362,7 +362,7 @@ export namespace Tool {
     schema: {
       ...ToolBase,
       error: UnknownError,
-      result: Schema.Unknown.pipe(optional),
+      result: Schema.Json.pipe(optional),
       provider: Schema.Struct({
         executed: Schema.Boolean,
         metadata: ProviderMetadata.pipe(optional),

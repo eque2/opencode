@@ -3,7 +3,7 @@ export * as LLM from "./llm"
 import { Schema } from "effect"
 import { optional } from "./schema"
 
-export const ProviderMetadata = Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Unknown)).annotate({
+export const ProviderMetadata = Schema.Record(Schema.String, Schema.JsonObject).annotate({
   identifier: "LLM.ProviderMetadata",
 })
 export type ProviderMetadata = Schema.Schema.Type<typeof ProviderMetadata>

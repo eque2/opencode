@@ -35,7 +35,7 @@ export const UnknownError = Schema.Struct({
 
 const Base = {
   id: ID,
-  metadata: Schema.Record(Schema.String, Schema.Unknown).pipe(optional),
+  metadata: Schema.JsonObject.pipe(optional),
   time: Schema.Struct({ created: DateTimeUtcFromMillis }),
 }
 
@@ -99,30 +99,30 @@ export const ToolStatePending = Schema.Struct({
 export interface ToolStateRunning extends Schema.Schema.Type<typeof ToolStateRunning> {}
 export const ToolStateRunning = Schema.Struct({
   status: Schema.Literal("running"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
+  structured: Schema.JsonObject,
   content: ToolContent.pipe(Schema.Array),
 }).annotate({ identifier: "Session.Message.ToolState.Running" })
 
 export interface ToolStateCompleted extends Schema.Schema.Type<typeof ToolStateCompleted> {}
 export const ToolStateCompleted = Schema.Struct({
   status: Schema.Literal("completed"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
   attachments: FileAttachment.pipe(Schema.Array, optional),
   content: ToolContent.pipe(Schema.Array),
   outputPaths: Schema.Array(Schema.String).pipe(optional),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
-  result: Schema.Unknown.pipe(optional),
+  structured: Schema.JsonObject,
+  result: Schema.Json.pipe(optional),
 }).annotate({ identifier: "Session.Message.ToolState.Completed" })
 
 export interface ToolStateError extends Schema.Schema.Type<typeof ToolStateError> {}
 export const ToolStateError = Schema.Struct({
   status: Schema.Literal("error"),
-  input: Schema.Record(Schema.String, Schema.Unknown),
+  input: Schema.JsonObject,
   content: ToolContent.pipe(Schema.Array),
-  structured: Schema.Record(Schema.String, Schema.Unknown),
+  structured: Schema.JsonObject,
   error: UnknownError,
-  result: Schema.Unknown.pipe(optional),
+  result: Schema.Json.pipe(optional),
 }).annotate({ identifier: "Session.Message.ToolState.Error" })
 
 export const ToolState = Schema.Union([ToolStatePending, ToolStateRunning, ToolStateCompleted, ToolStateError]).pipe(
