@@ -19,6 +19,8 @@ export { isRecord }
 export const Json = Schema.fromJsonString(Schema.Unknown)
 export const decodeJson = Schema.decodeUnknownSync(Json)
 export const encodeJson = Schema.encodeSync(Json)
+/** Parse JSON text into a value typed as JSON; JSON.parse output always is one. */
+const decodeJsonValue = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))
 const isJson = Schema.is(Schema.Json)
 export const JsonObject = Schema.JsonObject
 export const optionalArray = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.Array(schema))
@@ -149,7 +151,10 @@ export const wrappedSystemUpdate = Effect.fn("ProviderShared.wrappedSystemUpdate
  * routes: `Invalid JSON input for <route> tool call <name>`.
  */
 export const parseToolInput = (route: string, name: string, raw: string) =>
-  parseJson(route, raw || "{}", `Invalid JSON input for ${route} tool call ${name}`)
+  Effect.try({
+    try: () => decodeJsonValue(raw || "{}"),
+    catch: () => eventError(route, `Invalid JSON input for ${route} tool call ${name}`, raw || "{}"),
+  })
 
 export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const
 export const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"] as const

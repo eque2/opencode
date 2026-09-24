@@ -1,4 +1,4 @@
-import { Option, Schema } from "effect"
+import { Option, Schema, SchemaParser } from "effect"
 import { ToolContent, ToolFileContent, ToolTextContent } from "@opencode-ai/schema/llm"
 import { JsonSchema, MessageRole, ProviderMetadata } from "./ids"
 import { CacheHint, CachePolicy, GenerationOptions, HttpOptions, ModelSchema, ProviderOptions } from "./options"
@@ -116,21 +116,23 @@ const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.U
 const toolResultText = (value: unknown) =>
   typeof value === "string" ? value : Option.getOrElse(encodeJsonText(value), () => String(value))
 
-export const ToolCallPart = Object.assign(
-  Schema.Struct({
-    type: Schema.Literal("tool-call"),
-    id: Schema.String,
-    name: Schema.String,
-    input: Schema.Unknown,
-    providerExecuted: Schema.optional(Schema.Boolean),
-    metadata: Schema.optional(Schema.JsonObject),
-    providerMetadata: Schema.optional(ProviderMetadata),
-  }).annotate({ identifier: "LLM.Content.ToolCall" }),
-  {
-    make: (input: Omit<ToolCallPart, "type">): ToolCallPart => ({ type: "tool-call", ...input }),
-  },
-)
-export type ToolCallPart = Schema.Schema.Type<typeof ToolCallPart>
+const toolCallPartSchema = Schema.Struct({
+  type: Schema.Literal("tool-call"),
+  id: Schema.String,
+  name: Schema.String,
+  input: Schema.Json,
+  providerExecuted: Schema.optional(Schema.Boolean),
+  metadata: Schema.optional(Schema.JsonObject),
+  providerMetadata: Schema.optional(ProviderMetadata),
+}).annotate({ identifier: "LLM.Content.ToolCall" })
+export type ToolCallPart = Schema.Schema.Type<typeof toolCallPartSchema>
+const makeToolCallPart = SchemaParser.make(toolCallPartSchema)
+
+export const ToolCallPart = Object.assign(toolCallPartSchema, {
+  /** Build a tool-call part; the JSON fields accept any value and are validated here. */
+  make: (input: Omit<Schema.Struct.MakeIn<typeof toolCallPartSchema.fields>, "type">): ToolCallPart =>
+    makeToolCallPart({ type: "tool-call", ...input }),
+})
 
 export const ToolResultPart = Object.assign(
   Schema.Struct({
