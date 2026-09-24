@@ -1,7 +1,7 @@
 export * as ConfigProviderPlugin from "./provider"
 
 import { define } from "../../plugin/internal"
-import { Effect } from "effect"
+import { Effect, HashSet } from "effect"
 import { Config } from "../../config"
 import { ModelV2 } from "../../model"
 
@@ -12,7 +12,7 @@ export const Plugin = define({
     yield* ctx.integration.transform(
       Effect.fn(function* (integrations) {
         const files = (yield* config.entries()).filter((entry): entry is Config.Document => entry.type === "document")
-        const configuredIntegrations = new Set(
+        const configuredIntegrations = HashSet.fromIterable(
           files.flatMap((file) =>
             Object.entries(file.info.providers ?? {}).flatMap(([id, provider]) =>
               provider.env === undefined ? [] : [id],
@@ -22,7 +22,7 @@ export const Plugin = define({
         for (const file of files) {
           for (const [id, item] of Object.entries(file.info.providers ?? {})) {
             const integrationID = id
-            if (!configuredIntegrations.has(id) && !integrations.get(integrationID)) continue
+            if (!HashSet.has(configuredIntegrations, id) && !integrations.get(integrationID)) continue
             integrations.update(integrationID, (integration) => {
               integration.name = item.name ?? integration.name
             })

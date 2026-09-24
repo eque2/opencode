@@ -2,7 +2,7 @@ export * as ConfigAgentPlugin from "./agent"
 
 import { define } from "../../plugin/internal"
 import path from "path"
-import { Array, Effect, Option, Schema } from "effect"
+import { Array, Effect, HashSet, Option, Schema } from "effect"
 import { AgentV2 } from "../../agent"
 import { Config } from "../../config"
 import { ConfigAgent } from "../agent"
@@ -31,7 +31,7 @@ type PathAction =
   | typeof ReadTool.name
   | typeof EditTool.name
 const pathActions = ["external_directory", "read", "edit"] as const satisfies readonly PathAction[]
-const agentKeys = new Set([
+const agentKeys = HashSet.make(
   "model",
   "variant",
   "request",
@@ -43,7 +43,7 @@ const agentKeys = new Set([
   "steps",
   "disabled",
   "permissions",
-])
+)
 
 export const Plugin = define({
   id: "config-agent",
@@ -162,7 +162,7 @@ function decode(file: { directory: string; filepath: string; primary: boolean },
         .replace(/^(agent|agents|mode|modes)\//, "")
         .replace(/\.md$/, "")
       const body = markdown.content.trim()
-      const legacy = Object.keys(markdown.data).some((key) => !agentKeys.has(key))
+      const legacy = Object.keys(markdown.data).some((key) => !HashSet.has(agentKeys, key))
       const agent = legacy
         ? Option.map(
             decodeLegacyAgent({ name, ...markdown.data, prompt: body }, { errors: "all" }),

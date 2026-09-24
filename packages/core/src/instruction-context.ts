@@ -43,7 +43,8 @@ const layer = Layer.effectDiscard(
       const fromProject = relative(stop, start)
       const insideProject =
         fromProject === "" || (fromProject !== ".." && !fromProject.startsWith(`..${sep}`) && !isAbsolute(fromProject))
-      const discovered = new Set(
+      // Array.dedupe keeps the first occurrence, like the insertion order of a Set.
+      const discovered = Array.dedupe(
         yield* Effect.forEach(
           Flag.OPENCODE_DISABLE_PROJECT_CONFIG || !insideProject
             ? []
@@ -68,7 +69,7 @@ const layer = Layer.effectDiscard(
             ),
         { concurrency: "unbounded" },
       )
-      if (files.some((file, index) => file === undefined && discovered.has(paths[index])))
+      if (files.some((file, index) => file === undefined && discovered.includes(paths[index])))
         return SystemContext.unavailable
       return files.filter((file): file is File => file !== undefined)
     })

@@ -1,6 +1,6 @@
 export * as ConfigAgentV1 from "./agent"
 
-import { Schema, SchemaGetter } from "effect"
+import { HashSet, Schema, SchemaGetter } from "effect"
 import { PositiveInt } from "../../schema"
 import { ConfigPermissionV1 } from "./permission"
 
@@ -40,7 +40,7 @@ const AgentSchema = Schema.StructWithRest(
   [Schema.Record(Schema.String, Schema.Any)],
 )
 
-const KNOWN_KEYS = new Set([
+const KNOWN_KEYS = HashSet.make(
   "name",
   "model",
   "variant",
@@ -57,12 +57,12 @@ const KNOWN_KEYS = new Set([
   "permission",
   "disable",
   "tools",
-])
+)
 
 const normalize = (agent: Schema.Schema.Type<typeof AgentSchema>): Schema.Schema.Type<typeof AgentSchema> => {
   const options: Record<string, unknown> = { ...agent.options }
   for (const [key, value] of Object.entries(agent)) {
-    if (!KNOWN_KEYS.has(key)) options[key] = value
+    if (!HashSet.has(KNOWN_KEYS, key)) options[key] = value
   }
 
   const permission: ConfigPermissionV1.Info = {}

@@ -1,5 +1,6 @@
 export * as ConfigMigrateV1 from "./migrate"
 
+import { HashSet } from "effect"
 import { ConfigV1 } from "./config"
 import { ConfigAgentV1 } from "./agent"
 import { ConfigMCPV1 } from "./mcp"
@@ -7,7 +8,7 @@ import { ConfigPermissionV1 } from "./permission"
 import { ConfigProviderV1 } from "./provider"
 import { ConfigProviderOptionsV1 } from "./provider-options"
 
-const keys = new Set([
+const keys = HashSet.make(
   "logLevel",
   "server",
   "command",
@@ -25,11 +26,11 @@ const keys = new Set([
   "tools",
   "attachment",
   "layout",
-])
+)
 
 export function isV1(input: unknown) {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return false
-  return Object.keys(input).some((key) => keys.has(key))
+  return Object.keys(input).some((key) => HashSet.has(keys, key))
 }
 
 export function migrate(info: typeof ConfigV1.Info.Type) {

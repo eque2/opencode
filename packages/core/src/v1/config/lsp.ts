@@ -1,6 +1,6 @@
 export * as ConfigLSPV1 from "./lsp"
 
-import { Schema } from "effect"
+import { HashSet, Schema } from "effect"
 
 export const Disabled = Schema.Struct({
   disabled: Schema.Literal(true),
@@ -64,10 +64,10 @@ export const requiresExtensionsForCustomServers = Schema.makeFilter<
   boolean | Record<string, Schema.Schema.Type<typeof Entry>>
 >((data) => {
   if (typeof data === "boolean") return undefined
-  const ids = new Set(builtinServerIds)
+  const ids = HashSet.fromIterable(builtinServerIds)
   const ok = Object.entries(data).every(([id, config]) => {
     if ("disabled" in config && config.disabled) return true
-    if (ids.has(id)) return true
+    if (HashSet.has(ids, id)) return true
     return "extensions" in config && Boolean(config.extensions)
   })
   return ok ? undefined : "For custom LSP servers, 'extensions' array is required."
