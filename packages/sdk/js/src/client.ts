@@ -1,6 +1,7 @@
 export * from "./gen/types.gen.js"
 
 import { createClient } from "./gen/client/client.gen.js"
+import { mergeHeaders } from "./gen/client/index.js"
 import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 import { wrapClientError } from "./error-interceptor.js"
@@ -44,10 +45,9 @@ export function createOpencodeClient(config?: Config & { directory?: string }) {
   }
 
   if (config?.directory) {
-    config.headers = {
-      ...config.headers,
+    config.headers = mergeHeaders(config.headers, {
       "x-opencode-directory": encodeURIComponent(config.directory),
-    }
+    })
   }
 
   const client = createClient(config)
