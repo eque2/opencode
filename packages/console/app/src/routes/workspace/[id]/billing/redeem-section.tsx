@@ -8,7 +8,7 @@ import { CouponType } from "@opencode-ai/console-core/schema/billing.sql.js"
 import styles from "./redeem-section.module.css"
 import { queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
 import { formText } from "~/lib/form-data"
 
 const redeem = action(async (form: FormData) => {
@@ -26,7 +26,7 @@ const redeem = action(async (form: FormData) => {
       if (!email) return { error: "No email on account." }
       return Billing.redeemCoupon(email, code as (typeof CouponType)[number])
         .then(() => ({ error: undefined, data: true }))
-        .catch((e) => ({ error: e.message as string }))
+        .catch((e: unknown) => ({ error: errorMessage(e) }))
     }, workspaceID),
     { revalidate: queryBillingInfo.key },
   )

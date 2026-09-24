@@ -53,6 +53,10 @@ const map = {
   "Payment failed.": "workspace.reload.error.paymentFailed",
 } as const satisfies Record<string, Key>
 
+export function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function formErrorReloadAmountMin(amount: number) {
   return `error.reloadAmountMin:${amount}`
 }

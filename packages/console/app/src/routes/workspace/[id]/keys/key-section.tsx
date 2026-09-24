@@ -7,7 +7,7 @@ import { createStore } from "solid-js/store"
 import styles from "./key-section.module.css"
 import { Actor } from "@opencode-ai/console-core/actor.js"
 import { useI18n } from "~/context/i18n"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
 import { formText } from "~/lib/form-data"
 
 const removeKey = action(async (form: FormData) => {
@@ -33,7 +33,7 @@ const createKey = action(async (form: FormData) => {
           name,
         })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: listKeys.key },

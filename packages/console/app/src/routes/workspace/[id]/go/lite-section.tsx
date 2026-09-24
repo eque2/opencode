@@ -19,7 +19,7 @@ import { queryBillingInfo } from "../../common"
 import styles from "./lite-section.module.css"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
-import { formError } from "~/lib/form-error"
+import { formError, errorMessage } from "~/lib/form-error"
 import { formatResetTime, liteResetTimeKeys } from "~/lib/format-reset-time"
 import { createReferralFromCookie } from "~/lib/referral-invite"
 import { getRequestEvent } from "solid-js/web"
@@ -225,8 +225,8 @@ const createLiteCheckoutUrl = action(
         const data = await Billing.generateLiteCheckoutUrl({ successUrl, cancelUrl, method })
         await createReferralFromCookie()
         return { error: undefined, data }
-      }, workspaceID).catch((e) => ({
-        error: e.message as string,
+      }, workspaceID).catch((e: unknown) => ({
+        error: errorMessage(e),
         data: undefined,
       })),
       { revalidate: [queryBillingInfo.key, queryLiteSubscription.key] },
@@ -242,8 +242,8 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
       () =>
         Billing.generateSessionUrl({ returnUrl })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({
-            error: e.message as string,
+          .catch((e: unknown) => ({
+            error: errorMessage(e),
             data: undefined,
           })),
       workspaceID,
@@ -269,7 +269,7 @@ const setLiteUseBalance = action(async (form: FormData) => {
           .where(eq(BillingTable.workspaceID, workspaceID)),
       )
       return { error: undefined }
-    }, workspaceID).catch((e) => ({ error: e.message as string })),
+    }, workspaceID).catch((e: unknown) => ({ error: errorMessage(e) })),
     { revalidate: [queryBillingInfo.key, queryLiteSubscription.key] },
   )
 }, "setLiteUseBalance")
@@ -285,7 +285,7 @@ const setGoProviderRouting = action(async (form: FormData) => {
       () =>
         Workspace.update({ region: useChinaProviders ? ["us", "eu", "sg"] : ["us", "eu", "sg", "cn"] })
           .then(() => ({ error: undefined }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: queryLiteSubscription.key },
@@ -303,7 +303,7 @@ const setGoAllowTraining = action(async (form: FormData) => {
       () =>
         Workspace.update({ allow_training: allowTraining })
           .then(() => ({ error: undefined }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: queryLiteSubscription.key },

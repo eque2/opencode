@@ -5,7 +5,7 @@ import { withActor } from "~/context/auth.withActor"
 import { createStore } from "solid-js/store"
 import styles from "./provider-section.module.css"
 import { useI18n } from "~/context/i18n"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
 import { formText } from "~/lib/form-data"
 
 const PROVIDERS = [
@@ -44,7 +44,7 @@ const saveProvider = action(async (form: FormData) => {
       () =>
         Provider.create({ provider, credentials })
           .then(() => ({ error: undefined }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: listProviders.key },

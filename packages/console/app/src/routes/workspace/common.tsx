@@ -7,6 +7,7 @@ import { and, Database, desc, eq, isNull } from "@opencode-ai/console-core/drizz
 import { WorkspaceTable } from "@opencode-ai/console-core/schema/workspace.sql.js"
 import { UserTable } from "@opencode-ai/console-core/schema/user.sql.js"
 import { checkCheckoutRateLimit } from "~/routes/zen/util/redis"
+import { errorMessage } from "~/lib/form-error"
 
 export function formatDateForTable(date: Date) {
   const options: Intl.DateTimeFormatOptions = {
@@ -82,8 +83,8 @@ export const createCheckoutUrl = action(
           checkCheckoutRateLimit(Actor.account())
             .then(() => Billing.generateCheckoutUrl({ amount, successUrl, cancelUrl }))
             .then((data) => ({ error: undefined, data }))
-            .catch((e) => ({
-              error: e.message as string,
+            .catch((e: unknown) => ({
+              error: errorMessage(e),
               data: undefined,
             })),
         workspaceID,

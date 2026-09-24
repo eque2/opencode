@@ -7,7 +7,7 @@ import { IconAlipay, IconCreditCard, IconStripe, IconUpi, IconWechat } from "~/c
 import styles from "./billing-section.module.css"
 import { createCheckoutUrl, formatBalance, queryBillingInfo } from "../../common"
 import { useI18n } from "~/context/i18n"
-import { localizeError } from "~/lib/form-error"
+import { localizeError, errorMessage } from "~/lib/form-error"
 
 const createSessionUrl = action(async (workspaceID: string, returnUrl: string) => {
   "use server"
@@ -16,8 +16,8 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
       () =>
         Billing.generateSessionUrl({ returnUrl })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({
-            error: e.message as string,
+          .catch((e: unknown) => ({
+            error: errorMessage(e),
             data: undefined,
           })),
       workspaceID,

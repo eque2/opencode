@@ -12,7 +12,7 @@ import { queryBillingInfo } from "../../common"
 import styles from "./black-section.module.css"
 import waitlistStyles from "./black-waitlist-section.module.css"
 import { useI18n } from "~/context/i18n"
-import { formError } from "~/lib/form-error"
+import { formError, errorMessage } from "~/lib/form-error"
 import { blackResetTimeKeys, formatResetTime } from "~/lib/format-reset-time"
 import { formText } from "~/lib/form-data"
 
@@ -69,7 +69,7 @@ const cancelWaitlist = action(async (workspaceID: string) => {
           .where(eq(BillingTable.workspaceID, workspaceID)),
       )
       return { error: undefined }
-    }, workspaceID).catch((e) => ({ error: e.message as string })),
+    }, workspaceID).catch((e: unknown) => ({ error: errorMessage(e) })),
     { revalidate: [queryBillingInfo.key, querySubscription.key] },
   )
 }, "cancelWaitlist")
@@ -80,7 +80,7 @@ const enroll = action(async (workspaceID: string) => {
     await withActor(async () => {
       await Billing.subscribeBlack({ seats: 1 })
       return { error: undefined }
-    }, workspaceID).catch((e) => ({ error: e.message as string })),
+    }, workspaceID).catch((e: unknown) => ({ error: errorMessage(e) })),
     { revalidate: [queryBillingInfo.key, querySubscription.key] },
   )
 }, "enroll")
@@ -92,8 +92,8 @@ const createSessionUrl = action(async (workspaceID: string, returnUrl: string) =
       () =>
         Billing.generateSessionUrl({ returnUrl })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({
-            error: e.message as string,
+          .catch((e: unknown) => ({
+            error: errorMessage(e),
             data: undefined,
           })),
       workspaceID,
@@ -121,7 +121,7 @@ const setUseBalance = action(async (form: FormData) => {
           .where(eq(BillingTable.workspaceID, workspaceID)),
       )
       return { error: undefined }
-    }, workspaceID).catch((e) => ({ error: e.message as string })),
+    }, workspaceID).catch((e: unknown) => ({ error: errorMessage(e) })),
     { revalidate: [queryBillingInfo.key, querySubscription.key] },
   )
 }, "setUseBalance")

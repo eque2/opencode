@@ -9,7 +9,7 @@ import { User } from "@opencode-ai/console-core/user.js"
 import { RoleDropdown } from "./role-dropdown"
 import { useI18n } from "~/context/i18n"
 import { useLanguage } from "~/context/language"
-import { formError, localizeError } from "~/lib/form-error"
+import { formError, localizeError, errorMessage } from "~/lib/form-error"
 import { formText } from "~/lib/form-data"
 
 const listMembers = query(async (workspaceID: string) => {
@@ -39,7 +39,7 @@ const inviteMember = action(async (form: FormData) => {
       () =>
         User.invite({ email, role, monthlyLimit })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: listMembers.key },
@@ -57,7 +57,7 @@ const removeMember = action(async (form: FormData) => {
       () =>
         User.remove(id)
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: listMembers.key },
@@ -82,7 +82,7 @@ const updateMember = action(async (form: FormData) => {
       () =>
         User.update({ id, role, monthlyLimit })
           .then((data) => ({ error: undefined, data }))
-          .catch((e) => ({ error: e.message as string })),
+          .catch((e: unknown) => ({ error: errorMessage(e) })),
       workspaceID,
     ),
     { revalidate: listMembers.key },
