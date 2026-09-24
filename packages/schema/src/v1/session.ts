@@ -111,7 +111,7 @@ export const TextPart = Schema.Struct({
       end: Schema.optional(NonNegativeInt),
     }),
   ),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "TextPart" })
 export type TextPart = Types.DeepMutable<Schema.Schema.Type<typeof TextPart>>
 
@@ -119,7 +119,7 @@ export const ReasoningPart = Schema.Struct({
   ...partBase,
   type: Schema.Literal("reasoning"),
   text: Schema.String,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
   time: Schema.Struct({
     start: NonNegativeInt,
     end: Schema.optional(NonNegativeInt),
@@ -318,7 +318,7 @@ export const ToolPart = Schema.Struct({
   callID: Schema.String,
   tool: Schema.String,
   state: ToolState,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Any)),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
 }).annotate({ identifier: "ToolPart" })
 export type ToolPart = Omit<Types.DeepMutable<Schema.Schema.Type<typeof ToolPart>>, "state"> & {
   state: ToolState
