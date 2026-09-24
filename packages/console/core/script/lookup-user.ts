@@ -250,20 +250,20 @@ async function printWorkspace(workspaceID: string) {
         .orderBy(sql`DATE(${UsageTable.timeCreated}) DESC`)
         .then((rows) => {
           const totalCost = rows.reduce((sum, r) => sum + Number(r.cost), 0)
-          const mapped = rows.map((row) => ({
+          const mapped: { [K in keyof (typeof rows)[number]]: string | null }[] = rows.map((row) => ({
             ...row,
             cost: `$${(Number(row.cost) / 100000000).toFixed(2)}`,
           }))
           if (mapped.length > 0) {
             mapped.push({
               date: "TOTAL",
-              requests: null as any,
-              inputTokens: null as any,
-              outputTokens: null as any,
-              reasoningTokens: null as any,
-              cacheReadTokens: null as any,
-              cacheWrite5mTokens: null as any,
-              cacheWrite1hTokens: null as any,
+              requests: null,
+              inputTokens: null,
+              outputTokens: null,
+              reasoningTokens: null,
+              cacheReadTokens: null,
+              cacheWrite5mTokens: null,
+              cacheWrite1hTokens: null,
               cost: `$${(totalCost / 100000000).toFixed(2)}`,
             })
           }

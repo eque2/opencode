@@ -3,8 +3,8 @@ import { BillingTable, BlackPlans } from "../src/schema/billing.sql.js"
 import { UserTable } from "../src/schema/user.sql.js"
 import { AuthTable } from "../src/schema/auth.sql.js"
 
-const plan = process.argv[2] as (typeof BlackPlans)[number]
-if (!BlackPlans.includes(plan)) {
+const plan = BlackPlans.find((value) => value === process.argv[2])
+if (!plan) {
   console.error("Usage: bun foo.ts <count>")
   process.exit(1)
 }
