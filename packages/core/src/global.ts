@@ -1,8 +1,8 @@
 import path from "path"
-import fs from "fs/promises"
 import { xdgData, xdgCache, xdgConfig, xdgState } from "xdg-basedir"
 import os from "os"
-import { Context, Effect, Layer } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Context, Effect, FileSystem, Layer } from "effect"
 import { Flock } from "./util/flock"
 import { Flag } from "./flag/flag"
 import { makeGlobalNode } from "./effect/app-node"
@@ -32,15 +32,17 @@ export const Path = paths
 
 Flock.setGlobal({ state })
 
-await Promise.all([
-  fs.mkdir(Path.data, { recursive: true }),
-  fs.mkdir(Path.config, { recursive: true }),
-  fs.mkdir(Path.state, { recursive: true }),
-  fs.mkdir(Path.tmp, { recursive: true }),
-  fs.mkdir(Path.log, { recursive: true }),
-  fs.mkdir(Path.bin, { recursive: true }),
-  fs.mkdir(Path.repos, { recursive: true }),
-])
+const ensureDirectories = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
+  yield* Effect.forEach(
+    [Path.data, Path.config, Path.state, Path.tmp, Path.log, Path.bin, Path.repos],
+    (dir) => fs.makeDirectory(dir, { recursive: true }),
+    { concurrency: "unbounded", discard: true },
+  )
+})
+
+// eslint-disable-next-line effect/no-async-await-use-effect -- ES module top-level await: importers use the Global.Path directories synchronously at import (logs, bin, state), so module evaluation must wait until they exist
+await Effect.runPromise(ensureDirectories.pipe(Effect.provide(NodeFileSystem.layer)))
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Global") {}
 
