@@ -49,24 +49,23 @@ export function sanitize(pkg: string) {
   return Array.from(pkg, (char) => (HashSet.has(illegal, char) || char.charCodeAt(0) < 32 ? "_" : char)).join("")
 }
 
-const resolveEntryPoint = (name: string, dir: string): EntryPoint => {
-  let entrypoint: string | undefined
-  try {
-    // Node only honors the parent argument behind --experimental-import-meta-resolve, and
-    // import() of the bare package directory fails with ERR_UNSUPPORTED_DIR_IMPORT. require
-    // resolution picks the "require"/"default" export target, which import() loads fine.
-    entrypoint =
-      typeof Bun !== "undefined"
-        ? import.meta.resolve(name, dir)
-        : pathToFileURL(createRequire(path.join(dir, "package.json")).resolve(name)).href
-  } catch {
-    entrypoint = undefined
-  }
-  return {
-    directory: dir,
-    entrypoint,
-  }
-}
+// Node only honors the parent argument behind --experimental-import-meta-resolve, and
+// import() of the bare package directory fails with ERR_UNSUPPORTED_DIR_IMPORT. require
+// resolution picks the "require"/"default" export target, which import() loads fine.
+// Both resolvers throw when the package cannot be resolved, which gives None.
+const resolveEntrypoint = Option.liftThrowable((name: string, dir: string) =>
+  typeof Bun !== "undefined"
+    ? import.meta.resolve(name, dir)
+    : pathToFileURL(createRequire(path.join(dir, "package.json")).resolve(name)).href,
+)
+
+const resolveEntryPoint = (name: string, dir: string): EntryPoint => ({
+  directory: dir,
+  entrypoint: Option.getOrUndefined(resolveEntrypoint(name, dir)),
+})
+
+// npm-package-arg throws for a spec it cannot parse, which gives None.
+const parsePackageSpec = Option.liftThrowable(npa)
 
 interface ArboristNode {
   name: string
@@ -122,13 +121,10 @@ const layer = Layer.effect(
 
     const add = Effect.fn("Npm.add")(function* (pkg: string) {
       const dir = directory(pkg)
-      const name = (() => {
-        try {
-          return npa(pkg).name ?? pkg
-        } catch {
-          return pkg
-        }
-      })()
+      const name = parsePackageSpec(pkg).pipe(
+        Option.flatMapNullishOr((spec) => spec.name),
+        Option.getOrElse(() => pkg),
+      )
 
       if (yield* afs.existsSafe(path.join(dir, "node_modules", name))) {
         return resolveEntryPoint(name, path.join(dir, "node_modules", name))
