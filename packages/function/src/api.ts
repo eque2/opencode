@@ -137,6 +137,7 @@ export class SyncServer extends DurableObject<Env> {
         for (const client of clients) {
           client.send(frame)
         }
+        return undefined
       }),
     )
   }
