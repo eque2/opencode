@@ -1,7 +1,7 @@
-import { Effect } from "effect"
+import { Array, Effect, Option } from "effect"
 import { AbsolutePath } from "../schema"
 import { Git } from "../git"
-import { DirectoryUnavailableError, StrategyID, type ListEntry, type Strategy } from "./copy"
+import { DirectoryUnavailableError, StrategyID, type Strategy } from "./copy"
 
 export function makeGitWorktreeStrategy(input: {
   git: Git.Interface
@@ -18,18 +18,19 @@ export function makeGitWorktreeStrategy(input: {
     remove: Effect.fn("ProjectCopy.GitWorktree.remove")(function* (options) {
       const found = yield* input.git.repo.discover(options.directory)
       if (!found) return yield* new DirectoryUnavailableError({ directory: options.directory })
-      yield* input.git.worktree.remove({ repository: found, directory: options.directory, force: options.force })
+      return yield* input.git.worktree.remove({ repository: found, directory: options.directory, force: options.force })
     }),
     list: Effect.fn("ProjectCopy.GitWorktree.list")(function* (directory) {
       const found = yield* input.git.repo.discover(directory)
       if (!found) return yield* new DirectoryUnavailableError({ directory })
       const entries = yield* input.git.worktree.list(found)
+      // A worktree whose directory is gone is left out of the listing.
       return yield* Effect.forEach(entries, (entry) =>
         input.canonical(entry.directory).pipe(
-          Effect.map((directory) => ({ directory, type: entry.kind === "main" ? "root" : "copy" }) as const),
-          Effect.catchTag("ProjectCopy.DirectoryUnavailableError", () => Effect.succeed(undefined)),
+          Effect.map((directory) => Option.some({ directory, type: entry.kind === "main" ? "root" : "copy" } as const)),
+          Effect.catchTag("ProjectCopy.DirectoryUnavailableError", () => Effect.succeedNone),
         ),
-      ).pipe(Effect.map((items) => items.filter((item): item is ListEntry => item !== undefined)))
+      ).pipe(Effect.map(Array.getSomes))
     }),
   } satisfies Strategy
 }

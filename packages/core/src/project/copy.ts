@@ -148,7 +148,9 @@ const layer = Layer.effect(
 
     const register = Effect.fn("ProjectCopy.register")(function* (strategy: Strategy) {
       if (MutableHashMap.has(registry, strategy.id)) return yield* new DuplicateStrategyError({ strategy: strategy.id })
-      MutableHashMap.set(registry, strategy.id, strategy)
+      return yield* Effect.sync(() => {
+        MutableHashMap.set(registry, strategy.id, strategy)
+      })
     })
 
     // Register default strategies
@@ -206,7 +208,7 @@ const layer = Layer.effect(
         directory: copyDirectory,
         force: input.force,
       })
-      yield* changed(
+      return yield* changed(
         input.projectID,
         yield* directories.remove({ projectID: input.projectID, directory: copyDirectory }),
       )
@@ -231,7 +233,7 @@ const layer = Layer.effect(
               Effect.map((items) =>
                 items.map((item) => ({
                   directory: item.directory,
-                  strategy: item.type === "copy" ? strategy.id : undefined,
+                  ...(item.type === "copy" ? { strategy: strategy.id } : {}),
                 })),
               ),
             ),
@@ -241,7 +243,9 @@ const layer = Layer.effect(
         // One entry per directory: the first listing fixes the position, the last listing wins.
         Effect.map((sets) =>
           Array.from(
-            MutableHashMap.values(MutableHashMap.fromIterable(sets.flat(2).map((item) => [item.directory, item] as const))),
+            MutableHashMap.values(
+              MutableHashMap.fromIterable(sets.flat(2).map((item) => [item.directory, item] as const)),
+            ),
           ),
         ),
       )
