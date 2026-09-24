@@ -529,6 +529,16 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
       "  _TError = unknown,",
     ),
   },
+
+  // typescript/no-floating-promises
+  {
+    // The surrounding try/catch catches only a synchronous throw; the
+    // rejection of the returned promise needs its own handler.
+    file: "core/serverSentEvents.gen.ts",
+    rule: "typescript/no-floating-promises",
+    search: "            reader.cancel()\n",
+    replace: "            reader.cancel().catch(() => undefined)\n",
+  },
 ]
 
 /**
