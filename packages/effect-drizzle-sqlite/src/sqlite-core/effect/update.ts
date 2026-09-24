@@ -15,15 +15,15 @@ import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import { SQLiteViewBase } from "drizzle-orm/sqlite-core/view-base"
 import { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, type UpdateSet, type ValueOrArray } from "drizzle-orm/utils"
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
 import {
-  getTableColumnsRuntime,
-  getTableLikeName,
-  getViewSelectedFieldsRuntime,
-  mapUpdateSet,
-  orderSelectedFields,
-} from "../../internal/drizzle-utils"
+  type DrizzleTypeError,
+  getTableColumns,
+  getViewSelectedFields,
+  type UpdateSet,
+  type ValueOrArray,
+} from "drizzle-orm/utils"
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
+import { getTableLikeName, mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
 import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
@@ -162,9 +162,9 @@ export type SQLiteEffectUpdateJoinFn<T extends AnySQLiteEffectUpdate> = <
 function joinedTableFields(
   table: SQLiteTable | Subquery | SQLiteViewBase | SQL,
 ): Option.Option<Record<string, unknown>> {
-  if (is(table, SQLiteTable)) return Option.some(getTableColumnsRuntime(table))
+  if (is(table, SQLiteTable)) return Option.some(getTableColumns(table))
   if (is(table, Subquery)) return Option.some(table._.selectedFields)
-  if (is(table, SQLiteViewBase)) return Option.some(getViewSelectedFieldsRuntime(table).selectedFields)
+  if (is(table, SQLiteViewBase)) return Option.some(getViewSelectedFields(table))
   return Option.none()
 }
 
@@ -315,7 +315,7 @@ export class SQLiteEffectUpdateBase<
     if (typeof columns[0] === "function") {
       const orderBy = columns[0](
         new Proxy(
-          getTableColumnsRuntime(this.config.table),
+          getTableColumns(this.config.table),
           new SelectionProxyHandler({ sqlAliasedBehavior: "alias", sqlBehavior: "sql" }),
         ) as any,
       )
@@ -338,7 +338,7 @@ export class SQLiteEffectUpdateBase<
     fields: TSelectedFields,
   ): SQLiteEffectUpdateReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFields = getTableColumnsRuntime(this.config.table),
+    fields: SelectedFields = getTableColumns(this.config.table),
   ): SQLiteEffectUpdateWithout<AnySQLiteEffectUpdate, TDynamic, "returning"> {
     this.config.returning = orderSelectedFields(fields)
     return this as any

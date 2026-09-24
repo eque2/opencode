@@ -13,9 +13,9 @@ import type { PreparedQueryConfig } from "drizzle-orm/sqlite-core/session"
 import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import type { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, type ValueOrArray } from "drizzle-orm/utils"
+import { type DrizzleTypeError, getTableColumns, type ValueOrArray } from "drizzle-orm/utils"
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core/columns/common"
-import { getTableColumnsRuntime, orderSelectedFields } from "../../internal/drizzle-utils"
+import { orderSelectedFields } from "../../internal/drizzle-utils"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
 export type SQLiteEffectDeleteWithout<
@@ -168,7 +168,7 @@ export class SQLiteEffectDeleteBase<
     if (typeof columns[0] === "function") {
       const orderBy = columns[0](
         new Proxy(
-          getTableColumnsRuntime(this.config.table),
+          getTableColumns(this.config.table),
           new SelectionProxyHandler({ sqlAliasedBehavior: "alias", sqlBehavior: "sql" }),
         ) as any,
       )
@@ -191,7 +191,7 @@ export class SQLiteEffectDeleteBase<
     fields: TSelectedFields,
   ): SQLiteEffectDeleteReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFieldsFlat = getTableColumnsRuntime(this.table),
+    fields: SelectedFieldsFlat = getTableColumns(this.table),
   ): SQLiteEffectDeleteReturning<this, TDynamic, any> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
     this.config.returning = orderSelectedFields(fields)
     return this as any

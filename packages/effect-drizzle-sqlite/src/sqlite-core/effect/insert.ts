@@ -18,10 +18,10 @@ import type { PreparedQueryConfig } from "drizzle-orm/sqlite-core/session"
 import { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import { extractUsedTable } from "drizzle-orm/sqlite-core/utils"
 import type { Subquery } from "drizzle-orm/subquery"
-import { type DrizzleTypeError, haveSameKeys } from "drizzle-orm/utils"
+import { type DrizzleTypeError, getTableColumns, haveSameKeys } from "drizzle-orm/utils"
 import { QueryBuilder } from "drizzle-orm/sqlite-core/query-builders/query-builder"
 import type { SQLiteUpdateSetSource } from "drizzle-orm/sqlite-core/query-builders/update"
-import { getTableColumnsRuntime, mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
+import { mapUpdateSet, orderSelectedFields } from "../../internal/drizzle-utils"
 import { EffectDrizzleBuilderError } from "../../internal/errors"
 import type { SQLiteEffectPreparedQuery, SQLiteEffectSession } from "./session"
 
@@ -155,9 +155,8 @@ export class SQLiteEffectInsertBuilder<
     }
     const mappedValues = values.map((entry) => {
       const result: Record<string, Param | SQL> = {}
-      const cols = getTableColumnsRuntime(this.table)
-      for (const colKey of Object.keys(entry)) {
-        const colValue = entry[colKey as keyof typeof entry]
+      const cols = getTableColumns(this.table)
+      for (const [colKey, colValue] of Object.entries(entry)) {
         result[colKey] = is(colValue, SQL) ? colValue : new Param(colValue, cols[colKey])
       }
       return result
@@ -184,7 +183,7 @@ export class SQLiteEffectInsertBuilder<
   ): SQLiteEffectInsertBase<TTable, TRunResult, undefined, false, never, TEffectHKT> {
     const select = typeof selectQuery === "function" ? selectQuery(new QueryBuilder()) : selectQuery
 
-    if (!is(select, SQL) && !haveSameKeys(getTableColumnsRuntime(this.table), select._.selectedFields)) {
+    if (!is(select, SQL) && !haveSameKeys(getTableColumns(this.table), select._.selectedFields)) {
       // eslint-disable-next-line effect/no-throw-use-effect -- drizzle-orm builder API (select()) returns synchronously; its contract throws at build time
       throw new EffectDrizzleBuilderError({
         message:
@@ -245,7 +244,7 @@ export class SQLiteEffectInsertBase<
     fields: TSelectedFields,
   ): SQLiteEffectInsertReturning<this, TDynamic, TSelectedFields>
   returning(
-    fields: SelectedFieldsFlat = getTableColumnsRuntime(this.config.table),
+    fields: SelectedFieldsFlat = getTableColumns(this.config.table),
   ): SQLiteEffectInsertWithout<AnySQLiteEffectInsert, TDynamic, "returning"> {
     this.config.returning = orderSelectedFields(fields)
     return this as any
@@ -280,10 +279,7 @@ export class SQLiteEffectInsertBase<
     const targetWhereSql = config.targetWhere ? sql` where ${config.targetWhere}` : sql``
     const setWhereSql = config.setWhere ? sql` where ${config.setWhere}` : sql``
     const targetSql = Array.isArray(config.target) ? sql`${config.target}` : sql`${[config.target]}`
-    const setSql = this.effectDialect.buildUpdateSet(
-      this.config.table,
-      mapUpdateSet(this.config.table, config.set as SQLiteUpdateSetSource<TTable>),
-    )
+    const setSql = this.effectDialect.buildUpdateSet(this.config.table, mapUpdateSet(this.config.table, config.set))
     this.config.onConflict.push(
       sql` on conflict ${targetSql}${targetWhereSql} do update set ${setSql}${whereSql}${setWhereSql}`,
     )
