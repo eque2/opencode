@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, HashMap, Layer, Option, Ref, Result, Schema, Semaphore } from "effect"
+import { Context, DateTime, Effect, FileSystem, HashMap, Layer, Option, Ref, Result, Schema, Semaphore } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
@@ -65,9 +65,10 @@ const buildCassette = (
   name: string,
   interactions: ReadonlyArray<Interaction>,
   metadata: CassetteMetadata | undefined,
+  recordedAt: string,
 ): Cassette => ({
   version: 1,
-  metadata: { name, recordedAt: new Date().toISOString(), ...metadata },
+  metadata: { name, recordedAt, ...metadata },
   interactions,
 })
 
@@ -130,7 +131,7 @@ export const fileSystem = (
               }))
               const interactions = [...entry.interactions, interaction]
               const interactionFindings = [...entry.findings, ...secretFindings(interaction)]
-              const cassette = buildCassette(name, interactions, metadata)
+              const cassette = buildCassette(name, interactions, metadata, DateTime.formatIso(yield* DateTime.now))
               const findings = [...interactionFindings, ...secretFindings(cassette.metadata ?? {})]
               yield* failIfUnsafe(name, findings)
               const target = yield* pathFor(name)
