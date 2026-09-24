@@ -1,4 +1,4 @@
-import { Brand, Context, Effect, Layer, Result, Schema } from "effect"
+import { Array, Brand, Context, Effect, Layer, MutableHashMap, MutableHashSet, Option, Result, Schema } from "effect"
 
 type AnyNode = Node<unknown, unknown, any>
 type RuntimeLayer = Layer.Layer<never, unknown, unknown>
@@ -185,7 +185,7 @@ function failedNode(error: GraphError): Node<never> {
 type Visit<Out> = (node: AnyNode, context: VisitContext<Out>) => Result.Result<Out, GraphError>
 
 type VisitContext<Out> = {
-  readonly cache: Map<AnyNode, Out>
+  readonly cache: MutableHashMap.MutableHashMap<AnyNode, Out>
   readonly visit: (node: AnyNode) => Result.Result<Out, GraphError>
 }
 
@@ -193,26 +193,23 @@ function walk<Out>(
   root: AnyNode,
   visit: Visit<Out>,
   options: {
-    readonly cache?: Map<AnyNode, Out>
+    readonly cache?: MutableHashMap.MutableHashMap<AnyNode, Out>
     readonly resolve?: (node: AnyNode) => AnyNode
   } = {},
 ): Result.Result<Out, GraphError> {
-  const cache = options.cache ?? new Map<AnyNode, Out>()
-  const visiting = new Set<AnyNode>()
+  const cache = options.cache ?? MutableHashMap.empty<AnyNode, Out>()
   const stack: AnyNode[] = []
 
   const recur = (node: AnyNode): Result.Result<Out, GraphError> => {
     const target = options.resolve?.(node) ?? node
-    const cached = cache.get(target)
-    if (cached !== undefined || cache.has(target)) return Result.succeed(cached!)
-    if (visiting.has(target)) return cycle(stack, target)
+    const cached = MutableHashMap.get(cache, target)
+    if (Option.isSome(cached)) return Result.succeed(cached.value)
+    if (stack.includes(target)) return cycle(stack, target)
 
-    visiting.add(target)
     stack.push(target)
     const result = visit(target, { cache, visit: recur })
     stack.pop()
-    visiting.delete(target)
-    if (Result.isSuccess(result) && !cache.has(target)) cache.set(target, result.success)
+    if (Result.isSuccess(result) && !MutableHashMap.has(cache, target)) MutableHashMap.set(cache, target, result.success)
     return result
   }
 
@@ -250,7 +247,7 @@ export function hoist<A, E, const Items extends Replacements = readonly []>(
 function hoistGraph(root: AnyNode, tag: Tag, replacements: Replacements = []) {
   return Result.gen(function* () {
     const replacementMap = yield* replacementMapFrom(replacements)
-    const hoisted = new Map<string, AnyNode>()
+    const hoisted = MutableHashMap.empty<string, AnyNode>()
 
     const node = yield* walk<AnyNode>(
       root,
@@ -260,11 +257,11 @@ function hoistGraph(root: AnyNode, tag: Tag, replacements: Replacements = []) {
             return { ...node, dependencies: yield* visitAll(node.dependencies, context.visit) }
           }
           if (node.tag === tag) {
-            const existing = hoisted.get(node.name)
-            if (existing && existing !== node) {
+            const existing = MutableHashMap.get(hoisted, node.name)
+            if (Option.isSome(existing) && existing.value !== node) {
               return yield* graphError(`Tag ${tag} has conflicting implementations for ${node.name}`)
             }
-            hoisted.set(node.name, yield* rewriteReplacementDependencies(node, replacementMap))
+            MutableHashMap.set(hoisted, node.name, yield* rewriteReplacementDependencies(node, replacementMap))
             return group([])
           }
           if (node.kind === "unbound") {
@@ -272,10 +269,10 @@ function hoistGraph(root: AnyNode, tag: Tag, replacements: Replacements = []) {
           }
           return { ...node, dependencies: yield* visitAll(node.dependencies, context.visit) }
         }),
-      { resolve: (node) => replacementMap.get(node.name) ?? node },
+      { resolve: (node) => resolveReplacement(replacementMap, node) },
     )
 
-    return { node, hoisted: group(Array.from(hoisted.values())) }
+    return { node, hoisted: group(Array.fromIterable(MutableHashMap.values(hoisted))) }
   })
 }
 
@@ -294,7 +291,7 @@ export function compile<A, E, const Items extends Replacements = readonly []>(
 function compileGraph(root: AnyNode, replacements: Replacements = []) {
   return Result.gen(function* () {
     const replacementMap = yield* replacementMapFrom(replacements)
-    const cache = new Map<AnyNode, RuntimeLayer>()
+    const cache = MutableHashMap.empty<AnyNode, RuntimeLayer>()
     const compileNode = (node: AnyNode) =>
       walk<RuntimeLayer>(
         node,
@@ -307,21 +304,25 @@ function compileGraph(root: AnyNode, replacements: Replacements = []) {
               ? implementation
               : implementation.pipe(Layer.provide(dependencies as [RuntimeLayer, ...RuntimeLayer[]]))
           }),
-        { cache, resolve: (node) => replacementMap.get(node.name) ?? node },
+        { cache, resolve: (node) => resolveReplacement(replacementMap, node) },
       )
     const layers = yield* visitAll(flatten(root), compileNode)
     return layers.reduce<RuntimeLayer>((result, layer) => layer.pipe(Layer.provideMerge(result)), Layer.empty)
   })
 }
 
+function resolveReplacement(replacements: MutableHashMap.MutableHashMap<string, AnyNode>, node: AnyNode) {
+  return Option.getOrElse(MutableHashMap.get(replacements, node.name), () => node)
+}
+
 function replacementMapFrom(replacements: Replacements = []) {
   return Result.gen(function* () {
-    const map = new Map<string, AnyNode>()
+    const map = MutableHashMap.empty<string, AnyNode>()
     for (const [source, replacement] of replacements) {
       const normalized = yield* rewriteReplacementDependencies(yield* replacementNode(source, replacement), map)
-      const current = new Map([[source.name, normalized]])
-      for (const [name, node] of map) map.set(name, yield* rewriteReplacementDependencies(node, current))
-      map.set(source.name, normalized)
+      const current = MutableHashMap.make([source.name, normalized])
+      for (const [name, node] of map) MutableHashMap.set(map, name, yield* rewriteReplacementDependencies(node, current))
+      MutableHashMap.set(map, source.name, normalized)
     }
     return map
   })
@@ -329,29 +330,26 @@ function replacementMapFrom(replacements: Replacements = []) {
 
 function rewriteReplacementDependencies(
   root: AnyNode,
-  replacements: ReadonlyMap<string, AnyNode>,
+  replacements: MutableHashMap.MutableHashMap<string, AnyNode>,
 ): Result.Result<AnyNode, GraphError> {
-  if (replacements.size === 0) return Result.succeed(root)
-  const cache = new Map<AnyNode, AnyNode>()
-  const visiting = new Set<AnyNode>()
+  if (MutableHashMap.isEmpty(replacements)) return Result.succeed(root)
+  const cache = MutableHashMap.empty<AnyNode, AnyNode>()
   const stack: AnyNode[] = []
 
   const recur = (node: AnyNode, isRoot = false): Result.Result<AnyNode, GraphError> => {
-    const target = isRoot ? node : (replacements.get(node.name) ?? node)
-    const cached = cache.get(target)
-    if (cached !== undefined || cache.has(target)) return Result.succeed(cached!)
-    if (visiting.has(target)) return cycle(stack, target)
+    const target = isRoot ? node : resolveReplacement(replacements, node)
+    const cached = MutableHashMap.get(cache, target)
+    if (Option.isSome(cached)) return Result.succeed(cached.value)
+    if (stack.includes(target)) return cycle(stack, target)
 
-    visiting.add(target)
     stack.push(target)
     const dependencies = visitAll(target.dependencies, (dependency) => recur(dependency))
     stack.pop()
-    visiting.delete(target)
     return Result.map(dependencies, (dependencies) => {
       const result = dependencies.every((dependency, index) => dependency === target.dependencies[index])
         ? target
         : { ...target, dependencies }
-      cache.set(target, result)
+      MutableHashMap.set(cache, target, result)
       return result
     })
   }
@@ -360,11 +358,11 @@ function rewriteReplacementDependencies(
 }
 
 export function hasUnbound(root: Node<unknown, unknown, any>, source: UnboundNode<unknown>): boolean {
-  const visited = new Set<AnyNode>()
+  const visited = MutableHashSet.empty<AnyNode>()
   const reaches = (node: AnyNode): boolean => {
     if (node === source) return true
-    if (visited.has(node)) return false
-    visited.add(node)
+    if (MutableHashSet.has(visited, node)) return false
+    MutableHashSet.add(visited, node)
     return node.dependencies.some(reaches)
   }
   return reaches(root)
