@@ -1,7 +1,7 @@
 import path from "path"
 import os from "os"
 import { randomUUID } from "crypto"
-import { Context, DateTime, Effect, Function, Layer, Option, Schedule, Schema } from "effect"
+import { Context, DateTime, Effect, Function, Layer, MutableHashSet, Option, Schedule, Schema } from "effect"
 import type { FileSystem, Scope } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FSUtil } from "../fs-util"
@@ -101,7 +101,7 @@ export namespace EffectFlock {
       const fs = yield* FSUtil.Service
       const lockRoot = path.join(global.state, "locks")
       const hostname = os.hostname()
-      const ensuredDirs = new Set<string>()
+      const ensuredDirs = MutableHashSet.empty<string>()
 
       // -- helpers (close over fs) --
 
@@ -142,9 +142,9 @@ export namespace EffectFlock {
       })
 
       const ensureDir = Effect.fnUntraced(function* (dir: string) {
-        if (ensuredDirs.has(dir)) return
+        if (MutableHashSet.has(ensuredDirs, dir)) return
         yield* fs.makeDirectory(dir, { recursive: true }).pipe(Effect.orDie)
-        ensuredDirs.add(dir)
+        MutableHashSet.add(ensuredDirs, dir)
       })
 
       const isStale = Effect.fnUntraced(function* (lockDir: string, heartbeatPath: string, metaPath: string) {
