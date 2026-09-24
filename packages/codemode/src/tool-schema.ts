@@ -125,7 +125,7 @@ const renderSchema = (
   const nested =
     schema.definitions === undefined && schema.$defs === undefined
       ? ctx
-      : { ...ctx, definitions: { ...ctx.definitions, ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) } }
+      : { ...ctx, definitions: { ...ctx.definitions, ...schema.definitions, ...schema.$defs } }
   if (schema.$ref) {
     const name = refName(schema.$ref)
     if (Option.isNone(name) || !nested.definitions[name.value] || HashSet.has(seen, name.value)) return "unknown"
@@ -224,9 +224,7 @@ export const toTypeScript = (schema: Schema.Top, decoded = false, pretty = false
 /** Renders a raw JSON Schema document as a TypeScript type string. */
 export const jsonSchemaToTypeScript = (schema: JsonSchema, pretty = false): string =>
   Result.getOrElse(
-    Result.try(() =>
-      renderSchema(schema, { definitions: { ...(schema.definitions ?? {}), ...(schema.$defs ?? {}) }, pretty }),
-    ),
+    Result.try(() => renderSchema(schema, { definitions: { ...schema.definitions, ...schema.$defs }, pretty })),
     () => "unknown",
   )
 
@@ -254,7 +252,7 @@ export const inputProperties = <R>(definition: Definition<R>): Array<InputProper
           })
         : {
             schema: definition.input,
-            definitions: { ...(definition.input.definitions ?? {}), ...(definition.input.$defs ?? {}) },
+            definitions: { ...definition.input.definitions, ...definition.input.$defs },
           }
       const definitions = document.definitions ?? {}
       const resolved =
