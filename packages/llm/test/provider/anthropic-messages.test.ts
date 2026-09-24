@@ -208,9 +208,25 @@ describe("Anthropic Messages route", () => {
           { role: "user", content: [{ type: "text", text: "What is the weather?" }] },
           {
             role: "assistant",
-            content: [{ type: "tool_use", id: "call_1", name: "lookup", input: { query: "weather" } }],
+            content: [
+              {
+                type: "tool_use",
+                id: AnthropicMessages.AnthropicToolUseID.make("call_1"),
+                name: "lookup",
+                input: { query: "weather" },
+              },
+            ],
           },
-          { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: '{"forecast":"sunny"}' }] },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: AnthropicMessages.AnthropicToolUseID.make("call_1"),
+                content: '{"forecast":"sunny"}',
+              },
+            ],
+          },
         ],
         stream: true,
         max_tokens: 4096,

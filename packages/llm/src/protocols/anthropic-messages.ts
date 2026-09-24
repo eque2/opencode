@@ -62,9 +62,14 @@ const AnthropicThinkingBlock = Schema.Struct({
   cache_control: Schema.optional(AnthropicCacheControl),
 }).annotate({ identifier: "AnthropicMessages.ThinkingBlock" })
 
+// One id space links a tool_use or server_tool_use block to the tool_result
+// or server tool result block that answers it.
+export const AnthropicToolUseID = Schema.String.pipe(Schema.brand("AnthropicMessages.ToolUseID"))
+export type AnthropicToolUseID = Schema.Schema.Type<typeof AnthropicToolUseID>
+
 const AnthropicToolUseBlock = Schema.Struct({
   type: Schema.tag("tool_use"),
-  id: Schema.String,
+  id: AnthropicToolUseID,
   name: Schema.String,
   input: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
@@ -73,7 +78,7 @@ type AnthropicToolUseBlock = Schema.Schema.Type<typeof AnthropicToolUseBlock>
 
 const AnthropicServerToolUseBlock = Schema.Struct({
   type: Schema.tag("server_tool_use"),
-  id: Schema.String,
+  id: AnthropicToolUseID,
   name: Schema.String,
   input: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
@@ -94,7 +99,7 @@ type AnthropicServerToolResultType = Schema.Schema.Type<typeof AnthropicServerTo
 
 const AnthropicServerToolResultBlock = Schema.Struct({
   type: AnthropicServerToolResultType,
-  tool_use_id: Schema.String,
+  tool_use_id: AnthropicToolUseID,
   content: Schema.Json,
   cache_control: Schema.optional(AnthropicCacheControl),
 }).annotate({ identifier: "AnthropicMessages.ServerToolResultBlock" })
@@ -110,7 +115,7 @@ const AnthropicToolResultContent = Schema.Union([AnthropicTextBlock, AnthropicIm
 
 const AnthropicToolResultBlock = Schema.Struct({
   type: Schema.tag("tool_result"),
-  tool_use_id: Schema.String,
+  tool_use_id: AnthropicToolUseID,
   content: Schema.Union([Schema.String, Schema.Array(AnthropicToolResultContent)]),
   is_error: Schema.optional(Schema.Boolean),
   cache_control: Schema.optional(AnthropicCacheControl),
@@ -286,7 +291,7 @@ const lowerToolInput = Effect.fn("AnthropicMessages.lowerToolInput")(function* (
 const lowerToolCall = Effect.fn("AnthropicMessages.lowerToolCall")(function* (part: ToolCallPart) {
   return {
     type: "tool_use" as const,
-    id: part.id,
+    id: AnthropicToolUseID.make(part.id),
     name: part.name,
     input: yield* lowerToolInput(part),
   } satisfies AnthropicToolUseBlock
@@ -295,7 +300,7 @@ const lowerToolCall = Effect.fn("AnthropicMessages.lowerToolCall")(function* (pa
 const lowerServerToolCall = Effect.fn("AnthropicMessages.lowerServerToolCall")(function* (part: ToolCallPart) {
   return {
     type: "server_tool_use" as const,
-    id: part.id,
+    id: AnthropicToolUseID.make(part.id),
     name: part.name,
     input: yield* lowerToolInput(part),
   } satisfies AnthropicServerToolUseBlock
@@ -317,7 +322,11 @@ const lowerServerToolResult = Effect.fn("AnthropicMessages.lowerServerToolResult
     return yield* invalid(`Anthropic Messages does not know how to round-trip server tool result for ${part.name}`)
   const content = part.result.value
   if (!isJson(content)) return yield* invalid(`Anthropic Messages server tool result for ${part.name} must be JSON`)
-  return { type: wireType, tool_use_id: part.id, content } satisfies AnthropicServerToolResultBlock
+  return {
+    type: wireType,
+    tool_use_id: AnthropicToolUseID.make(part.id),
+    content,
+  } satisfies AnthropicServerToolResultBlock
 })
 
 const lowerImage = Effect.fn("AnthropicMessages.lowerImage")(function* (part: MediaPart) {
@@ -492,7 +501,7 @@ const lowerMessages = Effect.fn("AnthropicMessages.lowerMessages")(function* (
         return yield* ProviderShared.unsupportedContent("Anthropic Messages", "tool", ["tool-result"])
       content.push({
         type: "tool_result",
-        tool_use_id: part.id,
+        tool_use_id: AnthropicToolUseID.make(part.id),
         content: yield* lowerToolResultContent(part),
         is_error: part.result.type === "error" ? true : undefined,
         cache_control: cacheControl(breakpoints, part.cache),
