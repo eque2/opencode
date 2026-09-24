@@ -269,7 +269,7 @@ export const CachePolicyObject = Schema.Struct({
     ]),
   ),
   ttlSeconds: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "LLM.CachePolicyObject" })
 export type CachePolicyObject = Schema.Schema.Type<typeof CachePolicyObject>
 
 export const CachePolicy = Schema.Union([Schema.Literal("auto"), Schema.Literal("none"), CachePolicyObject])
