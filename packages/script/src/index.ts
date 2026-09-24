@@ -1,8 +1,11 @@
 import { $ } from "bun"
 import semver from "semver"
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Config, Effect, Option, Schema, String as Str } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
+
+/** Reads an optional environment variable; an empty value counts as absent. */
+const optionalEnv = (name: string) => Config.String(name).pipe(Config.option, Config.map(Option.filter(Str.isNonEmpty)))
 
 /** Failure while resolving the release channel, version, or team for a release script. */
 class ScriptError extends Schema.TaggedError<ScriptError>()("ScriptError", {
@@ -40,16 +43,16 @@ const program = Effect.gen(function* () {
   }
 
   const env = {
-    OPENCODE_CHANNEL: process.env["OPENCODE_CHANNEL"],
-    OPENCODE_BUMP: process.env["OPENCODE_BUMP"],
-    OPENCODE_VERSION: process.env["OPENCODE_VERSION"],
-    OPENCODE_RELEASE: process.env["OPENCODE_RELEASE"],
+    OPENCODE_CHANNEL: yield* optionalEnv("OPENCODE_CHANNEL"),
+    OPENCODE_BUMP: yield* optionalEnv("OPENCODE_BUMP"),
+    OPENCODE_VERSION: yield* optionalEnv("OPENCODE_VERSION"),
+    OPENCODE_RELEASE: yield* optionalEnv("OPENCODE_RELEASE"),
   }
 
   const channel = yield* Effect.gen(function* () {
-    if (env.OPENCODE_CHANNEL) return env.OPENCODE_CHANNEL
-    if (env.OPENCODE_BUMP) return "latest"
-    if (env.OPENCODE_VERSION && !env.OPENCODE_VERSION.startsWith("0.0.0-")) return "latest"
+    if (Option.isSome(env.OPENCODE_CHANNEL)) return env.OPENCODE_CHANNEL.value
+    if (Option.isSome(env.OPENCODE_BUMP)) return "latest"
+    if (Option.exists(env.OPENCODE_VERSION, (value) => !value.startsWith("0.0.0-"))) return "latest"
     return yield* Effect.tryPromise({
       try: () => $`git branch --show-current`.text(),
       catch: (cause) => new ScriptError({ message: "Failed to run git branch --show-current", cause }),
@@ -58,16 +61,16 @@ const program = Effect.gen(function* () {
   const preview = channel !== "latest"
 
   const version = yield* Effect.gen(function* () {
-    if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
+    if (Option.isSome(env.OPENCODE_VERSION)) return env.OPENCODE_VERSION.value
     if (preview) return `0.0.0-${channel}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
     const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
     const latest = yield* http
       .get("https://registry.npmjs.org/opencode-ai/latest")
       .pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(RegistryRelease)))
     const [major, minor, patch] = latest.version.split(".").map((x) => Number(x) || 0)
-    const t = env.OPENCODE_BUMP?.toLowerCase()
-    if (t === "major") return `${major + 1}.0.0`
-    if (t === "minor") return `${major}.${minor + 1}.0`
+    const t = Option.map(env.OPENCODE_BUMP, (value) => value.toLowerCase())
+    if (Option.contains(t, "major")) return `${major + 1}.0.0`
+    if (Option.contains(t, "minor")) return `${major}.${minor + 1}.0`
     return `${major}.${minor}.${patch + 1}`
   })
 
@@ -85,7 +88,7 @@ const program = Effect.gen(function* () {
     channel,
     version,
     preview,
-    release: !!env.OPENCODE_RELEASE,
+    release: Option.isSome(env.OPENCODE_RELEASE),
     team: [...members, ...bot],
   }
 })
