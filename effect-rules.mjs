@@ -706,7 +706,7 @@ export const noTryCatchUseEffect = {
     },
     messages: {
       noTryCatch:
-        'Avoid try/catch - use Effect.catch, Effect.catchTag, or Effect.orElse instead. Effect error handling is type-safe and composable. See: https://effect.website/docs/error-management/expected-errors/',
+        'Avoid try/catch - use Effect.catch, Effect.catchTag, or Effect.catchTags instead. Effect error handling is type-safe and composable. See: https://effect.website/docs/error-management/expected-errors/',
     },
     schema: [],
   },
@@ -822,9 +822,9 @@ export const noDateStaticUseDateTime = {
       noDateNow:
         'Avoid Date.now() - use DateTime.now from Effect for type-safe, immutable timestamps. See: https://effect.website/docs/data-types/datetime/',
       noDateParse:
-        'Avoid Date.parse() - use DateTime.parse from Effect for type-safe date parsing with proper error handling. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid Date.parse() - use DateTime.make from Effect for type-safe date parsing with proper error handling. See: https://effect.website/docs/data-types/datetime/',
       noDateUTC:
-        'Avoid Date.UTC() - use DateTime.make or DateTime.utc from Effect. See: https://effect.website/docs/data-types/datetime/',
+        'Avoid Date.UTC() - use DateTime.make or DateTime.makeUnsafe from Effect. See: https://effect.website/docs/data-types/datetime/',
       replaceWithDateTimeNow:
         'Replace Date.now() with DateTime.now. Review the resulting DateTime type.',
     },
@@ -1274,7 +1274,7 @@ export const noProcessEnvUseConfig = {
       noProcessEnv:
         'Avoid process.env - use Config from Effect for strongly-typed configuration management. See: https://effect.website/docs/configuration/',
       replaceWithConfigString:
-        'Replace this environment read with Config.string(). Review required and optional configuration behavior.',
+        'Replace this environment read with Config.String(). Review required and optional configuration behavior.',
     },
     schema: [],
   },
@@ -1300,7 +1300,7 @@ export const noProcessEnvUseConfig = {
             ? withNamedEffectImport(context, node, 'Config', (fixer) =>
                 fixer.replaceText(
                   node,
-                  `(yield* Config.string(${JSON.stringify(key)}))`
+                  `(yield* Config.String(${JSON.stringify(key)}))`
                 ))
             : null;
           const report = {
@@ -1800,21 +1800,21 @@ export const noSuperstructUseSchema = {
 // TIER 2: Heuristic Pattern Detection Rules
 // =============================================================================
 
-// Pattern #36: Config.redacted for secrets
+// Pattern #36: Config.Redacted for secrets
 export const preferRedactedForSecrets = {
   meta: {
     type: 'problem',
     hasSuggestions: true,
     docs: {
-      description: 'Use Config.redacted for secret configuration values',
+      description: 'Use Config.Redacted for secret configuration values',
       category: 'Best Practices',
       recommended: true,
     },
     messages: {
       useRedacted:
-        'Config value "{{name}}" appears to be a secret. Use Config.redacted() instead of Config.string() to prevent accidental exposure in logs. See: https://effect.website/docs/configuration/',
+        'Config value "{{name}}" appears to be a secret. Use Config.Redacted() instead of Config.String() to prevent accidental exposure in logs. See: https://effect.website/docs/configuration/',
       replaceWithConfigRedacted:
-        'Replace Config.string() with Config.redacted(). Review the resulting Redacted value type.',
+        'Replace Config.String() with Config.Redacted(). Review the resulting Redacted value type.',
     },
     schema: [],
   },
@@ -1823,13 +1823,13 @@ export const preferRedactedForSecrets = {
 
     return {
       CallExpression(node) {
-        // Match Config.string("SECRET_NAME")
+        // Match Config.String("SECRET_NAME")
         if (
           node.callee.type === 'MemberExpression' &&
           node.callee.object.type === 'Identifier' &&
           node.callee.object.name === 'Config' &&
           node.callee.property.type === 'Identifier' &&
-          node.callee.property.name === 'string' &&
+          node.callee.property.name === 'String' &&
           node.arguments.length > 0 &&
           node.arguments[0].type === 'Literal' &&
           typeof node.arguments[0].value === 'string'
@@ -1852,7 +1852,7 @@ export const preferRedactedForSecrets = {
               report.suggest = [{
                 messageId: 'replaceWithConfigRedacted',
                 fix: (fixer) =>
-                  fixer.replaceText(node.callee.property, 'redacted'),
+                  fixer.replaceText(node.callee.property, 'Redacted'),
               }];
             }
             context.report(report);
@@ -2929,9 +2929,9 @@ export const noSetTimeoutUseSchedule = {
     },
     messages: {
       noSetTimeout:
-        'Avoid setTimeout - use Effect.sleep or Effect.delay instead. For repeated execution, use Schedule.repeat. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid setTimeout - use Effect.sleep or Effect.delay instead. For repeated execution, use Effect.repeat with a Schedule. See: https://effect.website/docs/scheduling/introduction/',
       noSetInterval:
-        'Avoid setInterval - use Schedule.repeat or Effect.repeat instead for structured recurring tasks. See: https://effect.website/docs/scheduling/introduction/',
+        'Avoid setInterval - use Effect.repeat with Schedule.spaced instead for structured recurring tasks. See: https://effect.website/docs/scheduling/introduction/',
       noClearTimeout:
         'Avoid clearTimeout - Effect handles cancellation via Fiber interruption. See: https://effect.website/docs/concurrency/fibers/',
     },
