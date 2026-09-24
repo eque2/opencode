@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { blend, contrastRatio, hexToOklch, shift } from "../color"
 import { mapV2Semantics } from "./mapping"
 import type { ColorValue, HexColor, V2ColorValue } from "../types"
@@ -7,25 +8,30 @@ const GREY_STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 120
 
 const greyRef = (step: number): V2ColorValue => `var(--v2-grey-${step})`
 
-function greyHex(primitives: Record<string, V2ColorValue>, step: number) {
-  const hex = primitives[`v2-grey-${step}`]
-  if (isHexColor(hex)) return hex
-  return undefined
+function greyHex(primitives: Record<string, V2ColorValue>, step: number): Option.Option<HexColor> {
+  return Option.liftPredicate(primitives[`v2-grey-${step}`], isHexColor)
 }
 
-function resolveGreyRef(value: V2ColorValue, primitives: Record<string, V2ColorValue>) {
+// The v2 semantics map every background to a grey primitive ref, and generateV2Primitives fills every grey step,
+// so both lookups succeed for resolved themes. None means an unresolvable ref.
+function resolveGreyRef(value: V2ColorValue, primitives: Record<string, V2ColorValue>): Option.Option<HexColor> {
   const step = value.match(/^var\(--v2-grey-(\d+)\)$/)?.[1]
-  if (!step) throw new Error(`Expected grey primitive ref, got ${value}`)
-  const hex = greyHex(primitives, Number(step))
-  if (!hex) throw new Error(`Missing grey primitive v2-grey-${step}`)
-  return hex
+  if (!step) return Option.none()
+  return greyHex(primitives, Number(step))
 }
 
-function pickGrey(primitives: Record<string, V2ColorValue>, background: HexColor, minContrast: number, target: number) {
-  const matches = GREY_STEPS.filter((step) => {
-    const hex = greyHex(primitives, step)
-    return hex && contrastRatio(hex, background) >= minContrast
-  })
+// Picks the grey step nearest to `target` that meets `minContrast` on `background`, or `target` when none does.
+function pickGrey(
+  primitives: Record<string, V2ColorValue>,
+  background: Option.Option<HexColor>,
+  minContrast: number,
+  target: number,
+) {
+  if (Option.isNone(background)) return target
+  const bg = background.value
+  const matches = GREY_STEPS.filter((step) =>
+    Option.exists(greyHex(primitives, step), (hex) => contrastRatio(hex, bg) >= minContrast),
+  )
   if (matches.length === 0) return target
   return matches.reduce((best, step) => (Math.abs(step - target) < Math.abs(best - target) ? step : best))
 }
@@ -46,7 +52,11 @@ export function mapV2Foreground(
   const bgBase = resolveGreyRef(semantics["v2-background-bg-base"], primitives)
   const bgContrast = resolveGreyRef(semantics["v2-background-bg-contrast"], primitives)
   const bgInverse = resolveGreyRef(semantics["v2-background-bg-inverse"], primitives)
-  const inverseTarget = hexToOklch(bgInverse).l > 0.55 ? 1100 : greyHex(primitives, 50) ? 50 : 100
+  const inverseTarget = Option.exists(bgInverse, (hex) => hexToOklch(hex).l > 0.55)
+    ? 1100
+    : Option.isSome(greyHex(primitives, 50))
+      ? 50
+      : 100
 
   return {
     "v2-text-text-base": isDark ? blend("#ffffff", body, 0.9) : shift(body, { l: -0.07, c: 1.04 }),

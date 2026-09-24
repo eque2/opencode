@@ -468,12 +468,8 @@ interface ThemeColors {
   diffDelete?: HexColor
 }
 
+// ThemeVariant defines exactly one of `palette` and `seeds`; isDesktopTheme enforces this for parsed JSON.
 function getColors(variant: ThemeVariant): ThemeColors {
-  const input = variant as { palette?: unknown; seeds?: unknown }
-  if (input.palette && input.seeds) {
-    throw new Error("Theme variant cannot define both `palette` and `seeds`")
-  }
-
   if (variant.palette) {
     return {
       compact: true,
@@ -491,23 +487,19 @@ function getColors(variant: ThemeVariant): ThemeColors {
     }
   }
 
-  if (variant.seeds) {
-    return {
-      compact: false,
-      neutral: variant.seeds.neutral,
-      primary: variant.seeds.primary,
-      accent: variant.seeds.info,
-      success: variant.seeds.success,
-      warning: variant.seeds.warning,
-      error: variant.seeds.error,
-      info: variant.seeds.info,
-      interactive: variant.seeds.interactive,
-      diffAdd: variant.seeds.diffAdd,
-      diffDelete: variant.seeds.diffDelete,
-    }
+  return {
+    compact: false,
+    neutral: variant.seeds.neutral,
+    primary: variant.seeds.primary,
+    accent: variant.seeds.info,
+    success: variant.seeds.success,
+    warning: variant.seeds.warning,
+    error: variant.seeds.error,
+    info: variant.seeds.info,
+    interactive: variant.seeds.interactive,
+    diffAdd: variant.seeds.diffAdd,
+    diffDelete: variant.seeds.diffDelete,
   }
-
-  throw new Error("Theme variant requires `palette` or `seeds`")
 }
 
 function generateNeutralAlphaScale(neutralScale: HexColor[], isDark: boolean): HexColor[] {

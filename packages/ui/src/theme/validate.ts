@@ -1,3 +1,4 @@
+import { Schema } from "effect"
 import type {
   ColorValue,
   CssVarRef,
@@ -46,11 +47,14 @@ export function isDesktopTheme(value: unknown): value is DesktopTheme {
   )
 }
 
-/** Narrows parsed theme JSON to DesktopTheme, or throws when the JSON does not match. */
+/** Narrows parsed theme JSON to DesktopTheme, or throws a SchemaError when the JSON does not match. */
 export function parseDesktopTheme(value: unknown): DesktopTheme {
-  if (isDesktopTheme(value)) return value
   const id = isRecord(value) && typeof value.id === "string" ? value.id : "<unknown>"
-  throw new Error(`Theme "${id}" does not match the DesktopTheme type`)
+  const schema = Schema.declare(isDesktopTheme, {
+    identifier: "DesktopTheme",
+    message: `Theme "${id}" does not match the DesktopTheme type`,
+  })
+  return Schema.decodeUnknownSync(schema)(value)
 }
 
 function isThemeVariant(value: unknown): value is ThemeVariant {
