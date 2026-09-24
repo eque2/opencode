@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import { identity } from "effect/Function"
 import * as Layer from "effect/Layer"
+import * as Predicate from "effect/Predicate"
 import * as Scope from "effect/Scope"
 import * as Semaphore from "effect/Semaphore"
 import * as Stream from "effect/Stream"
@@ -19,13 +20,6 @@ const ATTR_DB_SYSTEM_NAME = "db.system.name"
 
 const TypeId = "~@opencode-ai/core/database/SqliteNode" as const
 type TypeId = typeof TypeId
-
-interface SqliteClient extends Client.SqlClient {
-  readonly [TypeId]: TypeId
-  readonly config: Config
-  readonly loadExtension: (path: string) => Effect.Effect<void, SqlError>
-  readonly updateValues: never
-}
 
 interface Config {
   readonly filename: string
@@ -44,28 +38,43 @@ interface SqliteConnection extends Connection {
   readonly loadExtension: (path: string) => Effect.Effect<void, SqlError>
 }
 
+/** The node:sqlite handle that nativeLayer provides. Sqlite.Native is shared with the bun driver, so it is typed unknown. */
+const nativeDatabase = Effect.gen(function* () {
+  const native = yield* Sqlite.Native
+  if (native instanceof DatabaseSync) return native
+  return yield* Effect.die("Sqlite.Native is not a node:sqlite DatabaseSync")
+})
+
+/** The positional values node:sqlite binds; it rejects any other value (undefined, boolean) when it runs the statement. */
+const isSqlInputValue = (value: unknown): value is SQLInputValue =>
+  Predicate.isNull(value) ||
+  Predicate.isNumber(value) ||
+  Predicate.isBigInt(value) ||
+  Predicate.isString(value) ||
+  ArrayBuffer.isView(value)
+
+/** A row that setReturnArrays(true) produces. The node:sqlite types still declare object rows. */
+const isValuesRow = (row: unknown): row is ReadonlyArray<unknown> => Array.isArray(row)
+
+const executeError = (cause: unknown) =>
+  new SqlError({
+    reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
+  })
+
+const invalidParameters = "Statement parameters must be null, number, bigint, string or ArrayBufferView values"
+
 const make = (options: Config) =>
   Effect.gen(function* () {
-    const native = (yield* Sqlite.Native) as DatabaseSync
+    const native = yield* nativeDatabase
 
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
-    const transformRows = options.transformResultNames
-      ? Statement.defaultTransforms(options.transformResultNames).array
-      : undefined
 
     const run = (query: string, params: ReadonlyArray<unknown> = []) =>
       Effect.withFiber<Array<Record<string, unknown>>, SqlError>((fiber) => {
         const statement = native.prepare(query)
         statement.setReadBigInts(Context.get(fiber.context, Client.SafeIntegers))
-        try {
-          return Effect.succeed(statement.all(...(params as SQLInputValue[])) as Array<Record<string, unknown>>)
-        } catch (cause) {
-          return Effect.fail(
-            new SqlError({
-              reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
-            }),
-          )
-        }
+        if (!params.every(isSqlInputValue)) return Effect.fail(executeError(invalidParameters))
+        return Effect.try({ try: () => statement.all(...params), catch: executeError })
       })
 
     const runValues = (query: string, params: ReadonlyArray<unknown> = []) =>
@@ -73,17 +82,14 @@ const make = (options: Config) =>
         const statement = native.prepare(query)
         statement.setReadBigInts(Context.get(fiber.context, Client.SafeIntegers))
         statement.setReturnArrays(true)
-        try {
-          return Effect.succeed(
-            statement.all(...(params as SQLInputValue[])) as unknown as ReadonlyArray<ReadonlyArray<unknown>>,
-          )
-        } catch (cause) {
-          return Effect.fail(
-            new SqlError({
-              reason: classifySqliteError(cause, { message: "Failed to execute statement", operation: "execute" }),
-            }),
-          )
-        }
+        if (!params.every(isSqlInputValue)) return Effect.fail(executeError(invalidParameters))
+        return Effect.try({ try: (): ReadonlyArray<unknown> => statement.all(...params), catch: executeError }).pipe(
+          Effect.flatMap((rows) =>
+            rows.every(isValuesRow)
+              ? Effect.succeed(rows)
+              : Effect.die("node:sqlite returned object rows after setReturnArrays(true)"),
+          ),
+        )
       })
 
     const connection = identity<SqliteConnection>({
@@ -127,7 +133,7 @@ const make = (options: Config) =>
     })
 
     const client = Object.assign(
-      (yield* Client.make({
+      yield* Client.make({
         acquirer,
         compiler,
         transactionAcquirer,
@@ -135,8 +141,10 @@ const make = (options: Config) =>
           ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
           [ATTR_DB_SYSTEM_NAME, "sqlite"],
         ],
-        transformRows,
-      })) as SqliteClient,
+        ...(options.transformResultNames
+          ? { transformRows: Statement.defaultTransforms(options.transformResultNames).array }
+          : {}),
+      }),
       {
         [TypeId]: TypeId,
         config: options,
@@ -169,7 +177,7 @@ const sqliteLayer = (config: Config) => Layer.effect(Client.SqlClient, make(conf
 const drizzleLayer = Layer.effect(
   Sqlite.Drizzle,
   Effect.gen(function* () {
-    return drizzle({ client: (yield* Sqlite.Native) as DatabaseSync }) as unknown as Sqlite.DrizzleClient
+    return drizzle({ client: yield* nativeDatabase }) as unknown as Sqlite.DrizzleClient
   }),
 )
 
