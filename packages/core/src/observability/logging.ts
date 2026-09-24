@@ -70,16 +70,34 @@ const printLogs = Config.String("OPENCODE_PRINT_LOGS").pipe(
 
 const isLevelName = Schema.is(Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]))
 
-export function minimumLogLevel() {
-  const value = process.env.OPENCODE_LOG_LEVEL?.toUpperCase()
-  const levels = {
-    DEBUG: "Debug",
-    INFO: "Info",
-    WARN: "Warn",
-    ERROR: "Error",
-  } as const satisfies Record<string, LogLevel.LogLevel>
-  return isLevelName(value) ? levels[value] : levels.INFO
-}
+const levels = {
+  DEBUG: "Debug",
+  INFO: "Info",
+  WARN: "Warn",
+  ERROR: "Error",
+} as const satisfies Record<string, LogLevel.LogLevel>
+
+const logLevelName = Config.String("OPENCODE_LOG_LEVEL").pipe(
+  Config.option,
+  Config.map(Option.map((value) => value.toUpperCase())),
+)
+
+/**
+ * The OPENCODE_LOG_LEVEL level, in any case, or Info for a missing or unknown name. The CLI sets the
+ * variable in a yargs middleware after startup, so each run reads a fresh env provider. The variable
+ * is optional, so a ConfigError is a defect.
+ */
+export const minimumLogLevel: Effect.Effect<LogLevel.LogLevel> = Effect.suspend(() =>
+  logLevelName.parse(ConfigProvider.fromEnv()),
+).pipe(
+  Effect.orDie,
+  Effect.map((name) =>
+    name.pipe(
+      Option.filter(isLevelName),
+      Option.match({ onNone: () => levels.INFO, onSome: (level) => levels[level] }),
+    ),
+  ),
+)
 
 export function loggers() {
   // The CLI sets OPENCODE_PRINT_LOGS after startup and the ambient ConfigProvider copies

@@ -17,7 +17,7 @@ export const layer = Layer.unwrap(
       Layer.provide(FetchHttpClient.layer),
       Layer.provide(OtlpExporter.layerFlusher),
       Layer.orDie,
-      Layer.merge(Layer.succeed(References.MinimumLogLevel, Logging.minimumLogLevel())),
+      Layer.merge(Layer.effect(References.MinimumLogLevel, Logging.minimumLogLevel)),
     )
     return Layer.merge(logs, yield* Otlp.tracing)
   }),
