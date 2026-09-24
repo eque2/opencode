@@ -7,7 +7,7 @@ import { wrapClientError } from "./error-interceptor.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
 function pick(value: string | null, fallback?: string) {
-  if (!value) return
+  if (!value) return undefined
   if (!fallback) return value
   if (value === fallback) return fallback
   if (value === encodeURIComponent(fallback)) return fallback
