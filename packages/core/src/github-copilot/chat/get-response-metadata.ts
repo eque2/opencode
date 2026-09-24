@@ -1,3 +1,5 @@
+import { DateTime, Option } from "effect"
+
 export function getResponseMetadata({
   id,
   model,
@@ -10,6 +12,10 @@ export function getResponseMetadata({
   return {
     id: id ?? undefined,
     modelId: model ?? undefined,
-    timestamp: created != null ? new Date(created * 1000) : undefined,
+    // `created` is in Unix seconds; a value outside the Date range gives no timestamp.
+    timestamp:
+      created != null
+        ? Option.getOrUndefined(Option.map(DateTime.make(created * 1000), DateTime.toDateUtc))
+        : undefined,
   }
 }
