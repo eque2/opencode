@@ -525,6 +525,7 @@ export const searchIndex = <R>(tools: HostTools<R>): ReadonlyArray<SearchEntry> 
 
 export const assertValidTools = <R>(tools: HostTools<R>): void => {
   if (Object.hasOwn(tools, reservedNamespace)) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) CodeMode.make and CodeMode.execute are synchronous public APIs that opencode code-mode.ts calls; codemode.test.ts pins the synchronous throw
     throw new ReservedNamespaceError({
       message: `Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`,
     })
@@ -544,6 +545,7 @@ export const assertValidTools = <R>(tools: HostTools<R>): void => {
  */
 export const prepare = <R>(tools: HostTools<R>, catalogBudget = defaultCatalogBudget): DiscoveryPlan => {
   if (!Number.isSafeInteger(catalogBudget) || catalogBudget < 0) {
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-error-constructor -- (c) CodeMode.make is a synchronous public API; codemode.test.ts pins a synchronous toThrow(RangeError)
     throw new RangeError("discovery.catalogBudget must be a non-negative safe integer")
   }
   const visible = visibleDefinitions(tools)

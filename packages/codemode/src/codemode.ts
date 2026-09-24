@@ -122,6 +122,7 @@ const validateLimit = <Value extends number | undefined>(
   minimum: number,
 ): Value => {
   if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum)) {
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-error-constructor -- (c) CodeMode.make and CodeMode.execute are synchronous public APIs; codemode.test.ts pins a synchronous toThrow(RangeError)
     throw new RangeError(`${name} must be a safe integer greater than or equal to ${minimum}.`)
   }
   return value
