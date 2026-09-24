@@ -19,9 +19,10 @@ export function createSimpleContext<T, Props extends Record<string, any>>(
 
       // Access init.ready inside the memo to make it reactive for getter properties
       const isReady = createMemo(() => {
-        // @ts-expect-error
-        const ready = init.ready as Accessor<boolean> | boolean | undefined
-        return ready === undefined || (typeof ready === "function" ? ready() : ready)
+        if (!init || (typeof init !== "object" && typeof init !== "function")) return true
+        if (!("ready" in init)) return true
+        const ready = init.ready
+        return ready === undefined || (isAccessor(ready) ? ready() : ready)
       })
       return (
         <Show when={isReady()}>
@@ -35,4 +36,9 @@ export function createSimpleContext<T, Props extends Record<string, any>>(
       return value
     },
   }
+}
+
+// Any function accepts a call with no arguments, so typeof alone proves this narrowing.
+function isAccessor(value: unknown): value is Accessor<unknown> {
+  return typeof value === "function"
 }
