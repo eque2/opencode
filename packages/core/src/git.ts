@@ -2,7 +2,7 @@ export * as Git from "./git"
 
 import path from "path"
 import { randomUUID } from "crypto"
-import { Array, Context, Effect, HashSet, Layer, Schema, Stream } from "effect"
+import { Array, Context, Effect, HashSet, Layer, Option, Schema, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { AbsolutePath, RelativePath } from "./schema"
 import { FSUtil } from "./fs-util"
@@ -183,12 +183,12 @@ const layer = Layer.effect(
 
     const discover = Effect.fn("Git.repo.discover")(function* (input: AbsolutePath) {
       const dotgit = yield* fs.up({ targets: [".git"], start: input }).pipe(
-        Effect.map((matches) => matches[0]),
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.map(Array.head),
+        Effect.catch(() => Effect.succeedNone),
       )
-      if (!dotgit) return undefined
+      if (Option.isNone(dotgit)) return undefined
 
-      const cwd = path.dirname(dotgit)
+      const cwd = path.dirname(dotgit.value)
       const git = run(cwd, proc)
       const topLevel = yield* git(["rev-parse", "--show-toplevel"])
       const gitDir = yield* git(["rev-parse", "--git-dir"])
@@ -205,7 +205,7 @@ const layer = Layer.effect(
     const remote = Effect.fn("Git.remote.get")(function* (repository: Repository, name = "origin") {
       const result = yield* run(repository.worktree, proc)(["remote", "get-url", name])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const roots = Effect.fn("Git.history.rootCommits")(function* (repository: Repository) {
@@ -221,13 +221,13 @@ const layer = Layer.effect(
     const head = Effect.fn("Git.history.head")(function* (repository: Repository) {
       const result = yield* run(repository.worktree, proc)(["rev-parse", "HEAD"])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const branch = Effect.fn("Git.history.branch")(function* (repository: Repository) {
       const result = yield* run(repository.worktree, proc)(["symbolic-ref", "--quiet", "--short", "HEAD"])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim() || undefined
+      return present(result.text.trim())
     })
 
     const remoteHead = Effect.fn("Git.history.defaultRemoteBranch")(function* (
@@ -236,7 +236,7 @@ const layer = Layer.effect(
     ) {
       const result = yield* run(repository.worktree, proc)(["symbolic-ref", `refs/remotes/${remoteName}/HEAD`])
       if (result.exitCode !== 0) return undefined
-      return result.text.trim().replace(new RegExp(`^refs/remotes/${remoteName}/`), "") || undefined
+      return present(result.text.trim().replace(new RegExp(`^refs/remotes/${remoteName}/`), ""))
     })
 
     const operation = Effect.fnUntraced(function* (
@@ -457,17 +457,21 @@ const layer = Layer.effect(
       const allowed = candidates.filter((item) => !HashSet.has(ignored, item))
       const maximum = input.maximumUntrackedFileBytes
       const skipped = maximum
-        ? (yield* Effect.forEach(
-            untracked.filter((item) => allowed.includes(item)),
-            (item) =>
-              fs.stat(path.join(input.repository.worktree, item)).pipe(
-                Effect.map((info) =>
-                  info.type === "File" && Number(info.size) > maximum ? RelativePath.make(item) : undefined,
+        ? Array.getSomes(
+            yield* Effect.forEach(
+              untracked.filter((item) => allowed.includes(item)),
+              (item) =>
+                fs.stat(path.join(input.repository.worktree, item)).pipe(
+                  Effect.map((info) =>
+                    info.type === "File" && Number(info.size) > maximum
+                      ? Option.some(RelativePath.make(item))
+                      : Option.none(),
+                  ),
+                  Effect.catch(() => Effect.succeedNone),
                 ),
-                Effect.catch(() => Effect.succeed(undefined)),
-              ),
-            { concurrency: 8 },
-          )).filter((item): item is RelativePath => item !== undefined)
+              { concurrency: 8 },
+            ),
+          )
         : []
       const stage = allowed.filter((item) => !skipped.includes(RelativePath.make(item)))
       const remove = [...ignored, ...skipped]
@@ -976,6 +980,11 @@ function execute(cwd: string, proc: AppProcess.Interface) {
             }) satisfies Result,
         ),
       )
+}
+
+// Git prints nothing for an unset value; the Interface reports that as undefined.
+function present(text: string) {
+  return Option.getOrUndefined(Option.liftPredicate(text, (value) => value.length > 0))
 }
 
 function resolvePath(cwd: string, value: string) {
