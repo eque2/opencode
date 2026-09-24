@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import path from "path"
 import { fileURLToPath } from "url"
 import { describe, expect, test } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Effect, Layer } from "effect"
 import { FileMutation } from "@opencode-ai/core/file-mutation"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -91,7 +92,7 @@ const withTool = <A, E, R>(directory: string, body: (registry: ToolRegistry.Inte
 const call = (input: typeof WriteTool.Input.Type, id = "call-write") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "write", input },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "write", input },
 })
 
 const it = testEffect(Layer.empty)

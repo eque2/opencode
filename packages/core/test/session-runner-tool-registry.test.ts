@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Tool } from "@opencode-ai/core/tool/tool"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -44,7 +45,7 @@ const sessionID = SessionV2.ID.make("ses_registry")
 const call = (name: string, id = `call-${name}`): ToolRegistry.ExecuteInput => ({
   sessionID,
   ...identity,
-  call: { type: "tool-call", id, name, input: { text: name } },
+  call: { type: "tool-call", id: ToolCallID.make(id), name, input: { text: name } },
 })
 
 const make = (permission?: string) => {
@@ -169,14 +170,14 @@ describe("ToolRegistry", () => {
         yield* executeTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "failed", name: "failed", input: {} },
+          call: { type: "tool-call", id: ToolCallID.make("failed"), name: "failed", input: {} },
         }),
       ).toEqual({ type: "error", value: "Denied" })
       expect(
         yield* executeTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "missing", name: "missing", input: {} },
+          call: { type: "tool-call", id: ToolCallID.make("missing"), name: "missing", input: {} },
         }),
       ).toEqual({ type: "error", value: "Unknown tool: missing" })
 
@@ -194,7 +195,7 @@ describe("ToolRegistry", () => {
             materialized.settle({
               sessionID,
               ...identity,
-              call: { type: "tool-call", id: "defect", name: "defect", input: {} },
+              call: { type: "tool-call", id: ToolCallID.make("defect"), name: "defect", input: {} },
             }),
           ),
           Effect.catchDefect(Effect.succeed),
@@ -241,7 +242,7 @@ describe("ToolRegistry", () => {
       yield* executeTool(service, {
         sessionID,
         ...identity,
-        call: { type: "tool-call", id: "call-context", name: "context", input: {} },
+        call: { type: "tool-call", id: ToolCallID.make("call-context"), name: "context", input: {} },
       })
       expect(contexts).toEqual([{ sessionID, ...identity, toolCallID: "call-context" }])
     }),
@@ -256,7 +257,12 @@ describe("ToolRegistry", () => {
         yield* settleTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "call-bounded", name: "bounded", input: { text: "complete" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("call-bounded"),
+            name: "bounded",
+            input: { text: "complete" },
+          },
         }),
       ).toEqual({
         result: { type: "text", value: "bounded reference" },
@@ -291,7 +297,7 @@ describe("ToolRegistry", () => {
         yield* executeTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "transformed", name: "transformed", input: { value: true } },
+          call: { type: "tool-call", id: ToolCallID.make("transformed"), name: "transformed", input: { value: true } },
         }),
       ).toEqual({ type: "text", value: "true" })
       expect(executed).toEqual(["yes"])
@@ -299,7 +305,12 @@ describe("ToolRegistry", () => {
         yield* executeTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "invalid-input", name: "transformed", input: { value: "yes" } },
+          call: {
+            type: "tool-call",
+            id: ToolCallID.make("invalid-input"),
+            name: "transformed",
+            input: { value: "yes" },
+          },
         }),
       ).toMatchObject({ type: "error", value: expect.stringContaining("Invalid tool input") })
       expect(executed).toEqual(["yes"])
@@ -327,7 +338,7 @@ describe("ToolRegistry", () => {
         yield* executeTool(service, {
           sessionID,
           ...identity,
-          call: { type: "tool-call", id: "invalid-output", name: "invalid_output", input: {} },
+          call: { type: "tool-call", id: ToolCallID.make("invalid-output"), name: "invalid_output", input: {} },
         }),
       ).toMatchObject({ type: "error", value: expect.stringContaining("invalid value for its output schema") })
     }),

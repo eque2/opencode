@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { ToolCallID } from "@opencode-ai/llm"
 import path from "path"
 import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
@@ -84,7 +85,12 @@ describe("SkillTool", () => {
               yield* executeTool(registry, {
                 sessionID,
                 ...toolIdentity,
-                call: { type: "tool-call", id: "call-skill", name: "skill", input: { name: "effect" } },
+                call: {
+                  type: "tool-call",
+                  id: ToolCallID.make("call-skill"),
+                  name: "skill",
+                  input: { name: "effect" },
+                },
               }),
             ).toEqual({
               type: "text",
@@ -95,7 +101,12 @@ describe("SkillTool", () => {
               yield* settleTool(registry, {
                 sessionID,
                 ...toolIdentity,
-                call: { type: "tool-call", id: "call-skill-overflow", name: "skill", input: { name: "effect" } },
+                call: {
+                  type: "tool-call",
+                  id: ToolCallID.make("call-skill-overflow"),
+                  name: "skill",
+                  input: { name: "effect" },
+                },
               }),
             ).toMatchObject({
               result: { type: "text", value: SkillTool.toModelOutput(info, [reference]) },
@@ -109,7 +120,12 @@ describe("SkillTool", () => {
               yield* executeTool(registry, {
                 sessionID,
                 ...toolIdentity,
-                call: { type: "tool-call", id: "call-missing-skill", name: "skill", input: { name: "missing" } },
+                call: {
+                  type: "tool-call",
+                  id: ToolCallID.make("call-missing-skill"),
+                  name: "skill",
+                  input: { name: "missing" },
+                },
               }),
             ).toEqual({ type: "error", value: "Unable to load skill missing" })
             deny = true
@@ -117,7 +133,12 @@ describe("SkillTool", () => {
               yield* executeTool(registry, {
                 sessionID,
                 ...toolIdentity,
-                call: { type: "tool-call", id: "call-denied-skill", name: "skill", input: { name: "effect" } },
+                call: {
+                  type: "tool-call",
+                  id: ToolCallID.make("call-denied-skill"),
+                  name: "skill",
+                  input: { name: "effect" },
+                },
               }),
             ).toEqual({ type: "error", value: "Unable to load skill effect" })
             deny = false
@@ -138,7 +159,12 @@ describe("SkillTool", () => {
               yield* executeTool(registry, {
                 sessionID,
                 ...toolIdentity,
-                call: { type: "tool-call", id: "call-flat-skill", name: "skill", input: { name: "public" } },
+                call: {
+                  type: "tool-call",
+                  id: ToolCallID.make("call-flat-skill"),
+                  name: "skill",
+                  input: { name: "public" },
+                },
               }),
             ).toEqual({ type: "text", value: SkillTool.toModelOutput(flat, []) })
           }).pipe(Effect.provide(skillToolLayer))
