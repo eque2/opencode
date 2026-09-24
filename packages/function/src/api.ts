@@ -399,6 +399,15 @@ export default new Hono<{ Bindings: Env }>()
           return c.json({ error: "Invalid or expired token" }, { status: 403 })
         }
         const repository = verified.success
+        const exchangeFailed = (error: unknown) =>
+          Effect.logError("GitHub App token exchange failed:", error).pipe(
+            Effect.as(
+              c.json(
+                { error: `Failed to exchange GitHub App token for ${repository.owner}/${repository.repo}` },
+                { status: 502 },
+              ),
+            ),
+          )
 
         return yield* Effect.gen(function* () {
           const auth = yield* githubAppAuth
@@ -418,16 +427,11 @@ export default new Hono<{ Bindings: Env }>()
           )
           return c.json({ token: installationAuth.token })
         }).pipe(
-          Effect.catch((error) =>
-            Effect.logError("GitHub App token exchange failed:", error.cause).pipe(
-              Effect.as(
-                c.json(
-                  { error: `Failed to exchange GitHub App token for ${repository.owner}/${repository.repo}` },
-                  { status: 502 },
-                ),
-              ),
-            ),
-          ),
+          // A GitHub failure carries the original error; log it as before.
+          Effect.catch((error) => exchangeFailed(error.cause)),
+          // The route has always answered 502 for any error thrown in this
+          // block, such as an Octokit constructor error.
+          Effect.catchDefect(exchangeFailed),
         )
       }),
     ),
