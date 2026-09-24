@@ -71,9 +71,7 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
     registerSuffix: () => setSuffixCount((n) => n + 1),
     unregisterSuffix: () => setSuffixCount((n) => Math.max(0, n - 1)),
     getDescribedBy: () => {
-      const ids: string[] = []
-      if (prefixCount() > 0) ids.push(prefixId)
-      if (suffixCount() > 0) ids.push(suffixId)
+      const ids = [...(prefixCount() > 0 ? [prefixId] : []), ...(suffixCount() > 0 ? [suffixId] : [])]
       return ids.length > 0 ? ids.join(" ") : undefined
     },
   }
