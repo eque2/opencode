@@ -55,6 +55,8 @@ export function fileLogger(file = path.join(Global.Path.log, "opencode.log"), id
 
 const stderrLogger = Logger.make((options) => process.stderr.write(formatter().log(options) + "\n"))
 
+const isLevelName = Schema.is(Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]))
+
 export function minimumLogLevel() {
   const value = process.env.OPENCODE_LOG_LEVEL?.toUpperCase()
   const levels = {
@@ -63,7 +65,7 @@ export function minimumLogLevel() {
     WARN: "Warn",
     ERROR: "Error",
   } as const satisfies Record<string, LogLevel.LogLevel>
-  return value && value in levels ? levels[value as keyof typeof levels] : levels.INFO
+  return isLevelName(value) ? levels[value] : levels.INFO
 }
 
 export function loggers() {
