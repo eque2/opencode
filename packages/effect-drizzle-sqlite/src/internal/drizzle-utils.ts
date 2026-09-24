@@ -1,4 +1,3 @@
-/* oxlint-disable */
 import { Column, getColumnTable } from "drizzle-orm/column"
 import { is } from "drizzle-orm/entity"
 import type { JoinNullability } from "drizzle-orm/query-builders/select.types"
