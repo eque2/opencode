@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, LayerMap, Option } from "effect"
+import { Cause, Context, Effect, Exit, Layer, LayerMap, Option } from "effect"
 import { Node } from "@opencode-ai/core/effect/app-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -64,9 +64,11 @@ describe("node build", () => {
       }) as unknown as Effect.Effect<LayerMap.LayerMap<Location.Ref, LocationServices, LocationError>, never, CycleB>,
     )
     const map = Node.makeGlobalNode({ service: LocationServiceMap.Service, layer: mapLayer, deps: [b] })
-    expect(() => AppNodeBuilder.build(LayerNode.group([a]), [[LocationServiceMap.node, map]])).toThrow(
-      "Cycle detected in layer tree",
-    )
+    const layer = AppNodeBuilder.build(LayerNode.group([a]), [[LocationServiceMap.node, map]])
+    const exit = await Effect.runPromiseExit(Effect.scoped(Layer.build(layer)))
+    const defect = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined
+    expect(defect).toBeInstanceOf(LayerNode.GraphError)
+    expect(defect).toMatchObject({ message: expect.stringContaining("Cycle detected in layer tree") })
   })
 
   test("shares top-level project with location services", async () => {
