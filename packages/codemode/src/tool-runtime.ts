@@ -799,12 +799,14 @@ export const make = <R>(
   }
 
   // Any failure to copy a tool result is an invalid output. A hostile host value can also throw
-  // while the walk reads it (a Proxy trap, a getter), so the walk runs inside Effect.try.
+  // while the walk reads it (a Proxy trap, a getter), so the walk runs inside Result.try.
   const decodeOutput = (value: unknown, name: string): Effect.Effect<unknown, ToolRuntimeError> => {
     const invalidOutput = () => new ToolRuntimeError("InvalidToolOutput", `Invalid output from tool '${name}'.`)
-    return Effect.try({ try: () => copyIn(value, `Result from tool '${name}'`), catch: invalidOutput }).pipe(
-      Effect.flatMap(Effect.fromResult),
-      Effect.mapError(invalidOutput),
+    return Effect.fromResult(
+      Result.flatMap(
+        Result.try({ try: () => copyIn(value, `Result from tool '${name}'`), catch: invalidOutput }),
+        (copied) => Result.mapError(copied, invalidOutput),
+      ),
     )
   }
 
@@ -834,8 +836,10 @@ export const make = <R>(
     invoke: (path, args) =>
       Effect.gen(function* () {
         const name = path.join(".")
-        const externalArgs = yield* Effect.forEach(args, (arg) =>
-          Effect.map(Effect.fromResult(copyIn(arg, `Arguments for tool '${name}'`)), (copied) => copyOut(copied)),
+        const externalArgs = yield* Effect.fromResult(
+          Result.all(
+            args.map((arg) => Result.map(copyIn(arg, `Arguments for tool '${name}'`), (copied) => copyOut(copied))),
+          ),
         )
         const call = { name }
         const recordAndObserve = (input: unknown) =>
