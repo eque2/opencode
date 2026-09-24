@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
+import { Clock, Config, ConfigProvider, DateTime, Duration, Effect, Option, Schema, Semaphore, Stream } from "effect"
 import type { Scope } from "effect"
 import type { IntegrationOAuthMethodRegistration } from "@opencode-ai/plugin/v2/effect/integration"
 import { define } from "@opencode-ai/plugin/v2/effect/plugin"
@@ -88,11 +88,12 @@ function oauth(http: HttpClient.HttpClient) {
           { grant_type: "refresh_token", refresh_token: credential.refresh, client_id: clientID },
           Token,
         )
+        const now = yield* Clock.currentTimeMillis
         return {
           ...credential,
           access: token.access_token,
           refresh: token.refresh_token,
-          expires: Date.now() + token.expires_in * 1000,
+          expires: now + token.expires_in * 1000,
         }
       }),
     label: (credential) => {
@@ -177,8 +178,10 @@ export const OpencodePlugin = define<HttpClient.HttpClient | EventV2.Service | S
                 }))
               }
               if (config.release_date !== undefined) {
-                const released = Date.parse(config.release_date)
-                model.time.released = Number.isFinite(released) ? released : 0
+                model.time.released = Option.match(DateTime.make(config.release_date), {
+                  onNone: () => 0,
+                  onSome: DateTime.toEpochMillis,
+                })
               }
               if (config.cost !== undefined) {
                 model.cost = remoteCost(config.cost)
@@ -303,12 +306,13 @@ function credential(http: HttpClient.HttpClient, server: string, token: typeof T
     const org = Option.fromUndefinedOr(
       orgs.toSorted((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).at(0),
     )
+    const now = yield* Clock.currentTimeMillis
     return Credential.OAuth.make({
       type: "oauth" as const,
       methodID,
       access: token.access_token,
       refresh: token.refresh_token,
-      expires: Date.now() + token.expires_in * 1000,
+      expires: now + token.expires_in * 1000,
       metadata: {
         server,
         accountID: user.id,

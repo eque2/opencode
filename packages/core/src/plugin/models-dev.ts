@@ -1,13 +1,12 @@
 import { define } from "./internal"
 import type { ModelV2Info } from "@opencode-ai/sdk/v2/types"
-import { Effect, MutableHashMap, Option, Stream } from "effect"
+import { DateTime, Effect, MutableHashMap, Option, Stream } from "effect"
 import { EventV2 } from "../event"
 import { ModelsDev } from "../models-dev"
 import { ProviderV2 } from "../provider"
 
 function released(date: string) {
-  const time = Date.parse(date)
-  return Number.isFinite(time) ? time : 0
+  return Option.match(DateTime.make(date), { onNone: () => 0, onSome: DateTime.toEpochMillis })
 }
 
 function cost(input: ModelsDev.Model["cost"]): ModelV2Info["cost"] {
