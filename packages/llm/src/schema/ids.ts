@@ -17,6 +17,10 @@ export type ModelID = typeof ModelID.Type
 export const ProviderID = Schema.String.pipe(Schema.brand("LLM.ProviderID"))
 export type ProviderID = typeof ProviderID.Type
 
+/** Identifier of a prepared or sent LLM request. */
+export const RequestID = Schema.String.pipe(Schema.brand("LLM.RequestID"))
+export type RequestID = typeof RequestID.Type
+
 export const ResponseID = Schema.String
 export type ResponseID = Schema.Schema.Type<typeof ResponseID>
 

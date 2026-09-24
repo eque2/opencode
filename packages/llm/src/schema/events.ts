@@ -1,5 +1,5 @@
 import { Array as Arr, Option, Schema } from "effect"
-import { ContentBlockID, FinishReason, ProtocolID, ProviderMetadata, RouteID, ToolCallID } from "./ids"
+import { ContentBlockID, FinishReason, ProtocolID, ProviderMetadata, RequestID, RouteID, ToolCallID } from "./ids"
 import { ModelSchema } from "./options"
 import { Message, ToolCallPart, ToolOutput, ToolResultPart, ToolResultValue, type ContentPart } from "./messages"
 import { ProviderFailureClassification } from "./errors"
@@ -289,7 +289,7 @@ export const LLMEvent = Object.assign(llmEventTagged, {
 export type LLMEvent = Schema.Schema.Type<typeof llmEventTagged>
 
 export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.PreparedRequest")({
-  id: Schema.String,
+  id: RequestID,
   route: RouteID,
   protocol: ProtocolID,
   model: ModelSchema,
