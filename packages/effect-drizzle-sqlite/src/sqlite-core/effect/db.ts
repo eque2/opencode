@@ -61,7 +61,7 @@ export class SQLiteEffectDatabase<
       ;(this.query as SQLiteEffectDatabase<TEffectHKT, TRunResult, AnyRelations>["query"])[tableName] =
         new SQLiteEffectRelationalQueryBuilder(
           relations,
-          relations[relation.name]!.table as SQLiteTable,
+          relations[relation.name].table as SQLiteTable,
           relation,
           dialect,
           session,
@@ -90,9 +90,9 @@ export class SQLiteEffectDatabase<
         new WithSubquery(
           qb.getSQL(),
           selection ??
-            (("getSelectedFields" in qb
+            ("getSelectedFields" in qb
               ? ((qb as { getSelectedFields(): SelectedFields | undefined }).getSelectedFields() ?? {})
-              : {}) as SelectedFields),
+              : {}),
           alias,
           true,
         ),
