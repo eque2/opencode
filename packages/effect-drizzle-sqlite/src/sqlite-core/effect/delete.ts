@@ -207,7 +207,7 @@ export class SQLiteEffectDeleteBase<
   }
 
   /** @internal */
-  _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this, TEffectHKT> {
+  _prepare(isOneTimeQuery = true): SQLiteEffectDeletePrepare<this> {
     return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.effectDialect.sqlToQuery(this.getSQL()),
       this.config.returning ? "all" : "run",
@@ -218,10 +218,10 @@ export class SQLiteEffectDeleteBase<
           tables: extractUsedTable(this.config.table),
         },
       },
-    ) as SQLiteEffectDeletePrepare<this, TEffectHKT>
+    ) as SQLiteEffectDeletePrepare<this>
   }
 
-  prepare(): SQLiteEffectDeletePrepare<this, TEffectHKT> {
+  prepare(): SQLiteEffectDeletePrepare<this> {
     return this._prepare(false)
   }
 

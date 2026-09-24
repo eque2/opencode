@@ -91,7 +91,7 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
     private tableConfig: TableRelationalConfig,
     private dialect: SQLiteDialect,
     private session: SQLiteEffectSession<TEffectHKT, any, any>,
-    private config: DBQueryConfig<"many" | "one"> | true,
+    private config: DBQueryConfig | true,
     mode: "many" | "first",
     private rowMode?: boolean,
     private forbidJsonb?: boolean,

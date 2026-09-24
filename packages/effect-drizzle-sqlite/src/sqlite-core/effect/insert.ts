@@ -300,7 +300,7 @@ export class SQLiteEffectInsertBase<
   }
 
   /** @internal */
-  _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this, TEffectHKT> {
+  _prepare(isOneTimeQuery = true): SQLiteEffectInsertPrepare<this> {
     return this.effectSession[isOneTimeQuery ? "prepareOneTimeQuery" : "prepareQuery"](
       this.effectDialect.sqlToQuery(this.getSQL()),
       this.config.returning ? "all" : "run",
@@ -311,10 +311,10 @@ export class SQLiteEffectInsertBase<
           tables: extractUsedTable(this.config.table),
         },
       },
-    ) as SQLiteEffectInsertPrepare<this, TEffectHKT>
+    ) as SQLiteEffectInsertPrepare<this>
   }
 
-  prepare(): SQLiteEffectInsertPrepare<this, TEffectHKT> {
+  prepare(): SQLiteEffectInsertPrepare<this> {
     return this._prepare(false)
   }
 

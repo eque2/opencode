@@ -82,7 +82,7 @@ export class SQLiteEffectPreparedQuery<
 
   /** @internal */
   joinsNotNullableMap?: Record<string, boolean>
-  private jitMapper?: RowsMapper<any> | RelationalRowsMapper<any>
+  private jitMapper?: RowsMapper<any> | RelationalRowsMapper
   private cacheConfig: Option.Option<WithCacheConfig>
   private effectExecuteMethod: SQLiteExecuteMethod
   private queryMetadata?: SQLiteEffectQueryMetadata

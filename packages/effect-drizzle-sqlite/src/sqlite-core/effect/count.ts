@@ -7,11 +7,11 @@ import type { SQLiteTable } from "drizzle-orm/sqlite-core/table"
 import type { SQLiteView } from "drizzle-orm/sqlite-core/view"
 import type { SQLiteEffectSession } from "./session"
 
-function buildSQLiteEmbeddedCount(source: SQLiteTable | SQLiteView | SQL | SQLWrapper, filters?: SQL<unknown>) {
+function buildSQLiteEmbeddedCount(source: SQLiteTable | SQLiteView | SQL | SQLWrapper, filters?: SQL) {
   return sql<number>`(select count(*) from ${source}${sql.raw(" where ").if(filters)}${filters})`
 }
 
-function buildSQLiteCount(source: SQLiteTable | SQLiteView | SQL | SQLWrapper, filters?: SQL<unknown>) {
+function buildSQLiteCount(source: SQLiteTable | SQLiteView | SQL | SQLWrapper, filters?: SQL) {
   return sql<number>`select count(*) from ${source}${sql.raw(" where ").if(filters)}${filters}`
 }
 
@@ -25,7 +25,7 @@ export class SQLiteEffectCountBuilder<
 
   constructor(params: {
     source: SQLiteTable | SQLiteView | SQL | SQLWrapper
-    filters?: SQL<unknown>
+    filters?: SQL
     session: SQLiteEffectSession<TEffectHKT, any, any>
   }) {
     super(buildSQLiteEmbeddedCount(params.source, params.filters).queryChunks)

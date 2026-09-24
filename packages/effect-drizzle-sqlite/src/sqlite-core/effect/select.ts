@@ -119,7 +119,7 @@ export class SQLiteEffectSelectBuilder<
     } else if (is(source, SQL)) {
       fields = {}
     } else {
-      fields = getTableColumns<SQLiteTable>(source)
+      fields = getTableColumns(source)
     }
 
     return new SQLiteEffectSelectBase({
