@@ -2,7 +2,7 @@ import { type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs"
 import { createEffect, createMemo, createSignal, onCleanup, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { render as renderSolid } from "solid-js/web"
-import { HashSet } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { createHoverCommentUtility } from "../pierre/comment-hover"
 import { cloneSelectedLineRange, formatSelectedLineLabel, lineInSelectedRange } from "../pierre/selection-bridge"
@@ -105,14 +105,12 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
   commentElement: (view: Accessor<C>) => JSX.Element
   draftElement: (view: Accessor<D>) => JSX.Element
 }) {
-  const nodes = new Map<
-    string,
-    {
-      host: HTMLDivElement
-      dispose: VoidFunction
-      setMeta: (meta: LineCommentAnnotationMeta<T>) => void
-    }
-  >()
+  type AnnotationHost = {
+    host: HTMLDivElement
+    dispose: VoidFunction
+    setMeta: (meta: LineCommentAnnotationMeta<T>) => void
+  }
+  const nodes = MutableHashMap.empty<string, AnnotationHost>()
 
   const mount = (meta: LineCommentAnnotationMeta<T>) => {
     if (typeof document === "undefined") return
@@ -140,14 +138,14 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
       return props.draftElement(view)
     }, host)
 
-    const node = { host, dispose, setMeta: setCurrent }
-    nodes.set(meta.key, node)
+    const node: AnnotationHost = { host, dispose, setMeta: setCurrent }
+    MutableHashMap.set(nodes, meta.key, node)
     return node
   }
 
   const render = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotation: A) => {
     const meta = annotation.metadata
-    const node = nodes.get(meta.key) ?? mount(meta)
+    const node = Option.getOrElse(MutableHashMap.get(nodes, meta.key), () => mount(meta))
     if (!node) return
     node.setMeta(meta)
     return node.host
@@ -158,13 +156,13 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
     for (const [key, node] of nodes) {
       if (HashSet.has(next, key)) continue
       node.dispose()
-      nodes.delete(key)
+      MutableHashMap.remove(nodes, key)
     }
   }
 
   const cleanup = () => {
     for (const [, node] of nodes) node.dispose()
-    nodes.clear()
+    MutableHashMap.clear(nodes)
   }
 
   return { render, reconcile, cleanup }

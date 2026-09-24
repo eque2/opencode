@@ -20,7 +20,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { type SelectedLineRange } from "@pierre/diffs"
 import { Dynamic } from "solid-js/web"
-import { HashSet } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import { mediaKindFromPath } from "../pierre/media"
 import { cloneSelectedLineRange, previewSelectedLines } from "../pierre/selection-bridge"
 import { createLineCommentController } from "./line-comment-annotations"
@@ -169,8 +169,8 @@ export const SessionReview = (props: SessionReviewProps) => {
   let frame: number | undefined
   const i18n = useI18n()
   const fileComponent = useFileComponent()
-  const anchors = new Map<string, HTMLElement>()
-  const nodes = new Map<string, HTMLDivElement>()
+  const anchors = MutableHashMap.empty<string, HTMLElement>()
+  const nodes = MutableHashMap.empty<string, HTMLDivElement>()
   const [store, setStore] = createStore({
     open: [] as string[],
     visible: {} as Record<string, boolean>,
@@ -309,20 +309,22 @@ export const SessionReview = (props: SessionReviewProps) => {
         const root = scroll
         if (!root) return
 
-        const wrapper = anchors.get(focus.file)
-        const anchor = wrapper?.querySelector(`[data-comment-id="${focus.id}"]`)
-        const ready =
-          anchor instanceof HTMLElement && anchor.style.pointerEvents !== "none" && anchor.style.opacity !== "0"
+        const wrapper = MutableHashMap.get(anchors, focus.file)
+        const anchor = wrapper.pipe(
+          Option.flatMapNullishOr((el) => el.querySelector(`[data-comment-id="${focus.id}"]`)),
+          Option.filter((el): el is HTMLElement => el instanceof HTMLElement),
+        )
+        const ready = Option.exists(anchor, (el) => el.style.pointerEvents !== "none" && el.style.opacity !== "0")
 
         const target = ready ? anchor : wrapper
-        if (!target) {
+        if (Option.isNone(target)) {
           if (attempt >= 120) return
           requestAnimationFrame(() => scrollTo(attempt + 1))
           return
         }
 
         const rootRect = root.getBoundingClientRect()
-        const targetRect = target.getBoundingClientRect()
+        const targetRect = target.value.getBoundingClientRect()
         const offset = targetRect.top - rootRect.top
         const next = root.scrollTop + offset - rootRect.height / 2 + targetRect.height / 2
         root.scrollTop = Math.max(0, next)
@@ -488,8 +490,8 @@ export const SessionReview = (props: SessionReviewProps) => {
                     })
 
                     onCleanup(() => {
-                      anchors.delete(file)
-                      nodes.delete(file)
+                      MutableHashMap.remove(anchors, file)
+                      MutableHashMap.remove(nodes, file)
                       queue()
                     })
 
@@ -575,8 +577,8 @@ export const SessionReview = (props: SessionReviewProps) => {
                           <div
                             data-slot="session-review-diff-wrapper"
                             ref={(el) => {
-                              anchors.set(file, el)
-                              nodes.set(file, el)
+                              MutableHashMap.set(anchors, file, el)
+                              MutableHashMap.set(nodes, file, el)
                               queue()
                             }}
                           >
