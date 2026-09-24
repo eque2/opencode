@@ -12,10 +12,10 @@ import {
 import { getUrl, isRecord } from "../core/utils.gen.js"
 import type { Client, ClientOptions, Config, RequestOptions } from "./types.gen.js"
 
-export const createQuerySerializer = <T = unknown>({ allowReserved, array, object }: QuerySerializerOptions = {}) => {
-  const querySerializer = (queryParams: T) => {
+export const createQuerySerializer = ({ allowReserved, array, object }: QuerySerializerOptions = {}) => {
+  const querySerializer = (queryParams: unknown) => {
     const search: string[] = []
-    if (queryParams && typeof queryParams === "object") {
+    if (isRecord(queryParams)) {
       for (const name in queryParams) {
         const value = queryParams[name]
 
