@@ -74,6 +74,12 @@ const markLastSystem = (system: LLMRequest["system"], hint: CacheHint): LLMReque
 const lastIndexOfRole = (messages: ReadonlyArray<Message>, role: Message["role"]): number =>
   messages.findLastIndex((m) => m.role === role)
 
+// Only text and tool-result parts declare a `cache` field. Message
+// construction drops the key from every other part type, so those parts stay
+// as they are.
+const withCacheHint = (part: ContentPart, hint: CacheHint): ContentPart =>
+  part.type === "text" || part.type === "tool-result" ? { ...part, cache: hint } : part
+
 // Mark the last text part of `messages[index]`. If no text part exists, mark
 // the last content part regardless of type — that's the breakpoint position
 // in tool-result-only messages too.
@@ -85,7 +91,7 @@ const markMessageAt = (messages: ReadonlyArray<Message>, index: number, hint: Ca
   const markAt = lastTextIndex >= 0 ? lastTextIndex : target.content.length - 1
   const existing = target.content[markAt]
   if ("cache" in existing && existing.cache) return messages
-  const nextContent = target.content.map((part, i) => (i === markAt ? ({ ...part, cache: hint } as ContentPart) : part))
+  const nextContent = target.content.map((part, i) => (i === markAt ? withCacheHint(part, hint) : part))
   const next = new Message({
     id: target.id,
     role: target.role,
