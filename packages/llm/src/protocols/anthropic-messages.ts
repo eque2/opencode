@@ -1,4 +1,4 @@
-import { Effect, HashSet, Predicate, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, Predicate, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -8,6 +8,7 @@ import {
   LLMEvent,
   Usage,
   type CacheHint,
+  type ContentPart,
   type FinishReason,
   type JsonSchema,
   type LLMRequest,
@@ -419,93 +420,116 @@ const lowerNativeSystemUpdate = Effect.fn("AnthropicMessages.lowerNativeSystemUp
   }
 })
 
+const lowerUserBlock = Effect.fn("AnthropicMessages.lowerUserBlock")(function* (
+  part: ContentPart,
+  breakpoints: Cache.Breakpoints,
+) {
+  if (part.type === "text")
+    return {
+      type: "text" as const,
+      text: part.text,
+      cache_control: cacheControl(breakpoints, part.cache),
+    } satisfies AnthropicTextBlock
+  if (part.type === "media") return yield* lowerImage(part)
+  return yield* ProviderShared.unsupportedContent("Anthropic Messages", "user", ["text", "media"])
+})
+
+const lowerAssistantBlock = Effect.fn("AnthropicMessages.lowerAssistantBlock")(function* (
+  part: ContentPart,
+  breakpoints: Cache.Breakpoints,
+) {
+  if (part.type === "text")
+    return {
+      type: "text" as const,
+      text: part.text,
+      cache_control: cacheControl(breakpoints, part.cache),
+    } satisfies AnthropicTextBlock
+  if (part.type === "reasoning")
+    return {
+      type: "thinking" as const,
+      thinking: part.text,
+      signature: part.encrypted ?? signatureFromMetadata(part.providerMetadata),
+    } satisfies AnthropicAssistantBlock
+  if (part.type === "tool-call") return yield* part.providerExecuted ? lowerServerToolCall(part) : lowerToolCall(part)
+  if (part.type === "tool-result" && part.providerExecuted) return yield* lowerServerToolResult(part)
+  return yield* invalid(
+    `Anthropic Messages assistant messages only support text, reasoning, and tool-call content for now`,
+  )
+})
+
+const lowerToolResultBlock = Effect.fn("AnthropicMessages.lowerToolResultBlock")(function* (
+  part: ContentPart,
+  breakpoints: Cache.Breakpoints,
+) {
+  if (!ProviderShared.supportsContent(part, ["tool-result"]))
+    return yield* ProviderShared.unsupportedContent("Anthropic Messages", "tool", ["tool-result"])
+  return {
+    type: "tool_result" as const,
+    tool_use_id: AnthropicToolUseID.make(part.id),
+    content: yield* lowerToolResultContent(part),
+    is_error: part.result.type === "error" ? true : undefined,
+    cache_control: cacheControl(breakpoints, part.cache),
+  } satisfies AnthropicToolResultBlock
+})
+
+// A wrapped system update joins the previous user turn when there is one, so
+// the lowered conversation keeps alternating user and assistant turns.
+const appendUserBlock = (
+  messages: ReadonlyArray<AnthropicMessage>,
+  block: AnthropicTextBlock,
+): ReadonlyArray<AnthropicMessage> => {
+  const previous = messages.at(-1)
+  if (previous?.role === "user")
+    return Arr.append(messages.slice(0, -1), { role: "user" as const, content: Arr.append(previous.content, block) })
+  return Arr.append(messages, { role: "user" as const, content: [block] })
+}
+
+// Lower one common message onto the messages lowered so far. Messages lower in
+// order so cache breakpoints are spent in request order.
+const lowerMessage = Effect.fn("AnthropicMessages.lowerMessage")(function* (
+  request: LLMRequest,
+  breakpoints: Cache.Breakpoints,
+  messages: ReadonlyArray<AnthropicMessage>,
+  message: LLMRequest["messages"][number],
+  index: number,
+) {
+  if (message.role === "system") {
+    if (splitsLocalToolResults(request.messages, index))
+      return yield* invalid("Anthropic Messages system updates cannot split a local tool call from its tool result")
+    if (supportsNativeSystemUpdates(request) && canUseNativeSystemUpdate(request.messages, index))
+      return Arr.append(messages, yield* lowerNativeSystemUpdate(message, breakpoints))
+    const part = yield* ProviderShared.wrappedSystemUpdate("Anthropic Messages", message)
+    return appendUserBlock(messages, {
+      type: "text",
+      text: part.text,
+      cache_control: cacheControl(breakpoints, part.cache),
+    })
+  }
+  if (message.role === "user")
+    return Arr.append(messages, {
+      role: "user" as const,
+      content: yield* Effect.forEach(message.content, (part) => lowerUserBlock(part, breakpoints)),
+    })
+  if (message.role === "assistant")
+    return Arr.append(messages, {
+      role: "assistant" as const,
+      content: yield* Effect.forEach(message.content, (part) => lowerAssistantBlock(part, breakpoints)),
+    })
+  return Arr.append(messages, {
+    role: "user" as const,
+    content: yield* Effect.forEach(message.content, (part) => lowerToolResultBlock(part, breakpoints)),
+  })
+})
+
 const lowerMessages = Effect.fn("AnthropicMessages.lowerMessages")(function* (
   request: LLMRequest,
   breakpoints: Cache.Breakpoints,
 ) {
-  const messages: AnthropicMessage[] = []
-
-  for (const [index, message] of request.messages.entries()) {
-    if (message.role === "system") {
-      if (splitsLocalToolResults(request.messages, index))
-        return yield* invalid("Anthropic Messages system updates cannot split a local tool call from its tool result")
-      if (supportsNativeSystemUpdates(request) && canUseNativeSystemUpdate(request.messages, index)) {
-        messages.push(yield* lowerNativeSystemUpdate(message, breakpoints))
-        continue
-      }
-      const part = yield* ProviderShared.wrappedSystemUpdate("Anthropic Messages", message)
-      const block = { type: "text" as const, text: part.text, cache_control: cacheControl(breakpoints, part.cache) }
-      const previous = messages.at(-1)
-      if (previous?.role === "user")
-        messages[messages.length - 1] = { role: "user", content: [...previous.content, block] }
-      else messages.push({ role: "user", content: [block] })
-      continue
-    }
-
-    if (message.role === "user") {
-      const content: AnthropicUserBlock[] = []
-      for (const part of message.content) {
-        if (part.type === "text") {
-          content.push({ type: "text", text: part.text, cache_control: cacheControl(breakpoints, part.cache) })
-          continue
-        }
-        if (part.type === "media") {
-          content.push(yield* lowerImage(part))
-          continue
-        }
-        return yield* ProviderShared.unsupportedContent("Anthropic Messages", "user", ["text", "media"])
-      }
-      messages.push({ role: "user", content })
-      continue
-    }
-
-    if (message.role === "assistant") {
-      const content: AnthropicAssistantBlock[] = []
-      for (const part of message.content) {
-        if (part.type === "text") {
-          content.push({ type: "text", text: part.text, cache_control: cacheControl(breakpoints, part.cache) })
-          continue
-        }
-        if (part.type === "reasoning") {
-          content.push({
-            type: "thinking",
-            thinking: part.text,
-            signature: part.encrypted ?? signatureFromMetadata(part.providerMetadata),
-          })
-          continue
-        }
-        if (part.type === "tool-call") {
-          content.push(yield* part.providerExecuted ? lowerServerToolCall(part) : lowerToolCall(part))
-          continue
-        }
-        if (part.type === "tool-result" && part.providerExecuted) {
-          content.push(yield* lowerServerToolResult(part))
-          continue
-        }
-        return yield* invalid(
-          `Anthropic Messages assistant messages only support text, reasoning, and tool-call content for now`,
-        )
-      }
-      messages.push({ role: "assistant", content })
-      continue
-    }
-
-    const content: AnthropicToolResultBlock[] = []
-    for (const part of message.content) {
-      if (!ProviderShared.supportsContent(part, ["tool-result"]))
-        return yield* ProviderShared.unsupportedContent("Anthropic Messages", "tool", ["tool-result"])
-      content.push({
-        type: "tool_result",
-        tool_use_id: AnthropicToolUseID.make(part.id),
-        content: yield* lowerToolResultContent(part),
-        is_error: part.result.type === "error" ? true : undefined,
-        cache_control: cacheControl(breakpoints, part.cache),
-      })
-    }
-    messages.push({ role: "user", content })
-  }
-
-  return messages
+  return yield* Effect.reduce(
+    request.messages,
+    (): ReadonlyArray<AnthropicMessage> => [],
+    (messages, message, index) => lowerMessage(request, breakpoints, messages, message, index),
+  )
 })
 
 const anthropicOptions = (request: LLMRequest) => request.providerOptions?.anthropic

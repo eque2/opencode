@@ -1,4 +1,4 @@
-import { Effect, HashSet, Schema } from "effect"
+import { Array as Arr, Effect, HashSet, Schema } from "effect"
 import { Route } from "../route/client"
 import { Auth } from "../route/auth"
 import { Endpoint } from "../route/endpoint"
@@ -7,12 +7,11 @@ import { Protocol } from "../route/protocol"
 import {
   LLMEvent,
   Usage,
+  type ContentPart,
   type FinishReason,
   type JsonSchema,
   type LLMRequest,
-  type MediaPart,
   type ProviderMetadata,
-  type TextPart,
   type ToolCallPart,
   type ToolDefinition,
   type ToolContent,
@@ -182,7 +181,9 @@ const lowerToolConfig = (toolChoice: NonNullable<LLMRequest["toolChoice"]>) =>
     tool: (name) => ({ functionCallingConfig: { mode: "ANY" as const, allowedFunctionNames: [name] } }),
   })
 
-const lowerUserPart = Effect.fn("Gemini.lowerUserPart")(function* (part: TextPart | MediaPart) {
+const lowerUserPart = Effect.fn("Gemini.lowerUserPart")(function* (part: ContentPart) {
+  if (!ProviderShared.supportsContent(part, ["text", "media"]))
+    return yield* ProviderShared.unsupportedContent("Gemini", "user", ["text", "media"])
   if (part.type === "text") return { text: part.text }
   const media = yield* ProviderShared.validateMedia("Gemini", part, MEDIA_MIMES)
   return { inlineData: { mimeType: media.mime, data: media.base64 } }
@@ -211,89 +212,89 @@ const lowerToolCall = Effect.fn("Gemini.lowerToolCall")(function* (part: ToolCal
   }
 })
 
-const lowerMessages = Effect.fn("Gemini.lowerMessages")(function* (request: LLMRequest) {
-  const contents: GeminiContent[] = []
+const lowerModelPart = Effect.fn("Gemini.lowerModelPart")(function* (part: ContentPart) {
+  if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
+    return yield* ProviderShared.unsupportedContent("Gemini", "assistant", ["text", "reasoning", "tool-call"])
+  if (part.type === "text") return { text: part.text }
+  if (part.type === "reasoning")
+    return { text: part.text, thought: true, thoughtSignature: thoughtSignature(part.providerMetadata) }
+  return yield* lowerToolCall(part)
+})
 
-  for (const message of request.messages) {
-    if (message.role === "system") {
-      const part = yield* ProviderShared.wrappedSystemUpdate("Gemini", message)
-      const previous = contents.at(-1)
-      if (previous?.role === "user")
-        contents[contents.length - 1] = { role: "user", parts: [...previous.parts, { text: part.text }] }
-      else contents.push({ role: "user", parts: [{ text: part.text }] })
-      continue
-    }
-
-    if (message.role === "user") {
-      const parts: Array<Schema.Schema.Type<typeof GeminiContentPart>> = []
-      for (const part of message.content) {
-        if (!ProviderShared.supportsContent(part, ["text", "media"]))
-          return yield* ProviderShared.unsupportedContent("Gemini", "user", ["text", "media"])
-        parts.push(yield* lowerUserPart(part))
-      }
-      contents.push({ role: "user", parts })
-      continue
-    }
-
-    if (message.role === "assistant") {
-      const parts: Array<Schema.Schema.Type<typeof GeminiContentPart>> = []
-      for (const part of message.content) {
-        if (!ProviderShared.supportsContent(part, ["text", "reasoning", "tool-call"]))
-          return yield* ProviderShared.unsupportedContent("Gemini", "assistant", ["text", "reasoning", "tool-call"])
-        if (part.type === "text") {
-          parts.push({ text: part.text })
-          continue
-        }
-        if (part.type === "reasoning") {
-          parts.push({ text: part.text, thought: true, thoughtSignature: thoughtSignature(part.providerMetadata) })
-          continue
-        }
-        if (part.type === "tool-call") {
-          parts.push(yield* lowerToolCall(part))
-          continue
-        }
-      }
-      contents.push({ role: "model", parts })
-      continue
-    }
-
-    const parts: Array<Schema.Schema.Type<typeof GeminiContentPart>> = []
-    for (const part of message.content) {
-      if (!ProviderShared.supportsContent(part, ["tool-result"]))
-        return yield* ProviderShared.unsupportedContent("Gemini", "tool", ["tool-result"])
-      if (part.result.type !== "content") {
-        parts.push({
-          functionResponse: {
-            name: part.name,
-            response: {
-              name: part.name,
-              content: ProviderShared.toolResultText(part),
-            },
-          },
-        })
-        continue
-      }
-      const content: ReadonlyArray<ToolContent> = part.result.value
-      const text = content.filter((item) => item.type === "text").map((item) => item.text)
-      parts.push({
+// One tool result lowers to a functionResponse part with the joined text, then
+// one inlineData part for each media item, in content order.
+const lowerToolResultParts = Effect.fn("Gemini.lowerToolResultParts")(function* (part: ContentPart) {
+  if (!ProviderShared.supportsContent(part, ["tool-result"]))
+    return yield* ProviderShared.unsupportedContent("Gemini", "tool", ["tool-result"])
+  if (part.result.type !== "content")
+    return [
+      {
         functionResponse: {
           name: part.name,
           response: {
             name: part.name,
-            content: text.join("\n"),
+            content: ProviderShared.toolResultText(part),
           },
         },
-      })
-      for (const item of content) {
-        if (item.type === "text") continue
-        const media = yield* ProviderShared.validateToolFile("Gemini", item, MEDIA_MIMES)
-        parts.push({ inlineData: { mimeType: media.mime, data: media.base64 } })
-      }
-    }
-    contents.push({ role: "user", parts })
-  }
+      },
+    ]
+  const content: ReadonlyArray<ToolContent> = part.result.value
+  const text = content.filter((item) => item.type === "text").map((item) => item.text)
+  const media = yield* Effect.forEach(
+    content.filter((item) => item.type !== "text"),
+    (item) => ProviderShared.validateToolFile("Gemini", item, MEDIA_MIMES),
+  )
+  return [
+    {
+      functionResponse: {
+        name: part.name,
+        response: {
+          name: part.name,
+          content: text.join("\n"),
+        },
+      },
+    },
+    ...media.map((file) => ({ inlineData: { mimeType: file.mime, data: file.base64 } })),
+  ]
+})
 
-  return contents
+// A wrapped system update joins the previous user turn when there is one, so
+// the lowered conversation keeps alternating user and model turns.
+const appendUserText = (contents: ReadonlyArray<GeminiContent>, text: string): ReadonlyArray<GeminiContent> => {
+  const previous = contents.at(-1)
+  if (previous?.role === "user")
+    return Arr.append(contents.slice(0, -1), { role: "user" as const, parts: Arr.append(previous.parts, { text }) })
+  return Arr.append(contents, { role: "user" as const, parts: [{ text }] })
+}
+
+const lowerMessage = Effect.fn("Gemini.lowerMessage")(function* (
+  contents: ReadonlyArray<GeminiContent>,
+  message: LLMRequest["messages"][number],
+) {
+  if (message.role === "system") {
+    const part = yield* ProviderShared.wrappedSystemUpdate("Gemini", message)
+    return appendUserText(contents, part.text)
+  }
+  if (message.role === "user")
+    return Arr.append(contents, {
+      role: "user" as const,
+      parts: yield* Effect.forEach(message.content, (part) => lowerUserPart(part)),
+    })
+  if (message.role === "assistant")
+    return Arr.append(contents, {
+      role: "model" as const,
+      parts: yield* Effect.forEach(message.content, (part) => lowerModelPart(part)),
+    })
+  const parts = yield* Effect.forEach(message.content, (part) => lowerToolResultParts(part))
+  return Arr.append(contents, { role: "user" as const, parts: parts.flat() })
+})
+
+const lowerMessages = Effect.fn("Gemini.lowerMessages")(function* (request: LLMRequest) {
+  return yield* Effect.reduce(
+    request.messages,
+    (): ReadonlyArray<GeminiContent> => [],
+    (contents, message) => lowerMessage(contents, message),
+  )
 })
 
 const geminiOptions = (request: LLMRequest) => request.providerOptions?.gemini
