@@ -1,7 +1,7 @@
 export * as Tool from "./tool"
 
 import { ToolDefinition, ToolFailure, ToolOutput, type ToolCall } from "@opencode-ai/llm"
-import { Effect, JsonSchema, Schema } from "effect"
+import { Effect, JsonSchema, MutableHashMap, Option, Schema } from "effect"
 import type { AgentV2 } from "../agent"
 import type { SessionMessage } from "../session/message"
 import type { SessionSchema } from "../session/schema"
@@ -74,20 +74,19 @@ export function make<
   Structured extends SchemaType<any> = Output,
 >(config: Config<Input, Output, Structured>): Definition<Input, Structured> {
   const tool = Object.freeze({}) as Definition<Input, Structured>
-  const definitions = new Map<string, ToolDefinition>()
+  const definitions = MutableHashMap.empty<string, ToolDefinition>()
   runtimes.set(tool, {
-    definition: (name) => {
-      const cached = definitions.get(name)
-      if (cached) return cached
-      const definition = new ToolDefinition({
-        name,
-        description: config.description,
-        inputSchema: toJsonSchema(config.input),
-        outputSchema: toJsonSchema(config.structured ?? config.output),
-      })
-      definitions.set(name, definition)
-      return definition
-    },
+    definition: (name) =>
+      Option.getOrElse(MutableHashMap.get(definitions, name), () => {
+        const definition = new ToolDefinition({
+          name,
+          description: config.description,
+          inputSchema: toJsonSchema(config.input),
+          outputSchema: toJsonSchema(config.structured ?? config.output),
+        })
+        MutableHashMap.set(definitions, name, definition)
+        return definition
+      }),
     settle: (call, context) =>
       Schema.decodeUnknownEffect(config.input)(call.input).pipe(
         Effect.mapError((error) => new ToolFailure({ message: `Invalid tool input: ${error.message}` })),

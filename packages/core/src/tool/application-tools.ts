@@ -1,12 +1,12 @@
 export * as ApplicationTools from "./application-tools"
 
-import { Context, Effect, Layer, Scope } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Scope } from "effect"
 import { State } from "../state"
 import { Tool } from "./tool"
 import { makeGlobalNode } from "../effect/app-node"
 
 type Data = {
-  readonly entries: Map<string, Entry>
+  readonly entries: MutableHashMap.MutableHashMap<string, Entry>
 }
 
 type Draft = {
@@ -22,7 +22,10 @@ export interface Interface {
   readonly register: (
     tools: Readonly<Record<string, Tool.AnyTool>>,
   ) => Effect.Effect<void, Tool.RegistrationError, Scope.Scope>
-  readonly entries: () => ReadonlyMap<string, Entry>
+  /** Active registrations in registration order. */
+  readonly entries: () => ReadonlyArray<readonly [string, Entry]>
+  /** The active registration for one tool name. */
+  readonly get: (name: string) => Option.Option<Entry>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ApplicationTools") {}
@@ -31,10 +34,10 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const state = State.create<Data, Draft>({
-      initial: () => ({ entries: new Map() }),
+      initial: () => ({ entries: MutableHashMap.empty() }),
       draft: (draft) => ({
         set: (name, tool) => {
-          draft.entries.set(name, tool)
+          MutableHashMap.set(draft.entries, name, tool)
         },
       }),
     })
@@ -49,7 +52,8 @@ const layer = Layer.effect(
           for (const [name, entry] of registrations) draft.set(name, entry)
         })
       }),
-      entries: () => state.get().entries,
+      entries: () => Array.from(state.get().entries),
+      get: (name) => MutableHashMap.get(state.get().entries, name),
     })
   }),
 )

@@ -1,7 +1,7 @@
 export * as ToolRegistry from "./registry"
 
 import { ToolOutput, type ToolCall, type ToolDefinition, type ToolResultValue } from "@opencode-ai/llm"
-import { Context, Effect, Layer, Scope } from "effect"
+import { Array, Context, Effect, Layer, MutableHashMap, Option, Scope } from "effect"
 import { AgentV2 } from "../agent"
 import { PermissionV2 } from "../permission"
 import { SessionMessage } from "../session/message"
@@ -45,18 +45,23 @@ const registryLayer = Layer.effect(
     const applications = yield* ApplicationTools.Service
     const resources = yield* ToolOutputStore.Service
     type Registration = { readonly identity: object; readonly tool: AnyTool }
-    const local = new Map<string, Array<{ readonly token: object; readonly registration: Registration }>>()
+    type LocalRegistration = { readonly token: object; readonly registration: Registration }
+    const local = MutableHashMap.empty<string, ReadonlyArray<LocalRegistration>>()
+    const localRegistrations = (name: string) =>
+      Option.getOrElse(MutableHashMap.get(local, name), (): ReadonlyArray<LocalRegistration> => [])
+    const latestLocal = (name: string) =>
+      Option.map(Array.last(localRegistrations(name)), (entry) => entry.registration)
 
     const settleWith = Effect.fn("ToolRegistry.settle")(function* (input: ExecuteInput, advertised?: object) {
-      const registration =
-        local.get(input.call.name)?.at(-1)?.registration ?? applications.entries().get(input.call.name)
-      if (!registration)
+      const current = Option.orElse(latestLocal(input.call.name), () => applications.get(input.call.name))
+      if (Option.isNone(current))
         return {
           result: {
             type: "error" as const,
             value: advertised ? `Stale tool call: ${input.call.name}` : `Unknown tool: ${input.call.name}`,
           },
         }
+      const registration = current.value
       if (advertised && registration.identity !== advertised)
         return { result: { type: "error" as const, value: `Stale tool call: ${input.call.name}` } }
       const pending = yield* settle(registration.tool, input.call, {
@@ -90,13 +95,16 @@ const registryLayer = Layer.effect(
           Effect.gen(function* () {
             const token = {}
             for (const [name, tool] of entries)
-              local.set(name, [...(local.get(name) ?? []), { token, registration: { identity: {}, tool } }])
+              MutableHashMap.set(local, name, [
+                ...localRegistrations(name),
+                { token, registration: { identity: {}, tool } },
+              ])
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
                 for (const [name] of entries) {
-                  const registrations = local.get(name)?.filter((registration) => registration.token !== token) ?? []
-                  if (registrations.length > 0) local.set(name, registrations)
-                  else local.delete(name)
+                  const registrations = localRegistrations(name).filter((registration) => registration.token !== token)
+                  if (registrations.length > 0) MutableHashMap.set(local, name, registrations)
+                  else MutableHashMap.remove(local, name)
                 }
               }),
             )
@@ -104,18 +112,21 @@ const registryLayer = Layer.effect(
         )
       }),
       materialize: Effect.fn("ToolRegistry.materialize")(function* (permissions = []) {
-        const registrations = new Map(applications.entries())
+        const registrations = MutableHashMap.fromIterable<string, Registration>(applications.entries())
         for (const [name, entries] of local) {
-          const registration = entries.at(-1)?.registration
-          if (registration) registrations.set(name, registration)
+          const latest = Array.last(entries)
+          if (Option.isSome(latest)) MutableHashMap.set(registrations, name, latest.value.registration)
         }
-        for (const [name, registration] of registrations)
-          if (whollyDisabled(permission(registration.tool, name), permissions)) registrations.delete(name)
+        const visible = Array.filter(
+          Array.fromIterable(registrations),
+          ([name, registration]) => !whollyDisabled(permission(registration.tool, name), permissions),
+        )
+        const advertised = MutableHashMap.fromIterable(visible)
         return {
-          definitions: Array.from(registrations, ([name, registration]) => definition(name, registration.tool)),
+          definitions: Array.map(visible, ([name, registration]) => definition(name, registration.tool)),
           settle: (input) => {
-            const registration = registrations.get(input.call.name)
-            if (registration) return settleWith(input, registration.identity)
+            const registration = MutableHashMap.get(advertised, input.call.name)
+            if (Option.isSome(registration)) return settleWith(input, registration.value.identity)
             return Effect.succeed({ result: { type: "error", value: `Unknown tool: ${input.call.name}` } })
           },
         }
