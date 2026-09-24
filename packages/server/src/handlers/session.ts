@@ -12,6 +12,7 @@ import {
   UnknownError,
 } from "@opencode-ai/protocol/errors"
 import { AbsolutePath } from "@opencode-ai/core/schema"
+import { errorRef } from "./error-ref"
 
 const DefaultSessionsLimit = 50
 const DefaultSessionHistoryLimit = 50
@@ -239,19 +240,20 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                     message: `Message not found: ${error.messageID}`,
                   }),
               ),
-              Effect.catchTag("Snapshot.Error", (error) => {
-                const ref = `err_${crypto.randomUUID().slice(0, 8)}`
-                return Effect.logError("failed to stage session revert", { cause: error }).pipe(
-                  Effect.andThen(
-                    Effect.fail(
-                      new UnknownError({
-                        message: "Unexpected server error. Check server logs for details.",
-                        ref,
-                      }),
+              Effect.catchTag("Snapshot.Error", (error) =>
+                Effect.flatMap(errorRef, (ref) =>
+                  Effect.logError("failed to stage session revert", { cause: error }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new UnknownError({
+                          message: "Unexpected server error. Check server logs for details.",
+                          ref,
+                        }),
+                      ),
                     ),
                   ),
-                )
-              }),
+                ),
+              ),
             ),
           }
         }),
@@ -268,19 +270,20 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                   message: `Session not found: ${error.sessionID}`,
                 }),
             ),
-            Effect.catchTag("Snapshot.Error", (error) => {
-              const ref = `err_${crypto.randomUUID().slice(0, 8)}`
-              return Effect.logError("failed to clear session revert", { cause: error }).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    new UnknownError({
-                      message: "Unexpected server error. Check server logs for details.",
-                      ref,
-                    }),
+            Effect.catchTag("Snapshot.Error", (error) =>
+              Effect.flatMap(errorRef, (ref) =>
+                Effect.logError("failed to clear session revert", { cause: error }).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new UnknownError({
+                        message: "Unexpected server error. Check server logs for details.",
+                        ref,
+                      }),
+                    ),
                   ),
                 ),
-              )
-            }),
+              ),
+            ),
           )
           return HttpApiSchema.NoContent.make()
         }),
@@ -314,17 +317,18 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                   }),
                 ),
               ),
-              Effect.catchTag("Session.MessageDecodeError", (error) => {
-                const ref = `err_${crypto.randomUUID().slice(0, 8)}`
-                return Effect.logError("failed to decode session message").pipe(
-                  Effect.annotateLogs({ ref, sessionID: error.sessionID, messageID: error.messageID }),
-                  Effect.andThen(
-                    Effect.fail(
-                      new UnknownError({ message: "Unexpected server error. Check server logs for details.", ref }),
+              Effect.catchTag("Session.MessageDecodeError", (error) =>
+                Effect.flatMap(errorRef, (ref) =>
+                  Effect.logError("failed to decode session message").pipe(
+                    Effect.annotateLogs({ ref, sessionID: error.sessionID, messageID: error.messageID }),
+                    Effect.andThen(
+                      Effect.fail(
+                        new UnknownError({ message: "Unexpected server error. Check server logs for details.", ref }),
+                      ),
                     ),
                   ),
-                )
-              }),
+                ),
+              ),
             ),
           }
         }),
