@@ -192,7 +192,7 @@ export function SegmentedControlItemV2(props: SegmentedControlItemV2Props) {
       {...rest}
       type="button"
       data-slot="segmented-control-v2-item"
-      data-pressed={pressed() ? "" : undefined}
+      bool:data-pressed={pressed()}
       aria-pressed={pressed()}
       disabled={disabled()}
       classList={{

@@ -270,7 +270,7 @@ export function LineCommentEditorV2(props: LineCommentEditorV2Props) {
                     <button
                       type="button"
                       data-slot="line-comment-v2-mention-item"
-                      data-active={mention.active() === item.path ? "" : undefined}
+                      bool:data-active={mention.active() === item.path}
                       onMouseDown={(event) => event.preventDefault()}
                       onMouseEnter={() => mention.setActive(item.path)}
                       onClick={() => selectMention(item)}

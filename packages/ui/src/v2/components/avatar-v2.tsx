@@ -40,7 +40,7 @@ export function Avatar(props: AvatarProps) {
       data-component="avatar-v2"
       data-size={split.size || "large"}
       data-kind={split.kind || "user"}
-      data-has-image={src ? "" : undefined}
+      bool:data-has-image={!!src}
       classList={{
         ...split.classList,
         [split.class ?? ""]: !!split.class,

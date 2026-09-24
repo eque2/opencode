@@ -44,11 +44,11 @@ export function InlineInputV2(props: InlineInputV2Props) {
   return (
     <div
       data-component="inline-input-v2"
-      data-disabled={local.disabled ? "" : undefined}
-      data-invalid={local.invalid ? "" : undefined}
-      data-numeric={local.numeric ? "" : undefined}
+      bool:data-disabled={!!local.disabled}
+      bool:data-invalid={!!local.invalid}
+      bool:data-numeric={!!local.numeric}
       data-appearance={local.appearance ?? "base"}
-      data-label-width={local.labelWidth !== undefined ? "" : undefined}
+      bool:data-label-width={local.labelWidth !== undefined}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,

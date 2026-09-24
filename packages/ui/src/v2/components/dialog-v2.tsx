@@ -57,7 +57,7 @@ export function DialogHeader(props: DialogHeaderProps) {
   const hideClose = () => local.hideClose === true
 
   return (
-    <div data-slot="dialog-header" data-hide-close={hideClose() ? "" : undefined}>
+    <div data-slot="dialog-header" bool:data-hide-close={hideClose()}>
       {local.children}
       {!hideClose() && (
         <Kobalte.CloseButton data-slot="dialog-close-button" aria-label={local.closeLabel ?? i18n.t("ui.common.close")}>

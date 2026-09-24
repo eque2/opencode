@@ -42,7 +42,7 @@ export function ProjectAvatar(props: ProjectAvatarProps) {
     <div
       {...rest}
       data-component="project-avatar-v2"
-      data-unread={split.unread ? "" : undefined}
+      bool:data-unread={!!split.unread}
       classList={{
         ...split.classList,
         [split.class ?? ""]: !!split.class,
@@ -52,7 +52,7 @@ export function ProjectAvatar(props: ProjectAvatarProps) {
       <div
         data-slot="project-avatar-surface"
         data-variant={split.variant ?? "gray"}
-        data-has-image={split.src ? "" : undefined}
+        bool:data-has-image={!!split.src}
       >
         <Show when={split.src} fallback={first(split.fallback)}>
           {(value) => <img src={value()} draggable={false} data-slot="project-avatar-image" />}

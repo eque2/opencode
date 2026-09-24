@@ -123,7 +123,7 @@ function FieldV2Root(props: ParentProps<FieldV2Props>) {
         {...rest}
         ref={rootRef}
         data-component="field-v2"
-        data-invalid={local.invalid ? "" : undefined}
+        bool:data-invalid={!!local.invalid}
         classList={{
           ...local.classList,
           [local.class ?? ""]: !!local.class,
