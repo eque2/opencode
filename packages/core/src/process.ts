@@ -1,9 +1,24 @@
-import { Context, Duration, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Context, Duration, Effect, Fiber, Formatter, Layer, Predicate, Schema, Stream } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "./cross-spawn-spawner"
 import { makeGlobalNode } from "./effect/app-node"
+
+// The text of a failure cause: an Error message, a primitive as text, or any other value formatted.
+const describeCause = (cause: unknown): string => {
+  if (Predicate.isError(cause)) return cause.message
+  if (!cause) return ""
+  if (
+    typeof cause === "string" ||
+    typeof cause === "number" ||
+    typeof cause === "boolean" ||
+    typeof cause === "bigint"
+  ) {
+    return String(cause)
+  }
+  return Formatter.format(cause)
+}
 
 export class AppProcessError extends Schema.TaggedError<AppProcessError>()("AppProcessError", {
   command: Schema.String,
@@ -12,8 +27,7 @@ export class AppProcessError extends Schema.TaggedError<AppProcessError>()("AppP
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message() {
-    const detail =
-      this.stderr?.trim() || (this.cause instanceof Error ? this.cause.message : this.cause && String(this.cause))
+    const detail = this.stderr?.trim() || describeCause(this.cause)
     const status = this.exitCode === undefined ? "" : ` (exit ${this.exitCode})`
     return `Command failed${status}: ${this.command}${detail ? `: ${detail}` : ""}`
   }
