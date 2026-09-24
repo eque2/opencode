@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect"
+import { Context, Effect, MutableHashMap, Option } from "effect"
 
 type EffectMethod = (...args: ReadonlyArray<never>) => Effect.Effect<unknown, unknown, unknown>
 
@@ -15,7 +15,7 @@ type ServiceUse<Identifier, Shape> = {
 }
 
 export const serviceUse = <Identifier, Shape>(tag: Context.Service<Identifier, Shape>) => {
-  const cache = new Map<string, (...args: unknown[]) => Effect.Effect<unknown, unknown, unknown>>()
+  const cache = MutableHashMap.empty<string, (...args: unknown[]) => Effect.Effect<unknown, unknown, unknown>>()
   // This is the only dynamic boundary: TypeScript knows the accessor shape,
   // but Proxy property names are runtime values.
   const access = new Proxy(
@@ -23,8 +23,8 @@ export const serviceUse = <Identifier, Shape>(tag: Context.Service<Identifier, S
     {
       get: (_, key) => {
         if (typeof key !== "string") return undefined
-        const cached = cache.get(key)
-        if (cached) return cached
+        const cached = MutableHashMap.get(cache, key)
+        if (Option.isSome(cached)) return cached.value
         const accessor = (...args: unknown[]) =>
           tag.use((service) => {
             // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Proxy keys are checked at runtime.
@@ -33,7 +33,7 @@ export const serviceUse = <Identifier, Shape>(tag: Context.Service<Identifier, S
             // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- ServiceUse exposes only Effect-returning methods.
             return (method as (...args: unknown[]) => Effect.Effect<unknown, unknown, unknown>)(...args)
           })
-        cache.set(key, accessor)
+        MutableHashMap.set(cache, key, accessor)
         return accessor
       },
     },
