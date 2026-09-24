@@ -33,8 +33,8 @@ export interface ScrollViewProps extends ComponentProps<"div"> {
 }
 
 export const scrollKey = (event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">) => {
-  if (event.altKey || event.ctrlKey || event.metaKey) return
-  if (event.shiftKey && event.key !== " ") return
+  if (event.altKey || event.ctrlKey || event.metaKey) return undefined
+  if (event.shiftKey && event.key !== " ") return undefined
 
   switch (event.key) {
     case "PageDown":
@@ -52,6 +52,7 @@ export const scrollKey = (event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey
     case " ":
       return event.shiftKey ? "page-up" : "page-down"
   }
+  return undefined
 }
 
 export function canScrollKey(element: HTMLElement, key: NonNullable<ReturnType<typeof scrollKey>>) {

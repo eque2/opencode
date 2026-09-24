@@ -25,7 +25,7 @@ function pick(variant: Variant) {
   if (variant === "warning") return "warning" as const
   if (variant === "success") return "circle-check" as const
   if (variant === "info") return "help" as const
-  return
+  return undefined
 }
 
 function mix(style: ComponentProps<"div">["style"], value?: string) {
@@ -44,7 +44,7 @@ export function Card(props: CardProps) {
     if (v === "warning") return "var(--icon-warning-active)"
     if (v === "success") return "var(--icon-success-active)"
     if (v === "info") return "var(--icon-info-active)"
-    return
+    return undefined
   }
   return (
     <div
@@ -66,7 +66,7 @@ export function CardTitle(props: CardTitleProps) {
   const [split, rest] = splitProps(props, ["variant", "icon", "class", "classList", "children"])
   const show = () => split.icon !== false && split.icon !== null
   const name = () => {
-    if (split.icon === false || split.icon === null) return
+    if (split.icon === false || split.icon === null) return undefined
     if (typeof split.icon === "string") return split.icon
     return pick(split.variant ?? "normal")
   }
