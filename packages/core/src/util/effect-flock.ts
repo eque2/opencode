@@ -246,7 +246,7 @@ export namespace EffectFlock {
 
           if (parsed.token !== handle.token) return yield* Effect.die(new ReleaseError({ detail: "token mismatch" }))
 
-          yield* forceRemove(handle.lockDir)
+          return yield* forceRemove(handle.lockDir)
         })
 
       // -- build service --
