@@ -1,5 +1,6 @@
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
@@ -108,21 +109,24 @@ export type SQLiteEffectDelete<
 
 export type AnySQLiteEffectDelete = SQLiteEffectDeleteBase<any, any, any, any, any, any>
 
-export interface SQLiteEffectDeleteBase<
-  TTable extends SQLiteTable,
-  TRunResult,
-  TReturning extends Record<string, unknown> | undefined = undefined,
-  TDynamic extends boolean = false,
-  _TExcludedMethods extends string = never,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">,
-    SQLWrapper,
-    Effect.Effect<
-      TReturning extends undefined ? TRunResult : TReturning[],
-      TEffectHKT["error"],
-      TEffectHKT["context"]
-    > {
-  readonly _: {
+export class SQLiteEffectDeleteBase<
+    TTable extends SQLiteTable,
+    TRunResult,
+    TReturning extends Record<string, unknown> | undefined = undefined,
+    TDynamic extends boolean = false,
+    _TExcludedMethods extends string = never,
+    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
+  >
+  extends Effectable.Class<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  >
+  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
+{
+  static readonly [entityKind]: string = "SQLiteEffectDelete"
+
+  declare readonly _: {
     dialect: "sqlite"
     readonly table: TTable
     readonly resultType: "async"
@@ -133,19 +137,6 @@ export interface SQLiteEffectDeleteBase<
     readonly result: TReturning extends undefined ? TRunResult : TReturning[]
     readonly effectHKT: TEffectHKT
   }
-}
-
-export class SQLiteEffectDeleteBase<
-    TTable extends SQLiteTable,
-    TRunResult,
-    TReturning extends Record<string, unknown> | undefined = undefined,
-    TDynamic extends boolean = false,
-    _TExcludedMethods extends string = never,
-    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-  >
-  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
-{
-  static readonly [entityKind]: string = "SQLiteEffectDelete"
 
   /** @internal */
   config: SQLiteDeleteConfig
@@ -156,6 +147,7 @@ export class SQLiteEffectDeleteBase<
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
   ) {
+    super()
     this.config = { table, withList }
   }
 
@@ -256,6 +248,12 @@ export class SQLiteEffectDeleteBase<
   $dynamic(): SQLiteEffectDeleteDynamic<this> {
     return this as any
   }
-}
 
-applyEffectWrapper(SQLiteEffectDeleteBase)
+  asEffect(): Effect.Effect<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  > {
+    return this.execute()
+  }
+}

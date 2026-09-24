@@ -1,6 +1,7 @@
 import type * as Effect from "effect/Effect"
+import * as Effectable from "effect/Effectable"
 import * as Option from "effect/Option"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type { SelectResultFields } from "drizzle-orm/query-builders/select.types"
 import type { RunnableQuery } from "drizzle-orm/runnable-query"
@@ -202,22 +203,25 @@ export class SQLiteEffectUpdateBuilder<
   }
 }
 
-export interface SQLiteEffectUpdateBase<
-  TTable extends SQLiteTable = SQLiteTable,
-  TRunResult = unknown,
-  TFrom extends SQLiteTable | Subquery | SQLiteViewBase | SQL | undefined = undefined,
-  TReturning = undefined,
-  TDynamic extends boolean = false,
-  _TExcludedMethods extends string = never,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends SQLWrapper,
-    RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">,
-    Effect.Effect<
-      TReturning extends undefined ? TRunResult : TReturning[],
-      TEffectHKT["error"],
-      TEffectHKT["context"]
-    > {
-  readonly _: {
+export class SQLiteEffectUpdateBase<
+    TTable extends SQLiteTable = SQLiteTable,
+    TRunResult = unknown,
+    TFrom extends SQLiteTable | Subquery | SQLiteViewBase | SQL | undefined = undefined,
+    TReturning = undefined,
+    TDynamic extends boolean = false,
+    _TExcludedMethods extends string = never,
+    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
+  >
+  extends Effectable.Class<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  >
+  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
+{
+  static readonly [entityKind]: string = "SQLiteEffectUpdate"
+
+  declare readonly _: {
     readonly dialect: "sqlite"
     readonly table: TTable
     readonly resultType: "async"
@@ -229,20 +233,6 @@ export interface SQLiteEffectUpdateBase<
     readonly result: TReturning extends undefined ? TRunResult : TReturning[]
     readonly effectHKT: TEffectHKT
   }
-}
-
-export class SQLiteEffectUpdateBase<
-    TTable extends SQLiteTable = SQLiteTable,
-    TRunResult = unknown,
-    TFrom extends SQLiteTable | Subquery | SQLiteViewBase | SQL | undefined = undefined,
-    TReturning = undefined,
-    TDynamic extends boolean = false,
-    _TExcludedMethods extends string = never,
-    TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-  >
-  implements RunnableQuery<TReturning extends undefined ? TRunResult : TReturning[], "sqlite">, SQLWrapper
-{
-  static readonly [entityKind]: string = "SQLiteEffectUpdate"
 
   /** @internal */
   config: SQLiteUpdateConfig
@@ -254,6 +244,7 @@ export class SQLiteEffectUpdateBase<
     private effectDialect: SQLiteDialect,
     withList?: Subquery[],
   ) {
+    super()
     this.config = { set, table, withList, joins: [] }
   }
 
@@ -406,6 +397,12 @@ export class SQLiteEffectUpdateBase<
   $dynamic(): SQLiteEffectUpdateDynamic<this> {
     return this as any
   }
-}
 
-applyEffectWrapper(SQLiteEffectUpdateBase)
+  asEffect(): Effect.Effect<
+    TReturning extends undefined ? TRunResult : TReturning[],
+    TEffectHKT["error"],
+    TEffectHKT["context"]
+  > {
+    return this.execute()
+  }
+}

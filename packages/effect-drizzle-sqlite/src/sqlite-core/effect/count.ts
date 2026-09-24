@@ -1,5 +1,6 @@
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import { SQL, sql, type SQLWrapper } from "drizzle-orm/sql/sql"
 import type { SQLiteTable } from "drizzle-orm/sqlite-core/table"
@@ -14,12 +15,9 @@ function buildSQLiteCount(source: SQLiteTable | SQLiteView | SQL | SQLWrapper, f
   return sql<number>`select count(*) from ${source}${sql.raw(" where ").if(filters)}${filters}`
 }
 
-export interface SQLiteEffectCountBuilder<TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
-  extends SQL<number>,
-    SQLWrapper<number>,
-    Effect.Effect<number, TEffectHKT["error"], TEffectHKT["context"]> {}
-
-export class SQLiteEffectCountBuilder<TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase> extends SQL<number> {
+export class SQLiteEffectCountBuilder<
+  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
+> extends Effectable.Mixin(SQL)<number> {
   static override readonly [entityKind]: string = "SQLiteEffectCountBuilder"
 
   private sql: SQL<number>
@@ -54,6 +52,8 @@ export class SQLiteEffectCountBuilder<TEffectHKT extends QueryEffectHKTBase = Qu
       })
       .execute(placeholderValues)
   }
-}
 
-applyEffectWrapper(SQLiteEffectCountBuilder)
+  asEffect(): Effect.Effect<number, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}

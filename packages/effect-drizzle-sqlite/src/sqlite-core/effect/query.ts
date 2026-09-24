@@ -1,5 +1,6 @@
 import type * as Effect from "effect/Effect"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import * as Effectable from "effect/Effectable"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind } from "drizzle-orm/entity"
 import {
   type BuildQueryResult,
@@ -67,12 +68,8 @@ export class SQLiteEffectRelationalQueryBuilder<
   }
 }
 
-export interface SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
-  extends Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]>,
-    RunnableQuery<TResult, "sqlite">,
-    SQLWrapper {}
-
 export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase>
+  extends Effectable.Class<TResult, TEffectHKT["error"], TEffectHKT["context"]>
   implements RunnableQuery<TResult, "sqlite">, SQLWrapper
 {
   static readonly [entityKind]: string = "SQLiteEffectRelationalQueryV2"
@@ -99,6 +96,7 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
     private rowMode?: boolean,
     private forbidJsonb?: boolean,
   ) {
+    super()
     this.mode = mode
     this.table = table
   }
@@ -193,6 +191,8 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
   execute(placeholderValues?: Record<string, unknown>) {
     return this.mode === "first" ? this._prepare().get(placeholderValues) : this._prepare().all(placeholderValues)
   }
-}
 
-applyEffectWrapper(SQLiteEffectRelationalQuery)
+  asEffect(): Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}

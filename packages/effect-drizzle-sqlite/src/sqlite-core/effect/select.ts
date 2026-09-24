@@ -1,6 +1,7 @@
 import type * as Effect from "effect/Effect"
+import * as Effectable from "effect/Effectable"
 import type { CacheConfig } from "drizzle-orm/cache/core/types"
-import { applyEffectWrapper, type QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
+import type { QueryEffectHKTBase } from "drizzle-orm/effect-core/query-effect"
 import { entityKind, is } from "drizzle-orm/entity"
 import type {
   BuildSubquerySelection,
@@ -150,34 +151,6 @@ export interface SQLiteEffectSelectHKT<TEffectHKT extends QueryEffectHKTBase = Q
   >
 }
 
-export interface SQLiteEffectSelectBase<
-  TTableName extends string | undefined,
-  TRunResult,
-  TSelection extends ColumnsSelection,
-  TSelectMode extends SelectMode = "single",
-  TNullabilityMap extends Record<string, JoinNullability> = TTableName extends string
-    ? Record<TTableName, "not-null">
-    : {},
-  TDynamic extends boolean = false,
-  TExcludedMethods extends string = never,
-  TResult extends any[] = SelectResult<TSelection, TSelectMode, TNullabilityMap>[],
-  TSelectedFields extends ColumnsSelection = BuildSubquerySelection<TSelection, TNullabilityMap>,
-  TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
-> extends SQLiteSelectQueryBuilderBase<
-      SQLiteEffectSelectHKT<TEffectHKT>,
-      TTableName,
-      "async",
-      TRunResult,
-      TSelection,
-      TSelectMode,
-      TNullabilityMap,
-      TDynamic,
-      TExcludedMethods,
-      TResult,
-      TSelectedFields
-    >,
-    Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {}
-
 export class SQLiteEffectSelectBase<
     TTableName extends string | undefined,
     TRunResult,
@@ -192,7 +165,7 @@ export class SQLiteEffectSelectBase<
     TSelectedFields extends ColumnsSelection = BuildSubquerySelection<TSelection, TNullabilityMap>,
     TEffectHKT extends QueryEffectHKTBase = QueryEffectHKTBase,
   >
-  extends SQLiteSelectQueryBuilderBase<
+  extends Effectable.Mixin(SQLiteSelectQueryBuilderBase)<
     SQLiteEffectSelectHKT<TEffectHKT>,
     TTableName,
     "async",
@@ -276,8 +249,10 @@ export class SQLiteEffectSelectBase<
   execute: ReturnType<this["prepare"]>["execute"] = (placeholderValues) => {
     return this._prepare().execute(placeholderValues)
   }
-}
 
-applyEffectWrapper(SQLiteEffectSelectBase)
+  asEffect(): Effect.Effect<TResult, TEffectHKT["error"], TEffectHKT["context"]> {
+    return this.execute()
+  }
+}
 
 export type AnySQLiteEffectSelect = SQLiteEffectSelectBase<any, any, any, any, any, any, any, any, any, any>
