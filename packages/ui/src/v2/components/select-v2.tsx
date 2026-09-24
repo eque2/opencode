@@ -98,7 +98,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
     state.key = undefined
   }
 
-  const keyFor = (item: T) => (local.value ? local.value(item) : String(item as string))
+  const keyFor = (item: T) => (local.value ? local.value(item) : String(item))
 
   const move = (item: T | undefined) => {
     if (!local.onHighlight) return
@@ -132,8 +132,8 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
       fitViewport={local.fitViewport ?? false}
       value={local.current}
       options={grouped()}
-      optionValue={(x) => (local.value ? local.value(x) : String(x as string))}
-      optionTextValue={(x) => (local.label ? local.label(x) : String(x as string))}
+      optionValue={(x) => (local.value ? local.value(x) : String(x))}
+      optionTextValue={(x) => (local.label ? local.label(x) : String(x))}
       optionGroupChildren="options"
       placeholder={local.placeholder}
       sectionComponent={(sectionProps) => (
@@ -156,7 +156,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
               ? local.children(itemProps.item.rawValue)
               : local.label
                 ? local.label(itemProps.item.rawValue)
-                : String(itemProps.item.rawValue as string)}
+                : String(itemProps.item.rawValue)}
           </Kobalte.ItemLabel>
           <Kobalte.ItemIndicator data-slot="menu-v2-item-indicator" forceMount>
             <CheckSmall />
@@ -164,8 +164,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
         </Kobalte.Item>
       )}
       onChange={(next) => {
-        const v = next == null ? null : Array.isArray(next) ? ((next[0] as T) ?? null) : (next as T)
-        local.onSelect?.(v)
+        local.onSelect?.(next)
         stop()
       }}
       onOpenChange={(open) => {
@@ -191,7 +190,7 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
             {(st) => {
               const selected = st.selectedOption()
               if (local.label && selected != null) return local.label(selected)
-              return selected != null ? (selected as string) : ""
+              return selected != null ? String(selected) : ""
             }}
           </Kobalte.Value>
         </div>

@@ -99,9 +99,10 @@ export function Dialog(props: DialogProps) {
             [local.class ?? ""]: !!local.class,
           }}
           onOpenAutoFocus={(e) => {
-            const target = e.currentTarget as HTMLElement | null
-            const autofocusEl = target?.querySelector("[autofocus]") as HTMLElement | null
-            if (autofocusEl) {
+            const target = e.currentTarget
+            if (!(target instanceof Element)) return
+            const autofocusEl = target.querySelector("[autofocus]")
+            if (autofocusEl instanceof HTMLElement) {
               e.preventDefault()
               autofocusEl.focus({ preventScroll: true })
             }

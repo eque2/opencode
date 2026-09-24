@@ -94,10 +94,10 @@ export function SegmentedControlV2(props: SegmentedControlV2Props) {
     focusNext,
   }
 
-  const assignRef = (el: HTMLDivElement | undefined) => {
+  const assignRef = (el: HTMLDivElement) => {
     const r = local.ref
-    if (typeof r === "function") (r as (el: HTMLDivElement | undefined) => void)(el)
-    else if (r != null && typeof r === "object" && "value" in r) (r as { value: HTMLDivElement | undefined }).value = el
+    if (typeof r === "function") r(el)
+    else if (r != null && typeof r === "object" && "value" in r) r.value = el
   }
 
   return (
@@ -127,9 +127,9 @@ export type SegmentedControlItemV2Props = Omit<ComponentProps<"button">, "type" 
 
 function invokeButtonHandler<E extends Event>(
   handler: JSX.EventHandlerUnion<HTMLButtonElement, E> | undefined,
-  e: E & { currentTarget: HTMLButtonElement },
+  e: E & { currentTarget: HTMLButtonElement; target: Element },
 ) {
-  if (typeof handler === "function") (handler as (ev: typeof e) => void)(e)
+  if (typeof handler === "function") handler(e)
 }
 
 export function SegmentedControlItemV2(props: SegmentedControlItemV2Props) {
