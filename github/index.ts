@@ -121,8 +121,9 @@ type CommentPayload = {
   comment: Pick<IssueCommentEvent["comment"], "id" | "body">
 }
 
+// `title` stays optional: the MOCK_EVENT templates in README.md send an issue with a number only.
 type IssueCommentPayload = CommentPayload & {
-  issue: Pick<IssueCommentEvent["issue"], "number" | "title"> & { pull_request?: unknown }
+  issue: Pick<IssueCommentEvent["issue"], "number"> & { title?: string; pull_request?: unknown }
 }
 
 type ReviewCommentPayload = {
@@ -411,7 +412,8 @@ function isCommentPayload(value: unknown): value is CommentPayload {
 
 function isIssueCommentPayload(value: unknown): value is IssueCommentPayload {
   if (!isRecord(value) || !isRecord(value.issue)) return false
-  return typeof value.issue.number === "number" && typeof value.issue.title === "string" && isCommentPayload(value)
+  const { number, title } = value.issue
+  return typeof number === "number" && (title === undefined || typeof title === "string") && isCommentPayload(value)
 }
 
 function isNumberOrNull(value: unknown) {
@@ -443,9 +445,7 @@ function commentPayload() {
 function issueCommentPayload() {
   const { payload } = useContext()
   if (!isIssueCommentPayload(payload)) {
-    throw new Error(
-      "Event payload is not an issue comment (expected comment.id, comment.body, issue.number, issue.title)",
-    )
+    throw new Error("Event payload is not an issue comment (expected comment.id, comment.body, issue.number)")
   }
   return payload
 }
