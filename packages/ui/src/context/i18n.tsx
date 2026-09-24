@@ -57,7 +57,7 @@ const fallback: UiI18n = {
     fallback.t(pluralKey(key, pluralCategory(fallback.locale(), count)), { ...params, count }),
 }
 
-const Context = createContext<UiI18n>(fallback)
+const Context = createContext(fallback)
 
 function UiI18nProvider(props: ParentProps<{ value: UiI18n }>) {
   return (
