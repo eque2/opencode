@@ -4,7 +4,9 @@ import {
   Effect,
   FileSystem,
   HashSet,
+  MutableHashMap,
   MutableHashSet,
+  Option,
   PlatformError,
   Predicate,
   Schema,
@@ -96,7 +98,7 @@ export function compile<Id extends string, Groups extends HttpApiGroup.Constrain
   },
 ): Contract {
   const endpoints: Array<Endpoint> = []
-  const portable = new Map<SchemaAST.AST, boolean>()
+  const portable = MutableHashMap.empty<SchemaAST.AST, boolean>()
 
   HttpApi.reflect(api, {
     onGroup() {},
@@ -438,16 +440,16 @@ function renderPromiseTypes(
   groups: ReadonlyArray<Group>,
   outputTypes?: Readonly<Record<string, { readonly name: string; readonly import: string }>>,
 ) {
-  const types = new Map<SchemaAST.AST, string>()
+  const types = MutableHashMap.empty<SchemaAST.AST, string>()
   const typeOf = (schema: Schema.Top, decoded = false) => {
     const projected = decoded ? Schema.toType(schema) : Schema.toEncoded(schema)
-    const cached = types.get(projected.ast)
-    if (cached !== undefined) return cached
+    const cached = MutableHashMap.get(types, projected.ast)
+    if (Option.isSome(cached)) return cached.value
     const type = structuralType(projected)
-    types.set(projected.ast, type)
+    MutableHashMap.set(types, projected.ast, type)
     return type
   }
-  const errors = new Map(
+  const errors = MutableHashMap.fromIterable(
     groups.flatMap((group) =>
       group.endpoints.flatMap((endpoint) =>
         endpoint.errors.flatMap((error) => {
@@ -457,7 +459,7 @@ function renderPromiseTypes(
       ),
     ),
   )
-  const errorTypes = Array.from(errors.values()).map((error) => {
+  const errorTypes = Array.from(MutableHashMap.values(errors)).map((error) => {
     const fields = error.fields
       .map(([name, schema, optional]) => `readonly ${encodeJsonString(name)}${optional ? "?" : ""}: ${typeOf(schema)}`)
       .join("; ")
@@ -580,8 +582,8 @@ function structuralType(schema: Schema.Top) {
   ) {
     throw new GenerationError({ reason: "Referenced Promise types are not implemented" })
   }
-  const references = new Map(
-    document.references.nonRecursives.map((reference) => [reference.$ref, reference.code.Type]),
+  const references = MutableHashMap.fromIterable(
+    document.references.nonRecursives.map((reference) => [reference.$ref, reference.code.Type] as const),
   )
   const expand = (type: string, seen = HashSet.empty<string>()): string => {
     for (const [reference, value] of references) {
@@ -845,17 +847,21 @@ function responseSchemas(schema: Schema.Top, path: string): Array<readonly [stri
   ]
 }
 
-function assertPortable(schema: Schema.Top, path: string, portable: Map<SchemaAST.AST, boolean>) {
+function assertPortable(
+  schema: Schema.Top,
+  path: string,
+  portable: MutableHashMap.MutableHashMap<SchemaAST.AST, boolean>,
+) {
   const visiting = MutableHashSet.empty<SchemaAST.AST>()
   const declaredError = declaredErrorFields(schema)
   const visit = (ast: SchemaAST.AST): boolean => {
-    const cached = portable.get(ast)
-    if (cached !== undefined) return cached
+    const cached = MutableHashMap.get(portable, ast)
+    if (Option.isSome(cached)) return cached.value
     if (MutableHashSet.has(visiting, ast)) return true
     MutableHashSet.add(visiting, ast)
     const result = visitCurrent(ast)
     MutableHashSet.remove(visiting, ast)
-    portable.set(ast, result)
+    MutableHashMap.set(portable, ast, result)
     return result
   }
   const visitCurrent = (ast: SchemaAST.AST): boolean => {
@@ -1213,15 +1219,10 @@ function renderGroup(group: Group, groupIndex: number) {
 
 function renderSchemas(slots: ReadonlyArray<Slot>) {
   if (slots.length === 0) return ""
-  const classes = new Map(
-    slots.flatMap((slot, index) => {
-      const declared = declaredErrorFields(slot.schema)
-      return declared === undefined ? [] : [[index, declared] as const]
-    }),
-  )
+  const classes = slots.map((slot) => Option.fromNullishOr(declaredErrorFields(slot.schema)))
   const expanded = [
-    ...slots.map((slot, index) => (classes.has(index) ? { name: slot.name, schema: Schema.Never } : slot)),
-    ...Array.from(classes.values()).flatMap((declared, classIndex) =>
+    ...slots.map((slot, index) => (Option.isSome(classes[index]) ? { name: slot.name, schema: Schema.Never } : slot)),
+    ...Arr.getSomes(classes).flatMap((declared, classIndex) =>
       declared.fields.map(([name, schema]) => ({ name: `Class${classIndex}${name}`, schema })),
     ),
   ]
@@ -1242,8 +1243,9 @@ function renderSchemas(slots: ReadonlyArray<Slot>) {
   ]
   let fieldIndex = slots.length
   const declarations = slots.map((slot, index) => {
-    const declared = classes.get(index)
-    if (declared === undefined) return `const ${slot.name} = ${document.codes[index].runtime}`
+    const slotClass = classes[index]
+    if (Option.isNone(slotClass)) return `const ${slot.name} = ${document.codes[index].runtime}`
+    const declared = slotClass.value
     const fields = declared.fields
       .map(([name]) => `${encodeJsonString(name)}: ${document.codes[fieldIndex++].runtime}`)
       .join(", ")
