@@ -2,7 +2,7 @@ export * as AISDK from "./aisdk"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Cause, Context, Duration, Effect, Layer, Option, Predicate, Schema, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Option, Predicate, Record, Schema, Scope } from "effect"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
@@ -71,6 +71,29 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   })
 }
 
+const decodeJsonObject = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.JsonObject))
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json))
+const isJsonArray = (json: Schema.Json | undefined): json is ReadonlyArray<Schema.Json> => Array.isArray(json)
+const isJsonObject = (json: Schema.Json): json is Schema.JsonObject => Predicate.isObject(json)
+
+// A Responses request that is not stored cannot refer to earlier input items by id, so the ids are
+// dropped from its input items. Some(text) is the rewritten body; None leaves the body unchanged.
+const withoutInputItemIDs = (text: string) =>
+  decodeJsonObject(text).pipe(
+    Option.flatMap((body) => {
+      const input = body.input
+      if (body.store === true || !isJsonArray(input)) return Option.none()
+      return Option.some(
+        encodeJson({
+          ...body,
+          input: input.map((item) =>
+            isJsonObject(item) ? Record.remove<string, Schema.Json, "id">(item, "id") : item,
+          ),
+        }),
+      )
+    }),
+  )
+
 function prepareOptions(model: ModelV2.Info, pkg: string) {
   const options: Record<string, any> = {
     name: model.providerID,
@@ -102,16 +125,11 @@ function prepareOptions(model: ModelV2.Info, pkg: string) {
 
     if (
       (pkg === "@ai-sdk/openai" || pkg === "@ai-sdk/azure" || pkg === "@ai-sdk/amazon-bedrock/mantle") &&
-      opts.body &&
+      Predicate.isString(opts.body) &&
       opts.method === "POST"
     ) {
-      const body = JSON.parse(opts.body as string)
-      if (body.store !== true && Array.isArray(body.input)) {
-        for (const item of body.input) {
-          if ("id" in item) delete item.id
-        }
-        opts.body = JSON.stringify(body)
-      }
+      const body = withoutInputItemIDs(opts.body)
+      if (Option.isSome(body)) opts.body = body.value
     }
 
     // A rejected fetch stays a defect, so the AI SDK gets the original error (an AbortError, a network
