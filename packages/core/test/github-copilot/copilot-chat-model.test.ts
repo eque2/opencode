@@ -535,7 +535,213 @@ describe("doStream", () => {
   })
 })
 
+// Resolves with the rejection reason, or with a marker error when the promise resolves instead.
+function rejectionOf(promise: PromiseLike<unknown>): Promise<unknown> {
+  return Promise.resolve(promise).then(
+    () => new Error("Expected the promise to reject"),
+    (error: unknown) => error,
+  )
+}
+
+function createJsonFetch(body: unknown, status = 200) {
+  return mock(async () => Response.json(body, { status }))
+}
+
+describe("doGenerate", () => {
+  test("should map text, reasoning, tool calls, usage and metadata", async () => {
+    const usage = {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+      prompt_tokens_details: { cached_tokens: 2 },
+      completion_tokens_details: {
+        reasoning_tokens: 3,
+        accepted_prediction_tokens: 1,
+        rejected_prediction_tokens: null,
+      },
+    }
+    const responseBody = {
+      id: "chatcmpl-gen",
+      object: "chat.completion",
+      created: 1700000000,
+      model: "gpt-test",
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Hi there",
+            reasoning_text: "thinking",
+            reasoning_opaque: "opaque-gen",
+            tool_calls: [
+              { id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+      usage,
+    }
+    const model = createModel(createJsonFetch(responseBody))
+
+    const result = await model.doGenerate({ prompt: TEST_PROMPT })
+
+    const copilot = { copilot: { reasoningOpaque: "opaque-gen" } }
+    expect(result.content).toEqual([
+      { type: "text", text: "Hi there", providerMetadata: copilot },
+      { type: "reasoning", text: "thinking", providerMetadata: copilot },
+      { type: "tool-call", toolCallId: "call_1", toolName: "read_file", input: '{"path":"a"}', providerMetadata: copilot },
+    ])
+    expect(result.finishReason).toEqual({ unified: "tool-calls", raw: "tool_calls" })
+    expect(result.usage).toEqual({
+      inputTokens: { total: 10, noCache: undefined, cacheRead: 2, cacheWrite: undefined },
+      outputTokens: { total: 5, text: undefined, reasoning: 3 },
+      raw: usage,
+    })
+    expect(result.providerMetadata).toEqual({ copilot: { acceptedPredictionTokens: 1 } })
+    expect(result.response).toMatchObject({
+      id: "chatcmpl-gen",
+      modelId: "gpt-test",
+      timestamp: new Date(1700000000 * 1000),
+      body: responseBody,
+    })
+    expect(result.warnings).toEqual([])
+    expect(JSON.parse(result.request.body)).toEqual({
+      model: "test-model",
+      messages: [{ role: "user", content: "Hello" }],
+    })
+  })
+
+  test("should omit metadata that the response does not carry", async () => {
+    const model = createModel(
+      createJsonFetch({
+        choices: [{ message: { content: "", tool_calls: [{ function: { name: "noop", arguments: "{}" } }] } }],
+      }),
+    )
+
+    const result = await model.doGenerate({ prompt: TEST_PROMPT })
+
+    expect(result.content).toEqual([
+      { type: "tool-call", toolCallId: expect.any(String), toolName: "noop", input: "{}" },
+    ])
+    expect(result.finishReason).toEqual({ unified: "other", raw: undefined })
+    expect(result.usage).toEqual({
+      inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+      outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+    })
+    expect(result.providerMetadata).toEqual({ copilot: {} })
+    expect(result.response?.id).toBeUndefined()
+    expect(result.response?.modelId).toBeUndefined()
+    expect(result.response?.timestamp).toBeUndefined()
+  })
+
+  test("should reject with the provider APICallError", async () => {
+    const model = createModel(
+      createJsonFetch({ error: { message: "bad request", type: "invalid_request_error", code: "bad" } }, 400),
+    )
+
+    expect(await rejectionOf(model.doGenerate({ prompt: TEST_PROMPT }))).toMatchObject({
+      name: "AI_APICallError",
+      message: "bad request",
+      statusCode: 400,
+    })
+  })
+})
+
+describe("stream errors", () => {
+  test("should emit error chunks and finish with an error reason", async () => {
+    const model = createModel(createMockFetch([`data: {"error":{"message":"overloaded"}}`, `data: [DONE]`]))
+
+    const { stream } = await model.doStream({ prompt: TEST_PROMPT, includeRawChunks: false })
+    const parts = await convertReadableStreamToArray(stream)
+
+    expect(parts).toContainEqual({ type: "error", error: "overloaded" })
+    expect(parts.find((p) => p.type === "finish")).toMatchObject({ finishReason: { unified: "error" } })
+  })
+
+  test("should fail the stream when a response repeats reasoning_opaque", async () => {
+    const model = createModel(
+      createMockFetch([
+        `data: {"choices":[{"index":0,"delta":{"reasoning_text":"a","reasoning_opaque":"one"}}]}`,
+        `data: {"choices":[{"index":0,"delta":{"reasoning_text":"b","reasoning_opaque":"two"}}]}`,
+        `data: [DONE]`,
+      ]),
+    )
+
+    const { stream } = await model.doStream({ prompt: TEST_PROMPT, includeRawChunks: false })
+
+    expect(await rejectionOf(convertReadableStreamToArray(stream))).toMatchObject({
+      name: "AI_InvalidResponseDataError",
+    })
+  })
+
+  test("should fail the stream when a new tool call has no id", async () => {
+    const model = createModel(
+      createMockFetch([
+        `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"read_file","arguments":"{}"}}]}}]}`,
+        `data: [DONE]`,
+      ]),
+    )
+
+    const { stream } = await model.doStream({ prompt: TEST_PROMPT, includeRawChunks: false })
+
+    expect(await rejectionOf(convertReadableStreamToArray(stream))).toMatchObject({
+      name: "AI_InvalidResponseDataError",
+      message: "Expected 'id' to be a string.",
+    })
+  })
+
+  test("should reject an unsupported file part", async () => {
+    const model = createModel(createMockFetch([`data: [DONE]`]))
+
+    const rejection = await rejectionOf(
+      model.doStream({
+        prompt: [{ role: "user", content: [{ type: "file", data: "AAECAw==", mediaType: "application/pdf" }] }],
+        includeRawChunks: false,
+      }),
+    )
+
+    expect(rejection).toMatchObject({ name: "AI_UnsupportedFunctionalityError" })
+  })
+})
+
 describe("request body", () => {
+  test("should pass provider options and warn about topK", async () => {
+    let capturedBody: unknown
+    const mockFetch = mock(async (_url: string, init?: RequestInit) => {
+      capturedBody = await new Response(init?.body).json()
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`data: [DONE]\n\n`))
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      )
+    })
+
+    const model = createModel(mockFetch)
+
+    const { stream } = await model.doStream({
+      prompt: TEST_PROMPT,
+      topK: 3,
+      providerOptions: { copilot: { reasoningEffort: "high", thinking_budget: 100, extra_flag: true } },
+      includeRawChunks: false,
+    })
+    const parts = await convertReadableStreamToArray(stream)
+
+    expect(parts[0]).toEqual({ type: "stream-start", warnings: [{ type: "unsupported", feature: "topK" }] })
+    expect(capturedBody).toEqual({
+      model: "test-model",
+      messages: [{ role: "user", content: "Hello" }],
+      extra_flag: true,
+      reasoning_effort: "high",
+      thinking_budget: 100,
+      stream: true,
+    })
+  })
+
   test("should send tools in OpenAI format", async () => {
     let capturedBody: unknown
     const mockFetch = mock(async (_url: string, init?: RequestInit) => {
