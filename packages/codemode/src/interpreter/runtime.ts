@@ -3,6 +3,7 @@ import {
   Array as Arr,
   Cause,
   Clock,
+  DateTime,
   Effect,
   Exit,
   Fiber,
@@ -1684,7 +1685,15 @@ class Interpreter<R> {
     if (args.length === 1) {
       const arg = args[0]
       if (arg instanceof SandboxDate) return Effect.succeed(new SandboxDate(arg.time))
-      if (typeof arg === "number") return Effect.succeed(new SandboxDate(new Date(arg).getTime()))
+      // A time value is clipped exactly as `new Date(number)` clips it; DateTime.make is None
+      // where JS produces an invalid date (non-finite or out of range), which reads as NaN.
+      if (typeof arg === "number") {
+        return Effect.succeed(
+          new SandboxDate(
+            Option.match(DateTime.make(arg), { onNone: () => Number.NaN, onSome: DateTime.toEpochMillis }),
+          ),
+        )
+      }
       if (typeof arg === "string") return Effect.succeed(new SandboxDate(Date.parse(arg)))
       return Effect.succeed(new SandboxDate(Number.NaN))
     }
