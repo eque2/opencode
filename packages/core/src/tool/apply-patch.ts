@@ -123,38 +123,33 @@ const layer = Layer.effectDiscard(
                   source,
                 })
 
-                const prepared: Prepared[] = []
-                for (const { hunk, target } of targets) {
-                  yield* Effect.gen(function* () {
+                const prepared: ReadonlyArray<Prepared> = yield* Effect.forEach(targets, ({ hunk, target }) =>
+                  Effect.gen(function* () {
                     if (hunk.type === "add") {
-                      prepared.push({
+                      return {
                         ...hunk,
                         target,
                         before: "",
                         after:
                           hunk.contents.endsWith("\n") || hunk.contents === "" ? hunk.contents : `${hunk.contents}\n`,
-                      })
-                      return
+                      }
                     }
-                    if ((yield* fs.stat(target.canonical)).type !== "File") yield* fail(hunk.path)
+                    if ((yield* fs.stat(target.canonical)).type !== "File") return yield* fail(hunk.path)
                     const source = yield* fs.readFile(target.canonical)
                     const original = new TextDecoder("utf-8", { ignoreBOM: true }).decode(source)
                     const before = original.replace(/^\uFEFF/, "")
-                    if (hunk.type === "delete") {
-                      prepared.push({ ...hunk, target, before, after: "" })
-                      return
-                    }
+                    if (hunk.type === "delete") return { ...hunk, target, before, after: "" }
                     const update = yield* Effect.fromResult(Patch.derive(hunk.path, hunk.chunks, original))
-                    prepared.push({
+                    return {
                       ...hunk,
                       target,
                       source,
                       content: Patch.joinBom(update.content, update.bom),
                       before,
                       after: update.content,
-                    })
-                  }).pipe(Effect.mapError(() => fail(hunk.path)))
-                }
+                    }
+                  }).pipe(Effect.mapError(() => fail(hunk.path))),
+                )
 
                 const patchFiles = prepared.map(patchFile)
                 yield* Effect.forEach(
