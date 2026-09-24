@@ -92,17 +92,17 @@ const SearchInput = Schema.Struct({
   namespace: Schema.optionalKey(Schema.String),
   limit: Schema.optionalKey(PositiveInt),
   offset: Schema.optionalKey(NonNegativeInt),
-})
+}).annotate({ identifier: "SearchInput" })
 const SearchItem = Schema.Struct({
   path: Schema.String,
   description: Schema.String,
   signature: Schema.String,
-})
+}).annotate({ identifier: "SearchItem" })
 const SearchOutput = Schema.Struct({
   items: Schema.Array(SearchItem),
   remaining: NonNegativeInt,
   next: Schema.NullOr(Schema.Struct({ offset: NonNegativeInt })),
-})
+}).annotate({ identifier: "SearchOutput" })
 const toolExpression = (path: string) =>
   "tools" +
   path
