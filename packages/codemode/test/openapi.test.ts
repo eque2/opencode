@@ -28,7 +28,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
 const toolAt = (tools: unknown, name: string) =>
-  name.split(".").reduce<unknown>((current, segment) => (isRecord(current) ? current[segment] : undefined), tools)
+  name.split(".").reduce((current, segment) => (isRecord(current) ? current[segment] : undefined), tools)
 
 const recordingClient = (respond: (request: HttpClientRequest.HttpClientRequest) => Response) => {
   const requests: Array<Recorded> = []
