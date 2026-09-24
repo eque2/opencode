@@ -34,10 +34,8 @@ export function UsageSection() {
     if (!openBreakdownId()) return
 
     const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement
-      if (!target.closest('[data-slot="tokens-with-breakdown"]')) {
-        setOpenBreakdownId(null)
-      }
+      if (e.target instanceof Element && e.target.closest('[data-slot="tokens-with-breakdown"]')) return
+      setOpenBreakdownId(null)
     }
 
     document.addEventListener("click", handleClickOutside)
