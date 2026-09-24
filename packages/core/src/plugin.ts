@@ -39,7 +39,7 @@ const layer = Layer.effect(
     // Waiters stay in arrays: Effect equality is structural, so two pending
     // Deferreds would be one HashSet element. Each waiter needs its own slot.
     const waiters = MutableHashMap.empty<ID, ReadonlyArray<Deferred.Deferred<void>>>()
-    const failures = MutableHashMap.empty<ID, Exit.Exit<void, never>>()
+    const failures = MutableHashMap.empty<ID, Exit.Exit<void>>()
     const waitersOf = (id: ID) => Option.getOrElse(MutableHashMap.get(waiters, id), () => [])
     let host: Parameters<PluginRuntime["effect"]>[0]
 
