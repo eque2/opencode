@@ -1,6 +1,6 @@
 import { App, type AllMiddlewareArgs, type SlackCommandMiddlewareArgs, type SlackEventMiddlewareArgs } from "@slack/bolt"
 import { createOpencode, type Event, type ToolPart } from "@opencode-ai/sdk"
-import { Effect, Schema, Stream } from "effect"
+import { Config, Effect, Option, Redacted, Schema, Stream } from "effect"
 
 class SlackBotError extends Schema.TaggedError<SlackBotError>()("SlackBotError", {
   operation: Schema.String,
@@ -23,21 +23,26 @@ const exitOnFailure = <A, E>(self: Effect.Effect<A, E>) =>
   )
 
 const main = Effect.gen(function* () {
+  const botToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN"))
+  const signingSecret = yield* Config.option(Config.Redacted("SLACK_SIGNING_SECRET"))
+  const appToken = yield* Config.option(Config.Redacted("SLACK_APP_TOKEN"))
+
+  // Bolt validates missing credentials itself, so an absent variable passes through as before.
   const app = yield* Effect.try({
     try: () =>
       new App({
-        token: process.env.SLACK_BOT_TOKEN,
-        signingSecret: process.env.SLACK_SIGNING_SECRET,
+        token: Option.getOrUndefined(Option.map(botToken, Redacted.value)),
+        signingSecret: Option.getOrUndefined(Option.map(signingSecret, Redacted.value)),
         socketMode: true,
-        appToken: process.env.SLACK_APP_TOKEN,
+        appToken: Option.getOrUndefined(Option.map(appToken, Redacted.value)),
       }),
     catch: (cause) => new SlackBotError({ operation: "new App", cause }),
   })
 
   yield* Effect.logInfo("🔧 Bot configuration:")
-  yield* Effect.logInfo("- Bot token present:", !!process.env.SLACK_BOT_TOKEN)
-  yield* Effect.logInfo("- Signing secret present:", !!process.env.SLACK_SIGNING_SECRET)
-  yield* Effect.logInfo("- App token present:", !!process.env.SLACK_APP_TOKEN)
+  yield* Effect.logInfo("- Bot token present:", Option.isSome(botToken))
+  yield* Effect.logInfo("- Signing secret present:", Option.isSome(signingSecret))
+  yield* Effect.logInfo("- App token present:", Option.isSome(appToken))
 
   yield* Effect.logInfo("🚀 Starting opencode server...")
   const opencode = yield* attempt("createOpencode", () =>
