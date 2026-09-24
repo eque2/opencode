@@ -2,7 +2,7 @@ export * as AISDK from "./aisdk"
 
 import { makeLocationNode } from "./effect/app-node"
 import type { LanguageModelV3 } from "@ai-sdk/provider"
-import { Cause, Context, Effect, Layer, Schema, Scope } from "effect"
+import { Cause, Context, Duration, Effect, Layer, Schema, Scope } from "effect"
 import { ModelV2 } from "./model"
 import { ProviderV2 } from "./provider"
 import { State } from "./state"
@@ -23,45 +23,45 @@ export interface LanguageEvent {
   language?: LanguageModelV3
 }
 
+/** An SSE response body sent no chunk within the configured `chunkTimeout`. */
+export class ChunkTimeoutError extends Schema.TaggedError<ChunkTimeoutError>()("AISDK.ChunkTimeoutError", {
+  message: Schema.String,
+}) {}
+
 function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (typeof ms !== "number" || ms <= 0) return res
   if (!res.body) return res
   if (!res.headers.get("content-type")?.includes("text/event-stream")) return res
 
   const reader = res.body.getReader()
+
+  // The timeout aborts the request and cancels the reader with the timeout error as the reason. The
+  // cancel is not awaited, so the pending read fails at once.
+  const timedOut = Effect.gen(function* () {
+    const error = new ChunkTimeoutError({ message: "SSE read timed out" })
+    ctl.abort(error)
+    yield* Effect.promise(() => reader.cancel(error)).pipe(
+      Effect.ignoreCause,
+      Effect.forkDetach({ startImmediately: true }),
+    )
+    return yield* error
+  })
+
+  // ReadableStream reports a rejected pull or cancel as the stream error. A reader failure (for example
+  // the AbortError of an aborted request) must reach the AI SDK unchanged, so the reader promises run
+  // with Effect.promise: a rejection stays a defect, and Effect.runPromise rejects with the original value.
+  const pull = (ctrl: ReadableStreamDefaultController<Uint8Array>) =>
+    Effect.promise(() => reader.read()).pipe(
+      Effect.timeoutOrElse({ duration: Duration.millis(ms), orElse: () => timedOut }),
+      Effect.flatMap((part) => Effect.sync(() => (part.done ? ctrl.close() : ctrl.enqueue(part.value)))),
+    )
+
+  const cancel = (reason: unknown) =>
+    Effect.sync(() => ctl.abort(reason)).pipe(Effect.andThen(Effect.promise(() => reader.cancel(reason))))
+
   const body = new ReadableStream<Uint8Array>({
-    async pull(ctrl) {
-      const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
-        const id = setTimeout(() => {
-          const err = new Error("SSE read timed out")
-          ctl.abort(err)
-          reader.cancel(err).catch(() => {})
-          reject(err)
-        }, ms)
-
-        reader.read().then(
-          (part) => {
-            clearTimeout(id)
-            resolve(part)
-          },
-          (err) => {
-            clearTimeout(id)
-            reject(err)
-          },
-        )
-      })
-
-      if (part.done) {
-        ctrl.close()
-        return
-      }
-
-      ctrl.enqueue(part.value)
-    },
-    async cancel(reason) {
-      ctl.abort(reason)
-      await reader.cancel(reason)
-    },
+    pull: (ctrl) => Effect.runPromise(pull(ctrl)),
+    cancel: (reason) => Effect.runPromise(cancel(reason)),
   })
 
   return new Response(body, {
