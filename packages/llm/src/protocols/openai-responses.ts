@@ -153,12 +153,15 @@ const OpenAIResponsesBody = Schema.Struct({
 }).annotate({ identifier: "OpenAIResponses.Body" })
 export type OpenAIResponsesBody = Schema.Schema.Type<typeof OpenAIResponsesBody>
 
+// The rest record keeps `http.body` overlay keys in the WebSocket message.
+// Effect applies it to the declared keys too, so every body field must be a
+// JSON value: `fromRequest` omits unset fields instead of setting undefined.
 const OpenAIResponsesWebSocketMessage = Schema.StructWithRest(
   Schema.Struct({
     type: Schema.tag("response.create"),
     ...OpenAIResponsesCoreFields,
   }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  [Schema.Record(Schema.String, Schema.Json)],
 )
 type OpenAIResponsesWebSocketMessage = Schema.Schema.Type<typeof OpenAIResponsesWebSocketMessage>
 const encodeWebSocketMessage = Schema.encodeSync(Schema.fromJsonString(OpenAIResponsesWebSocketMessage))
@@ -183,15 +186,15 @@ const OpenAIResponsesStreamItem = Schema.Struct({
   // call's typed input portion and round-trip the full result payload without
   // hand-rolling a per-tool schema.
   status: Schema.optional(Schema.String),
-  action: Schema.optional(Schema.Unknown),
-  queries: Schema.optional(Schema.Unknown),
-  results: Schema.optional(Schema.Unknown),
+  action: Schema.optional(Schema.Json),
+  queries: Schema.optional(Schema.Json),
+  results: Schema.optional(Schema.Json),
   code: Schema.optional(Schema.String),
   container_id: Schema.optional(Schema.String),
-  outputs: Schema.optional(Schema.Unknown),
+  outputs: Schema.optional(Schema.Json),
   server_label: Schema.optional(Schema.String),
-  output: Schema.optional(Schema.Unknown),
-  error: Schema.optional(Schema.Unknown),
+  output: Schema.optional(Schema.Json),
+  error: Schema.optional(Schema.Json),
   encrypted_content: optionalNull(Schema.String),
 }).annotate({ identifier: "OpenAIResponses.StreamItem" })
 type OpenAIResponsesStreamItem = Schema.Schema.Type<typeof OpenAIResponsesStreamItem>
@@ -222,7 +225,7 @@ const OpenAIResponsesEvent = Schema.Struct({
         usage: optionalNull(OpenAIResponsesUsage),
         error: optionalNull(OpenAIResponsesErrorPayload),
       }),
-      [Schema.Record(Schema.String, Schema.Unknown)],
+      [Schema.Record(Schema.String, Schema.Json)],
     ),
   ),
   code: Schema.optional(Schema.String),
@@ -465,7 +468,7 @@ const lowerOptions = Effect.fn("OpenAIResponses.lowerOptions")(function* (reques
     ...(store !== undefined ? { store } : {}),
     ...(promptCacheKey ? { prompt_cache_key: promptCacheKey } : {}),
     ...(include ? { include } : {}),
-    ...(effort || summary ? { reasoning: { effort, summary } } : {}),
+    ...(effort || summary ? { reasoning: { ...(effort ? { effort } : {}), ...(summary ? { summary } : {}) } } : {}),
     ...(verbosity ? { text: { verbosity } } : {}),
     ...(serviceTier ? { service_tier: serviceTier } : {}),
   }
@@ -487,9 +490,9 @@ const fromRequest = Effect.fn("OpenAIResponses.fromRequest")(function* (request:
         }),
     ...(request.toolChoice ? { tool_choice: yield* lowerToolChoice(request.toolChoice) } : {}),
     stream: true as const,
-    max_output_tokens: generation?.maxTokens,
-    temperature: generation?.temperature,
-    top_p: generation?.topP,
+    ...(generation?.maxTokens === undefined ? {} : { max_output_tokens: generation.maxTokens }),
+    ...(generation?.temperature === undefined ? {} : { temperature: generation.temperature }),
+    ...(generation?.topP === undefined ? {} : { top_p: generation.topP }),
     ...options,
   }
 })
