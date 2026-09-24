@@ -157,6 +157,11 @@ export class ToolRuntimeError extends Data.TaggedError("ToolRuntimeError")<{
   }
 }
 
+/** A host tool tree claims the namespace that CodeMode keeps for its own discovery tools. */
+export class ReservedNamespaceError extends Data.TaggedError("ReservedNamespaceError")<{
+  readonly message: string
+}> {}
+
 const isDefinition = <R>(value: HostTool<R> | Definition<R> | HostTools<R>): value is Definition<R> =>
   isToolDefinition<R>(value)
 
@@ -520,7 +525,9 @@ export const searchIndex = <R>(tools: HostTools<R>): ReadonlyArray<SearchEntry> 
 
 export const assertValidTools = <R>(tools: HostTools<R>): void => {
   if (Object.hasOwn(tools, reservedNamespace)) {
-    throw new Error(`Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`)
+    throw new ReservedNamespaceError({
+      message: `Tool namespace '${reservedNamespace}' is reserved for CodeMode discovery tools.`,
+    })
   }
 }
 
