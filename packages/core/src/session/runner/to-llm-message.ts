@@ -16,8 +16,15 @@ const media = (file: FileAttachment): ContentPart => ({
   mediaType: file.mime,
   data: file.uri,
   filename: file.name,
-  metadata: file.description === undefined ? undefined : { description: file.description },
+  ...(file.description === undefined ? {} : { metadata: { description: file.description } }),
 })
+
+/** The providerMetadata key of a content part, present only when there is metadata to replay. */
+const providerMetadataField = (providerMetadata: Option.Option<ProviderMetadata>) =>
+  Option.match(providerMetadata, {
+    onNone: () => ({}),
+    onSome: (metadata) => ({ providerMetadata: metadata }),
+  })
 
 const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
 
@@ -28,19 +35,19 @@ const toolInput = (tool: SessionMessage.AssistantTool): Schema.Json => {
   return Option.getOrElse(decodeJsonText(text), () => text)
 }
 
-const toolCall = (tool: SessionMessage.AssistantTool, providerMetadata: ProviderMetadata | undefined): ContentPart =>
+const toolCall = (tool: SessionMessage.AssistantTool, providerMetadata: Option.Option<ProviderMetadata>): ContentPart =>
   ToolCallPart.make({
     id: tool.id,
     name: tool.name,
     input: toolInput(tool),
     providerExecuted: tool.provider?.executed,
-    providerMetadata,
+    ...providerMetadataField(providerMetadata),
   })
 
 /** The settled result of a tool call; a pending or running call has none yet. */
 const toolResult = (
   tool: SessionMessage.AssistantTool,
-  providerMetadata: ProviderMetadata | undefined,
+  providerMetadata: Option.Option<ProviderMetadata>,
 ): Option.Option<ToolResultPart> => {
   if (tool.state.status === "completed") {
     // TODO: Materialize remote and managed URIs before provider-history lowering.
@@ -55,7 +62,7 @@ const toolResult = (
         name: tool.name,
         result,
         providerExecuted: tool.provider?.executed,
-        providerMetadata,
+        ...providerMetadataField(providerMetadata),
       }),
     )
   }
@@ -70,7 +77,7 @@ const toolResult = (
             : { error: tool.state.error, content: tool.state.content, structured: tool.state.structured },
         resultType: "error",
         providerExecuted: tool.provider?.executed,
-        providerMetadata,
+        ...providerMetadataField(providerMetadata),
       }),
     )
   }
@@ -81,6 +88,9 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
   const sameModel =
     String(message.model.providerID) === String(model.provider) && String(message.model.id) === String(model.id)
   const reuseProviderMetadata = sameModel && message.error === undefined
+  /** Provider-native continuation metadata replays only for a successful turn of the same model. */
+  const replayed = (providerMetadata: ProviderMetadata | undefined): Option.Option<ProviderMetadata> =>
+    reuseProviderMetadata ? Option.fromUndefinedOr(providerMetadata) : Option.none()
   const content = message.content.flatMap((item): ContentPart[] => {
     if (item.type === "text") return [{ type: "text", text: item.text }]
     if (item.type === "reasoning")
@@ -89,18 +99,15 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
             {
               type: "reasoning",
               text: item.text,
-              providerMetadata: reuseProviderMetadata ? item.providerMetadata : undefined,
+              ...providerMetadataField(replayed(item.providerMetadata)),
             },
           ]
         : item.text.length > 0
           ? [{ type: "text", text: item.text }]
           : []
-    const call = toolCall(item, reuseProviderMetadata ? item.provider?.metadata : undefined)
+    const call = toolCall(item, replayed(item.provider?.metadata))
     if (item.provider?.executed !== true) return [call]
-    const result = toolResult(
-      item,
-      reuseProviderMetadata ? (item.provider.resultMetadata ?? item.provider.metadata) : undefined,
-    )
+    const result = toolResult(item, replayed(item.provider.resultMetadata ?? item.provider.metadata))
     return [call, ...Option.toArray(result)]
   })
   const meaningful = content.filter((part) => {
@@ -111,12 +118,7 @@ const assistant = (message: SessionMessage.Assistant, model: Model) => {
   const results = message.content
     .filter((item): item is SessionMessage.AssistantTool => item.type === "tool" && item.provider?.executed !== true)
     .flatMap((item) =>
-      Option.toArray(
-        toolResult(
-          item,
-          reuseProviderMetadata ? (item.provider?.resultMetadata ?? item.provider?.metadata) : undefined,
-        ),
-      ),
+      Option.toArray(toolResult(item, replayed(item.provider?.resultMetadata ?? item.provider?.metadata))),
     )
     .map(Message.tool)
   if (meaningful.length === 0) return results
