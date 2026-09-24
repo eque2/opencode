@@ -1,5 +1,6 @@
 import type { ColorValue, DesktopTheme, HexColor, ResolvedTheme, ThemeVariant } from "./types"
 import { blend, generateNeutralScale, generateScale, hexToOklch, hexToRgb, shift, withAlpha } from "./color"
+import { isHexColor } from "./validate"
 
 export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): ResolvedTheme {
   const colors = getColors(variant)
@@ -191,15 +192,14 @@ export function resolveThemeVariant(variant: ThemeVariant, isDark: boolean): Res
   tokens["input-focus"] = isDark ? interactive[6] : interactive[0]
   tokens["input-disabled"] = neutral[3]
 
-  tokens["text-base"] = colors.compact ? (body as HexColor) : neutral[10]
-  tokens["text-weak"] = colors.compact ? shift(body as HexColor, { l: isDark ? -0.11 : 0.11, c: 0.9 }) : neutral[8]
-  tokens["text-weaker"] = colors.compact
-    ? shift(body as HexColor, { l: isDark ? -0.2 : 0.21, c: isDark ? 0.78 : 0.72 })
-    : neutral[7]
-  tokens["text-strong"] = colors.compact
+  // body is defined exactly when colors.compact is true
+  tokens["text-base"] = body ?? neutral[10]
+  tokens["text-weak"] = body ? shift(body, { l: isDark ? -0.11 : 0.11, c: 0.9 }) : neutral[8]
+  tokens["text-weaker"] = body ? shift(body, { l: isDark ? -0.2 : 0.21, c: isDark ? 0.78 : 0.72 }) : neutral[7]
+  tokens["text-strong"] = body
     ? isDark
-      ? blend("#ffffff", body as HexColor, 0.9)
-      : shift(body as HexColor, { l: -0.07, c: 1.04 })
+      ? blend("#ffffff", body, 0.9)
+      : shift(body, { l: -0.07, c: 1.04 })
     : neutral[11]
   tokens["text-invert-base"] = isDark ? neutral[10] : neutral[1]
   tokens["text-invert-weak"] = isDark ? neutral[8] : neutral[2]
@@ -522,8 +522,8 @@ function generateNeutralAlphaScale(neutralScale: HexColor[], isDark: boolean): H
 }
 
 function getHex(value: ColorValue | undefined): HexColor | undefined {
-  if (!value?.startsWith("#")) return undefined
-  return value as HexColor
+  if (!isHexColor(value)) return undefined
+  return value
 }
 
 export function resolveTheme(theme: DesktopTheme): { light: ResolvedTheme; dark: ResolvedTheme } {

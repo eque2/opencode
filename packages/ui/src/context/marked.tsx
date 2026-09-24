@@ -17,8 +17,8 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
         langs: [],
         preferredHighlighter: "shiki-wasm",
       })
-      const name = language in bundledLanguages ? language : "text"
-      if (!highlighter.getLoadedLanguages().includes(name)) await highlighter.loadLanguage(name as BundledLanguage)
+      const name = isBundledLanguage(language) ? language : "text"
+      if (!highlighter.getLoadedLanguages().includes(name)) await highlighter.loadLanguage(name)
       return highlighter.codeToHtml(code, {
         lang: name,
         theme: "OpenCode",
@@ -26,3 +26,7 @@ export const { use: useMarked, provider: MarkedProvider } = createSimpleContext(
       })
     }),
 })
+
+function isBundledLanguage(language: string): language is BundledLanguage {
+  return Object.hasOwn(bundledLanguages, language)
+}

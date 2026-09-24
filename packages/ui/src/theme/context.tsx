@@ -8,6 +8,7 @@ import oc2ThemeJson from "./themes/oc-2.json"
 import { resolveThemeVariant, themeToCss } from "./resolve"
 import { resolveThemeVariantV2, themeV2ToCss } from "./v2/resolve"
 import type { DesktopTheme } from "./types"
+import { parseDesktopTheme } from "./validate"
 
 export type ColorScheme = "light" | "dark" | "system"
 
@@ -82,7 +83,11 @@ const names: Record<string, string> = {
   vesper: "Vesper",
   zenburn: "Zenburn",
 }
-const oc2Theme = oc2ThemeJson as DesktopTheme
+const oc2Theme = parseDesktopTheme(oc2ThemeJson)
+
+function isColorScheme(value: unknown): value is ColorScheme {
+  return value === "light" || value === "dark" || value === "system"
+}
 
 function normalize(id: string | null | undefined) {
   return id === "oc-1" ? "oc-2" : id
@@ -111,14 +116,19 @@ function drop(key: string) {
   } catch {}
 }
 
+function readColorScheme(): ColorScheme {
+  const scheme = read(STORAGE_KEYS.COLOR_SCHEME)
+  return isColorScheme(scheme) ? scheme : "system"
+}
+
 function clear() {
   drop(STORAGE_KEYS.THEME_CSS_LIGHT)
   drop(STORAGE_KEYS.THEME_CSS_DARK)
 }
 
 function ensureThemeStyleElement(): HTMLStyleElement {
-  const existing = document.getElementById(THEME_STYLE_ID) as HTMLStyleElement | null
-  if (existing) return existing
+  const existing = document.getElementById(THEME_STYLE_ID)
+  if (existing instanceof HTMLStyleElement) return existing
   const element = document.createElement("style")
   element.id = THEME_STYLE_ID
   document.head.appendChild(element)
@@ -178,7 +188,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     onThemeApplied?: (theme: DesktopTheme, mode: "light" | "dark", scheme: ColorScheme) => void
   }) => {
     const themeId = normalize(read(STORAGE_KEYS.THEME_ID) ?? props.defaultTheme) ?? "oc-2"
-    const colorScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
+    const colorScheme = readColorScheme()
     const mode = colorScheme === "system" ? getSystemMode() : colorScheme
     const [store, setStore] = createStore({
       themes: {
@@ -246,9 +256,9 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
           cacheThemeVariants(theme, next)
         })
       }
-      if (e.key === STORAGE_KEYS.COLOR_SCHEME && e.newValue) {
-        setStore("colorScheme", e.newValue as ColorScheme)
-        setStore("mode", e.newValue === "system" ? getSystemMode() : (e.newValue as "light" | "dark"))
+      if (e.key === STORAGE_KEYS.COLOR_SCHEME && isColorScheme(e.newValue)) {
+        setStore("colorScheme", e.newValue)
+        setStore("mode", e.newValue === "system" ? getSystemMode() : e.newValue)
       }
     }
 
@@ -264,7 +274,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
       const rawTheme = read(STORAGE_KEYS.THEME_ID)
       const savedTheme = normalize(rawTheme ?? props.defaultTheme) ?? "oc-2"
-      const savedScheme = (read(STORAGE_KEYS.COLOR_SCHEME) as ColorScheme | null) ?? "system"
+      const savedScheme = readColorScheme()
       if (rawTheme && rawTheme !== savedTheme) {
         write(STORAGE_KEYS.THEME_ID, savedTheme)
         clear()
