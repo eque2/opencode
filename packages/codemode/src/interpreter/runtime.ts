@@ -2,6 +2,7 @@ import { parse } from "acorn"
 import {
   Array as Arr,
   Cause,
+  Clock,
   Effect,
   Exit,
   Fiber,
@@ -1660,7 +1661,7 @@ class Interpreter<R> {
         const args = yield* this.evaluateCallArguments(argNodes)
         switch (name) {
           case "Date":
-            return this.constructDate(args)
+            return yield* this.constructDate(args)
           case "RegExp":
             return yield* this.constructRegExp(args, node)
           case "Map":
@@ -1677,18 +1678,19 @@ class Interpreter<R> {
     })
   }
 
-  private constructDate(args: Array<unknown>): SandboxDate {
-    if (args.length === 0) return new SandboxDate(Date.now())
+  private constructDate(args: Array<unknown>): Effect.Effect<SandboxDate> {
+    // `new Date()` reads the current time from the Effect clock.
+    if (args.length === 0) return Effect.map(Clock.currentTimeMillis, (now) => new SandboxDate(now))
     if (args.length === 1) {
       const arg = args[0]
-      if (arg instanceof SandboxDate) return new SandboxDate(arg.time)
-      if (typeof arg === "number") return new SandboxDate(new Date(arg).getTime())
-      if (typeof arg === "string") return new SandboxDate(Date.parse(arg))
-      return new SandboxDate(Number.NaN)
+      if (arg instanceof SandboxDate) return Effect.succeed(new SandboxDate(arg.time))
+      if (typeof arg === "number") return Effect.succeed(new SandboxDate(new Date(arg).getTime()))
+      if (typeof arg === "string") return Effect.succeed(new SandboxDate(Date.parse(arg)))
+      return Effect.succeed(new SandboxDate(Number.NaN))
     }
     // new Date(year, month, day?, hours?, ...) - local-time component form.
     const parts = args.map((arg) => coerceToNumber(arg))
-    return new SandboxDate(new Date(...(parts as [number, number])).getTime())
+    return Effect.succeed(new SandboxDate(new Date(...(parts as [number, number])).getTime()))
   }
 
   private constructRegExp(args: Array<unknown>, node: AstNode): Effect.Effect<SandboxRegExp, InterpreterRuntimeError> {
