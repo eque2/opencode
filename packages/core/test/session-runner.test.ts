@@ -6,7 +6,6 @@ import {
   Model,
   TransportReason,
   InvalidRequestReason,
-  type LLMClientShape,
   type LLMRequest,
 } from "@opencode-ai/llm"
 import * as OpenAIChat from "@opencode-ai/llm/protocols/openai-chat"
@@ -75,7 +74,7 @@ const client = Layer.succeed(
   LLMClient.Service,
   LLMClient.Service.of({
     prepare: () => Effect.die("unused"),
-    stream: ((request: LLMRequest) => {
+    stream: (request: LLMRequest): Stream.Stream<LLMEvent, LLMError> => {
       requests.push(request)
       if (responseStream) {
         const stream = responseStream
@@ -92,7 +91,7 @@ const client = Layer.succeed(
           Effect.as(events),
         ),
       )
-    }) as unknown as LLMClientShape["stream"],
+    },
     generate: () => Effect.die("unused"),
   }),
 )
