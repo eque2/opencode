@@ -19,7 +19,7 @@ const addPlugin = Effect.fn(function* () {
   yield* GatewayPlugin.effect(host)
 })
 
-mock.module("@ai-sdk/gateway", () => ({
+void mock.module("@ai-sdk/gateway", () => ({
   createGateway(options: Record<string, unknown>) {
     gatewayCalls.push({ ...options })
     return {
