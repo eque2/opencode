@@ -884,7 +884,7 @@ const onOutputItemDone = Effect.fn("OpenAIResponses.onOutputItemDone")(function*
       const { [item.id]: _removed, ...reasoningItems } = state.reasoningItems
       return [{ ...state, lifecycle, reasoningItems }, events] satisfies StepResult
     }
-    if (!state.lifecycle.reasoning.has(item.id)) {
+    if (!Lifecycle.isReasoningOpen(state.lifecycle, item.id)) {
       const lifecycle = Lifecycle.stepStart(state.lifecycle, events)
       events.push(LLMEvent.reasoningStart({ id: item.id, providerMetadata }))
       events.push(LLMEvent.reasoningEnd({ id: item.id, providerMetadata }))
