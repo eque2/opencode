@@ -306,14 +306,15 @@ async function loadWorkspace(workspaceID: string): Promise<WorkspaceSection> {
     tx
       .select({
         date: sql<string>`DATE(${UsageTable.timeCreated})`.as("date"),
-        freeRequests: sql<number>`SUM(CASE WHEN ${UsageTable.cost} = 0 THEN 1 ELSE 0 END)`.as("free_requests"),
-        goRequests: sql<number>`SUM(CASE WHEN ${planExpr} = 'lite' THEN 1 ELSE 0 END)`.as("go_requests"),
-        goCost: sql<number>`SUM(CASE WHEN ${planExpr} = 'lite' THEN ${UsageTable.cost} ELSE 0 END)`.as("go_cost"),
-        apiRequests: sql<number>`SUM(CASE WHEN ${planExpr} IS NULL AND ${UsageTable.cost} > 0 THEN 1 ELSE 0 END)`.as(
+        // The PlanetScale driver returns SUM results as strings.
+        freeRequests: sql<string>`SUM(CASE WHEN ${UsageTable.cost} = 0 THEN 1 ELSE 0 END)`.as("free_requests"),
+        goRequests: sql<string>`SUM(CASE WHEN ${planExpr} = 'lite' THEN 1 ELSE 0 END)`.as("go_requests"),
+        goCost: sql<string>`SUM(CASE WHEN ${planExpr} = 'lite' THEN ${UsageTable.cost} ELSE 0 END)`.as("go_cost"),
+        apiRequests: sql<string>`SUM(CASE WHEN ${planExpr} IS NULL AND ${UsageTable.cost} > 0 THEN 1 ELSE 0 END)`.as(
           "api_requests",
         ),
         apiCost:
-          sql<number>`SUM(CASE WHEN ${planExpr} IS NULL AND ${UsageTable.cost} > 0 THEN ${UsageTable.cost} ELSE 0 END)`.as(
+          sql<string>`SUM(CASE WHEN ${planExpr} IS NULL AND ${UsageTable.cost} > 0 THEN ${UsageTable.cost} ELSE 0 END)`.as(
             "api_cost",
           ),
       })
