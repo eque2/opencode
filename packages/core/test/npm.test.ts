@@ -1,4 +1,5 @@
 import fs from "fs/promises"
+import { statSync } from "fs"
 import path from "path"
 import { pathToFileURL } from "url"
 import { describe, expect, test } from "bun:test"
@@ -148,7 +149,7 @@ describe("Npm.install", () => {
 
     await Npm.install(tmp.path)
 
-    await expect(fs.stat(path.join(tmp.path, "node_modules", "prod-pkg"))).resolves.toBeDefined()
-    await expect(fs.stat(path.join(tmp.path, "node_modules", "dev-pkg"))).rejects.toThrow()
+    expect(await fs.stat(path.join(tmp.path, "node_modules", "prod-pkg"))).toBeDefined()
+    expect(() => statSync(path.join(tmp.path, "node_modules", "dev-pkg"))).toThrow()
   })
 })
