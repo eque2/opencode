@@ -71,7 +71,7 @@ const toolCall = (route: string, tool: PendingTool, inputOverride?: string) =>
           id: tool.id,
           name: tool.name,
           input,
-          providerExecuted: tool.providerExecuted ? true : undefined,
+          ...(tool.providerExecuted ? { providerExecuted: true } : {}),
           providerMetadata: tool.providerMetadata,
         }),
     ),
