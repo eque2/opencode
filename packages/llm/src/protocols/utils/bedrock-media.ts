@@ -12,7 +12,7 @@ export const ImageBlock = Schema.Struct({
     format: ImageFormat,
     source: Schema.Struct({ bytes: Schema.String }),
   }),
-})
+}).annotate({ identifier: "BedrockMedia.ImageBlock" })
 export type ImageBlock = Schema.Schema.Type<typeof ImageBlock>
 
 // Bedrock document blocks require a user-facing name so the model can refer to
@@ -26,7 +26,7 @@ export const DocumentBlock = Schema.Struct({
     name: Schema.String,
     source: Schema.Struct({ bytes: Schema.String }),
   }),
-})
+}).annotate({ identifier: "BedrockMedia.DocumentBlock" })
 export type DocumentBlock = Schema.Schema.Type<typeof DocumentBlock>
 
 const IMAGE_FORMATS = {

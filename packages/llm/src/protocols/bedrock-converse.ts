@@ -35,7 +35,7 @@ export type { Credentials as BedrockCredentials } from "./utils/bedrock-auth"
 // =============================================================================
 const BedrockTextBlock = Schema.Struct({
   text: Schema.String,
-})
+}).annotate({ identifier: "BedrockConverse.TextBlock" })
 type BedrockTextBlock = Schema.Schema.Type<typeof BedrockTextBlock>
 
 const BedrockToolUseBlock = Schema.Struct({
@@ -44,7 +44,7 @@ const BedrockToolUseBlock = Schema.Struct({
     name: Schema.String,
     input: Schema.Unknown,
   }),
-})
+}).annotate({ identifier: "BedrockConverse.ToolUseBlock" })
 type BedrockToolUseBlock = Schema.Schema.Type<typeof BedrockToolUseBlock>
 
 const BedrockToolResultContentItem = Schema.Union([
@@ -59,7 +59,7 @@ const BedrockToolResultBlock = Schema.Struct({
     content: Schema.Array(BedrockToolResultContentItem),
     status: Schema.optional(Schema.Literals(["success", "error"])),
   }),
-})
+}).annotate({ identifier: "BedrockConverse.ToolResultBlock" })
 type BedrockToolResultBlock = Schema.Schema.Type<typeof BedrockToolResultBlock>
 
 const BedrockReasoningBlock = Schema.Struct({
@@ -71,7 +71,7 @@ const BedrockReasoningBlock = Schema.Struct({
       }),
     ),
   }),
-})
+}).annotate({ identifier: "BedrockConverse.ReasoningBlock" })
 
 const BedrockUserBlock = Schema.Union([
   BedrockTextBlock,
@@ -107,7 +107,7 @@ const BedrockToolSpec = Schema.Struct({
       json: JsonObject,
     }),
   }),
-})
+}).annotate({ identifier: "BedrockConverse.ToolSpec" })
 type BedrockToolSpec = Schema.Schema.Type<typeof BedrockToolSpec>
 
 const BedrockTool = Schema.Union([BedrockToolSpec, BedrockCache.CachePointBlock])
@@ -139,7 +139,7 @@ const BedrockBodyFields = {
   ),
   additionalModelRequestFields: Schema.optional(JsonObject),
 }
-const BedrockConverseBody = Schema.Struct(BedrockBodyFields)
+const BedrockConverseBody = Schema.Struct(BedrockBodyFields).annotate({ identifier: "BedrockConverse.Body" })
 export type BedrockConverseBody = Schema.Schema.Type<typeof BedrockConverseBody>
 
 const BedrockUsageSchema = Schema.Struct({
@@ -148,7 +148,7 @@ const BedrockUsageSchema = Schema.Struct({
   totalTokens: Schema.optional(Schema.Number),
   cacheReadInputTokens: Schema.optional(Schema.Number),
   cacheWriteInputTokens: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "BedrockConverse.Usage" })
 type BedrockUsageSchema = Schema.Schema.Type<typeof BedrockUsageSchema>
 
 // Streaming event shape — the AWS event stream wraps each JSON payload by its
@@ -202,7 +202,7 @@ const BedrockEvent = Schema.Struct({
   validationException: Schema.optional(Schema.Struct({ message: Schema.String })),
   throttlingException: Schema.optional(Schema.Struct({ message: Schema.String })),
   serviceUnavailableException: Schema.optional(Schema.Struct({ message: Schema.String })),
-})
+}).annotate({ identifier: "BedrockConverse.Event" })
 type BedrockEvent = Schema.Schema.Type<typeof BedrockEvent>
 
 // =============================================================================
