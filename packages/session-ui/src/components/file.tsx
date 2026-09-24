@@ -877,7 +877,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
   })
 
   const options = createMemo(() => ({
-    ...createDefaultOptions<T>("unified"),
+    ...createDefaultOptions("unified"),
     ...others,
     ...lineCallbacks,
   }))
