@@ -51,14 +51,19 @@ const decodeEvent = (event: WebSocketEvent) =>
 const jsonOrText = (value: string) => Option.match(decodeJson(value), { onNone: () => value, onSome: canonicalizeJson })
 
 const assertClientEvent = (actual: string, expected: WebSocketEvent | undefined, index: number, asJson: boolean) =>
-  Effect.sync(() => {
+  Effect.suspend(() => {
     const matches =
       expected?.direction === "client" &&
       expected.kind === "text" &&
       encodeJson(asJson ? jsonOrText(actual) : actual) ===
         encodeJson(asJson ? jsonOrText(expected.body) : expected.body)
-    if (matches) return
-    throw new Error(`WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`)
+    return matches
+      ? Effect.void
+      : Effect.die(
+          new Error(
+            `WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`,
+          ),
+        )
   })
 
 export const makeWebSocketExecutor = <E>(
@@ -141,11 +146,11 @@ export const makeWebSocketExecutor = <E>(
         Effect.gen(function* () {
           const claimed = yield* replay
             .claim((interaction, index) =>
-              Effect.sync(() => {
+              Effect.suspend(() => {
                 const incoming = canonicalizeJson(openSnapshot(request))
-                if (interaction && encodeJson(incoming) === encodeJson(canonicalizeJson(interaction.open)))
-                  return
-                throw new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`)
+                return interaction && encodeJson(incoming) === encodeJson(canonicalizeJson(interaction.open))
+                  ? Effect.void
+                  : Effect.die(new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`))
               }),
             )
             .pipe(Effect.orDie)

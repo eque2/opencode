@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Schema, Semaphore } from "effect"
+import { Context, Effect, FileSystem, Layer, Result, Schema, Semaphore } from "effect"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
@@ -25,6 +25,15 @@ export class UnsafeCassetteError extends Schema.TaggedError<UnsafeCassetteError>
   }
 }
 
+export class InvalidCassetteNameError extends Schema.TaggedError<InvalidCassetteNameError>()(
+  "InvalidCassetteNameError",
+  { cassetteName: Schema.String },
+) {
+  override get message() {
+    return `Invalid cassette name "${this.cassetteName}"`
+  }
+}
+
 export interface Interface {
   readonly read: (name: string) => Effect.Effect<ReadonlyArray<Interaction>, CassetteNotFoundError>
   readonly append: (
@@ -38,19 +47,19 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode-ai/http-recorder/Cassette") {}
 
-const cassettePath = (directory: string, name: string) => {
+const cassettePath = (directory: string, name: string): Result.Result<string, InvalidCassetteNameError> => {
+  const invalid = () => Result.fail(new InvalidCassetteNameError({ cassetteName: name }))
   if (!name || path.isAbsolute(name) || path.win32.isAbsolute(name) || name.split(/[\\/]/).includes(".."))
-    throw new Error(`Invalid cassette name "${name}"`)
+    return invalid()
   const root = path.resolve(directory)
   const target = path.resolve(root, `${name}.json`)
   const relative = path.relative(root, target)
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative))
-    throw new Error(`Invalid cassette name "${name}"`)
-  return target
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return invalid()
+  return Result.succeed(target)
 }
 
 export const hasCassetteSync = (name: string, options: { readonly directory?: string } = {}) =>
-  fs.existsSync(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name))
+  fs.existsSync(Result.getOrThrow(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name)))
 
 const buildCassette = (
   name: string,
@@ -82,7 +91,7 @@ export const fileSystem = (
       const recorded = new Map<string, { interactions: Interaction[]; findings: SecretFinding[] }>()
       const appendLock = yield* Semaphore.make(1)
 
-      const pathFor = (name: string) => cassettePath(directory, name)
+      const pathFor = (name: string) => Effect.fromResult(cassettePath(directory, name)).pipe(Effect.orDie)
 
       const walk = (current: string): Effect.Effect<ReadonlyArray<string>> =>
         Effect.gen(function* () {
@@ -99,9 +108,13 @@ export const fileSystem = (
 
       return Service.of({
         read: (name) =>
-          fs.readFileString(pathFor(name)).pipe(
-            Effect.map((raw) => parseCassette(raw).interactions),
-            Effect.catch(() => Effect.fail(new CassetteNotFoundError({ cassetteName: name }))),
+          pathFor(name).pipe(
+            Effect.flatMap((target) =>
+              fs.readFileString(target).pipe(
+                Effect.map((raw) => parseCassette(raw).interactions),
+                Effect.catch(() => Effect.fail(new CassetteNotFoundError({ cassetteName: name }))),
+              ),
+            ),
           ),
         append: (name, interaction, metadata) =>
           appendLock.withPermit(
@@ -112,7 +125,7 @@ export const fileSystem = (
               const cassette = buildCassette(name, interactions, metadata)
               const findings = [...interactionFindings, ...secretFindings(cassette.metadata ?? {})]
               yield* failIfUnsafe(name, findings)
-              const target = pathFor(name)
+              const target = yield* pathFor(name)
               yield* fs.makeDirectory(path.dirname(target), { recursive: true }).pipe(Effect.orDie)
               const temporary = `${target}.${crypto.randomUUID()}.tmp`
               yield* fs.writeFileString(temporary, formatCassette(cassette)).pipe(
@@ -124,9 +137,13 @@ export const fileSystem = (
             }),
           ),
         exists: (name) =>
-          fs.access(pathFor(name)).pipe(
-            Effect.as(true),
-            Effect.catch(() => Effect.succeed(false)),
+          pathFor(name).pipe(
+            Effect.flatMap((target) =>
+              fs.access(target).pipe(
+                Effect.as(true),
+                Effect.catch(() => Effect.succeed(false)),
+              ),
+            ),
           ),
         list: () =>
           walk(directory).pipe(

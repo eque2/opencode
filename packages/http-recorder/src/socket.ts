@@ -60,10 +60,13 @@ const comparable = (event: WebSocketEvent, asJson: boolean) => {
 }
 
 const assertEvent = (actual: WebSocketEvent, expected: WebSocketEvent | undefined, index: number, asJson: boolean) =>
-  Effect.sync(() => {
-    if (expected && comparable(actual, asJson) === comparable(expected, asJson)) return
-    throw new Error(`WebSocket event ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`)
-  })
+  Effect.suspend(() =>
+    expected && comparable(actual, asJson) === comparable(expected, asJson)
+      ? Effect.void
+      : Effect.die(
+          new Error(`WebSocket event ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`),
+        ),
+  )
 
 const replayClosed = () =>
   Effect.fail(
@@ -162,11 +165,16 @@ const makeRecordingSocket = (
           pull: reader.pull.pipe(
             Effect.tap((messages) =>
               state.eventLock.withPermit(
-                Effect.sync(() => {
-                  if (!Ref.getUnsafe(state.accepting)) throw new Error("WebSocket received a frame after closing")
-                  for (const message of messages)
-                    state.events.push(redactEvent(encodeEvent("server", message), redactor))
-                }),
+                Ref.get(state.accepting).pipe(
+                  Effect.flatMap((accepting) =>
+                    accepting
+                      ? Effect.sync(() => {
+                          for (const message of messages)
+                            state.events.push(redactEvent(encodeEvent("server", message), redactor))
+                        })
+                      : Effect.die(new Error("WebSocket received a frame after closing")),
+                  ),
+                ),
               ),
             ),
             Effect.onError(() => Effect.sync(() => (state.valid = false))),
@@ -218,16 +226,16 @@ const makeReplaySocket = (
       Effect.gen(function* () {
         const claimed = yield* replay
           .claim((interaction, index) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               const incoming = openSnapshot(request, redactor)
-              if (
-                interaction &&
+              return interaction &&
                 encodeJson(canonicalizeJson(incoming)) === encodeJson(canonicalizeJson(interaction.open))
-              )
-                return
-              throw new Error(
-                `WebSocket open ${index + 1}: expected ${safeText(interaction?.open)}, received ${safeText(incoming)}`,
-              )
+                ? Effect.void
+                : Effect.die(
+                    new Error(
+                      `WebSocket open ${index + 1}: expected ${safeText(interaction?.open)}, received ${safeText(incoming)}`,
+                    ),
+                  )
             }),
           )
           .pipe(Effect.orDie)
