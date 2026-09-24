@@ -1001,11 +1001,6 @@ function serializable(value: unknown): boolean {
   return Object.values(value).every(serializable)
 }
 
-function taggedErrorFields(schema: Schema.Top) {
-  const fields = declaredErrorFields(schema)
-  return fields?.key === "_tag" ? fields : undefined
-}
-
 function declaredErrorFields(schema: Schema.Top) {
   if (!SchemaAST.isDeclaration(schema.ast) || typeof schema.ast.annotations?.["~constructor"] !== "function") {
     return undefined
