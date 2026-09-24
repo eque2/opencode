@@ -1,12 +1,18 @@
 import {
+  type LanguageModelV3FilePart,
   type LanguageModelV3Prompt,
+  type LanguageModelV3TextPart,
   type LanguageModelV3ToolCallPart,
   type SharedV3Warning,
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
 import { Effect, Schema } from "effect"
-import type { OpenAIResponsesInput, OpenAIResponsesReasoning } from "./openai-responses-api-types"
+import type {
+  OpenAIResponsesInput,
+  OpenAIResponsesReasoning,
+  OpenAIResponsesUserMessage,
+} from "./openai-responses-api-types"
 import { ResponsesCallError } from "./openai-error"
 import { localShellInputSchema, localShellOutputSchema } from "./tool/local-shell"
 
@@ -64,60 +70,17 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
           }
           default: {
             const _exhaustiveCheck: never = systemMessageMode
-            throw new Error(`Unsupported system message mode: ${_exhaustiveCheck}`)
+            return yield* unsupported(`system message mode ${String(_exhaustiveCheck)}`)
           }
         }
         break
       }
 
       case "user": {
-        input.push({
-          role: "user",
-          content: content.map((part, index) => {
-            switch (part.type) {
-              case "text": {
-                return { type: "input_text", text: part.text }
-              }
-              case "file": {
-                if (part.mediaType.startsWith("image/")) {
-                  const mediaType = part.mediaType === "image/*" ? "image/jpeg" : part.mediaType
-
-                  return {
-                    type: "input_image",
-                    ...(part.data instanceof URL
-                      ? { image_url: part.data.toString() }
-                      : typeof part.data === "string" && isFileId(part.data, fileIdPrefixes)
-                        ? { file_id: part.data }
-                        : {
-                            image_url: `data:${mediaType};base64,${convertToBase64(part.data)}`,
-                          }),
-                    detail: part.providerOptions?.copilot?.imageDetail,
-                  }
-                } else if (part.mediaType === "application/pdf") {
-                  if (part.data instanceof URL) {
-                    return {
-                      type: "input_file",
-                      file_url: part.data.toString(),
-                    }
-                  }
-                  return {
-                    type: "input_file",
-                    ...(typeof part.data === "string" && isFileId(part.data, fileIdPrefixes)
-                      ? { file_id: part.data }
-                      : {
-                          filename: part.filename ?? `part-${index}.pdf`,
-                          file_data: `data:application/pdf;base64,${convertToBase64(part.data)}`,
-                        }),
-                  }
-                } else {
-                  throw new UnsupportedFunctionalityError({
-                    functionality: `file part media type ${part.mediaType}`,
-                  })
-                }
-              }
-            }
-          }),
-        })
+        const userContent = yield* Effect.forEach(content, (part, index) =>
+          toUserContentPart(part, index, fileIdPrefixes),
+        )
+        input.push({ role: "user", content: userContent })
 
         break
       }
@@ -144,7 +107,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
               }
 
               if (hasLocalShellTool && part.toolName === "local_shell") {
-                const parsedInput = Schema.decodeUnknownSync(localShellInputSchema)(part.input)
+                const parsedInput = yield* decodeLocalShellInput(part.input)
                 input.push({
                   type: "local_shell_call",
                   call_id: part.toolCallId,
@@ -292,10 +255,11 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
           }
 
           if (hasLocalShellTool && part.toolName === "local_shell" && output.type === "json") {
+            const localShellOutput = yield* decodeLocalShellOutput(output.value)
             input.push({
               type: "local_shell_call_output",
               call_id: part.toolCallId,
-              output: Schema.decodeUnknownSync(localShellOutputSchema)(output.value).output,
+              output: localShellOutput.output,
             })
             break
           }
@@ -328,10 +292,72 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 
       default: {
         const _exhaustiveCheck: never = role
-        throw new Error(`Unsupported role: ${_exhaustiveCheck}`)
+        return yield* unsupported(`role ${String(_exhaustiveCheck)}`)
       }
     }
   }
 
   return { input, warnings }
 })
+
+// An input that the Responses API cannot take fails the call with the AI SDK error for it.
+const unsupported = (functionality: string) =>
+  Effect.fail(new ResponsesCallError({ cause: new UnsupportedFunctionalityError({ functionality }) }))
+
+const decodeLocalShellInput = (input: unknown) =>
+  Schema.decodeUnknownEffect(localShellInputSchema)(input).pipe(
+    Effect.mapError((cause) => new ResponsesCallError({ cause })),
+  )
+
+const decodeLocalShellOutput = (output: unknown) =>
+  Schema.decodeUnknownEffect(localShellOutputSchema)(output).pipe(
+    Effect.mapError((cause) => new ResponsesCallError({ cause })),
+  )
+
+type OpenAIResponsesUserContentPart = OpenAIResponsesUserMessage["content"][number]
+
+// A user text or file part as a Responses input part. Images and PDFs are the only supported files.
+function toUserContentPart(
+  part: LanguageModelV3TextPart | LanguageModelV3FilePart,
+  index: number,
+  fileIdPrefixes: readonly string[] | undefined,
+): Effect.Effect<OpenAIResponsesUserContentPart, ResponsesCallError> {
+  if (part.type === "text") return Effect.succeed({ type: "input_text", text: part.text })
+
+  if (part.mediaType.startsWith("image/")) {
+    const mediaType = part.mediaType === "image/*" ? "image/jpeg" : part.mediaType
+    // The Responses API reads `detail`, but the input types here do not declare it.
+    const image = {
+      type: "input_image" as const,
+      ...(part.data instanceof URL
+        ? { image_url: part.data.toString() }
+        : typeof part.data === "string" && isFileId(part.data, fileIdPrefixes)
+          ? { file_id: part.data }
+          : {
+              image_url: `data:${mediaType};base64,${convertToBase64(part.data)}`,
+            }),
+      detail: part.providerOptions?.copilot?.imageDetail,
+    }
+    return Effect.succeed(image)
+  }
+
+  if (part.mediaType === "application/pdf") {
+    if (part.data instanceof URL) {
+      return Effect.succeed({
+        type: "input_file",
+        file_url: part.data.toString(),
+      })
+    }
+    return Effect.succeed({
+      type: "input_file",
+      ...(typeof part.data === "string" && isFileId(part.data, fileIdPrefixes)
+        ? { file_id: part.data }
+        : {
+            filename: part.filename ?? `part-${index}.pdf`,
+            file_data: `data:application/pdf;base64,${convertToBase64(part.data)}`,
+          }),
+    })
+  }
+
+  return unsupported(`file part media type ${part.mediaType}`)
+}

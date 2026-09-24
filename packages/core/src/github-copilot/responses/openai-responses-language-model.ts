@@ -507,7 +507,7 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     tools: openaiTools,
     toolChoice: openaiToolChoice,
     toolWarnings,
-  } = prepareResponsesTools({
+  } = yield* prepareResponsesTools({
     tools,
     toolChoice,
     strictJsonSchema,
@@ -554,14 +554,16 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
   })
 
   if (response.error) {
-    throw new APICallError({
-      message: response.error.message,
-      url,
-      requestBodyValues: body,
-      statusCode: 400,
-      responseHeaders,
-      responseBody: rawResponse as string,
-      isRetryable: false,
+    return yield* new ResponsesCallError({
+      cause: new APICallError({
+        message: response.error.message,
+        url,
+        requestBodyValues: body,
+        statusCode: 400,
+        responseHeaders,
+        responseBody: rawResponse as string,
+        isRetryable: false,
+      }),
     })
   }
 

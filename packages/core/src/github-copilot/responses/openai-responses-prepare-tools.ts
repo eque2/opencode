@@ -1,21 +1,14 @@
 import { type LanguageModelV3CallOptions, type SharedV3Warning, UnsupportedFunctionalityError } from "@ai-sdk/provider"
-import { Schema } from "effect"
+import { Effect, Schema, type SchemaAST } from "effect"
 import { codeInterpreterArgsSchema } from "./tool/code-interpreter"
 import { fileSearchArgsSchema } from "./tool/file-search"
 import { webSearchArgsSchema } from "./tool/web-search"
 import { webSearchPreviewArgsSchema } from "./tool/web-search-preview"
 import { imageGenerationArgsSchema } from "./tool/image-generation"
 import type { OpenAIResponsesTool } from "./openai-responses-api-types"
+import { ResponsesCallError } from "./openai-error"
 
-export function prepareResponsesTools({
-  tools,
-  toolChoice,
-  strictJsonSchema,
-}: {
-  tools: LanguageModelV3CallOptions["tools"]
-  toolChoice?: LanguageModelV3CallOptions["toolChoice"]
-  strictJsonSchema: boolean
-}): {
+export type PreparedResponsesTools = {
   tools?: Array<OpenAIResponsesTool>
   toolChoice?:
     | "auto"
@@ -28,7 +21,17 @@ export function prepareResponsesTools({
     | { type: "code_interpreter" }
     | { type: "image_generation" }
   toolWarnings: SharedV3Warning[]
-} {
+}
+
+export const prepareResponsesTools = Effect.fn("CopilotResponses.prepareResponsesTools")(function* ({
+  tools,
+  toolChoice,
+  strictJsonSchema,
+}: {
+  tools: LanguageModelV3CallOptions["tools"]
+  toolChoice?: LanguageModelV3CallOptions["toolChoice"]
+  strictJsonSchema: boolean
+}): Effect.fn.Return<PreparedResponsesTools, ResponsesCallError> {
   // when the tools array is empty, change it to undefined to prevent errors:
   tools = tools?.length ? tools : undefined
 
@@ -54,7 +57,7 @@ export function prepareResponsesTools({
       case "provider": {
         switch (tool.id) {
           case "openai.file_search": {
-            const args = Schema.decodeUnknownSync(fileSearchArgsSchema)(tool.args)
+            const args = yield* decodeToolArgs(fileSearchArgsSchema, tool.args)
 
             openaiTools.push({
               type: "file_search",
@@ -78,7 +81,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.web_search_preview": {
-            const args = Schema.decodeUnknownSync(webSearchPreviewArgsSchema)(tool.args)
+            const args = yield* decodeToolArgs(webSearchPreviewArgsSchema, tool.args)
             openaiTools.push({
               type: "web_search_preview",
               search_context_size: args.searchContextSize,
@@ -87,7 +90,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.web_search": {
-            const args = Schema.decodeUnknownSync(webSearchArgsSchema)(tool.args)
+            const args = yield* decodeToolArgs(webSearchArgsSchema, tool.args)
             openaiTools.push({
               type: "web_search",
               filters: args.filters != null ? { allowed_domains: args.filters.allowedDomains } : undefined,
@@ -97,7 +100,7 @@ export function prepareResponsesTools({
             break
           }
           case "openai.code_interpreter": {
-            const args = Schema.decodeUnknownSync(codeInterpreterArgsSchema)(tool.args)
+            const args = yield* decodeToolArgs(codeInterpreterArgsSchema, tool.args)
             openaiTools.push({
               type: "code_interpreter",
               container:
@@ -110,7 +113,8 @@ export function prepareResponsesTools({
             break
           }
           case "openai.image_generation": {
-            const args = Schema.decodeUnknownSync(imageGenerationArgsSchema)(tool.args, { onExcessProperty: "error" })
+            // Unknown image generation options are an error.
+            const args = yield* decodeToolArgs(imageGenerationArgsSchema, tool.args, { onExcessProperty: "error" })
             openaiTools.push({
               type: "image_generation",
               background: args.background,
@@ -166,9 +170,15 @@ export function prepareResponsesTools({
       }
     default: {
       const _exhaustiveCheck: never = type
-      throw new UnsupportedFunctionalityError({
-        functionality: `tool choice type: ${_exhaustiveCheck}`,
+      return yield* new ResponsesCallError({
+        cause: new UnsupportedFunctionalityError({
+          functionality: `tool choice type: ${String(_exhaustiveCheck)}`,
+        }),
       })
     }
   }
-}
+})
+
+// Provider tool args that do not match their schema fail the call.
+const decodeToolArgs = <S extends Schema.Constraint>(schema: S, args: unknown, options?: SchemaAST.ParseOptions) =>
+  Schema.decodeUnknownEffect(schema)(args, options).pipe(Effect.mapError((cause) => new ResponsesCallError({ cause })))
