@@ -1,5 +1,5 @@
 import type { FileContent } from "@opencode-ai/sdk/v2"
-import { HashSet } from "effect"
+import { HashSet, Option, Result } from "effect"
 
 export type MediaKind = "image" | "audio" | "svg"
 
@@ -81,15 +81,18 @@ export function dataUrlFromMediaValue(value: MediaValue, kind: MediaKind) {
   return `data:${mime};base64,${record.content}`
 }
 
-function decodeBase64Utf8(value: string) {
-  if (typeof atob !== "function") return
+function decodeBase64Utf8(value: string): Option.Option<string> {
+  if (typeof atob !== "function") return Option.none()
 
-  try {
-    const raw = atob(value)
-    const bytes = Uint8Array.from(raw, (x) => x.charCodeAt(0))
-    if (typeof TextDecoder === "function") return new TextDecoder().decode(bytes)
-    return raw
-  } catch {}
+  // atob throws on malformed base64; a malformed payload has no SVG text.
+  return Result.getSuccess(
+    Result.try(() => {
+      const raw = atob(value)
+      const bytes = Uint8Array.from(raw, (x) => x.charCodeAt(0))
+      if (typeof TextDecoder === "function") return new TextDecoder().decode(bytes)
+      return raw
+    }),
+  )
 }
 
 export function svgTextFromValue(value: MediaValue) {
@@ -99,7 +102,7 @@ export function svgTextFromValue(value: MediaValue) {
 
   const mime = normalizeMimeType(typeof record.mimeType === "string" ? record.mimeType : undefined)
   if (mime !== "image/svg+xml") return
-  if (record.encoding === "base64") return decodeBase64Utf8(record.content)
+  if (record.encoding === "base64") return Option.getOrUndefined(decodeBase64Utf8(record.content))
   return record.content
 }
 
