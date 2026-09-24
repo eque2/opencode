@@ -216,7 +216,8 @@ const layer = Layer.effect(
           .onConflictDoNothing()
           .run()
           .pipe(Effect.orDie)
-        const now = Date.now()
+        const now = yield* DateTime.now
+        const created = DateTime.toEpochMillis(now)
         const info = SessionV1.SessionInfo.make({
           id: sessionID,
           slug: Slug.create(),
@@ -225,7 +226,7 @@ const layer = Layer.effect(
           directory: input.location.directory,
           path: path.relative(project.directory, input.location.directory).replaceAll("\\", "/"),
           ...(input.location.workspaceID ? { workspaceID: WorkspaceV2.ID.make(input.location.workspaceID) } : {}),
-          title: `New session - ${new Date(now).toISOString()}`,
+          title: `New session - ${DateTime.formatIso(now)}`,
           agent: input.agent,
           ...(input.model
             ? {
@@ -238,7 +239,7 @@ const layer = Layer.effect(
             : {}),
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-          time: { created: now, updated: now },
+          time: { created, updated: created },
         })
         const projected = yield* events
           .publish(SessionV1.Event.Created, { sessionID, info }, { location: input.location })

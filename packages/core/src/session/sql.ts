@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, index, primaryKey, real, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { DateTime } from "effect"
 import * as DatabasePath from "../database/path"
 import { ProjectTable } from "../project/sql"
 import type { SessionMessage } from "./message"
@@ -150,7 +151,7 @@ export const SessionInputTable = sqliteTable(
     promoted_seq: integer(),
     time_created: integer()
       .notNull()
-      .$default(() => Date.now()),
+      .$default(() => DateTime.toEpochMillis(DateTime.nowUnsafe())),
   },
   (table) => [
     index("session_input_session_pending_delivery_seq_idx").on(

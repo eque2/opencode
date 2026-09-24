@@ -250,7 +250,7 @@ const layer = Layer.effectDiscard(
         return yield* workspaceID
           ? db
               .update(WorkspaceTable)
-              .set({ time_used: Date.now() })
+              .set({ time_used: DateTime.toEpochMillis(yield* DateTime.now) })
               .where(eq(WorkspaceTable.id, workspaceID))
               .run()
               .pipe(Effect.orDie, Effect.asVoid)
