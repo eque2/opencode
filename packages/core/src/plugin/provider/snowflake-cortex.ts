@@ -1,8 +1,15 @@
-import { Effect } from "effect"
+import { Config, Effect, Option, Predicate, Redacted, String as Str } from "effect"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
+import { readEnvSnapshot } from "./env-snapshot"
 
 type FetchLike = (url: string | URL | Request, init?: RequestInit) => Promise<Response>
+
+const tokenEnv = Config.option(
+  Config.Redacted("SNOWFLAKE_CORTEX_TOKEN").pipe(Config.orElse(() => Config.Redacted("SNOWFLAKE_CORTEX_PAT"))),
+)
+
+const stringOption = (value: unknown) => (Predicate.isString(value) ? Option.some(value) : Option.none())
 
 // Exported for testing: intercepts Cortex-specific request/response quirks.
 export function cortexFetch(upstream: FetchLike = fetch) {
@@ -70,17 +77,18 @@ export const SnowflakeCortexPlugin = define({
     yield* ctx.aisdk.sdk(
       Effect.fn(function* (evt) {
         if (evt.model.providerID !== ProviderV2.ID.make("snowflake-cortex")) return
-        const token =
-          process.env.SNOWFLAKE_CORTEX_TOKEN ??
-          process.env.SNOWFLAKE_CORTEX_PAT ??
-          (typeof evt.options.token === "string" ? evt.options.token : undefined) ??
-          (typeof evt.options.apiKey === "string" ? evt.options.apiKey : undefined)
+        // Env tokens win even when empty; an empty token keeps the configured apiKey.
+        const token = Option.map(yield* readEnvSnapshot(tokenEnv), Redacted.value).pipe(
+          Option.orElse(() => stringOption(evt.options.token)),
+          Option.orElse(() => stringOption(evt.options.apiKey)),
+          Option.filter(Str.isNonEmpty),
+        )
         const upstream = typeof evt.options.fetch === "function" ? (evt.options.fetch as FetchLike) : undefined
         if (evt.options.includeUsage !== false) evt.options.includeUsage = true
         const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
         evt.sdk = mod.createOpenAICompatible({
           ...evt.options,
-          ...(token ? { apiKey: token } : {}),
+          ...Option.match(token, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
           fetch: cortexFetch(upstream) as typeof fetch,
         } as any)
       }),
