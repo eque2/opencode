@@ -31,7 +31,7 @@ const Context = createContext<ReturnType<typeof init>>()
 
 function init() {
   const [stack, setStack] = createSignal<Active[]>([])
-  const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
+  const timer: { current?: ReturnType<typeof setTimeout> } = {}
   const lock = { value: false }
 
   onCleanup(() => {
