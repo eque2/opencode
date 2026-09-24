@@ -30,12 +30,12 @@ const cacheFile = path.join(Global.Path.cache, "models.json")
 
 const fixture: Record<string, ModelsDev.Provider> = {
   acme: {
-    id: "acme",
+    id: ModelsDev.ProviderID.make("acme"),
     name: "Acme",
     env: ["ACME_API_KEY"],
     models: {
       "acme-1": {
-        id: "acme-1",
+        id: ModelsDev.ModelID.make("acme-1"),
         name: "Acme One",
         release_date: "2026-01-01",
         attachment: false,
@@ -50,12 +50,12 @@ const fixture: Record<string, ModelsDev.Provider> = {
 
 const fixture2: Record<string, ModelsDev.Provider> = {
   beta: {
-    id: "beta",
+    id: ModelsDev.ProviderID.make("beta"),
     name: "Beta",
     env: ["BETA_API_KEY"],
     models: {
       "beta-1": {
-        id: "beta-1",
+        id: ModelsDev.ModelID.make("beta-1"),
         name: "Beta One",
         release_date: "2026-02-01",
         attachment: false,

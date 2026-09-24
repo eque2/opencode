@@ -64,8 +64,14 @@ const ReasoningOption = Schema.Union([
   }),
 ])
 
+export const ProviderID = Schema.String.pipe(Schema.brand("ModelsDev.ProviderID"))
+export type ProviderID = typeof ProviderID.Type
+
+export const ModelID = Schema.String.pipe(Schema.brand("ModelsDev.ModelID"))
+export type ModelID = typeof ModelID.Type
+
 export const Model = Schema.Struct({
-  id: Schema.String,
+  id: ModelID,
   name: Schema.String,
   family: Schema.optional(Schema.String),
   release_date: Schema.String,
@@ -124,7 +130,7 @@ export const Provider = Schema.Struct({
   api: Schema.optional(Schema.String),
   name: Schema.String,
   env: Schema.Array(Schema.String),
-  id: Schema.String,
+  id: ProviderID,
   npm: Schema.optional(Schema.String),
   models: Schema.Record(Schema.String, Model),
 }).annotate({ identifier: "ModelsDev.Provider" })
