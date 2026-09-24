@@ -169,7 +169,8 @@ export function generateObject(options: GenerateObjectOptions<ToolSchema<any>> |
       makeTool({
         description: GENERATE_OBJECT_TOOL_DESCRIPTION,
         parameters: schema,
-        success: Schema.Unknown as ToolSchema<unknown>,
+        // The forced tool is never executed; its handler returns nothing.
+        success: Schema.Void,
         execute: () => Effect.void,
       }),
     )

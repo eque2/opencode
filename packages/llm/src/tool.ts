@@ -166,8 +166,9 @@ export function make(config: TypedToolConfig | DynamicToolConfig): AnyTool {
   if ("jsonSchema" in config) {
     return {
       description: config.description,
-      parameters: Schema.Unknown as ToolSchema<unknown>,
-      success: Schema.Unknown as ToolSchema<unknown>,
+      // Dynamic tools describe their input and output with JSON Schema: both are JSON values.
+      parameters: Schema.Json,
+      success: Schema.Json,
       execute: config.execute,
       toModelOutput: config.toModelOutput,
       toStructuredOutput: config.toStructuredOutput,
