@@ -294,7 +294,7 @@ export class PreparedRequest extends Schema.Class<PreparedRequest>("LLM.Prepared
   protocol: ProtocolID,
   model: ModelSchema,
   body: Schema.Unknown,
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }) {}
 
 /**

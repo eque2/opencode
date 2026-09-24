@@ -11,9 +11,9 @@ import {
   Message,
   type ModelInput as SchemaModelInput,
   SystemPart,
+  type SystemPartInput,
   ToolChoice,
   ToolDefinition,
-  type ContentPart,
   ToolResultPart,
 } from "./schema"
 import { make as makeTool, toDefinitions, type ToolSchema } from "./tool"
@@ -32,8 +32,8 @@ export type RequestInput = Omit<
   ConstructorParameters<typeof LLMRequest>[0],
   "system" | "messages" | "tools" | "toolChoice" | "generation" | "http" | "providerOptions"
 > & {
-  readonly system?: string | SystemPart | ReadonlyArray<SystemPart>
-  readonly prompt?: string | ContentPart | ReadonlyArray<ContentPart>
+  readonly system?: string | SystemPartInput | ReadonlyArray<SystemPartInput>
+  readonly prompt?: Message.ContentInput
   readonly messages?: ReadonlyArray<Message | MessageInput>
   readonly tools?: ReadonlyArray<ToolDefinition.Input>
   readonly toolChoice?: ToolChoiceInput

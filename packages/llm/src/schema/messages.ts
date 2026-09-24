@@ -8,15 +8,17 @@ const systemPartSchema = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }).annotate({ identifier: "LLM.SystemPart" })
 export type SystemPart = Schema.Schema.Type<typeof systemPartSchema>
+/** Construction input of a system part; JSON-valued fields accept their make-side input type. */
+export type SystemPartInput = Schema.Struct.MakeIn<typeof systemPartSchema.fields>
 
 const makeSystemPart = (text: string): SystemPart => ({ type: "text", text })
 
 export const SystemPart = Object.assign(systemPartSchema, {
   make: makeSystemPart,
-  content: (input?: string | SystemPart | ReadonlyArray<SystemPart>) => {
+  content: (input?: string | SystemPartInput | ReadonlyArray<SystemPartInput>) => {
     if (input === undefined) return []
     return typeof input === "string" ? [makeSystemPart(input)] : Array.isArray(input) ? [...input] : [input]
   },
@@ -26,7 +28,7 @@ export const TextPart = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Content.Text" })
 export type TextPart = Schema.Schema.Type<typeof TextPart>
@@ -36,7 +38,7 @@ export const MediaPart = Schema.Struct({
   mediaType: Schema.String,
   data: Schema.Union([Schema.String, Schema.Uint8Array]),
   filename: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }).annotate({ identifier: "LLM.Content.Media" })
 export type MediaPart = Schema.Schema.Type<typeof MediaPart>
 
@@ -121,7 +123,7 @@ export const ToolCallPart = Object.assign(
     name: Schema.String,
     input: Schema.Unknown,
     providerExecuted: Schema.optional(Schema.Boolean),
-    metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    metadata: Schema.optional(Schema.JsonObject),
     providerMetadata: Schema.optional(ProviderMetadata),
   }).annotate({ identifier: "LLM.Content.ToolCall" }),
   {
@@ -138,7 +140,7 @@ export const ToolResultPart = Object.assign(
     result: ToolResultValue,
     providerExecuted: Schema.optional(Schema.Boolean),
     cache: Schema.optional(CacheHint),
-    metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    metadata: Schema.optional(Schema.JsonObject),
     providerMetadata: Schema.optional(ProviderMetadata),
   }).annotate({ identifier: "LLM.Content.ToolResult" }),
   {
@@ -165,7 +167,7 @@ export const ReasoningPart = Schema.Struct({
   type: Schema.Literal("reasoning"),
   text: Schema.String,
   encrypted: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
   providerMetadata: Schema.optional(ProviderMetadata),
 }).annotate({ identifier: "LLM.Content.Reasoning" })
 export type ReasoningPart = Schema.Schema.Type<typeof ReasoningPart>
@@ -179,8 +181,8 @@ export class Message extends Schema.Class<Message>("LLM.Message")({
   id: Schema.optional(Schema.String),
   role: MessageRole,
   content: Schema.Array(ContentPart),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
+  native: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace Message {
@@ -225,8 +227,8 @@ export class ToolDefinition extends Schema.Class<ToolDefinition>("LLM.ToolDefini
   inputSchema: JsonSchema,
   outputSchema: Schema.optional(JsonSchema),
   cache: Schema.optional(CacheHint),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-  native: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
+  native: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace ToolDefinition {
@@ -278,7 +280,7 @@ export class LLMRequest extends Schema.Class<LLMRequest>("LLM.Request")({
   http: Schema.optional(HttpOptions),
   responseFormat: Schema.optional(ResponseFormat),
   cache: Schema.optional(CachePolicy),
-  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  metadata: Schema.optional(Schema.JsonObject),
 }) {}
 
 export namespace LLMRequest {
