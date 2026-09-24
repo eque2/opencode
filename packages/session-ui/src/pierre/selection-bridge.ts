@@ -1,5 +1,5 @@
 import { type SelectedLineRange } from "@pierre/diffs"
-import { Option, Predicate } from "effect"
+import { Option, Predicate, Result } from "effect"
 
 type SelectionKey = "ui.sessionReview.selection.line" | "ui.sessionReview.selection.lines"
 type SelectionVars = Record<string, string | number>
@@ -84,10 +84,12 @@ export function restoreShadowTextSelection(root: ShadowRoot | undefined, range: 
     const selection = readShadowSelection(root)
     if (Option.isNone(selection)) return
 
-    try {
+    // addRange throws when the saved range no longer fits the document. The restore is best effort, so the
+    // failure is dropped, as the old empty catch block did.
+    Result.try(() => {
       selection.value.removeAllRanges()
       selection.value.addRange(range)
-    } catch {}
+    })
   })
 }
 
