@@ -23,7 +23,7 @@ export default function BlackLayout(props: RouteSectionProps) {
       : config.github.starsFormatted.compact,
   )
 
-  const [spotlightAnimationState, setSpotlightAnimationState] = createSignal<SpotlightAnimationState>({
+  const [spotlightAnimationState, setSpotlightAnimationState] = createSignal({
     time: 0,
     intensity: 0.5,
     pulseValue: 1,
