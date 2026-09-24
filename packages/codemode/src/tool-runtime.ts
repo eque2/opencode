@@ -349,11 +349,12 @@ const copyBounded = (
 }
 
 export const copyOut = (value: unknown, undefinedAsNull = false): unknown => {
-  if (value === undefined && undefinedAsNull) return null
-  // Normalize non-finite numbers to null as the value crosses out of the sandbox (final return
-  // and tool-call arguments both funnel through here), matching JSON semantics - NaN/Infinity
-  // have no JSON representation, so JSON.stringify would produce null anyway.
-  if (typeof value === "number" && !Number.isFinite(value)) {
+  // Normalize undefined (when undefinedAsNull is set) and non-finite numbers to null as the value
+  // crosses out of the sandbox (final return and tool-call arguments both funnel through here),
+  // matching JSON semantics - NaN/Infinity have no JSON representation, so JSON.stringify would
+  // produce null anyway.
+  if ((value === undefined && undefinedAsNull) || (typeof value === "number" && !Number.isFinite(value))) {
+    // eslint-disable-next-line effect/no-null-use-option -- (b) the value is JSON null in the serialized program output, which Option cannot represent
     return null
   }
   if (Array.isArray(value)) {
