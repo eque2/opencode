@@ -188,7 +188,7 @@ const lowerUserPart = Effect.fn("Gemini.lowerUserPart")(function* (part: TextPar
   return { inlineData: { mimeType: media.mime, data: media.base64 } }
 })
 
-const googleMetadata = (metadata: Record<string, unknown>): ProviderMetadata => ({ google: metadata })
+const googleMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ google: metadata })
 
 const thoughtSignature = (providerMetadata: ProviderMetadata | undefined) => {
   const google = providerMetadata?.google

@@ -250,7 +250,7 @@ const cacheControl = (breakpoints: Cache.Breakpoints, cache: CacheHint | undefin
   return Cache.ttlBucket(cache.ttlSeconds) === "1h" ? EPHEMERAL_1H : EPHEMERAL_5M
 }
 
-const anthropicMetadata = (metadata: Record<string, unknown>): ProviderMetadata => ({ anthropic: metadata })
+const anthropicMetadata = (metadata: Schema.JsonObject): ProviderMetadata => ({ anthropic: metadata })
 
 const signatureFromMetadata = (metadata: ProviderMetadata | undefined): string | undefined => {
   const anthropic = metadata?.anthropic
