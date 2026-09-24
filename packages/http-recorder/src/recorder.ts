@@ -1,19 +1,21 @@
-import { Effect, Scope, SynchronizedRef } from "effect"
+import { Config, ConfigProvider, Effect, Scope, SynchronizedRef } from "effect"
 import type * as CassetteService from "./cassette.js"
 import type { CassetteNotFoundError } from "./cassette.js"
 import type { Interaction } from "./schema.js"
 
-const isCI = () => {
-  const value = process.env.CI
-  return value !== undefined && value !== "" && value !== "false" && value !== "0"
-}
+const isCI = Config.String("CI").pipe(
+  Config.withDefault(""),
+  Config.map((value) => value !== "" && value !== "false" && value !== "0"),
+)
 
 export const resolveAutoMode = (
   cassette: CassetteService.Interface,
   name: string,
 ): Effect.Effect<"record" | "replay" | "passthrough"> =>
   Effect.gen(function* () {
-    if (isCI()) return "replay"
+    // The ambient ConfigProvider copies process.env once per process. Read a
+    // fresh env provider on each call so a CI change between runs still counts.
+    if (yield* isCI.parse(ConfigProvider.fromEnv()).pipe(Effect.orDie)) return "replay"
     return (yield* cassette.exists(name)) ? "replay" : "record"
   })
 
