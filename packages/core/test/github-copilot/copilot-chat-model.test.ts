@@ -628,6 +628,7 @@ describe("doGenerate", () => {
     expect(result.usage).toEqual({
       inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
       outputTokens: { total: undefined, text: undefined, reasoning: undefined },
+      raw: undefined,
     })
     expect(result.providerMetadata).toEqual({ copilot: {} })
     expect(result.response?.id).toBeUndefined()
