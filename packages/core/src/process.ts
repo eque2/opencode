@@ -1,4 +1,4 @@
-import { Context, Duration, Effect, Fiber, Formatter, Layer, Predicate, Schema, Stream } from "effect"
+import { Cause, Context, Duration, Effect, Fiber, Formatter, Layer, Predicate, Schema, Stream } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
@@ -104,12 +104,16 @@ const describeCommand = (command: ChildProcess.Command): string => {
 const wrapError = (description: string, cause: unknown): AppProcessError =>
   cause instanceof AppProcessError ? cause : new AppProcessError({ command: description, cause })
 
+// The failure of an aborted signal whose reason is not an Error. The tag keeps the
+// conventional "AbortError" error name.
+export class AbortError extends Schema.TaggedError<AbortError>()("AbortError", {
+  message: Schema.String,
+}) {}
+
 export const abortError = (signal: AbortSignal): Error => {
   const reason = signal.reason
   if (reason instanceof Error) return reason
-  const err = new Error("Aborted")
-  err.name = "AbortError"
-  return err
+  return new AbortError({ message: "Aborted" })
 }
 
 export const waitForAbort = (signal: AbortSignal) =>
@@ -197,7 +201,8 @@ const layer = Layer.effect(
       const timed = options?.timeout
         ? Effect.timeoutOrElse(collect, {
             duration: options.timeout,
-            orElse: () => Effect.fail(new AppProcessError({ command: description, cause: new Error("Timed out") })),
+            orElse: () =>
+              Effect.fail(new AppProcessError({ command: description, cause: new Cause.TimeoutError("Timed out") })),
           })
         : collect
       const aborted = options?.signal
@@ -215,7 +220,7 @@ const layer = Layer.effect(
       if (command._tag !== "StandardCommand") {
         return yield* new AppProcessError({
           command: describeCommand(command),
-          cause: new Error("stdin option only supports StandardCommand; received PipedCommand"),
+          cause: new Cause.IllegalArgumentError("stdin option only supports StandardCommand; received PipedCommand"),
         })
       }
       const next = ChildProcess.make(command.command, command.args, {
