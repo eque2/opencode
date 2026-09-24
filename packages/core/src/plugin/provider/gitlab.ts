@@ -1,6 +1,6 @@
 import os from "os"
 import { InstallationVersion } from "../../installation/version"
-import { Effect } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
 
@@ -38,20 +38,19 @@ export const GitLabPlugin = define({
           typeof evt.options.featureFlags === "object" && evt.options.featureFlags ? evt.options.featureFlags : {}
         if (evt.model.api.id.startsWith("duo-workflow-")) {
           const gitlab = yield* Effect.promise(() => import("gitlab-ai-provider")).pipe(Effect.orDie)
-          const workflowRef =
-            typeof evt.model.request.body.workflowRef === "string" ? evt.model.request.body.workflowRef : undefined
-          const workflowDefinition =
-            typeof evt.model.request.body.workflowDefinition === "string"
-              ? evt.model.request.body.workflowDefinition
-              : undefined
+          const workflowRef = Option.liftPredicate(evt.model.request.body.workflowRef, Predicate.isString).pipe(
+            Option.filter((ref) => ref !== ""),
+          )
+          const workflowDefinition = Option.liftPredicate(evt.model.request.body.workflowDefinition, Predicate.isString)
           const language = evt.sdk.workflowChat(
             gitlab.isWorkflowModel(evt.model.api.id) ? evt.model.api.id : "duo-workflow",
             {
               featureFlags,
-              workflowDefinition,
+              // GitLabWorkflowOptions.workflowDefinition is string | undefined.
+              workflowDefinition: Option.getOrUndefined(workflowDefinition),
             },
           )
-          if (workflowRef) language.selectedModelRef = workflowRef
+          if (Option.isSome(workflowRef)) language.selectedModelRef = workflowRef.value
           evt.language = language
           return
         }

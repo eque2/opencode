@@ -1,6 +1,6 @@
 import os from "os"
 import { InstallationVersion } from "../../installation/version"
-import { Effect } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import { define } from "../internal"
 import { ProviderV2 } from "../../provider"
 
@@ -17,7 +17,7 @@ export const CloudflareWorkersAIPlugin = define({
           if (provider.api.type !== "aisdk") return
           if (provider.api.url) return
           const accountId = resolveAccountId(provider.request.body)
-          if (accountId) provider.api.url = workersEndpoint(accountId)
+          if (Option.isSome(accountId)) provider.api.url = workersEndpoint(accountId.value)
         })
       }),
     )
@@ -27,12 +27,12 @@ export const CloudflareWorkersAIPlugin = define({
         if (evt.package !== "@ai-sdk/openai-compatible") return
 
         const accountId = resolveAccountId(evt.options)
-        if (!hasWorkersEndpoint(evt.model.api) && !accountId) return
+        if (!hasWorkersEndpoint(evt.model.api) && Option.isNone(accountId)) return
         const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
         evt.sdk = mod.createOpenAICompatible(
           sdkOptions({
             ...evt.options,
-            baseURL: evt.options.baseURL ?? (accountId ? workersEndpoint(accountId) : undefined),
+            baseURL: evt.options.baseURL ?? Option.getOrUndefined(Option.map(accountId, workersEndpoint)),
           }) as any,
         )
       }),
@@ -46,8 +46,12 @@ export const CloudflareWorkersAIPlugin = define({
   }),
 })
 
-function resolveAccountId(options: Record<string, unknown>) {
-  return process.env.CLOUDFLARE_ACCOUNT_ID ?? stringOption(options, "accountId")
+function resolveAccountId(options: Record<string, unknown>): Option.Option<string> {
+  return Option.fromUndefinedOr(process.env.CLOUDFLARE_ACCOUNT_ID).pipe(
+    Option.orElse(() => stringOption(options, "accountId")),
+    // An empty value still wins over the option, then counts as missing.
+    Option.filter((id) => id !== ""),
+  )
 }
 
 function workersEndpoint(accountId: string) {
@@ -77,6 +81,6 @@ function expandAccountId(baseURL: unknown) {
   return baseURL.replaceAll("${CLOUDFLARE_ACCOUNT_ID}", process.env.CLOUDFLARE_ACCOUNT_ID ?? "${CLOUDFLARE_ACCOUNT_ID}")
 }
 
-function stringOption(options: Record<string, unknown>, key: string) {
-  return typeof options[key] === "string" ? options[key] : undefined
+function stringOption(options: Record<string, unknown>, key: string): Option.Option<string> {
+  return Option.liftPredicate(options[key], Predicate.isString)
 }
