@@ -34,8 +34,8 @@ export function pluralCategory(locale: string, count: number): UiPluralCategory 
   return next.select(count)
 }
 
-export function pluralKey(key: UiI18nPluralKey, category: UiPluralCategory) {
-  return `${key}.${category}` as UiI18nPluralLookupKey
+export function pluralKey(key: UiI18nPluralKey, category: UiPluralCategory): UiI18nPluralLookupKey {
+  return `${key}.${category}`
 }
 
 function resolveTemplate(text: string, params?: UiI18nParams) {
