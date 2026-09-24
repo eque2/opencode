@@ -39,7 +39,7 @@ describe("SystemContext", () => {
   it.effect("loads once and initializes a baseline with a structured snapshot", () =>
     Effect.gen(function* () {
       let loads = 0
-      const context = SystemContext.combine([
+      const context = yield* SystemContext.combine([
         SystemContext.make({
           key: key("core/date"),
           codec: Schema.toCodecJson(Schema.String),
@@ -71,7 +71,7 @@ describe("SystemContext", () => {
         "core/date": { value: "2026-06-03", removed: "The date was removed." },
         "core/location": { value: "/repo", removed: "Removed: /repo" },
       }
-      const changed = SystemContext.combine([
+      const changed = yield* SystemContext.combine([
         stringContext({
           key: "core/date",
           value: "2026-06-04",
@@ -92,7 +92,7 @@ describe("SystemContext", () => {
 
       expect(
         yield* SystemContext.reconcile(
-          SystemContext.combine([
+          yield* SystemContext.combine([
             stringContext({ key: "core/date", value: "2026-06-03", removed: () => "The date was removed." }),
             stringContext({ key: "core/location", value: "/repo" }),
           ]),
@@ -224,7 +224,7 @@ describe("SystemContext", () => {
   it.effect("does not render discarded updates while replacing", () =>
     Effect.gen(function* () {
       let updates = 0
-      const context = SystemContext.combine([
+      const context = yield* SystemContext.combine([
         stringContext({
           key: "core/date",
           value: "2026-06-04",
@@ -252,7 +252,7 @@ describe("SystemContext", () => {
         "core/date": { value: 42, removed: "Date removed" },
         "core/remote": { value: "instructions", removed: "Instructions removed" },
       }
-      const context = SystemContext.combine([
+      const context = yield* SystemContext.combine([
         stringContext({ key: "core/date", value: "2026-06-04" }),
         stringContext({ key: "core/remote", value: SystemContext.unavailable }),
       ])
@@ -263,13 +263,17 @@ describe("SystemContext", () => {
   )
 
   it.effect("rejects duplicate source keys", () =>
-    Effect.sync(() => {
-      expect(() =>
-        SystemContext.combine([
-          stringContext({ key: "core/date", value: "one" }),
-          stringContext({ key: "core/date", value: "two" }),
-        ]),
-      ).toThrow(new SystemContext.DuplicateKeyError({ key: key("core/date") }))
+    Effect.gen(function* () {
+      const exit = yield* SystemContext.combine([
+        stringContext({ key: "core/date", value: "one" }),
+        stringContext({ key: "core/date", value: "two" }),
+      ]).pipe(Effect.exit)
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(true)
+        expect(Cause.squash(exit.cause)).toEqual(new SystemContext.DuplicateKeyError({ key: key("core/date") }))
+      }
     }),
   )
 
@@ -277,7 +281,7 @@ describe("SystemContext", () => {
     Effect.gen(function* () {
       expect(
         (yield* SystemContext.initialize(
-          SystemContext.combine([
+          yield* SystemContext.combine([
             stringContext({ key: "core/date", value: "date" }),
             stringContext({ key: "core/location", value: "location" }),
           ]),

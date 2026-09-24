@@ -163,7 +163,7 @@ const layer = Layer.effect(
     const loadSystemContext = (agent: AgentV2.Selection) =>
       Effect.all([systemContext.load(), skillGuidance.load(agent), referenceGuidance.load()], {
         concurrency: "unbounded",
-      }).pipe(Effect.map(SystemContext.combine))
+      }).pipe(Effect.flatMap(SystemContext.combine))
 
     const runTurnAttempt = Effect.fn("SessionRunner.runTurn")(function* (
       sessionID: SessionSchema.ID,

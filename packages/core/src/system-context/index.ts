@@ -190,11 +190,10 @@ export function make<A>(source: Source<A>): SystemContext {
   ])
 }
 
-/** Combines contexts in order and rejects duplicate source keys immediately. */
-export function combine(values: ReadonlyArray<SystemContext>): SystemContext {
+/** Combines contexts in order. A duplicate source key is a defect that dies with `DuplicateKeyError`. */
+export function combine(values: ReadonlyArray<SystemContext>): Effect.Effect<SystemContext> {
   const sources = values.flatMap((value) => value[ContextTypeId])
-  assertUniqueKeys(sources)
-  return context(sources)
+  return Effect.as(assertUniqueKeys(sources), context(sources))
 }
 
 const observe = (value: SystemContext) =>
@@ -323,10 +322,14 @@ function requireText(key: Key, kind: RenderingKind, text: string): Effect.Effect
   return text.length === 0 ? Effect.die(new EmptyRenderingError({ key, kind })) : Effect.succeed(text)
 }
 
-function assertUniqueKeys(sources: ReadonlyArray<PackedSource>) {
-  const keys = MutableHashSet.empty<Key>()
-  for (const source of sources) {
-    if (MutableHashSet.has(keys, source.key)) throw new DuplicateKeyError({ key: source.key })
-    MutableHashSet.add(keys, source.key)
-  }
+/** Dies with `DuplicateKeyError` at the first repeated source key, because a duplicate is a programmer error. */
+function assertUniqueKeys(sources: ReadonlyArray<PackedSource>): Effect.Effect<void> {
+  return Effect.suspend(() => {
+    const keys = MutableHashSet.empty<Key>()
+    for (const source of sources) {
+      if (MutableHashSet.has(keys, source.key)) return Effect.die(new DuplicateKeyError({ key: source.key }))
+      MutableHashSet.add(keys, source.key)
+    }
+    return Effect.void
+  })
 }

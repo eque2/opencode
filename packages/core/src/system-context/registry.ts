@@ -38,7 +38,7 @@ const layer = Layer.effect(
       }),
       load: Effect.fn("SystemContextRegistry.load")(function* () {
         const current = (yield* Ref.get(entries)).toSorted((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
-        return SystemContext.combine(
+        return yield* SystemContext.combine(
           yield* Effect.forEach(current, (entry) => entry.load, { concurrency: "unbounded" }),
         )
       }),

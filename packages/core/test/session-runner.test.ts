@@ -167,7 +167,7 @@ const systemContext = Layer.effectDiscard(
     Effect.flatMap((registry) =>
       registry.register({
         key: systemContextKey,
-        load: Effect.sync(() =>
+        load: Effect.suspend(() =>
           SystemContext.combine(
             systemRemoved
               ? []
