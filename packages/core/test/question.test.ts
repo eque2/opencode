@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Schema, Scope } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { EventV2 } from "@opencode-ai/core/event"
@@ -17,6 +17,8 @@ const question: QuestionV2.Info = {
   options: [{ label: "One", description: "First option" }],
 }
 
+const isRequest = Schema.is(QuestionV2.Request)
+
 const waitForAsk = Effect.fn("QuestionV2Test.waitForAsk")(function* (
   service: QuestionV2.Interface,
   input: QuestionV2.AskInput,
@@ -24,8 +26,8 @@ const waitForAsk = Effect.fn("QuestionV2Test.waitForAsk")(function* (
   const events = yield* EventV2.Service
   const asked = yield* Deferred.make<QuestionV2.Request>()
   const unsubscribe = yield* events.listen((event) =>
-    event.type === QuestionV2.Event.Asked.type
-      ? Deferred.succeed(asked, event.data as QuestionV2.Request).pipe(Effect.asVoid)
+    event.type === QuestionV2.Event.Asked.type && isRequest(event.data)
+      ? Deferred.succeed(asked, event.data).pipe(Effect.asVoid)
       : Effect.void,
   )
   yield* Effect.addFinalizer(() => unsubscribe)

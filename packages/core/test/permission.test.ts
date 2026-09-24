@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Cause, Deferred, Effect, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Fiber, Layer, Schema } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -85,14 +85,16 @@ function assertion(input: Partial<PermissionV2.AssertInput> = {}) {
   } satisfies PermissionV2.AssertInput
 }
 
+const isRequest = Schema.is(PermissionV2.Request)
+
 function waitForRequest() {
   return Effect.gen(function* () {
     const service = yield* PermissionV2.Service
     const events = yield* EventV2.Service
     const asked = yield* Deferred.make<PermissionV2.Request>()
     const unsubscribe = yield* events.listen((event) =>
-      event.type === PermissionV2.Event.Asked.type
-        ? Deferred.succeed(asked, event.data as PermissionV2.Request).pipe(Effect.asVoid)
+      event.type === PermissionV2.Event.Asked.type && isRequest(event.data)
+        ? Deferred.succeed(asked, event.data).pipe(Effect.asVoid)
         : Effect.void,
     )
     yield* Effect.addFinalizer(() => unsubscribe)
@@ -290,8 +292,8 @@ describe("PermissionV2", () => {
       const asked = yield* Deferred.make<PermissionV2.Request>()
       const events = yield* EventV2.Service
       const unsubscribe = yield* events.listen((event) =>
-        event.type === PermissionV2.Event.Asked.type
-          ? Deferred.succeed(asked, event.data as PermissionV2.Request).pipe(Effect.asVoid)
+        event.type === PermissionV2.Event.Asked.type && isRequest(event.data)
+          ? Deferred.succeed(asked, event.data).pipe(Effect.asVoid)
           : Effect.void,
       )
       yield* Effect.addFinalizer(() => unsubscribe)
