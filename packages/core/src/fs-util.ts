@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, join, relative, resolve as pathResolve, sep } from "path"
 import { realpathSync } from "fs"
 import { lookup } from "mime-types"
-import { Context, Effect, FileSystem, Layer, Option, Schema } from "effect"
+import { Context, Effect, FileSystem, Layer, Option, Predicate, Result, Schema } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { Glob } from "./util/glob"
 import { serviceUse } from "./effect/service-use"
@@ -238,11 +238,11 @@ export namespace FSUtil {
   export function normalizePath(p: string): string {
     if (process.platform !== "win32") return p
     const resolved = pathResolve(windowsPath(p))
-    try {
-      return realpathSync.native(resolved)
-    } catch {
-      return resolved
-    }
+    // Any realpath failure keeps the resolved path.
+    return Result.getOrElse(
+      Result.try(() => realpathSync.native(resolved)),
+      () => resolved,
+    )
   }
 
   export function normalizePathPattern(p: string): string {
@@ -254,15 +254,20 @@ export namespace FSUtil {
     return join(normalizePath(dir), "*")
   }
 
+  /**
+   * Synchronous realpath for sync callers. A missing path resolves to itself; any
+   * other realpath failure (for example EACCES or ENOTDIR) reaches the caller as the
+   * original Node error, as before.
+   */
   export function resolve(p: string): string {
     const resolved = pathResolve(windowsPath(p))
-    try {
-      return normalizePath(realpathSync(resolved))
-    } catch (e: any) {
-      if (e?.code === "ENOENT") return normalizePath(resolved)
-      throw e
-    }
+    const real = Result.try(() => realpathSync(resolved)).pipe(
+      Result.orElse((error) => (isNotFound(error) ? Result.succeed(resolved) : Result.fail(error))),
+    )
+    return normalizePath(Result.getOrThrow(real))
   }
+
+  const isNotFound = (error: unknown) => Predicate.hasProperty(error, "code") && error.code === "ENOENT"
 
   export function windowsPath(p: string): string {
     if (process.platform !== "win32") return p
