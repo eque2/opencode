@@ -1,7 +1,7 @@
 export * as Reference from "./reference"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Effect, Layer, Scope, Types } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Scope, Types } from "effect"
 import { Reference } from "@opencode-ai/schema/reference"
 import { Global } from "./global"
 import { EventV2 } from "./event"
@@ -25,7 +25,7 @@ export const Info = Reference.Info
 export type Info = Reference.Info
 
 type Data = {
-  sources: Map<string, Types.DeepMutable<Source>>
+  sources: MutableHashMap.MutableHashMap<string, Types.DeepMutable<Source>>
 }
 
 type Draft = {
@@ -47,20 +47,21 @@ const layer = Layer.effect(
     const events = yield* EventV2.Service
     const cache = yield* RepositoryCache.Service
     const scope = yield* Scope.Scope
-    const materialized = new Map<string, Info>()
+    const materialized = MutableHashMap.empty<string, Info>()
     const state = State.create<Data, Draft>({
-      initial: () => ({ sources: new Map() }),
+      initial: () => ({ sources: MutableHashMap.empty() }),
       draft: (draft) => ({
-        add: (name, source) => draft.sources.set(name, source as Types.DeepMutable<Source>),
-        remove: (name) => draft.sources.delete(name),
-        list: () => Array.from(draft.sources.entries()) as [string, Source][],
+        add: (name, source) => MutableHashMap.set(draft.sources, name, source as Types.DeepMutable<Source>),
+        remove: (name) => MutableHashMap.remove(draft.sources, name),
+        list: () => Array.from(draft.sources) as [string, Source][],
       }),
       finalize: (draft) =>
         Effect.gen(function* () {
-          materialized.clear()
+          MutableHashMap.clear(materialized)
           for (const [name, source] of draft.list()) {
             if (source.type === "local") {
-              materialized.set(
+              MutableHashMap.set(
+                materialized,
                 name,
                 new Info({
                   name,
@@ -81,7 +82,8 @@ const layer = Layer.effect(
                 continue
               }
             }
-            materialized.set(
+            MutableHashMap.set(
+              materialized,
               name,
               new Info({
                 name,
@@ -110,7 +112,7 @@ const layer = Layer.effect(
       transform: state.transform,
       reload: state.reload,
       list: Effect.fn("Reference.list")(function* () {
-        return Array.from(materialized.values())
+        return Array.from(MutableHashMap.values(materialized))
       }),
     })
   }),

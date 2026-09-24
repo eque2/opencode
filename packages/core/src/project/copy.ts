@@ -1,6 +1,6 @@
 export * as ProjectCopy from "./copy"
 
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, MutableHashMap, Option, Schema } from "effect"
 import path from "path"
 import { AbsolutePath } from "../schema"
 import { FSUtil } from "../fs-util"
@@ -144,17 +144,17 @@ const layer = Layer.effect(
       return resolved
     })
 
-    const registry = new Map<StrategyID, Strategy>()
+    const registry = MutableHashMap.empty<StrategyID, Strategy>()
 
     const register = Effect.fn("ProjectCopy.register")(function* (strategy: Strategy) {
-      if (registry.has(strategy.id)) return yield* new DuplicateStrategyError({ strategy: strategy.id })
-      registry.set(strategy.id, strategy)
+      if (MutableHashMap.has(registry, strategy.id)) return yield* new DuplicateStrategyError({ strategy: strategy.id })
+      MutableHashMap.set(registry, strategy.id, strategy)
     })
 
     // Register default strategies
     yield* register(makeGitWorktreeStrategy({ git, canonical })).pipe(Effect.orDie)
 
-    const strategies = () => Array.from(registry.values())
+    const strategies = () => Array.from(MutableHashMap.values(registry))
 
     const source = Effect.fnUntraced(function* (input: AbsolutePath, projectID: Project.ID) {
       const sourceDirectory = yield* canonical(input)
@@ -164,9 +164,9 @@ const layer = Layer.effect(
     })
 
     const getStrategy = Effect.fnUntraced(function* (id: StrategyID) {
-      const found = registry.get(id)
-      if (!found) return yield* new StrategyUnavailableError({ strategy: id })
-      return found
+      const found = MutableHashMap.get(registry, id)
+      if (Option.isNone(found)) return yield* new StrategyUnavailableError({ strategy: id })
+      return found.value
     })
 
     const create = Effect.fn("ProjectCopy.create")(function* (input: CreateInput) {
@@ -238,7 +238,12 @@ const layer = Layer.effect(
           ),
         { concurrency: "unbounded" },
       ).pipe(
-        Effect.map((sets) => new Map(sets.flat(2).map((item) => [item.directory, item] as const)).values().toArray()),
+        // One entry per directory: the first listing fixes the position, the last listing wins.
+        Effect.map((sets) =>
+          Array.from(
+            MutableHashMap.values(MutableHashMap.fromIterable(sets.flat(2).map((item) => [item.directory, item] as const))),
+          ),
+        ),
       )
       const removed = checked.filter((item) => !item.exists).map((item) => item.directory)
       const result = yield* db
