@@ -22,7 +22,11 @@ const encodeMessage = Schema.encodeSync(SessionMessage.Message)
 const isAssistant = (message: SessionMessage.Message): message is SessionMessage.Assistant =>
   message.type === "assistant"
 
-export class SessionAlreadyProjected extends Error {}
+// A concurrent creation already projected this Session; V2Session.create catches this defect.
+export class SessionAlreadyProjected extends Schema.TaggedError<SessionAlreadyProjected>()(
+  "SessionProjector.SessionAlreadyProjected",
+  {},
+) {}
 
 // The cost and token usage of a V1 step-finish part, read from an event part or a stored part row.
 const StepFinishUsage = Schema.Struct({
