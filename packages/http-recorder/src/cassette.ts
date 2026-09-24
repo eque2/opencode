@@ -13,7 +13,8 @@ import {
   Schema,
   Semaphore,
 } from "effect"
-import * as fs from "node:fs"
+// eslint-disable-next-line effect/no-fs-use-effect-fs -- hasCassetteSync is a public synchronous API used at test-declaration time; effect/FileSystem only offers async Effects (NodeFileSystem.access is callback-based, so Effect.runSync cannot run it)
+import { existsSync } from "node:fs"
 import * as path from "node:path"
 import { encodeJson } from "./matching.js"
 import { secretFindings, SecretFindingSchema, type SecretFinding } from "./redaction.js"
@@ -80,7 +81,7 @@ const cassettePath = (directory: string, name: string): Result.Result<string, In
 }
 
 export const hasCassetteSync = (name: string, options: { readonly directory?: string } = {}) =>
-  fs.existsSync(Result.getOrThrow(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name)))
+  existsSync(Result.getOrThrow(cassettePath(options.directory ?? DEFAULT_RECORDINGS_DIR, name)))
 
 // Round-trip metadata through JSON so the stored value is exactly what the
 // cassette file holds: undefined fields drop and toJSON values serialize.
