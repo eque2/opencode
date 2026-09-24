@@ -88,7 +88,7 @@ export function Dialog(props: DialogProps) {
     <div
       data-component="dialog-v2"
       data-variant={local.variant === "settings" ? "settings" : undefined}
-      data-fit={local.fit ? true : undefined}
+      bool:data-fit={!!local.fit}
       data-size={local.size || "normal"}
     >
       <div data-slot="dialog-container" class={local.containerClass}>

@@ -81,7 +81,7 @@ export function CardTitle(props: CardTitleProps) {
       }}
     >
       <Show when={show()}>
-        <span data-slot="card-title-icon" data-placeholder={placeholder() || undefined}>
+        <span data-slot="card-title-icon" bool:data-placeholder={placeholder()}>
           <Icon name={name() ?? "dash"} size="small" />
         </span>
       </Show>

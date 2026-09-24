@@ -153,13 +153,11 @@ export function Icon(props: IconProps) {
     <div
       data-component="icon"
       data-size={local.size || "normal"}
-      data-directional={
+      bool:data-directional={
         local.name === "arrow-left" ||
         local.name === "arrow-right" ||
         local.name === "chevron-left" ||
         local.name === "chevron-right"
-          ? true
-          : undefined
       }
     >
       <svg

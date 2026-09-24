@@ -177,9 +177,9 @@ export function SelectV2<T>(props: SelectV2Props<T>) {
         data-component="select-v2"
         data-appearance={local.appearance ?? "base"}
         data-invalid={local.invalid ? "" : undefined}
-        data-numeric={local.numeric ? "" : undefined}
+        bool:data-numeric={!!local.numeric}
         disabled={local.disabled}
-        data-disabled={local.disabled ? "" : undefined}
+        bool:data-disabled={!!local.disabled}
         classList={{
           ...local.classList,
           [local.class ?? ""]: !!local.class,

@@ -10,6 +10,15 @@ const squares = Array.from({ length: 16 }, (_, i) => ({
   duration: 1 + Math.random() * 1,
   outer: outerIndices.has(i),
   corner: cornerIndices.has(i),
+})).map((square) => ({
+  ...square,
+  style: square.corner
+    ? { opacity: 0 }
+    : {
+        animation: `${square.outer ? "pulse-opacity-dim" : "pulse-opacity"} ${square.duration}s ease-in-out infinite`,
+        "animation-fill-mode": "both",
+        "animation-delay": `${square.delay}s`,
+      },
 }))
 
 export function Spinner(props: {
@@ -36,14 +45,7 @@ export function Spinner(props: {
             width="3"
             height="3"
             rx="1"
-            style={{
-              opacity: square.corner ? 0 : undefined,
-              animation: square.corner
-                ? undefined
-                : `${square.outer ? "pulse-opacity-dim" : "pulse-opacity"} ${square.duration}s ease-in-out infinite`,
-              "animation-fill-mode": square.corner ? undefined : "both",
-              "animation-delay": square.corner ? undefined : `${square.delay}s`,
-            }}
+            style={square.style}
           />
         )}
       </For>
