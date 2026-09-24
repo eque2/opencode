@@ -13,7 +13,6 @@ import { SessionMessageUpdater } from "./message-updater"
 import { SessionInput } from "./input"
 import { WorkspaceV2 } from "../workspace"
 import { MessageTable, PartTable, SessionInputTable, SessionMessageTable, SessionTable } from "./sql"
-import type { DeepMutable } from "../schema"
 
 type DatabaseService = Database.Interface["db"]
 
@@ -79,12 +78,12 @@ function messageData(
   info: (typeof SessionV1.Event.MessageUpdated.Type)["data"]["info"],
 ): typeof MessageTable.$inferInsert.data {
   const { id: _, sessionID: __, ...rest } = info
-  return rest as DeepMutable<typeof rest>
+  return rest
 }
 
 function partData(part: (typeof SessionV1.Event.PartUpdated.Type)["data"]["part"]): typeof PartTable.$inferInsert.data {
   const { id: _, messageID: __, sessionID: ___, ...rest } = part
-  return rest as DeepMutable<typeof rest>
+  return rest
 }
 
 // Add (sign 1) or remove (sign -1) the usage of a step-finish part in the session totals; other parts add nothing.
