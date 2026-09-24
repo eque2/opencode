@@ -32,7 +32,7 @@ export const Output = Schema.Struct({
   target: Schema.String,
   resource: Schema.String,
   existed: Schema.Boolean,
-})
+}).annotate({ identifier: "WriteTool.Output" })
 export type Output = typeof Output.Type
 
 export const toModelOutput = (output: Output) =>

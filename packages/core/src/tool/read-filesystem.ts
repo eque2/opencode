@@ -72,7 +72,7 @@ export type ReadError =
 export const PageInput = Schema.Struct({
   offset: PositiveInt.pipe(Schema.optional),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(MAX_READ_LINES)).pipe(Schema.optional),
-})
+}).annotate({ identifier: "ReadTool.PageInput" })
 export type PageInput = typeof PageInput.Type
 
 export class TextPage extends Schema.Class<TextPage>("ReadTool.TextPage")({

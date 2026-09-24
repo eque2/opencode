@@ -36,7 +36,7 @@ export const Input = Schema.Struct({
 export const Output = Schema.Struct({
   files: Schema.Array(FileDiff.Info),
   replacements: Schema.Number,
-})
+}).annotate({ identifier: "EditTool.Output" })
 export type Output = typeof Output.Type
 
 const normalizeLineEndings = (text: string) => text.replaceAll("\r\n", "\n")

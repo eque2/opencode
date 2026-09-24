@@ -28,7 +28,7 @@ export const Input = Schema.Struct({
 
 export const Output = Schema.Struct({
   answers: Schema.Array(QuestionV2.Answer),
-})
+}).annotate({ identifier: "QuestionTool.Output" })
 export type Output = typeof Output.Type
 
 export const toModelOutput = (

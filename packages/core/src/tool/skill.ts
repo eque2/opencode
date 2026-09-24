@@ -22,7 +22,7 @@ export const Output = Schema.Struct({
   name: Schema.String,
   directory: Schema.String,
   output: Schema.String,
-})
+}).annotate({ identifier: "SkillTool.Output" })
 
 export const description = [
   "Load a specialized skill when the task at hand matches one of the available skills in the system context.",

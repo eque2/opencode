@@ -18,7 +18,7 @@ export const ResolveInput = Schema.Struct({
   path: Schema.String,
   /** Selects the external approval boundary; it does not validate the target type. */
   kind: Kind.pipe(Schema.optional),
-})
+}).annotate({ identifier: "LocationMutation.ResolveInput" })
 export type ResolveInput = typeof ResolveInput.Type
 
 export class PathError extends Schema.TaggedError<PathError>()("LocationMutation.PathError", {
