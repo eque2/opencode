@@ -20,7 +20,7 @@ export const Json = Schema.fromJsonString(Schema.Unknown)
 export const decodeJson = Schema.decodeUnknownSync(Json)
 export const encodeJson = Schema.encodeSync(Json)
 const isJson = Schema.is(Schema.Json)
-export const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
+export const JsonObject = Schema.JsonObject
 export const optionalArray = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.Array(schema))
 export const optionalNull = <const S extends Schema.Top>(schema: S) => Schema.optional(Schema.NullOr(schema))
 
