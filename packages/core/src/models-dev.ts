@@ -1,5 +1,5 @@
 import path from "path"
-import { Context, Duration, Effect, Layer, Option, Schedule, Schema } from "effect"
+import { Context, Duration, Effect, Layer, Option, Record, Result, Schedule, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { ModelsDev } from "@opencode-ai/schema/models-dev"
 import { Global } from "./global"
@@ -77,7 +77,8 @@ export const Model = Schema.Struct({
   release_date: Schema.String,
   attachment: Schema.Boolean,
   reasoning: Schema.Boolean,
-  temperature: Schema.Boolean,
+  // models.dev leaves `temperature` out for some models; consumers default it.
+  temperature: Schema.optional(Schema.Boolean),
   tool_call: Schema.Boolean,
   reasoning_options: Schema.optional(Schema.Array(ReasoningOption)),
   interleaved: Schema.optional(
@@ -141,6 +142,37 @@ export const Event = ModelsDev.Event
 
 declare const OPENCODE_MODELS_DEV: Record<string, Provider> | undefined
 
+// models.dev changes on its own schedule, so these schemas can fall behind the catalog. The catalog is
+// checked one provider and one model at a time: an entry that does not match is left out and logged,
+// and the rest of the catalog still loads. Only a file that is not a JSON object fails as a whole.
+// The checks are guards, not decodes, so a kept entry is the parsed object itself, undeclared keys included.
+const Entries = Schema.Record(Schema.String, Schema.ObjectKeyword).annotate({ identifier: "ModelsDev.Entries" })
+const ProviderEntry = Schema.Struct({ ...Provider.fields, models: Entries }).annotate({
+  identifier: "ModelsDev.ProviderEntry",
+})
+const decodeEntries = Schema.decodeUnknownEffect(Entries)
+const decodeEntriesText = Schema.decodeUnknownEffect(Schema.fromJsonString(Entries))
+const isProviderEntry = Schema.is(ProviderEntry)
+const isModel = Schema.is(Model)
+
+const toCatalog = Effect.fnUntraced(function* (entries: Record<string, object>) {
+  const [skippedProviders, providers] = Record.partition(entries, (entry) =>
+    isProviderEntry(entry) ? Result.succeed(entry) : Result.fail(entry),
+  )
+  const decoded = Record.map(providers, (provider) =>
+    Record.partition(provider.models, (model) => (isModel(model) ? Result.succeed(model) : Result.fail(model))),
+  )
+  const skipped = [
+    ...Record.keys(skippedProviders),
+    ...Record.toEntries(decoded).flatMap(([providerID, [skippedModels]]) =>
+      Record.keys(skippedModels).map((modelID) => `${providerID}/${modelID}`),
+    ),
+  ]
+  if (skipped.length > 0)
+    yield* Effect.logWarning("Skipped models.dev entries that do not match the schema", { skipped })
+  return Record.map(providers, (provider, providerID): Provider => ({ ...provider, models: decoded[providerID][1] }))
+})
+
 export interface Interface {
   readonly get: () => Effect.Effect<Record<string, Provider>>
   readonly refresh: (force?: boolean) => Effect.Effect<void>
@@ -188,21 +220,25 @@ const layer = Layer.effect(
     })
 
     const loadFromDisk = fs.readJson(Flag.OPENCODE_MODELS_PATH ?? filepath).pipe(
+      Effect.flatMap(decodeEntries),
+      Effect.flatMap(toCatalog),
+      Effect.map(Option.some),
       Effect.catch((error) => {
+        // A cache file that does not parse, or does not hold a JSON object, is corrupt: remove it to refetch.
         if (
           Flag.OPENCODE_MODELS_PATH === undefined &&
-          error._tag === "FileSystemError" &&
-          error.method === "readJson"
+          (error._tag === "SchemaError" || (error._tag === "FileSystemError" && error.method === "readJson"))
         ) {
-          return fs.remove(filepath, { force: true }).pipe(Effect.ignore, Effect.as(undefined))
+          return fs
+            .remove(filepath, { force: true })
+            .pipe(Effect.ignore, Effect.as(Option.none<Record<string, Provider>>()))
         }
-        return Effect.succeed(undefined)
+        return Effect.succeed(Option.none<Record<string, Provider>>())
       }),
-      Effect.map((v) => v as Record<string, Provider> | undefined),
     )
 
     const loadSnapshot = Effect.sync(() =>
-      typeof OPENCODE_MODELS_DEV === "undefined" ? undefined : OPENCODE_MODELS_DEV,
+      typeof OPENCODE_MODELS_DEV === "undefined" ? Option.none() : Option.some(OPENCODE_MODELS_DEV),
     )
 
     const fetchAndWrite = Effect.fn("ModelsDev.fetchAndWrite")(function* () {
@@ -222,9 +258,9 @@ const layer = Layer.effect(
 
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
-      if (fromDisk) return fromDisk
+      if (Option.isSome(fromDisk)) return fromDisk.value
       const snapshot = yield* loadSnapshot
-      if (snapshot) return snapshot
+      if (Option.isSome(snapshot)) return snapshot.value
       if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
       // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
       const text = yield* Effect.scoped(
@@ -233,7 +269,7 @@ const layer = Layer.effect(
           return yield* fetchAndWrite()
         }),
       )
-      return JSON.parse(text) as Record<string, Provider>
+      return yield* decodeEntriesText(text).pipe(Effect.flatMap(toCatalog))
     }).pipe(Effect.withSpan("ModelsDev.populate"), Effect.orDie)
 
     const [cachedGet, invalidate] = yield* Effect.cachedInvalidateWithTTL(populate, Duration.infinity)
