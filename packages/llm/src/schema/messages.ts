@@ -47,15 +47,16 @@ export { ToolContent, ToolFileContent, ToolTextContent }
 const toolResultValueSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("json"),
-    value: Schema.Unknown,
+    value: Schema.Json,
   }),
   Schema.Struct({
     type: Schema.Literal("text"),
-    value: Schema.Unknown,
+    value: Schema.Json,
   }),
   Schema.Struct({
     type: Schema.Literal("error"),
-    value: Schema.Unknown,
+    // Tool errors may carry a thrown value (for example an Error), not only JSON.
+    value: Schema.Defect(),
   }),
   Schema.Struct({
     type: Schema.Literal("content"),
@@ -63,19 +64,27 @@ const toolResultValueSchema = Schema.Union([
   }),
 ]).annotate({ identifier: "LLM.ToolResult" })
 export type ToolResultValue = Schema.Schema.Type<typeof toolResultValueSchema>
+const validateToolResultValue = Schema.decodeUnknownSync(Schema.toType(toolResultValueSchema))
 
-const isToolResultValue = (value: unknown): value is ToolResultValue =>
+/** A value already shaped as a tool result: a known `type` tag and a `value` key. */
+const isToolResultShape = (
+  value: unknown,
+): value is { readonly type: ToolResultValue["type"]; readonly value: unknown } =>
   isRecord(value) &&
   (value.type === "text" || value.type === "json" || value.type === "error" || value.type === "content") &&
   "value" in value
 
 export const ToolResultValue = Object.assign(toolResultValueSchema, {
-  is: isToolResultValue,
-  make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue => {
-    if (isToolResultValue(value)) return value
-    if (type === "content") return { type, value: Array.isArray(value) ? value : [] }
-    return { type, value }
-  },
+  is: Schema.is(toolResultValueSchema),
+  /** Wrap a raw value as a tool result of `type`, or keep a value already shaped as one; validated as JSON here. */
+  make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue =>
+    validateToolResultValue(
+      isToolResultShape(value)
+        ? value
+        : type === "content"
+          ? { type, value: Array.isArray(value) ? value : [] }
+          : { type, value },
+    ),
 })
 
 export interface ToolOutput {
@@ -101,8 +110,9 @@ export const ToolOutput = Object.assign(
       }
       return undefined
     },
+    /** Project an output to the model; with no content the structured value is the JSON result and is validated. */
     toResultValue: (output: ToolOutput): ToolResultValue => {
-      if (output.content.length === 0) return { type: "json", value: output.structured }
+      if (output.content.length === 0) return validateToolResultValue({ type: "json", value: output.structured })
       if (output.content.length === 1 && output.content[0]?.type === "text")
         return { type: "text", value: output.content[0].text }
       return { type: "content", value: output.content }
