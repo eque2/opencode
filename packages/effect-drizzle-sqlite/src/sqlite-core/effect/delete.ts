@@ -153,7 +153,7 @@ export class SQLiteEffectDeleteBase<
   where(where: SQL | undefined): SQLiteEffectDeleteWithout<this, TDynamic, "where"> {
     this.config.where = where
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-    return this as any
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "where">
   }
 
   orderBy(
@@ -176,18 +176,18 @@ export class SQLiteEffectDeleteBase<
 
       this.config.orderBy = Array.isArray(orderBy) ? orderBy : [orderBy]
       // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-      return this as any
+      return this as SQLiteEffectDeleteWithout<this, TDynamic, "orderBy">
     }
 
     this.config.orderBy = columns.filter((column) => typeof column !== "function")
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-    return this as any
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "orderBy">
   }
 
   limit(limit: number | Placeholder): SQLiteEffectDeleteWithout<this, TDynamic, "limit"> {
     this.config.limit = limit
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-    return this as any
+    return this as SQLiteEffectDeleteWithout<this, TDynamic, "limit">
   }
 
   returning(): SQLiteEffectDeleteReturningAll<this, TDynamic>
@@ -196,10 +196,12 @@ export class SQLiteEffectDeleteBase<
   ): SQLiteEffectDeleteReturning<this, TDynamic, TSelectedFields>
   returning(
     fields: SelectedFieldsFlat = getTableColumns(this.table),
-  ): SQLiteEffectDeleteReturning<this, TDynamic, any> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
+  ): SQLiteEffectDeleteReturning<this, TDynamic, SelectedFieldsFlat> | SQLiteEffectDeleteReturningAll<this, TDynamic> {
     this.config.returning = orderSelectedFields(fields)
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-    return this as any
+    return this as
+      | SQLiteEffectDeleteReturning<this, TDynamic, SelectedFieldsFlat>
+      | SQLiteEffectDeleteReturningAll<this, TDynamic>
   }
 
   /** @internal */

@@ -244,10 +244,12 @@ export class SQLiteEffectInsertBase<
   ): SQLiteEffectInsertReturning<this, TDynamic, TSelectedFields>
   returning(
     fields: SelectedFieldsFlat = getTableColumns(this.config.table),
-  ): SQLiteEffectInsertWithout<AnySQLiteEffectInsert, TDynamic, "returning"> {
+  ): SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat> | SQLiteEffectInsertReturningAll<this, TDynamic> {
     this.config.returning = orderSelectedFields(fields)
     // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm type-state builder API: this method returns the same builder typed as its Omit-based next state, which TypeScript cannot relate to `this`
-    return this as any
+    return this as
+      | SQLiteEffectInsertReturning<this, TDynamic, SelectedFieldsFlat>
+      | SQLiteEffectInsertReturningAll<this, TDynamic>
   }
 
   onConflictDoNothing(config: { target?: IndexColumn | IndexColumn[]; where?: SQL } = {}): this {
