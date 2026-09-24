@@ -1,4 +1,4 @@
-import { Config, Effect } from "effect"
+import { Config, Effect, Schema } from "effect"
 import { define } from "../internal"
 import { readEnvSnapshot } from "./env-snapshot"
 import { ProviderV2 } from "../../provider"
@@ -8,6 +8,26 @@ const AzureResourceName = Config.String("AZURE_RESOURCE_NAME").pipe(Config.withD
 const CognitiveServicesResourceName = Config.String("AZURE_COGNITIVE_SERVICES_RESOURCE_NAME").pipe(
   Config.withDefault(""),
 )
+
+export class ResourceNameMissingError extends Schema.TaggedError<ResourceNameMissingError>()(
+  "AzurePlugin.ResourceNameMissingError",
+  { message: Schema.String },
+) {}
+
+// Plugin hooks cannot fail, so the missing endpoint is a defect; AISDK.language wraps it in AISDK.InitError.
+function requireEndpoint(evt: {
+  readonly model: { readonly providerID: string; readonly api: { readonly type: string; readonly url?: string } }
+  readonly options: Record<string, any>
+}) {
+  if (evt.model.providerID !== ProviderV2.ID.azure) return Effect.void
+  if (evt.options.resourceName || evt.options.baseURL) return Effect.void
+  if (evt.model.api.type === "aisdk" && evt.model.api.url) return Effect.void
+  return Effect.die(
+    new ResourceNameMissingError({
+      message: "AZURE_RESOURCE_NAME is missing, set it using env var or reconnecting the azure provider and setting it",
+    }),
+  )
+}
 
 function selectLanguage(sdk: any, modelID: string, useChat: boolean) {
   if (useChat && sdk.chat) return sdk.chat(modelID)
@@ -38,17 +58,7 @@ export const AzurePlugin = define({
     yield* ctx.aisdk.sdk(
       Effect.fn(function* (evt) {
         if (evt.package !== "@ai-sdk/azure") return
-        if (evt.model.providerID === ProviderV2.ID.azure) {
-          if (
-            !evt.options.resourceName &&
-            !evt.options.baseURL &&
-            (evt.model.api.type !== "aisdk" || !evt.model.api.url)
-          ) {
-            throw new Error(
-              "AZURE_RESOURCE_NAME is missing, set it using env var or reconnecting the azure provider and setting it",
-            )
-          }
-        }
+        yield* requireEndpoint(evt)
         const mod = yield* Effect.promise(() => import("@ai-sdk/azure"))
         evt.sdk = mod.createAzure(evt.options)
       }),
