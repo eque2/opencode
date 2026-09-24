@@ -74,11 +74,32 @@ const isToolResultShape = (
   (value.type === "text" || value.type === "json" || value.type === "error" || value.type === "content") &&
   "value" in value
 
+const isJson = Schema.is(Schema.Json)
+const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const decodeJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
+
+/**
+ * The JSON that a provider receives for `value`. A JSON value stays as it is. Any other value goes through JSON
+ * encoding, as the protocols encode it: undefined-valued keys drop out and Dates become ISO strings. A value with
+ * no JSON form (undefined, a bigint, a cycle) stays unchanged, so the result validation rejects it.
+ */
+const toWireJson = (value: unknown): unknown =>
+  isJson(value) ? value : Option.getOrElse(Option.flatMap(encodeJsonText(value), decodeJsonText), () => value)
+
+/** Validate a result shape; its json and text payloads first become the JSON that a provider receives. */
+const toToolResultValue = (shape: {
+  readonly type: ToolResultValue["type"]
+  readonly value: unknown
+}): ToolResultValue =>
+  validateToolResultValue(
+    shape.type === "json" || shape.type === "text" ? { type: shape.type, value: toWireJson(shape.value) } : shape,
+  )
+
 export const ToolResultValue = Object.assign(toolResultValueSchema, {
   is: Schema.is(toolResultValueSchema),
   /** Wrap a raw value as a tool result of `type`, or keep a value already shaped as one; validated as JSON here. */
   make: (value: unknown, type: ToolResultValue["type"] = "json"): ToolResultValue =>
-    validateToolResultValue(
+    toToolResultValue(
       isToolResultShape(value)
         ? value
         : type === "content"
@@ -110,17 +131,15 @@ export const ToolOutput = Object.assign(
       }
       return undefined
     },
-    /** Project an output to the model; with no content the structured value is the JSON result and is validated. */
+    /** Project an output to the model; with no content the structured value becomes the JSON result. */
     toResultValue: (output: ToolOutput): ToolResultValue => {
-      if (output.content.length === 0) return validateToolResultValue({ type: "json", value: output.structured })
+      if (output.content.length === 0) return toToolResultValue({ type: "json", value: output.structured })
       if (output.content.length === 1 && output.content[0]?.type === "text")
         return { type: "text", value: output.content[0].text }
       return { type: "content", value: output.content }
     },
   },
 )
-
-const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 /** Text for a `text` tool result: strings pass through, JSON-encodable values encode, anything else stringifies. */
 const toolResultText = (value: unknown) =>

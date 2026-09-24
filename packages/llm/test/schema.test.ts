@@ -2,7 +2,17 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import * as OpenAIChat from "../src/protocols/openai-chat"
 import * as OpenAIResponses from "../src/protocols/openai-responses"
-import { ContentPart, LLMEvent, LLMRequest, Model, ModelID, ProviderID, Usage } from "../src/schema"
+import {
+  ContentPart,
+  LLMEvent,
+  LLMRequest,
+  Model,
+  ModelID,
+  ProviderID,
+  ToolOutput,
+  ToolResultValue,
+  Usage,
+} from "../src/schema"
 import { ProviderShared } from "../src/protocols/shared"
 
 const model = new Model({
@@ -55,6 +65,18 @@ describe("llm schema", () => {
   test("content part tagged union exposes guards", () => {
     expect(ContentPart.guards.text({ type: "text", text: "hi" })).toBe(true)
     expect(ContentPart.guards.media({ type: "text", text: "hi" })).toBe(false)
+  })
+
+  test("tool results hold the JSON that a provider receives", () => {
+    expect(ToolResultValue.make({ title: "t", attachments: undefined })).toStrictEqual({
+      type: "json",
+      value: { title: "t" },
+    })
+    expect(ToolOutput.toResultValue(ToolOutput.make({ at: new Date(0) }))).toStrictEqual({
+      type: "json",
+      value: { at: "1970-01-01T00:00:00.000Z" },
+    })
+    expect(() => ToolResultValue.make(1n)).toThrow()
   })
 })
 
