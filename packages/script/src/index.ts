@@ -1,7 +1,7 @@
 import { $ } from "bun"
 import semver from "semver"
 import path from "path"
-import { Config, Effect, Option, Schema, String as Str } from "effect"
+import { Config, DateTime, Effect, Option, Schema, String as Str } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http"
 
 /** Reads an optional environment variable; an empty value counts as absent. */
@@ -62,7 +62,12 @@ const program = Effect.gen(function* () {
 
   const version = yield* Effect.gen(function* () {
     if (Option.isSome(env.OPENCODE_VERSION)) return env.OPENCODE_VERSION.value
-    if (preview) return `0.0.0-${channel}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
+    if (preview) {
+      const stamp = DateTime.formatIso(yield* DateTime.now)
+        .slice(0, 16)
+        .replace(/[-:T]/g, "")
+      return `0.0.0-${channel}-${stamp}`
+    }
     const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
     const latest = yield* http
       .get("https://registry.npmjs.org/opencode-ai/latest")
