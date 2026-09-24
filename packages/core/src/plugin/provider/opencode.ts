@@ -300,7 +300,9 @@ function credential(http: HttpClient.HttpClient, server: string, token: typeof T
       ],
       { concurrency: 2 },
     )
-    const org = orgs.toSorted((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))[0]
+    const org = Option.fromUndefinedOr(
+      orgs.toSorted((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)).at(0),
+    )
     return Credential.OAuth.make({
       type: "oauth" as const,
       methodID,
@@ -311,8 +313,11 @@ function credential(http: HttpClient.HttpClient, server: string, token: typeof T
         server,
         accountID: user.id,
         email: user.email,
-        orgID: org?.id,
-        orgName: org?.name,
+        // Metadata is a JSON object, so an account without an organization omits the keys.
+        ...Option.match(org, {
+          onNone: () => ({}),
+          onSome: (item) => ({ orgID: item.id, orgName: item.name }),
+        }),
       },
     })
   })
