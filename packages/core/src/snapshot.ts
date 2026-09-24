@@ -2,7 +2,7 @@ export * as Snapshot from "./snapshot"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, HashMap, Layer, Option, Schema } from "effect"
 import { Config } from "./config"
 import { File } from "./file"
 import { FSUtil } from "./fs-util"
@@ -33,7 +33,7 @@ export interface DiffInput extends CompareInput {
 
 export interface RestoreInput {
   /** Paths are relative to the project root. */
-  readonly files: ReadonlyMap<RelativePath, ID>
+  readonly files: HashMap.HashMap<RelativePath, ID>
 }
 
 export interface PreviewInput extends RestoreInput {
@@ -166,17 +166,15 @@ const layer = Layer.effect(
     const diff = Effect.fn("Snapshot.diff")(function* (input: DiffInput) {
       const comparison = yield* compare("diff", input)
       const files = yield* git.tree.files(comparison).pipe(Effect.mapError((cause) => failure("diff", cause)))
-      const ignored = source
-        ? yield* git.index
-            .ignored({ repository: source, paths: files })
-            .pipe(Effect.mapError((cause) => failure("diff", cause)))
-        : new Set<RelativePath>()
+      const candidates = input.paths ?? files
+      const paths = source
+        ? yield* git.index.ignored({ repository: source, paths: files }).pipe(
+            Effect.map((ignored) => candidates.filter((file) => !ignored.has(file))),
+            Effect.mapError((cause) => failure("diff", cause)),
+          )
+        : candidates
       return yield* git.tree
-        .diff({
-          ...comparison,
-          context: input.context,
-          paths: (input.paths ?? files).filter((file) => !ignored.has(file)),
-        })
+        .diff({ ...comparison, context: input.context, paths })
         .pipe(Effect.mapError((cause) => failure("diff", cause)))
     })
 

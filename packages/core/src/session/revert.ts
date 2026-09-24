@@ -1,7 +1,7 @@
 export * as SessionRevert from "./revert"
 
 import { and, asc, eq, gt } from "drizzle-orm"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect, HashMap, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { RelativePath } from "../schema"
@@ -47,14 +47,17 @@ const plan = Effect.fn("SessionRevert.plan")(function* (input: BoundaryInput) {
     .all()
     .pipe(Effect.orDie)
   const decode = Schema.decodeUnknownEffect(SessionMessage.Message)
-  const files = new Map<RelativePath, Snapshot.ID>()
-  for (const row of rows) {
-    const message = yield* decode({ ...row.data, id: row.id, type: row.type }).pipe(Effect.orDie)
-    if (message.type !== "assistant" || !message.snapshot?.start) continue
-    for (const file of message.snapshot.files ?? [])
-      if (!files.has(file)) files.set(file, Snapshot.ID.make(message.snapshot.start))
-  }
-  return files
+  const messages = yield* Effect.forEach(rows, (row) =>
+    decode({ ...row.data, id: row.id, type: row.type }).pipe(Effect.orDie),
+  )
+  const touched = messages.flatMap((message) => {
+    if (message.type !== "assistant" || !message.snapshot?.start) return []
+    const tree = Snapshot.ID.make(message.snapshot.start)
+    return (message.snapshot.files ?? []).map((file): readonly [RelativePath, Snapshot.ID] => [file, tree])
+  })
+  // The earliest step after the boundary holds the tree to restore for each file. The order of the
+  // first occurrences is the order of the staged diff.
+  return touched.filter(([file], index) => touched.findIndex(([first]) => first === file) === index)
 })
 
 export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
@@ -68,13 +71,13 @@ export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
     ? Snapshot.ID.make(input.session.revert.snapshot)
     : yield* snapshot.capture()
   const next = yield* plan({ sessionID: input.session.id, messageID: input.messageID })
-  const restore = new Map<RelativePath, Snapshot.ID>()
-  if (original) {
-    for (const file of input.session.revert?.files ?? []) restore.set(file.path, original)
-  }
-  if (input.files !== false) for (const [file, tree] of next) restore.set(file, tree)
-  if (restore.size) yield* snapshot.restore({ files: restore })
-  const paths = input.files === false ? [] : Array.from(next.keys())
+  const previous = original
+    ? (input.session.revert?.files ?? []).map((file): readonly [RelativePath, Snapshot.ID] => [file.path, original])
+    : []
+  // Files of the new revert point take precedence over files of the previously staged revert.
+  const restore = HashMap.fromIterable([...previous, ...(input.files === false ? [] : next)])
+  if (HashMap.size(restore) > 0) yield* snapshot.restore({ files: restore })
+  const paths = input.files === false ? [] : next.map(([file]) => file)
   const files = original
     ? yield* snapshot.diff({ from: original, to: (yield* snapshot.capture()) ?? original, paths })
     : []
@@ -101,7 +104,7 @@ export const clear = Effect.fn("SessionRevert.clear")(function* (session: Sessio
   if (session.revert.snapshot) {
     const original = Snapshot.ID.make(session.revert.snapshot)
     yield* snapshot.restore({
-      files: new Map((session.revert.files ?? []).map((file) => [file.path, original])),
+      files: HashMap.fromIterable((session.revert.files ?? []).map((file) => [file.path, original] as const)),
     })
   }
   const events = yield* EventV2.Service
