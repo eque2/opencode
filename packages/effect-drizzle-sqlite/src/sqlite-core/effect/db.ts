@@ -1,4 +1,4 @@
-import { Effect, Random } from "effect"
+import { Effect, Predicate, Random } from "effect"
 import type { SqlError } from "effect/unstable/sql/SqlError"
 import type { EffectCacheShape } from "drizzle-orm/cache/core/cache-effect"
 import type { MutationOption } from "drizzle-orm/cache/core/cache"
@@ -25,6 +25,19 @@ import { SQLiteEffectSelectBuilder } from "./select"
 import type { SQLiteEffectSelectBase } from "./select"
 import type { SQLiteEffectSession, SQLiteEffectTransaction } from "./session"
 import { SQLiteEffectUpdateBuilder } from "./update"
+
+/**
+ * Reads the selection of a query builder for a CTE. drizzle-orm select builders
+ * expose it through their internal getSelectedFields(); other builders and raw
+ * SQL have none, so the CTE gets an empty selection.
+ */
+const selectedFieldsOf = (qb: TypedQueryBuilder<ColumnsSelection | undefined> | SQL): ColumnsSelection => {
+  if (Predicate.hasProperty(qb, "getSelectedFields") && Predicate.isFunction(qb.getSelectedFields)) {
+    const fields: unknown = qb.getSelectedFields()
+    if (Predicate.isObject(fields)) return fields
+  }
+  return {}
+}
 
 export class SQLiteEffectDatabase<
   TEffectHKT extends QueryEffectHKTBase,
@@ -56,11 +69,13 @@ export class SQLiteEffectDatabase<
       session,
     }
 
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm types db.query as a mapped type over the generic TRelations keys; TypeScript cannot build that mapped type from Object.entries without an assertion (upstream sqlite-core/db.ts does the same)
     this.query = {} as (typeof this)["query"]
     for (const [tableName, relation] of Object.entries(relations)) {
       ;(this.query as SQLiteEffectDatabase<TEffectHKT, TRunResult, AnyRelations>["query"])[tableName] =
         new SQLiteEffectRelationalQueryBuilder(
           relations,
+          // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- drizzle-orm TableRelationalConfig.table is the generic Table | View, but the RelationalQueryBuilder API takes SQLiteTable (upstream sqlite-core/db.ts casts the same entry)
           relations[relation.name].table as SQLiteTable,
           relation,
           dialect,
@@ -89,10 +104,7 @@ export class SQLiteEffectDatabase<
       return new Proxy(
         new WithSubquery(
           qb.getSQL(),
-          selection ??
-            ("getSelectedFields" in qb
-              ? ((qb as { getSelectedFields(): SelectedFields | undefined }).getSelectedFields() ?? {})
-              : {}),
+          selection ?? selectedFieldsOf(qb),
           alias,
           true,
         ),
@@ -258,10 +270,6 @@ export const withReplicas = <
   const selectDistinct: Q["selectDistinct"] = (...args: []) => getReplica(replicas).selectDistinct(...args)
   const $count: Q["$count"] = (...args: [any]) => getReplica(replicas).$count(...args)
   const _with: Q["with"] = (...args: []) => getReplica(replicas).with(...args)
-  const $with = ((...args: [string] | [string, ColumnsSelection]) =>
-    args.length === 1
-      ? getReplica(replicas).$with(args[0])
-      : getReplica(replicas).$with(args[0], args[1])) as Q["$with"]
 
   const update: Q["update"] = (...args: [any]) => primary.update(...args)
   const insert: Q["insert"] = (...args: [any]) => primary.insert(...args)
@@ -287,7 +295,9 @@ export const withReplicas = <
     select,
     selectDistinct,
     $count,
-    $with,
+    get $with() {
+      return getReplica(replicas).$with
+    },
     with: _with,
     get query() {
       return getReplica(replicas).query
