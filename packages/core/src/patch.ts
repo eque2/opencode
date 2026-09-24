@@ -143,7 +143,7 @@ function parseChunk(lines: ReadonlyArray<string>, index: number) {
     if (!lines[index]!.startsWith("@@")) {
       return yield* invalid(`Invalid update file line: ${lines[index]}`)
     }
-    const changeContext = lines[index]!.slice(2).trim() || undefined
+    const changeContext = lines[index]!.slice(2).trim()
     const end = findFrom(lines, index + 1, (line) => line.startsWith("@@") || line.startsWith("***"))
     const body = lines.slice(index + 1, end)
     const bad = body.findIndex((line) => !line.startsWith(" ") && !line.startsWith("-") && !line.startsWith("+"))
@@ -152,8 +152,8 @@ function parseChunk(lines: ReadonlyArray<string>, index: number) {
     const chunk: UpdateFileChunk = {
       oldLines: body.filter((line) => line.startsWith(" ") || line.startsWith("-")).map((line) => line.slice(1)),
       newLines: body.filter((line) => line.startsWith(" ") || line.startsWith("+")).map((line) => line.slice(1)),
-      changeContext,
-      endOfFile: endOfFile || undefined,
+      ...(changeContext ? { changeContext } : {}),
+      ...(endOfFile ? { endOfFile } : {}),
     }
     return { chunk, next: endOfFile ? end + 1 : end }
   })
