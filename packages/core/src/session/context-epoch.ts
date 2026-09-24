@@ -1,7 +1,7 @@
 export * as SessionContextEpoch from "./context-epoch"
 
 import { eq } from "drizzle-orm"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import type { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { SystemContext } from "../system-context/index"
@@ -24,7 +24,10 @@ export function initialize(
   context: Effect.Effect<SystemContext.SystemContext>,
   sessionID: SessionSchema.ID,
 ): Effect.Effect<Prepared | undefined, SystemContext.InitializationBlocked> {
-  return initializeOnce(db, context, sessionID).pipe(Effect.withSpan("SessionContextEpoch.initialize"))
+  return initializeOnce(db, context, sessionID).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.withSpan("SessionContextEpoch.initialize"),
+  )
 }
 
 export function prepare(
@@ -55,15 +58,21 @@ const prepareOnce = Effect.fnUntraced(function* (
   const snapshot = yield* Schema.decodeUnknownEffect(SystemContext.Snapshot)(stored.snapshot).pipe(
     Effect.mapError((error) => new ContextSnapshotDecodeError({ sessionID, details: String(error) })),
   )
-  const replacementSeq = compaction !== undefined && compaction.seq > stored.baseline_seq ? compaction.seq : undefined
-  const result = replacementSeq
+  // A compaction newer than the epoch baseline replaces the baseline at the compaction sequence.
+  const replacementSeq = Option.fromUndefinedOr(compaction).pipe(
+    Option.map((latest) => latest.seq),
+    Option.filter((seq) => seq > stored.baseline_seq),
+  )
+  const result = Option.isSome(replacementSeq)
     ? yield* SystemContext.replace(value, snapshot)
     : yield* SystemContext.reconcile(value, snapshot)
   if (result._tag === "Unchanged" || result._tag === "ReplacementBlocked") {
     return { baseline: stored.baseline, baselineSeq: stored.baseline_seq }
   }
   if (result._tag === "ReplacementReady") {
-    const baselineSeq = replacementSeq ?? (yield* EventV2.latestSequence(db, sessionID))
+    const baselineSeq = Option.isSome(replacementSeq)
+      ? replacementSeq.value
+      : yield* EventV2.latestSequence(db, sessionID)
     yield* replace(db, sessionID, baselineSeq, result.generation)
     return { baseline: result.generation.baseline, baselineSeq }
   }
@@ -81,10 +90,10 @@ const initializeOnce = Effect.fnUntraced(function* (
   context: Effect.Effect<SystemContext.SystemContext>,
   sessionID: SessionSchema.ID,
 ) {
-  if (yield* exists(db, sessionID)) return
+  if (yield* exists(db, sessionID)) return Option.none<Prepared>()
   const generation = yield* context.pipe(Effect.flatMap(SystemContext.initialize))
   const baselineSeq = yield* insert(db, sessionID, generation)
-  return { baseline: generation.baseline, baselineSeq }
+  return Option.some({ baseline: generation.baseline, baselineSeq })
 })
 
 const exists = Effect.fn("SessionContextEpoch.exists")(function* (db: DatabaseService, sessionID: SessionSchema.ID) {

@@ -1,7 +1,7 @@
 export * as SessionStore from "./store"
 
 import { eq } from "drizzle-orm"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Database } from "../database/database"
 import { makeGlobalNode } from "../effect/app-node"
 import { SessionHistory } from "./history"
@@ -20,7 +20,7 @@ export interface Interface {
   ) => Effect.Effect<SessionMessage.Message[], MessageDecodeError>
   readonly message: (
     messageID: SessionMessage.ID,
-  ) => Effect.Effect<{ readonly sessionID: SessionSchema.ID; readonly message: SessionMessage.Message } | undefined>
+  ) => Effect.Effect<Option.Option<{ readonly sessionID: SessionSchema.ID; readonly message: SessionMessage.Message }>>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/v2/SessionStore") {}
@@ -34,7 +34,8 @@ const layer = Layer.effect(
     return Service.of({
       get: Effect.fn("SessionStore.get")(function* (sessionID) {
         const row = yield* db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get().pipe(Effect.orDie)
-        return row ? fromRow(row) : undefined
+        // Callers in other modules read a missing Session as undefined.
+        return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), fromRow))
       }),
       context: Effect.fn("SessionStore.context")(function* (sessionID) {
         return yield* SessionHistory.load(db, sessionID)
@@ -49,12 +50,11 @@ const layer = Layer.effect(
           .where(eq(SessionMessageTable.id, messageID))
           .get()
           .pipe(Effect.orDie)
-        return row
-          ? {
-              sessionID: SessionSchema.ID.make(row.session_id),
-              message: yield* decodeMessage({ ...row.data, id: row.id, type: row.type }).pipe(Effect.orDie),
-            }
-          : undefined
+        if (!row) return Option.none()
+        return Option.some({
+          sessionID: SessionSchema.ID.make(row.session_id),
+          message: yield* decodeMessage({ ...row.data, id: row.id, type: row.type }).pipe(Effect.orDie),
+        })
       }),
     })
   }),

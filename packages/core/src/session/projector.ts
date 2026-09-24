@@ -1,7 +1,7 @@
 export * as SessionProjector from "./projector"
 
 import { and, desc, eq, gt, or, sql } from "drizzle-orm"
-import { DateTime, Effect, Layer, Schema } from "effect"
+import { DateTime, Effect, Layer, Option, Schema } from "effect"
 import { Database } from "../database/database"
 import { EventV2 } from "../event"
 import { makeGlobalNode } from "../effect/app-node"
@@ -19,6 +19,8 @@ type DatabaseService = Database.Interface["db"]
 
 const decodeMessage = Schema.decodeUnknownSync(SessionMessage.Message)
 const encodeMessage = Schema.encodeSync(SessionMessage.Message)
+const isAssistant = (message: SessionMessage.Message): message is SessionMessage.Assistant =>
+  message.type === "assistant"
 
 export class SessionAlreadyProjected extends Error {}
 
@@ -57,7 +59,7 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     summary_additions: info.summary?.additions,
     summary_deletions: info.summary?.deletions,
     summary_files: info.summary?.files,
-    summary_diffs: info.summary?.diffs ? [...info.summary.diffs] : undefined,
+    ...(info.summary?.diffs ? { summary_diffs: [...info.summary.diffs] } : {}),
     metadata: info.metadata,
     cost: info.cost ?? 0,
     tokens_input: (info.tokens ?? { input: 0 }).input,
@@ -66,7 +68,7 @@ function sessionRow(info: SessionV1.SessionInfo): typeof SessionTable.$inferInse
     tokens_cache_read: (info.tokens ?? { cache: { read: 0 } }).cache.read,
     tokens_cache_write: (info.tokens ?? { cache: { write: 0 } }).cache.write,
     revert: info.revert ? { ...info.revert, messageID: SessionMessage.ID.make(info.revert.messageID) } : null,
-    permission: info.permission ? [...info.permission] : undefined,
+    ...(info.permission ? { permission: [...info.permission] } : {}),
     time_created: info.time.created,
     time_updated: info.time.updated,
     time_compacting: info.time.compacting,
@@ -143,9 +145,11 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             .limit(1)
             .get()
             .pipe(Effect.orDie)
-          if (!row) return
-          const message = decodeRow(row)
-          return message.type === "assistant" && !message.time.completed ? message : undefined
+          return Option.fromUndefinedOr(row).pipe(
+            Option.map(decodeRow),
+            Option.filter(isAssistant),
+            Option.filter((message) => !message.time.completed),
+          )
         })
       },
       getAssistant(messageID) {
@@ -162,9 +166,7 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             )
             .get()
             .pipe(Effect.orDie)
-          if (!row) return
-          const message = decodeRow(row)
-          return message.type === "assistant" ? message : undefined
+          return Option.fromUndefinedOr(row).pipe(Option.map(decodeRow), Option.filter(isAssistant))
         })
       },
       getCurrentShell(callID) {
@@ -176,9 +178,13 @@ function run(db: DatabaseService, event: SessionEvent.Event) {
             .orderBy(desc(SessionMessageTable.seq))
             .all()
             .pipe(Effect.orDie)
-          return rows
-            .map(decodeRow)
-            .find((message): message is SessionMessage.Shell => message.type === "shell" && message.callID === callID)
+          return Option.fromUndefinedOr(
+            rows
+              .map(decodeRow)
+              .find(
+                (message): message is SessionMessage.Shell => message.type === "shell" && message.callID === callID,
+              ),
+          )
         })
       },
       updateAssistant: updateMessage,
@@ -395,7 +401,10 @@ const layer = Layer.effectDiscard(
       db
         .update(SessionTable)
         .set({
-          revert: { ...event.data.revert, files: event.data.revert.files ? [...event.data.revert.files] : undefined },
+          revert: {
+            ...event.data.revert,
+            ...(event.data.revert.files ? { files: [...event.data.revert.files] } : {}),
+          },
           time_updated: DateTime.toEpochMillis(event.data.timestamp),
         })
         .where(eq(SessionTable.id, event.data.sessionID))

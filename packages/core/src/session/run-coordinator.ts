@@ -55,12 +55,11 @@ export const make = <Key, E>(options: {
         return
       }
 
-      const successor = entry.pendingWake ? makeEntry() : undefined
-      if (successor === undefined) active.delete(key)
-      else {
+      if (entry.pendingWake) {
+        const successor = makeEntry()
         active.set(key, successor)
         start(key, successor, false, true)
-      }
+      } else active.delete(key)
       Deferred.doneUnsafe(entry.done, exit)
     }
 

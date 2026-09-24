@@ -1,7 +1,7 @@
 export * as PermissionV2 from "./permission"
 
 import { makeLocationNode } from "./effect/app-node"
-import { Context, Deferred, Effect as EffectRuntime, Layer, Schema } from "effect"
+import { Context, Deferred, Effect as EffectRuntime, Exit, Layer, Option, Schema } from "effect"
 import { Permission } from "@opencode-ai/schema/permission"
 import { EventV2 } from "./event"
 import { Location } from "./location"
@@ -254,17 +254,19 @@ const layer = Layer.effect(
               resources: existing.request.save,
             })
           }
-          yield* Deferred.succeed(existing.deferred, undefined)
+          yield* Deferred.done(existing.deferred, Exit.void)
           pending.delete(input.requestID)
           if (input.reply !== "always" || !existing.request.save?.length) return
 
           const rememberedRules = yield* savedRules()
           for (const [id, item] of pending) {
             const input = { ...item.request }
-            const rules = yield* configured(item.request.sessionID, item.agent).pipe(
-              EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeed(undefined)),
+            const configuredRules = yield* configured(item.request.sessionID, item.agent).pipe(
+              EffectRuntime.map(Option.some),
+              EffectRuntime.catchTag("Session.NotFoundError", () => EffectRuntime.succeedNone),
             )
-            if (!rules) continue
+            if (Option.isNone(configuredRules)) continue
+            const rules = configuredRules.value
             if (denied(input, rules)) continue
             const effective = [...rules, ...rememberedRules]
             if (
@@ -278,7 +280,7 @@ const layer = Layer.effect(
               requestID: item.request.id,
               reply: "always",
             })
-            yield* Deferred.succeed(item.deferred, undefined)
+            yield* Deferred.done(item.deferred, Exit.void)
             pending.delete(id)
           }
         }),

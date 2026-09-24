@@ -1,7 +1,7 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
 
-import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
+import { DateTime, Effect, Layer, Option, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
 import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
@@ -224,16 +224,18 @@ const layer = Layer.effect(
           projectID: project.id,
           directory: input.location.directory,
           path: path.relative(project.directory, input.location.directory).replaceAll("\\", "/"),
-          workspaceID: input.location.workspaceID ? WorkspaceV2.ID.make(input.location.workspaceID) : undefined,
+          ...(input.location.workspaceID ? { workspaceID: WorkspaceV2.ID.make(input.location.workspaceID) } : {}),
           title: `New session - ${new Date(now).toISOString()}`,
           agent: input.agent,
-          model: input.model
+          ...(input.model
             ? {
-                id: ModelV2.ID.make(input.model.id),
-                providerID: input.model.providerID,
-                variant: input.model.variant,
+                model: {
+                  id: ModelV2.ID.make(input.model.id),
+                  providerID: input.model.providerID,
+                  variant: input.model.variant,
+                },
               }
-            : undefined,
+            : {}),
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           time: { created: now, updated: now },
@@ -291,7 +293,7 @@ const layer = Layer.effect(
         const query = db
           .select()
           .from(SessionTable)
-          .where(conditions.length > 0 ? and(...conditions) : undefined)
+          .where(and(...conditions))
           .orderBy(
             order === "asc" ? asc(sortColumn) : desc(sortColumn),
             order === "asc" ? asc(SessionTable.id) : desc(SessionTable.id),
@@ -307,24 +309,26 @@ const layer = Layer.effect(
         const requestedOrder = input.order ?? "desc"
         const order = direction === "previous" ? (requestedOrder === "asc" ? "desc" : "asc") : requestedOrder
         const anchor = input.cursor
-          ? yield* db
-              .select({ seq: SessionMessageTable.seq })
-              .from(SessionMessageTable)
-              .where(
-                and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.cursor.id)),
-              )
-              .get()
-              .pipe(Effect.orDie)
-          : undefined
-        if (input.cursor && !anchor) return []
-        const boundary = anchor
-          ? order === "asc"
-            ? gt(SessionMessageTable.seq, anchor.seq)
-            : lt(SessionMessageTable.seq, anchor.seq)
-          : undefined
-        const where = boundary
-          ? and(eq(SessionMessageTable.session_id, input.sessionID), boundary)
-          : eq(SessionMessageTable.session_id, input.sessionID)
+          ? Option.fromUndefinedOr(
+              yield* db
+                .select({ seq: SessionMessageTable.seq })
+                .from(SessionMessageTable)
+                .where(
+                  and(eq(SessionMessageTable.session_id, input.sessionID), eq(SessionMessageTable.id, input.cursor.id)),
+                )
+                .get()
+                .pipe(Effect.orDie),
+            )
+          : Option.none()
+        if (input.cursor && Option.isNone(anchor)) return []
+        const where = Option.match(anchor, {
+          onNone: () => eq(SessionMessageTable.session_id, input.sessionID),
+          onSome: (anchor) =>
+            and(
+              eq(SessionMessageTable.session_id, input.sessionID),
+              order === "asc" ? gt(SessionMessageTable.seq, anchor.seq) : lt(SessionMessageTable.seq, anchor.seq),
+            ),
+        })
         const query = db
           .select()
           .from(SessionMessageTable)
@@ -337,7 +341,13 @@ const layer = Layer.effect(
       }),
       message: Effect.fn("V2Session.message")(function* (input) {
         const stored = yield* store.message(input.messageID)
-        return stored?.sessionID === input.sessionID ? stored.message : undefined
+        // The public message lookup reports a message of another Session as absent (undefined).
+        return Option.getOrUndefined(
+          stored.pipe(
+            Option.filter((found) => found.sessionID === input.sessionID),
+            Option.map((found) => found.message),
+          ),
+        )
       }),
       context: Effect.fn("V2Session.context")(function* (sessionID) {
         yield* result.get(sessionID)

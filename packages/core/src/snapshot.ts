@@ -2,7 +2,7 @@ export * as Snapshot from "./snapshot"
 
 import { makeLocationNode } from "./effect/app-node"
 import path from "path"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { Config } from "./config"
 import { File } from "./file"
 import { FSUtil } from "./fs-util"
@@ -126,21 +126,26 @@ const layer = Layer.effect(
       return Config.latest(yield* config.entries(), "snapshots") !== false
     })
 
-    const capture = Effect.fn("Snapshot.capture")(function* () {
-      if (!(yield* enabled())) return undefined
-      return yield* Effect.gen(function* () {
-        const repo = yield* repository()
-        return ID.make(
-          yield* git.tree.capture({
-            repository: repo,
-            scopes: [yield* scope()],
-            ignores: source,
-            maximumUntrackedFileBytes: 2 * 1024 * 1024,
-          }),
-        )
-      }).pipe(
-        Effect.catch((cause) => Effect.logWarning("failed to capture snapshot", { cause }).pipe(Effect.as(undefined))),
+    // A best-effort capture: a failure logs a warning and holds no tree.
+    const captureTree = Effect.gen(function* () {
+      const repo = yield* repository()
+      return ID.make(
+        yield* git.tree.capture({
+          repository: repo,
+          scopes: [yield* scope()],
+          ignores: source,
+          maximumUntrackedFileBytes: 2 * 1024 * 1024,
+        }),
       )
+    }).pipe(
+      Effect.tapError((cause) => Effect.logWarning("failed to capture snapshot", { cause })),
+      Effect.option,
+    )
+
+    const capture = Effect.fn("Snapshot.capture")(function* () {
+      const captured = (yield* enabled()) ? yield* captureTree : Option.none<ID>()
+      // The Interface reports a missing capture as undefined.
+      return Option.getOrUndefined(captured)
     })
 
     const compare = Effect.fnUntraced(function* (operation: "files" | "diff", input: CompareInput) {
@@ -238,7 +243,8 @@ export const node = makeLocationNode({
 export const noopLayer = Layer.succeed(
   Service,
   Service.of({
-    capture: () => Effect.succeed(undefined),
+    // This layer never captures a tree; the Interface reports the missing capture as undefined.
+    capture: () => Effect.map(Effect.succeedNone, Option.getOrUndefined<ID>),
     files: () => Effect.succeed([]),
     diff: () => Effect.succeed([]),
     preview: () => Effect.succeed([]),

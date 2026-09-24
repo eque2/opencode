@@ -1,7 +1,7 @@
 export * as SessionCompaction from "./compaction"
 
 import { LLM, LLMError, LLMEvent, Message, type LLMRequest, type Model } from "@opencode-ai/llm"
-import { DateTime, Effect, Stream } from "effect"
+import { DateTime, Effect, Option, Stream } from "effect"
 import type { Config } from "../config"
 import type { EventV2 } from "../event"
 import { SessionEvent } from "./event"
@@ -137,12 +137,12 @@ const settings = (documents: readonly Config.Entry[]) => {
 const select = (
   entries: readonly Entry[],
   tokens: number,
-): { readonly head: string; readonly recent: string } | undefined => {
+): Option.Option<{ readonly head: string; readonly recent: string }> => {
   const conversation = entries
     .filter((entry) => entry.message.type !== "compaction")
     .map((entry) => serialize(entry.message))
     .filter(Boolean)
-  if (conversation.length === 0) return
+  if (conversation.length === 0) return Option.none()
   let total = 0
   let split = conversation.length
   for (let index = conversation.length - 1; index >= 0; index--) {
@@ -151,10 +151,10 @@ const select = (
     total = next
     split = index
   }
-  return {
+  return Option.some({
     head: conversation.slice(0, split).join("\n\n"),
     recent: conversation.slice(split).join("\n\n"),
-  }
+  })
 }
 
 export const buildPrompt = (input: { readonly previousSummary?: string; readonly context: readonly string[] }) => {
@@ -179,11 +179,13 @@ export const make = (dependencies: Dependencies) => {
     const context = input.model.route.defaults.limits?.context
     if (context === undefined || context <= 0) return false
     const output = input.request.generation?.maxTokens ?? input.model.route.defaults.limits?.output ?? 0
-    const selected = select(input.entries, config.tokens)
+    const selection = select(input.entries, config.tokens)
     const previousSummary = input.entries.find((entry) => entry.message.type === "compaction")?.message
-    if (!selected || (selected.head.length === 0 && previousSummary?.type !== "compaction")) return false
+    if (Option.isNone(selection) || (selection.value.head.length === 0 && previousSummary?.type !== "compaction"))
+      return false
+    const selected = selection.value
     const summaryPrompt = buildPrompt({
-      previousSummary: previousSummary?.type === "compaction" ? previousSummary.summary : undefined,
+      ...(previousSummary?.type === "compaction" ? { previousSummary: previousSummary.summary } : {}),
       context: [previousSummary?.type === "compaction" ? previousSummary.recent : "", selected.head].filter(Boolean),
     })
     const summaryOutput = Math.min(output || SUMMARY_OUTPUT_TOKENS, SUMMARY_OUTPUT_TOKENS)

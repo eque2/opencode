@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Fiber, Layer, Stream } from "effect"
+import { DateTime, Effect, Fiber, Layer, Option, Stream } from "effect"
 import { eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
@@ -74,7 +74,9 @@ const setup = Effect.gen(function* () {
     .pipe(Effect.orDie)
 })
 
-const admitted = (id: SessionMessage.ID) => Database.Service.use(({ db }) => SessionInput.find(db, id))
+// SessionInput.find gives Option; the assertions read the admitted row or undefined.
+const admitted = (id: SessionMessage.ID) =>
+  Database.Service.use(({ db }) => SessionInput.find(db, id).pipe(Effect.map(Option.getOrUndefined)))
 const admittedCount = Database.Service.use(({ db }) =>
   db
     .select()
@@ -205,9 +207,7 @@ describe("SessionV2.prompt", () => {
       ])
       expect(
         Array.from(
-          yield* session
-            .events({ sessionID, after: streamed[0].durable?.seq })
-            .pipe(Stream.take(1), Stream.runCollect),
+          yield* session.events({ sessionID, after: streamed[0].durable?.seq }).pipe(Stream.take(1), Stream.runCollect),
         ).map((event) => [event.durable?.seq, event.type]),
       ).toEqual([[1, "session.next.prompt.admitted"]])
     }),

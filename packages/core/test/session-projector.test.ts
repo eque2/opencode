@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { asc, eq, sql } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -430,9 +430,9 @@ describe("SessionProjector", () => {
         time: { created: DateTime.makeUnsafe(1), completed: DateTime.makeUnsafe(2) },
       })
 
-      expect(
-        yield* SessionMessageUpdater.memory({ messages: [stale, completed] }).getCurrentAssistant(),
-      ).toBeUndefined()
+      expect(yield* SessionMessageUpdater.memory({ messages: [stale, completed] }).getCurrentAssistant()).toEqual(
+        Option.none(),
+      )
     }),
   )
 

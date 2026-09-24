@@ -33,17 +33,20 @@ const messageRows = Effect.fnUntraced(function* (
     .where(
       and(
         eq(SessionMessageTable.session_id, sessionID),
-        compaction
-          ? or(
-              gte(SessionMessageTable.seq, compaction.seq),
-              baselineSeq === undefined
-                ? undefined
-                : and(eq(SessionMessageTable.type, "system"), gt(SessionMessageTable.seq, baselineSeq)),
-            )
-          : undefined,
-        baselineSeq === undefined
-          ? undefined
-          : or(ne(SessionMessageTable.type, "system"), gt(SessionMessageTable.seq, baselineSeq)),
+        // An absent compaction or baseline adds no condition.
+        ...(compaction
+          ? [
+              or(
+                gte(SessionMessageTable.seq, compaction.seq),
+                ...(baselineSeq === undefined
+                  ? []
+                  : [and(eq(SessionMessageTable.type, "system"), gt(SessionMessageTable.seq, baselineSeq))]),
+              ),
+            ]
+          : []),
+        ...(baselineSeq === undefined
+          ? []
+          : [or(ne(SessionMessageTable.type, "system"), gt(SessionMessageTable.seq, baselineSeq))]),
       ),
     )
     .orderBy(asc(SessionMessageTable.seq))

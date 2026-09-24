@@ -98,11 +98,12 @@ export const stage = Effect.fn("SessionRevert.stage")(function* (input: {
 export const clear = Effect.fn("SessionRevert.clear")(function* (session: SessionSchema.Info) {
   if (!session.revert) return
   const snapshot = yield* Snapshot.Service
-  const original = session.revert.snapshot ? Snapshot.ID.make(session.revert.snapshot) : undefined
-  if (original)
+  if (session.revert.snapshot) {
+    const original = Snapshot.ID.make(session.revert.snapshot)
     yield* snapshot.restore({
       files: new Map((session.revert.files ?? []).map((file) => [file.path, original])),
     })
+  }
   const events = yield* EventV2.Service
   yield* events.publish(SessionEvent.RevertEvent.Cleared, {
     sessionID: session.id,

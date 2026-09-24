@@ -1,7 +1,7 @@
 export * as SessionInput from "./input"
 
 import { and, asc, eq, isNull, lte } from "drizzle-orm"
-import { DateTime, Effect, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { Admitted, Delivery } from "@opencode-ai/schema/session-input"
 import type { Database } from "../database/database"
 import type { EventV2 } from "../event"
@@ -31,7 +31,7 @@ const fromRow = (row: typeof SessionInputTable.$inferSelect): Admitted =>
 
 export const find = Effect.fn("SessionInput.find")(function* (db: DatabaseService, id: SessionMessage.ID) {
   const row = yield* db.select().from(SessionInputTable).where(eq(SessionInputTable.id, id)).get().pipe(Effect.orDie)
-  return row === undefined ? undefined : fromRow(row)
+  return Option.map(Option.fromUndefinedOr(row), fromRow)
 })
 
 export class LifecycleConflict extends Schema.TaggedError<LifecycleConflict>()("SessionInput.LifecycleConflict", {
@@ -49,7 +49,7 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
   },
 ) {
   const existing = yield* find(db, input.id)
-  if (existing !== undefined) return existing
+  if (Option.isSome(existing)) return existing.value
   const timestamp = yield* DateTime.now
   return yield* events
     .publish(SessionEvent.PromptAdmitted, {
@@ -75,7 +75,11 @@ export const admit = Effect.fn("SessionInput.admit")(function* (
             ),
       ),
       Effect.catchDefect((defect) =>
-        find(db, input.id).pipe(Effect.flatMap((stored) => (stored ? Effect.succeed(stored) : Effect.die(defect)))),
+        find(db, input.id).pipe(
+          Effect.flatMap((stored) =>
+            Option.match(stored, { onNone: () => Effect.die(defect), onSome: Effect.succeed }),
+          ),
+        ),
       ),
     )
 })
@@ -146,8 +150,8 @@ export const projectPrompted = Effect.fn("SessionInput.projectPrompted")(functio
   }
 
   const stored = yield* find(db, input.id)
-  if (stored) {
-    if (!matchesProjection(stored, input) || stored.promotedSeq !== input.promotedSeq)
+  if (Option.isSome(stored)) {
+    if (!matchesProjection(stored.value, input) || stored.value.promotedSeq !== input.promotedSeq)
       return yield* Effect.die(new LifecycleConflict({ id: input.id }))
     return
   }
@@ -233,7 +237,9 @@ const publish = Effect.fn("SessionInput.publish")(function* (
         Effect.catchDefect((defect) =>
           defect instanceof LifecycleConflict
             ? find(db, id).pipe(
-                Effect.flatMap((stored) => (stored?.promotedSeq === undefined ? Effect.die(defect) : Effect.void)),
+                Effect.flatMap((stored) =>
+                  Option.isNone(stored) || stored.value.promotedSeq === undefined ? Effect.die(defect) : Effect.void,
+                ),
               )
             : Effect.die(defect),
         ),

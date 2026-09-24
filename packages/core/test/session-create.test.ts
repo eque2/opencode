@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import path from "path"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer, Option, Stream } from "effect"
 import { AgentV2 } from "@opencode-ai/core/agent"
 import { asc, eq } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
@@ -256,7 +256,7 @@ describe("SessionV2.create", () => {
 
         expect(yield* store.get(created.id)).toBeUndefined()
         expect(yield* events.replayAll(serialized.slice(0, 2))).toBe(created.id)
-        expect(yield* SessionInput.find(db, admitted.id)).toMatchObject({
+        expect(Option.getOrUndefined(yield* SessionInput.find(db, admitted.id))).toMatchObject({
           id: admitted.id,
           sessionID: created.id,
           prompt: { text: "Replay lifecycle" },
@@ -266,7 +266,7 @@ describe("SessionV2.create", () => {
         expect(yield* store.context(created.id)).toEqual([])
 
         expect(yield* events.replayAll(serialized.slice(2))).toBe(created.id)
-        expect(yield* SessionInput.find(db, admitted.id)).toMatchObject({
+        expect(Option.getOrUndefined(yield* SessionInput.find(db, admitted.id))).toMatchObject({
           id: admitted.id,
           sessionID: created.id,
           prompt: { text: "Replay lifecycle" },
