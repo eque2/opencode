@@ -66,7 +66,7 @@ export default {
 
 export const Playground = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -83,7 +83,7 @@ export const Playground = {
 
 export const Large = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -100,7 +100,7 @@ export const Large = {
 
 export const Grouped = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<(typeof cities)[0]>()
     return (
       <SelectV2<(typeof cities)[0]>
         placeholder={args.placeholder}
@@ -120,7 +120,7 @@ export const Grouped = {
 
 export const Invalid = {
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <SelectV2
         placeholder={args.placeholder}
@@ -152,7 +152,7 @@ export const Disabled = {
 export const Field = {
   parameters: { frameHeight: "500px" },
   render: (args) => {
-    const [current, setCurrent] = createSignal(undefined)
+    const [current, setCurrent] = createSignal<string>()
     return (
       <div style={{ width: "280px" }}>
         <FieldV2>
