@@ -57,6 +57,13 @@ const utcTime = (args: ReadonlyArray<unknown>): number => {
   })
 }
 
+// The time value of a date string, as sandbox `Date.parse(text)` and `new Date(text)` read it: the
+// host parse reads a zone-less date-time or free-form string in the host time zone, and an
+// unparseable string gives NaN. DateTime.make reads zone-less strings as UTC, so it cannot stand in.
+export const parseTime = (text: string): number =>
+  // eslint-disable-next-line effect/no-date-static-use-datetime -- (b) sandbox Date strings follow host Date.parse semantics (local zone for zone-less strings, free-form input), which DateTime.make does not reproduce
+  Date.parse(text)
+
 export const invokeDateStatic = (
   name: string,
   args: Array<unknown>,
@@ -67,7 +74,7 @@ export const invokeDateStatic = (
     case "now":
       return Clock.currentTimeMillis
     case "parse":
-      return Effect.succeed(Date.parse(coerceToString(args[0])))
+      return Effect.succeed(parseTime(coerceToString(args[0])))
     case "UTC":
       return Effect.succeed(utcTime(args))
     default:

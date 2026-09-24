@@ -74,7 +74,7 @@ import {
 } from "./model.js"
 import { arrayMethods, mapMethods, setMethods, spreadItems } from "../stdlib/collections.js"
 import { consoleMethods, MAX_CONSOLE_DEPTH } from "../stdlib/console.js"
-import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic } from "../stdlib/date.js"
+import { dateMethods, dateStatics, invokeDateMethod, invokeDateStatic, parseTime } from "../stdlib/date.js"
 import { encodeJsonText, invokeJsonMethod, toJsonValue } from "../stdlib/json.js"
 import { invokeMathMethod, isMathConstant } from "../stdlib/math.js"
 import {
@@ -1690,7 +1690,7 @@ class Interpreter<R> {
           ),
         )
       }
-      if (typeof arg === "string") return Effect.succeed(new SandboxDate(Date.parse(arg)))
+      if (typeof arg === "string") return Effect.succeed(new SandboxDate(parseTime(arg)))
       return Effect.succeed(new SandboxDate(Number.NaN))
     }
     // new Date(year, month, day?, hours?, ...) - local-time component form. Omitted components
