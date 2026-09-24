@@ -20,6 +20,7 @@ import { truthy } from "../flag/flag"
 import { InstallationVersion } from "../installation/version"
 import { PositiveInt } from "../schema"
 import { PermissionV2 } from "../permission"
+import { SessionSchema } from "../session/schema"
 import { Tool } from "./tool"
 import { Tools } from "./tools"
 import { collectBoundedResponseBody } from "./http-body"
@@ -173,7 +174,7 @@ const ExaArgs = Schema.Struct({
 const ParallelArgs = Schema.Struct({
   objective: Schema.String,
   search_queries: Schema.Array(Schema.String),
-  session_id: Schema.String,
+  session_id: SessionSchema.ID,
 })
 const McpRequest = <F extends Schema.Struct.Fields>(args: Schema.Struct<F>) =>
   Schema.Struct({
