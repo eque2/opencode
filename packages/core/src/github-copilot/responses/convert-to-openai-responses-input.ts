@@ -6,7 +6,7 @@ import {
   UnsupportedFunctionalityError,
 } from "@ai-sdk/provider"
 import { convertToBase64, parseProviderOptions } from "@ai-sdk/provider-utils"
-import { Chunk, Effect, HashMap, HashSet, Option, Schema } from "effect"
+import { Chunk, Effect, HashMap, HashSet, Option, Predicate, Schema } from "effect"
 import type {
   OpenAIResponsesInputItem,
   OpenAIResponsesReasoning,
@@ -171,7 +171,7 @@ export const convertToOpenAIResponsesInput = Effect.fn("CopilotResponses.convert
 
               const reasoningId = providerOptions?.itemId
 
-              if (reasoningId != null) {
+              if (Predicate.isNotNullish(reasoningId)) {
                 const reasoningAt = HashMap.get(reasoningIndex, reasoningId)
 
                 if (store) {

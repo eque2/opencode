@@ -1,4 +1,5 @@
 import type { LanguageModelV3FinishReason } from "@ai-sdk/provider"
+import { Predicate } from "effect"
 
 export function mapOpenAIResponseFinishReason({
   finishReason,
@@ -8,10 +9,9 @@ export function mapOpenAIResponseFinishReason({
   // flag that checks if there have been client-side tool calls (not executed by openai)
   hasFunctionCall: boolean
 }): LanguageModelV3FinishReason["unified"] {
+  if (Predicate.isNullish(finishReason)) return hasFunctionCall ? "tool-calls" : "stop"
+
   switch (finishReason) {
-    case undefined:
-    case null:
-      return hasFunctionCall ? "tool-calls" : "stop"
     case "max_output_tokens":
       return "length"
     case "content_filter":

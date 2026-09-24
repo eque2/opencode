@@ -19,7 +19,7 @@ import {
   type ParseResult,
   postJsonToApi,
 } from "@ai-sdk/provider-utils"
-import { Chunk, DateTime, Effect, Schema } from "effect"
+import { Chunk, DateTime, Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
 import type { OpenAIConfig } from "./openai-config"
 import { openaiFailedResponseHandler, ResponsesCallError } from "./openai-error"
 import { codeInterpreterInputSchema, codeInterpreterOutputSchema, ContainerID } from "./tool/code-interpreter"
@@ -130,6 +130,40 @@ const encodeLocalShellCallInput = Schema.encodeSync(Schema.fromJsonString(localS
 const encodeLocalShellInput = Schema.encodeSync(Schema.fromJsonString(localShellInputSchema))
 const encodeCodeInterpreterInput = Schema.encodeSync(Schema.fromJsonString(codeInterpreterInputSchema))
 const quoteJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String))
+
+// Provider metadata keeps the wire nulls that callers read: reasoningEncryptedContent is null until the
+// Responses API sends the encrypted content, and a stream without response.created has a null responseId.
+const reasoningMetadataSchema = Schema.Struct({
+  itemId: ItemID,
+  reasoningEncryptedContent: Schema.OptionFromNullOr(Schema.String),
+}).annotate({ identifier: "CopilotResponses.ReasoningMetadata" })
+const encodeReasoningMetadata = Schema.encodeSync(reasoningMetadataSchema)
+const encodeNullableString = Schema.encodeSync(Schema.OptionFromNullOr(Schema.String))
+
+// A file search call result with the key names of the file search tool output.
+const toFileSearchResult = (result: NonNullable<(typeof fileSearchCallItem.Type)["results"]>[number]) => ({
+  attributes: result.attributes,
+  fileId: result.file_id,
+  filename: result.filename,
+  score: result.score,
+  text: result.text,
+})
+
+// A streaming tool call whose input deltas are still arriving.
+type OngoingToolCall = {
+  readonly toolName: string
+  readonly toolCallId: string
+  readonly codeInterpreter?: {
+    readonly containerId: typeof ContainerID.Type
+  }
+}
+
+// A streaming reasoning item, keyed by its output index.
+type ActiveReasoning = {
+  readonly canonicalId: typeof ItemID.Type // the item.id from output_item.added
+  readonly encryptedContent: Option.Option<string>
+  readonly summaryParts: ReadonlyArray<number>
+}
 
 /**
  * `top_logprobs` request body argument can be set to an integer between
@@ -315,11 +349,11 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
   const modelConfig = getResponsesModelConfig(modelId)
 
   const callWarnings = [
-    ...warnIf(topK != null, { type: "unsupported", feature: "topK" }),
-    ...warnIf(seed != null, { type: "unsupported", feature: "seed" }),
-    ...warnIf(presencePenalty != null, { type: "unsupported", feature: "presencePenalty" }),
-    ...warnIf(frequencyPenalty != null, { type: "unsupported", feature: "frequencyPenalty" }),
-    ...warnIf(stopSequences != null, { type: "unsupported", feature: "stopSequences" }),
+    ...warnIf(Predicate.isNotNullish(topK), { type: "unsupported", feature: "topK" }),
+    ...warnIf(Predicate.isNotNullish(seed), { type: "unsupported", feature: "seed" }),
+    ...warnIf(Predicate.isNotNullish(presencePenalty), { type: "unsupported", feature: "presencePenalty" }),
+    ...warnIf(Predicate.isNotNullish(frequencyPenalty), { type: "unsupported", feature: "frequencyPenalty" }),
+    ...warnIf(Predicate.isNotNullish(stopSequences), { type: "unsupported", feature: "stopSequences" }),
   ]
 
   const openaiOptions = yield* Effect.tryPromise({
@@ -332,6 +366,8 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     catch: (cause) => new ResponsesCallError({ cause }),
   })
 
+  const hasOpenAITool = (id: string) => tools?.some((tool) => tool.type === "provider" && tool.id === id) === true
+
   const { input, warnings: inputWarnings } = yield* convertToOpenAIResponsesInput({
     prompt,
     systemMessageMode: modelConfig.systemMessageMode,
@@ -342,16 +378,6 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
 
   const strictJsonSchema = openaiOptions?.strictJsonSchema ?? false
 
-  let include: OpenAIResponsesIncludeOptions = openaiOptions?.include
-
-  function addInclude(key: OpenAIResponsesIncludeValue) {
-    include = include != null ? [...include, key] : [key]
-  }
-
-  function hasOpenAITool(id: string) {
-    return tools?.find((tool) => tool.type === "provider" && tool.id === id) != null
-  }
-
   // when logprobs are requested, automatically include them:
   const topLogprobs =
     typeof openaiOptions?.logprobs === "number"
@@ -359,10 +385,6 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
       : openaiOptions?.logprobs === true
         ? TOP_LOGPROBS_MAX
         : undefined
-
-  if (topLogprobs) {
-    addInclude("message.output_text.logprobs")
-  }
 
   // when a web search tool is present, automatically include the sources:
   const webSearchToolName = (
@@ -372,19 +394,19 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     ) as LanguageModelV3ProviderTool | undefined
   )?.name
 
-  if (webSearchToolName) {
-    addInclude("web_search_call.action.sources")
-  }
-
-  // when a code interpreter tool is present, automatically include the outputs:
-  if (hasOpenAITool("openai.code_interpreter")) {
-    addInclude("code_interpreter_call.outputs")
-  }
+  // requested logprobs, web search sources and code interpreter outputs are included automatically:
+  const autoInclude: ReadonlyArray<OpenAIResponsesIncludeValue> = [
+    ...(topLogprobs ? ["message.output_text.logprobs" as const] : []),
+    ...(webSearchToolName ? ["web_search_call.action.sources" as const] : []),
+    ...(hasOpenAITool("openai.code_interpreter") ? ["code_interpreter_call.outputs" as const] : []),
+  ]
+  const include: OpenAIResponsesIncludeOptions =
+    autoInclude.length === 0 ? openaiOptions?.include : [...(openaiOptions?.include ?? []), ...autoInclude]
 
   // remove unsupported settings for reasoning models
   // see https://platform.openai.com/docs/guides/reasoning#limitations
-  const dropsTemperature = modelConfig.isReasoningModel && temperature != null
-  const dropsTopP = modelConfig.isReasoningModel && topP != null
+  const dropsTemperature = modelConfig.isReasoningModel && Predicate.isNotNullish(temperature)
+  const dropsTopP = modelConfig.isReasoningModel && Predicate.isNotNullish(topP)
   // flex and priority processing need a model that supports them; the args leave out an unsupported service tier
   const unsupportedFlex = openaiOptions?.serviceTier === "flex" && !modelConfig.supportsFlexProcessing
   const unsupportedPriority = openaiOptions?.serviceTier === "priority" && !modelConfig.supportsPriorityProcessing
@@ -399,16 +421,15 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
     ...((responseFormat?.type === "json" || openaiOptions?.textVerbosity) && {
       text: {
         ...(responseFormat?.type === "json" && {
-          format:
-            responseFormat.schema != null
-              ? {
-                  type: "json_schema",
-                  strict: strictJsonSchema,
-                  name: responseFormat.name ?? "response",
-                  description: responseFormat.description,
-                  schema: responseFormat.schema,
-                }
-              : { type: "json_object" },
+          format: Predicate.isNotNullish(responseFormat.schema)
+            ? {
+                type: "json_schema",
+                strict: strictJsonSchema,
+                name: responseFormat.name ?? "response",
+                description: responseFormat.description,
+                schema: responseFormat.schema,
+              }
+            : { type: "json_object" },
         }),
         ...(openaiOptions?.textVerbosity && {
           verbosity: openaiOptions.textVerbosity,
@@ -432,12 +453,13 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
 
     // model-specific settings:
     ...(modelConfig.isReasoningModel &&
-      (openaiOptions?.reasoningEffort != null || openaiOptions?.reasoningSummary != null) && {
+      (Predicate.isNotNullish(openaiOptions?.reasoningEffort) ||
+        Predicate.isNotNullish(openaiOptions?.reasoningSummary)) && {
         reasoning: {
-          ...(openaiOptions?.reasoningEffort != null && {
+          ...(Predicate.isNotNullish(openaiOptions?.reasoningEffort) && {
             effort: openaiOptions.reasoningEffort,
           }),
-          ...(openaiOptions?.reasoningSummary != null && {
+          ...(Predicate.isNotNullish(openaiOptions?.reasoningSummary) && {
             summary: openaiOptions.reasoningSummary,
           }),
         },
@@ -461,12 +483,12 @@ const getArgs = Effect.fn("CopilotResponses.getArgs")(function* (
         }),
       ]
     : [
-        ...warnIf(openaiOptions?.reasoningEffort != null, {
+        ...warnIf(Predicate.isNotNullish(openaiOptions?.reasoningEffort), {
           type: "unsupported",
           feature: "reasoningEffort",
           details: "reasoningEffort is not supported for non-reasoning models",
         }),
-        ...warnIf(openaiOptions?.reasoningSummary != null, {
+        ...warnIf(Predicate.isNotNullish(openaiOptions?.reasoningSummary), {
           type: "unsupported",
           feature: "reasoningSummary",
           details: "reasoningSummary is not supported for non-reasoning models",
@@ -562,10 +584,10 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
           type: "reasoning",
           text,
           providerMetadata: {
-            copilot: {
+            copilot: encodeReasoningMetadata({
               itemId: part.id,
-              reasoningEncryptedContent: part.encrypted_content ?? null,
-            },
+              reasoningEncryptedContent: Option.fromNullishOr(part.encrypted_content),
+            }),
           },
         }))
       }
@@ -718,14 +740,9 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
             toolName: "file_search",
             result: {
               queries: part.queries,
-              results:
-                part.results?.map((result) => ({
-                  attributes: result.attributes,
-                  fileId: result.file_id,
-                  filename: result.filename,
-                  score: result.score,
-                  text: result.text,
-                })) ?? null,
+              results: Option.getOrNull(
+                Option.map(Option.fromNullishOr(part.results), (results) => results.map(toFileSearchResult)),
+              ),
             } satisfies typeof fileSearchOutputSchema.Type,
           },
         ]
@@ -791,10 +808,12 @@ const generateResponse = Effect.fn("CopilotResponses.generate")(function* (
     usage: {
       inputTokens: {
         total: response.usage.input_tokens,
-        noCache:
-          response.usage.input_tokens_details?.cached_tokens != null
-            ? response.usage.input_tokens - response.usage.input_tokens_details.cached_tokens
-            : undefined,
+        noCache: Option.getOrUndefined(
+          Option.map(
+            Option.fromNullishOr(response.usage.input_tokens_details?.cached_tokens),
+            (cachedTokens) => response.usage.input_tokens - cachedTokens,
+          ),
+        ),
         cacheRead: response.usage.input_tokens_details?.cached_tokens ?? undefined,
         cacheWrite: undefined,
       },
@@ -868,39 +887,23 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
     cachedInputTokens: undefined,
   }
   let logprobs = Chunk.empty<typeof LOGPROBS_SCHEMA.Type>()
-  let responseId: string | null = null
-  const ongoingToolCalls: Record<
-    number,
-    | {
-        toolName: string
-        toolCallId: string
-        codeInterpreter?: {
-          containerId: typeof ContainerID.Type
-        }
-      }
-    | undefined
-  > = {}
+  let responseId = Option.none<string>()
+  // Tool calls whose input is still streaming, by output index.
+  const ongoingToolCalls = MutableHashMap.empty<number, OngoingToolCall>()
 
   // flag that checks if there have been client-side tool calls (not executed by openai)
   let hasFunctionCall = false
 
   // Track reasoning by output_index instead of item_id
   // GitHub Copilot rotates encrypted item IDs on every event
-  const activeReasoning: Record<
-    number,
-    {
-      canonicalId: string // the item.id from output_item.added
-      encryptedContent?: string | null
-      summaryParts: number[]
-    }
-  > = {}
+  const activeReasoning = MutableHashMap.empty<number, ActiveReasoning>()
 
   // Track current active reasoning output_index for correlating summary events
-  let currentReasoningOutputIndex: number | null = null
+  let currentReasoningOutputIndex = Option.none<number>()
 
   // Track a stable text part id for the current assistant message.
   // Copilot may change item_id across text deltas; normalize to one id.
-  let currentTextId: string | null = null
+  let currentTextId = Option.none<string>()
 
   let serviceTier: string | undefined
 
@@ -930,10 +933,10 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
 
           if (isResponseOutputItemAddedChunk(value)) {
             if (value.item.type === "function_call") {
-              ongoingToolCalls[value.output_index] = {
+              MutableHashMap.set(ongoingToolCalls, value.output_index, {
                 toolName: value.item.name,
                 toolCallId: value.item.call_id,
-              }
+              })
 
               controller.enqueue({
                 type: "tool-input-start",
@@ -941,10 +944,10 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 toolName: value.item.name,
               })
             } else if (value.item.type === "web_search_call") {
-              ongoingToolCalls[value.output_index] = {
+              MutableHashMap.set(ongoingToolCalls, value.output_index, {
                 toolName: webSearchToolName ?? "web_search",
                 toolCallId: value.item.id,
-              }
+              })
 
               controller.enqueue({
                 type: "tool-input-start",
@@ -952,10 +955,10 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 toolName: webSearchToolName ?? "web_search",
               })
             } else if (value.item.type === "computer_call") {
-              ongoingToolCalls[value.output_index] = {
+              MutableHashMap.set(ongoingToolCalls, value.output_index, {
                 toolName: "computer_use",
                 toolCallId: value.item.id,
-              }
+              })
 
               controller.enqueue({
                 type: "tool-input-start",
@@ -963,13 +966,13 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 toolName: "computer_use",
               })
             } else if (value.item.type === "code_interpreter_call") {
-              ongoingToolCalls[value.output_index] = {
+              MutableHashMap.set(ongoingToolCalls, value.output_index, {
                 toolName: "code_interpreter",
                 toolCallId: value.item.id,
                 codeInterpreter: {
                   containerId: value.item.container_id,
                 },
-              }
+              })
 
               controller.enqueue({
                 type: "tool-input-start",
@@ -1000,7 +1003,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
               })
             } else if (value.item.type === "message") {
               // Start a stable text part for this assistant message
-              currentTextId = value.item.id
+              currentTextId = Option.some(value.item.id)
               controller.enqueue({
                 type: "text-start",
                 id: value.item.id,
@@ -1011,27 +1014,27 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 },
               })
             } else if (isResponseOutputItemAddedReasoningChunk(value)) {
-              activeReasoning[value.output_index] = {
+              MutableHashMap.set(activeReasoning, value.output_index, {
                 canonicalId: value.item.id,
-                encryptedContent: value.item.encrypted_content,
+                encryptedContent: Option.fromNullishOr(value.item.encrypted_content),
                 summaryParts: [0],
-              }
-              currentReasoningOutputIndex = value.output_index
+              })
+              currentReasoningOutputIndex = Option.some(value.output_index)
 
               controller.enqueue({
                 type: "reasoning-start",
                 id: `${value.item.id}:0`,
                 providerMetadata: {
-                  copilot: {
+                  copilot: encodeReasoningMetadata({
                     itemId: value.item.id,
-                    reasoningEncryptedContent: value.item.encrypted_content ?? null,
-                  },
+                    reasoningEncryptedContent: Option.fromNullishOr(value.item.encrypted_content),
+                  }),
                 },
               })
             }
           } else if (isResponseOutputItemDoneChunk(value)) {
             if (value.item.type === "function_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
               hasFunctionCall = true
 
               controller.enqueue({
@@ -1051,7 +1054,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 },
               })
             } else if (value.item.type === "web_search_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
 
               controller.enqueue({
                 type: "tool-input-end",
@@ -1073,7 +1076,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 result: { status: value.item.status },
               })
             } else if (value.item.type === "computer_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
 
               controller.enqueue({
                 type: "tool-input-end",
@@ -1098,7 +1101,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 },
               })
             } else if (value.item.type === "file_search_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
 
               controller.enqueue({
                 type: "tool-result",
@@ -1106,18 +1109,13 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 toolName: "file_search",
                 result: {
                   queries: value.item.queries,
-                  results:
-                    value.item.results?.map((result) => ({
-                      attributes: result.attributes,
-                      fileId: result.file_id,
-                      filename: result.filename,
-                      score: result.score,
-                      text: result.text,
-                    })) ?? null,
+                  results: Option.getOrNull(
+                    Option.map(Option.fromNullishOr(value.item.results), (results) => results.map(toFileSearchResult)),
+                  ),
                 } satisfies typeof fileSearchOutputSchema.Type,
               })
             } else if (value.item.type === "code_interpreter_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
 
               controller.enqueue({
                 type: "tool-result",
@@ -1137,7 +1135,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 } satisfies typeof imageGenerationOutputSchema.Type,
               })
             } else if (value.item.type === "local_shell_call") {
-              ongoingToolCalls[value.output_index] = undefined
+              MutableHashMap.remove(ongoingToolCalls, value.output_index)
 
               controller.enqueue({
                 type: "tool-call",
@@ -1158,41 +1156,41 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
                 },
               })
             } else if (value.item.type === "message") {
-              if (currentTextId) {
+              if (Option.isSome(currentTextId)) {
                 controller.enqueue({
                   type: "text-end",
-                  id: currentTextId,
+                  id: currentTextId.value,
                 })
-                currentTextId = null
+                currentTextId = Option.none()
               }
             } else if (isResponseOutputItemDoneReasoningChunk(value)) {
-              const activeReasoningPart = activeReasoning[value.output_index]
-              if (activeReasoningPart) {
-                for (const summaryIndex of activeReasoningPart.summaryParts) {
+              const activeReasoningPart = MutableHashMap.get(activeReasoning, value.output_index)
+              if (Option.isSome(activeReasoningPart)) {
+                for (const summaryIndex of activeReasoningPart.value.summaryParts) {
                   controller.enqueue({
                     type: "reasoning-end",
-                    id: `${activeReasoningPart.canonicalId}:${summaryIndex}`,
+                    id: `${activeReasoningPart.value.canonicalId}:${summaryIndex}`,
                     providerMetadata: {
-                      copilot: {
-                        itemId: activeReasoningPart.canonicalId,
-                        reasoningEncryptedContent: value.item.encrypted_content ?? null,
-                      },
+                      copilot: encodeReasoningMetadata({
+                        itemId: activeReasoningPart.value.canonicalId,
+                        reasoningEncryptedContent: Option.fromNullishOr(value.item.encrypted_content),
+                      }),
                     },
                   })
                 }
-                delete activeReasoning[value.output_index]
-                if (currentReasoningOutputIndex === value.output_index) {
-                  currentReasoningOutputIndex = null
+                MutableHashMap.remove(activeReasoning, value.output_index)
+                if (Option.exists(currentReasoningOutputIndex, (index) => index === value.output_index)) {
+                  currentReasoningOutputIndex = Option.none()
                 }
               }
             }
           } else if (isResponseFunctionCallArgumentsDeltaChunk(value)) {
-            const toolCall = ongoingToolCalls[value.output_index]
+            const toolCall = MutableHashMap.get(ongoingToolCalls, value.output_index)
 
-            if (toolCall != null) {
+            if (Option.isSome(toolCall)) {
               controller.enqueue({
                 type: "tool-input-delta",
-                id: toolCall.toolCallId,
+                id: toolCall.value.toolCallId,
                 delta: value.delta,
               })
             }
@@ -1206,46 +1204,46 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
               } satisfies typeof imageGenerationOutputSchema.Type,
             })
           } else if (isResponseCodeInterpreterCallCodeDeltaChunk(value)) {
-            const toolCall = ongoingToolCalls[value.output_index]
+            const toolCall = MutableHashMap.get(ongoingToolCalls, value.output_index)
 
-            if (toolCall != null) {
+            if (Option.isSome(toolCall)) {
               controller.enqueue({
                 type: "tool-input-delta",
-                id: toolCall.toolCallId,
+                id: toolCall.value.toolCallId,
                 // The delta is code, which is embedded in a JSON string.
                 // To escape it, we quote it as a JSON string and slice off the outer quotes.
                 delta: quoteJsonString(value.delta).slice(1, -1),
               })
             }
           } else if (isResponseCodeInterpreterCallCodeDoneChunk(value)) {
-            const toolCall = ongoingToolCalls[value.output_index]
+            const toolCall = MutableHashMap.get(ongoingToolCalls, value.output_index)
 
-            if (toolCall != null) {
+            if (Option.isSome(toolCall)) {
               controller.enqueue({
                 type: "tool-input-delta",
-                id: toolCall.toolCallId,
+                id: toolCall.value.toolCallId,
                 delta: '"}',
               })
 
               controller.enqueue({
                 type: "tool-input-end",
-                id: toolCall.toolCallId,
+                id: toolCall.value.toolCallId,
               })
 
               // immediately send the tool call after the input end:
               controller.enqueue({
                 type: "tool-call",
-                toolCallId: toolCall.toolCallId,
+                toolCallId: toolCall.value.toolCallId,
                 toolName: "code_interpreter",
                 input: encodeCodeInterpreterInput({
                   code: value.code,
-                  containerId: toolCall.codeInterpreter!.containerId,
+                  containerId: toolCall.value.codeInterpreter!.containerId,
                 }),
                 providerExecuted: true,
               })
             }
           } else if (isResponseCreatedChunk(value)) {
-            responseId = value.response.id
+            responseId = Option.some(value.response.id)
             controller.enqueue({
               type: "response-metadata",
               id: value.response.id,
@@ -1254,20 +1252,21 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
             })
           } else if (isTextDeltaChunk(value)) {
             // Ensure a text-start exists, and normalize deltas to a stable id
-            if (!currentTextId) {
-              currentTextId = value.item_id
+            const textId = Option.getOrElse(currentTextId, () => value.item_id)
+            if (Option.isNone(currentTextId)) {
               controller.enqueue({
                 type: "text-start",
-                id: currentTextId,
+                id: textId,
                 providerMetadata: {
                   copilot: { itemId: value.item_id },
                 },
               })
             }
+            currentTextId = Option.some(textId)
 
             controller.enqueue({
               type: "text-delta",
-              id: currentTextId,
+              id: textId,
               delta: value.delta,
             })
 
@@ -1275,36 +1274,40 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
               logprobs = Chunk.append(logprobs, value.logprobs)
             }
           } else if (isResponseReasoningSummaryPartAddedChunk(value)) {
-            const activeItem =
-              currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
+            const outputIndex = currentReasoningOutputIndex
+            const activeItem = Option.flatMap(outputIndex, (index) => MutableHashMap.get(activeReasoning, index))
 
             // the first reasoning start is pushed in isResponseOutputItemAddedReasoningChunk.
-            if (activeItem && value.summary_index > 0) {
-              activeItem.summaryParts.push(value.summary_index)
+            if (Option.isSome(outputIndex) && Option.isSome(activeItem) && value.summary_index > 0) {
+              MutableHashMap.set(activeReasoning, outputIndex.value, {
+                ...activeItem.value,
+                summaryParts: [...activeItem.value.summaryParts, value.summary_index],
+              })
 
               controller.enqueue({
                 type: "reasoning-start",
-                id: `${activeItem.canonicalId}:${value.summary_index}`,
+                id: `${activeItem.value.canonicalId}:${value.summary_index}`,
                 providerMetadata: {
-                  copilot: {
-                    itemId: activeItem.canonicalId,
-                    reasoningEncryptedContent: activeItem.encryptedContent ?? null,
-                  },
+                  copilot: encodeReasoningMetadata({
+                    itemId: activeItem.value.canonicalId,
+                    reasoningEncryptedContent: activeItem.value.encryptedContent,
+                  }),
                 },
               })
             }
           } else if (isResponseReasoningSummaryTextDeltaChunk(value)) {
-            const activeItem =
-              currentReasoningOutputIndex !== null ? activeReasoning[currentReasoningOutputIndex] : null
+            const activeItem = Option.flatMap(currentReasoningOutputIndex, (index) =>
+              MutableHashMap.get(activeReasoning, index),
+            )
 
-            if (activeItem) {
+            if (Option.isSome(activeItem)) {
               controller.enqueue({
                 type: "reasoning-delta",
-                id: `${activeItem.canonicalId}:${value.summary_index}`,
+                id: `${activeItem.value.canonicalId}:${value.summary_index}`,
                 delta: value.delta,
                 providerMetadata: {
                   copilot: {
-                    itemId: activeItem.canonicalId,
+                    itemId: activeItem.value.canonicalId,
                   },
                 },
               })
@@ -1351,14 +1354,14 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
 
         flush(controller) {
           // Close any dangling text part
-          if (currentTextId) {
-            controller.enqueue({ type: "text-end", id: currentTextId })
-            currentTextId = null
+          if (Option.isSome(currentTextId)) {
+            controller.enqueue({ type: "text-end", id: currentTextId.value })
+            currentTextId = Option.none()
           }
 
           const providerMetadata: SharedV3ProviderMetadata = {
             copilot: {
-              responseId,
+              responseId: encodeNullableString(responseId),
               ...(Chunk.isNonEmpty(logprobs) && { logprobs: Chunk.toArray(logprobs) }),
               ...(serviceTier !== undefined && { serviceTier }),
             },
@@ -1371,7 +1374,7 @@ const streamResponse = Effect.fn("CopilotResponses.stream")(function* (
               inputTokens: {
                 total: usage.inputTokens,
                 noCache:
-                  usage.inputTokens != null && usage.cachedInputTokens != null
+                  Predicate.isNotNullish(usage.inputTokens) && Predicate.isNotNullish(usage.cachedInputTokens)
                     ? usage.inputTokens - usage.cachedInputTokens
                     : undefined,
                 cacheRead: usage.cachedInputTokens,
