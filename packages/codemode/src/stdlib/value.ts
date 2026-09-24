@@ -58,8 +58,9 @@ export const coerceToString = (value: unknown): string => {
   }
   // Only objects remain here.
   if (Predicate.isNull(value)) return "null"
-  if (value instanceof SandboxDate)
-    return Number.isFinite(value.time) ? new Date(value.time).toISOString() : "Invalid Date"
+  if (value instanceof SandboxDate) {
+    return Option.match(DateTime.make(value.time), { onNone: () => "Invalid Date", onSome: DateTime.formatIso })
+  }
   if (value instanceof SandboxRegExp) return `/${value.regex.source}/${value.regex.flags}`
   if (value instanceof SandboxMap) return "[object Map]"
   if (value instanceof SandboxSet) return "[object Set]"
@@ -106,7 +107,7 @@ export const invokeCoercion = (
     },
   )
 }
-import { Effect, HashSet, Option, Predicate, type Result } from "effect"
+import { DateTime, Effect, HashSet, Option, Predicate, type Result } from "effect"
 import { type AstNode, CoercionFunction, InterpreterRuntimeError } from "../interpreter/model.js"
 import { copyIn, makeSafeObject, type SafeObject, type ToolRuntimeError } from "../tool-runtime.js"
 import {
