@@ -1,3 +1,4 @@
+import { MutableHashMap, Option } from "effect"
 import { Toaster, toast, type ToasterProps } from "solid-sonner"
 import { isRTL } from "@kobalte/core/i18n"
 import type { ComponentProps, JSX } from "solid-js"
@@ -152,10 +153,11 @@ export const toasterV2 = {
   },
   dismiss(toastId?: number) {
     if (toastId === undefined) {
-      activeToastV2ByKey.clear()
-      activeToastV2ById.clear()
+      MutableHashMap.clear(activeToastV2ByKey)
+      MutableHashMap.clear(activeToastV2ById)
     } else {
-      releaseToastV2(activeToastV2ById.get(toastId))
+      const active = MutableHashMap.get(activeToastV2ById, toastId)
+      if (Option.isSome(active)) releaseToastV2(active.value)
     }
     return toast.dismiss(toastId)
   },
@@ -184,8 +186,8 @@ interface ActiveToastV2 {
   actions?: JSX.Element
 }
 
-const activeToastV2ByKey = new Map<string, ActiveToastV2>()
-const activeToastV2ById = new Map<number, ActiveToastV2>()
+const activeToastV2ByKey = MutableHashMap.empty<string, ActiveToastV2>()
+const activeToastV2ById = MutableHashMap.empty<number, ActiveToastV2>()
 
 export function showToastV2(options: ToastV2Options | string) {
   const opts: ToastV2Options = typeof options === "string" ? { description: options } : options
@@ -197,23 +199,25 @@ export function showToastV2(options: ToastV2Options | string) {
     persistent: opts.persistent,
     actions: opts.actions?.map((action) => [action.label, action.variant]),
   })
-  const active = activeToastV2ByKey.get(key)
+  const active = MutableHashMap.get(activeToastV2ByKey, key)
   const toasts = toast.getToasts()
 
-  if (active && toasts.at(-1)?.id === active.id) {
-    active.options = opts
-    publishToastV2(active)
-    pulseToastV2(active.id)
-    return active.id
+  if (Option.isSome(active)) {
+    const current = active.value
+    if (toasts.at(-1)?.id === current.id) {
+      current.options = opts
+      publishToastV2(current)
+      pulseToastV2(current.id)
+      return current.id
+    }
+    if (toasts.some((item) => item.id === current.id)) toasterV2.dismiss(current.id)
+    releaseToastV2(current)
   }
-
-  if (active && toasts.some((item) => item.id === active.id)) toasterV2.dismiss(active.id)
-  releaseToastV2(active)
 
   const entry: ActiveToastV2 = { id: --toastV2Id, key, options: opts }
   entry.actions = createToastV2Actions(entry)
-  activeToastV2ByKey.set(key, entry)
-  activeToastV2ById.set(entry.id, entry)
+  MutableHashMap.set(activeToastV2ByKey, key, entry)
+  MutableHashMap.set(activeToastV2ById, entry.id, entry)
   publishToastV2(entry)
   return entry.id
 }
@@ -268,10 +272,11 @@ function pulseToastV2(toastId: number) {
   })
 }
 
-function releaseToastV2(entry: ActiveToastV2 | undefined) {
-  if (!entry) return
-  if (activeToastV2ByKey.get(entry.key) === entry) activeToastV2ByKey.delete(entry.key)
-  if (activeToastV2ById.get(entry.id) === entry) activeToastV2ById.delete(entry.id)
+function releaseToastV2(entry: ActiveToastV2) {
+  if (Option.exists(MutableHashMap.get(activeToastV2ByKey, entry.key), (item) => item === entry))
+    MutableHashMap.remove(activeToastV2ByKey, entry.key)
+  if (Option.exists(MutableHashMap.get(activeToastV2ById, entry.id), (item) => item === entry))
+    MutableHashMap.remove(activeToastV2ById, entry.id)
 }
 
 export interface ToastV2PromiseOptions<T, U = unknown> {

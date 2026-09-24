@@ -1,4 +1,5 @@
 import { Select as Kobalte } from "@kobalte/core/select"
+import { MutableHashMap, Option } from "effect"
 import { Show, createMemo, onCleanup, splitProps, type ComponentProps, type JSX } from "solid-js"
 import "./select-v2.css"
 
@@ -6,14 +7,15 @@ function groupOptions<T>(options: T[], groupBy?: (x: T) => string): { category: 
   if (!groupBy) {
     return [{ category: "", options }]
   }
-  const map = new Map<string, T[]>()
+  // MutableHashMap iterates in insertion order, so groups keep their first-seen order.
+  const groups = MutableHashMap.empty<string, T[]>()
   for (const opt of options) {
     const key = groupBy(opt)
-    const arr = map.get(key)
-    if (arr) arr.push(opt)
-    else map.set(key, [opt])
+    const arr = MutableHashMap.get(groups, key)
+    if (Option.isSome(arr)) arr.value.push(opt)
+    else MutableHashMap.set(groups, key, [opt])
   }
-  return [...map.entries()].map(([category, opts]) => ({ category, options: opts }))
+  return [...groups].map(([category, opts]) => ({ category, options: opts }))
 }
 
 const ChevronDown = () => (
