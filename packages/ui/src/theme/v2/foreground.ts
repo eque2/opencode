@@ -9,6 +9,7 @@ const greyRef = (step: number): V2ColorValue => `var(--v2-grey-${step})`
 function greyHex(primitives: Record<string, V2ColorValue>, step: number) {
   const hex = primitives[`v2-grey-${step}`]
   if (typeof hex === "string" && hex.startsWith("#")) return hex as HexColor
+  return undefined
 }
 
 function resolveGreyRef(value: V2ColorValue, primitives: Record<string, V2ColorValue>) {

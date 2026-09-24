@@ -522,7 +522,7 @@ function generateNeutralAlphaScale(neutralScale: HexColor[], isDark: boolean): H
 }
 
 function getHex(value: ColorValue | undefined): HexColor | undefined {
-  if (!value?.startsWith("#")) return
+  if (!value?.startsWith("#")) return undefined
   return value as HexColor
 }
 
