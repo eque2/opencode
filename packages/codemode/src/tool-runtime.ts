@@ -1,4 +1,18 @@
-import { Array as Arr, Cause, Clock, Data, DateTime, Effect, HashSet, Option, Predicate, Result, Schema } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Chunk,
+  Clock,
+  Data,
+  DateTime,
+  Effect,
+  HashSet,
+  Option,
+  Predicate,
+  Ref,
+  Result,
+  Schema,
+} from "effect"
 import { ToolError, toolError } from "./tool-error.js"
 import {
   decodeInput as decodeToolInput,
@@ -735,7 +749,8 @@ const resolve = <R>(
 
 export type ToolRuntime<R = never> = {
   readonly root: ToolReference
-  readonly calls: Array<ToolCall>
+  /** A snapshot of the admitted tool calls, in admission order. */
+  readonly calls: Effect.Effect<ReadonlyArray<ToolCall>>
   readonly invoke: (path: ReadonlyArray<string>, args: Array<unknown>) => Effect.Effect<unknown, unknown, R>
   /** Enumerable namespace/tool names at one node of the callable tool tree; see `namespaceKeys`. */
   readonly keys: (path: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, ToolRuntimeError>
@@ -748,7 +763,7 @@ export const make = <R>(
   searchIndex: ReadonlyArray<SearchEntry>,
   hooks?: ToolCallHooks<R>,
 ): ToolRuntime<R> => {
-  const calls: Array<ToolCall> = []
+  const callLog = Ref.makeUnsafe(Chunk.empty<ToolCall>())
   const callableTools = {
     ...tools,
     [reservedNamespace]: { search: makeSearchTool(searchIndex) },
@@ -790,21 +805,28 @@ export const make = <R>(
     )
   }
 
+  // One Ref.modify checks the limit and appends the call, so concurrent calls cannot both pass
+  // the check. The result is the call's index in the log.
   const recordCall = (call: ToolCall): Effect.Effect<number, ToolRuntimeError> =>
-    Effect.gen(function* () {
-      if (maxToolCalls !== undefined && calls.length >= maxToolCalls) {
-        return yield* new ToolRuntimeError(
-          "ToolCallLimitExceeded",
-          `Execution exceeded its tool-call limit of ${maxToolCalls}.`,
-        )
-      }
-      calls.push(call)
-      return calls.length - 1
-    })
+    Effect.flatten(
+      Ref.modify(callLog, (calls): readonly [Effect.Effect<number, ToolRuntimeError>, Chunk.Chunk<ToolCall>] =>
+        maxToolCalls !== undefined && Chunk.size(calls) >= maxToolCalls
+          ? [
+              Effect.fail(
+                new ToolRuntimeError(
+                  "ToolCallLimitExceeded",
+                  `Execution exceeded its tool-call limit of ${maxToolCalls}.`,
+                ),
+              ),
+              calls,
+            ]
+          : [Effect.succeed(Chunk.size(calls)), Chunk.append(calls, call)],
+      ),
+    )
 
   return {
     root: new ToolReference([]),
-    calls,
+    calls: Effect.map(Ref.get(callLog), Chunk.toReadonlyArray),
     keys: (path) => namespaceKeys(callableTools, path),
     invoke: (path, args) =>
       Effect.gen(function* () {

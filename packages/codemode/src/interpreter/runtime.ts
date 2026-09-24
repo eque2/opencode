@@ -3648,11 +3648,11 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
   const logged = () => (logs.length > 0 ? { logs: [...logs] } : {})
 
   if (options.code.trim().length === 0) {
-    return Effect.succeed({
+    return Effect.map(tools.calls, (toolCalls) => ({
       ok: false,
       error: { kind: "ParseError", message: "Code cannot be empty." },
-      toolCalls: tools.calls,
-    })
+      toolCalls,
+    }))
   }
 
   const operation = Effect.gen(function* () {
@@ -3666,7 +3666,7 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       ok: true,
       value: result,
       ...logged(),
-      toolCalls: tools.calls,
+      toolCalls: yield* tools.calls,
     } satisfies ExecutionResult
   }).pipe((program) => {
     const timeoutMs = limits.timeoutMs
@@ -3675,12 +3675,16 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
       Effect.timeoutOrElse({
         duration: timeoutMs,
         orElse: () =>
-          Effect.succeed({
-            ok: false,
-            error: { kind: "TimeoutExceeded", message: `Execution timed out after ${timeoutMs}ms.` },
-            ...logged(),
-            toolCalls: tools.calls,
-          } satisfies ExecutionResult),
+          Effect.map(
+            tools.calls,
+            (toolCalls) =>
+              ({
+                ok: false,
+                error: { kind: "TimeoutExceeded", message: `Execution timed out after ${timeoutMs}ms.` },
+                ...logged(),
+                toolCalls,
+              }) satisfies ExecutionResult,
+          ),
       }),
     )
   })
@@ -3689,12 +3693,16 @@ export const executeWithLimits = <const Tools extends Record<string, unknown>>(
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.interrupt
-        : Effect.succeed({
-            ok: false,
-            error: normalizeError(Cause.squash(cause)),
-            ...logged(),
-            toolCalls: tools.calls,
-          } satisfies ExecutionResult),
+        : Effect.map(
+            tools.calls,
+            (toolCalls) =>
+              ({
+                ok: false,
+                error: normalizeError(Cause.squash(cause)),
+                ...logged(),
+                toolCalls,
+              }) satisfies ExecutionResult,
+          ),
     ),
     Effect.map((result) => (limits.maxOutputBytes === undefined ? result : boundOutput(result, limits.maxOutputBytes))),
   )
