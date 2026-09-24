@@ -43,6 +43,12 @@ const Output = Schema.Struct({
 
 type Format = (typeof Input.Type)["format"]
 
+/** A fetch step failed before the tool could return content. */
+export class FetchError extends Schema.TaggedError<FetchError>()("WebFetchTool.FetchError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 const acceptHeader = (format: Format) => {
   switch (format) {
     case "markdown":
@@ -82,9 +88,15 @@ const isCloudflareChallenge = (error: unknown) => {
 const request = (url: string, format: Format, userAgent = browserUserAgent) =>
   HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers(format, userAgent)))
 
-const assertHttpUrl = (url: URL) => {
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must use http:// or https://")
-}
+const assertHttpUrl = Effect.fnUntraced(function* (input: string) {
+  const url = yield* Effect.try({
+    try: () => new URL(input),
+    catch: (cause) => new FetchError({ message: `Invalid URL: ${input}`, cause }),
+  })
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return yield* new FetchError({ message: "URL must use http:// or https://" })
+  return url
+})
 
 const execute = (http: HttpClient.HttpClient, url: string, format: Format, userAgent = browserUserAgent) =>
   http.execute(request(url, format, userAgent)).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
@@ -93,7 +105,7 @@ const collectBody = (response: HttpClientResponse.HttpClientResponse) =>
   collectBoundedResponseBody(
     response,
     MAX_RESPONSE_BYTES,
-    () => new Error(`Response too large (exceeds ${MAX_RESPONSE_BYTES} byte limit)`),
+    () => new FetchError({ message: `Response too large (exceeds ${MAX_RESPONSE_BYTES} byte limit)` }),
   )
 
 const mimeFrom = (contentType: string) => contentType.split(";", 1)[0]?.trim().toLowerCase() ?? ""
@@ -130,10 +142,7 @@ const layer = Layer.effectDiscard(
           toModelOutput: ({ output }) => [{ type: "text", text: output.output }],
           execute: (input, context) =>
             Effect.gen(function* () {
-              yield* Effect.try({
-                try: () => assertHttpUrl(new URL(input.url)),
-                catch: (error) => error,
-              })
+              yield* assertHttpUrl(input.url)
 
               yield* permission.assert({
                 action: name,
@@ -152,20 +161,20 @@ const layer = Layer.effectDiscard(
                 const contentType = response.headers["content-type"] || ""
                 const mime = mimeFrom(contentType)
                 if (isImageAttachment(mime))
-                  return yield* Effect.fail(new Error(`Unsupported fetched image content type: ${mime}`))
+                  return yield* new FetchError({ message: `Unsupported fetched image content type: ${mime}` })
                 if (!isTextualMime(mime))
-                  return yield* Effect.fail(new Error(`Unsupported fetched file content type: ${mime}`))
+                  return yield* new FetchError({ message: `Unsupported fetched file content type: ${mime}` })
                 return { body: yield* collectBody(response), contentType }
               }).pipe(
                 Effect.timeoutOrElse({
                   duration: Duration.seconds(input.timeout ?? DEFAULT_TIMEOUT_SECONDS),
-                  orElse: () => Effect.fail(new Error("Request timed out")),
+                  orElse: () => Effect.fail(new FetchError({ message: "Request timed out" })),
                 }),
               )
               const content = new TextDecoder().decode(body)
               const output = yield* Effect.try({
                 try: () => convert(content, contentType, input.format),
-                catch: (error) => error,
+                catch: (cause) => new FetchError({ message: `Unable to convert ${contentType} content`, cause }),
               })
               return {
                 url: input.url,

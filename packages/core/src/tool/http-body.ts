@@ -1,10 +1,10 @@
 import { Effect, Stream } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
 
-export const collectBoundedResponseBody = (
+export const collectBoundedResponseBody = <E>(
   response: HttpClientResponse.HttpClientResponse,
   maximumBytes: number,
-  tooLarge: () => Error,
+  tooLarge: () => E,
 ) =>
   Effect.gen(function* () {
     const contentLength = response.headers["content-length"]
