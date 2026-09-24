@@ -12,7 +12,8 @@ import { PluginTestLayer } from "./fixture"
 
 const it = testEffect(PluginTestLayer)
 
-const addPlugin = Effect.fn(function* (definition: typeof GoogleVertexAnthropicPlugin | typeof GoogleVertexPlugin) {
+// GoogleVertexPlugin and GoogleVertexAnthropicPlugin share this plugin type.
+const addPlugin = Effect.fn(function* (definition: typeof GoogleVertexPlugin) {
   const plugin = yield* PluginV2.Service
   const host = yield* PluginHost.make(plugin)
   yield* definition.effect(host)
