@@ -1,8 +1,14 @@
 import os from "os"
 import { InstallationVersion } from "../../installation/version"
-import { Effect, Option, Predicate } from "effect"
+import { Config, Effect, Option, Predicate, Redacted } from "effect"
 import { define } from "../internal"
+import { readEnvSnapshot } from "./env-snapshot"
 import { ProviderV2 } from "../../provider"
+
+const GitLabEnv = Config.all({
+  instanceUrl: Config.String("GITLAB_INSTANCE_URL").pipe(Config.withDefault("https://gitlab.com")),
+  token: Config.option(Config.Redacted("GITLAB_TOKEN")),
+})
 
 export const GitLabPlugin = define({
   id: "gitlab",
@@ -10,14 +16,13 @@ export const GitLabPlugin = define({
     yield* ctx.aisdk.sdk(
       Effect.fn(function* (evt) {
         if (evt.package !== "gitlab-ai-provider") return
+        const env = yield* readEnvSnapshot(GitLabEnv)
         const mod = yield* Effect.promise(() => import("gitlab-ai-provider"))
         evt.sdk = mod.createGitLab({
           ...evt.options,
-          instanceUrl:
-            typeof evt.options.instanceUrl === "string"
-              ? evt.options.instanceUrl
-              : (process.env.GITLAB_INSTANCE_URL ?? "https://gitlab.com"),
-          apiKey: typeof evt.options.apiKey === "string" ? evt.options.apiKey : process.env.GITLAB_TOKEN,
+          instanceUrl: typeof evt.options.instanceUrl === "string" ? evt.options.instanceUrl : env.instanceUrl,
+          // GitLabProviderSettings.apiKey is string | undefined.
+          apiKey: typeof evt.options.apiKey === "string" ? evt.options.apiKey : Option.getOrUndefined(Option.map(env.token, Redacted.value)),
           aiGatewayHeaders: {
             "User-Agent": `opencode/${InstallationVersion} gitlab-ai-provider/${mod.VERSION} (${os.platform()} ${os.release()}; ${os.arch()})`,
             "anthropic-beta": "context-1m-2025-08-07",

@@ -1,7 +1,8 @@
 import os from "os"
 import { InstallationVersion } from "../../installation/version"
-import { Effect, Option, Predicate, Schema } from "effect"
+import { Config, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { define } from "../internal"
+import { readEnvSnapshot } from "./env-snapshot"
 
 export const CloudflareAIGatewayPlugin = define({
   id: "cloudflare-ai-gateway",
@@ -11,7 +12,8 @@ export const CloudflareAIGatewayPlugin = define({
         if (evt.package !== "ai-gateway-provider") return
         if (evt.options.baseURL) return
 
-        const config = gatewayConfig(evt.options)
+        const env = yield* readEnvSnapshot(GatewayEnv)
+        const config = gatewayConfig(evt.options, env)
         if (Option.isNone(config)) return
         const { accountId, gatewayId, apiKey } = config.value
         const metadata = gatewayMetadata(evt.options)
@@ -48,20 +50,28 @@ type GatewayConfig = {
   apiKey: string
 }
 
+const GatewayEnv = Config.all({
+  accountId: Config.option(Config.String("CLOUDFLARE_ACCOUNT_ID")),
+  gatewayId: Config.option(Config.String("CLOUDFLARE_GATEWAY_ID")),
+  apiToken: Config.option(Config.Redacted("CLOUDFLARE_API_TOKEN")),
+  aigToken: Config.option(Config.Redacted("CF_AIG_TOKEN")),
+})
+
+type GatewayEnv = Config.Success<typeof GatewayEnv>
+
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
-function gatewayConfig(options: Record<string, unknown>): Option.Option<GatewayConfig> {
-  const accountId = Option.fromUndefinedOr(process.env.CLOUDFLARE_ACCOUNT_ID).pipe(
-    Option.orElse(() => stringOption(options, "accountId")),
-  )
+function gatewayConfig(options: Record<string, unknown>, env: GatewayEnv): Option.Option<GatewayConfig> {
+  const accountId = env.accountId.pipe(Option.orElse(() => stringOption(options, "accountId")))
   // Credential projection copies key metadata into options. The prompt stores the
   // gateway as gatewayId, while older config examples may use gateway.
-  const gatewayId = Option.fromUndefinedOr(process.env.CLOUDFLARE_GATEWAY_ID).pipe(
+  const gatewayId = env.gatewayId.pipe(
     Option.orElse(() => stringOption(options, "gatewayId")),
     Option.orElse(() => stringOption(options, "gateway")),
   )
-  const apiKey = Option.fromUndefinedOr(process.env.CLOUDFLARE_API_TOKEN).pipe(
-    Option.orElse(() => Option.fromUndefinedOr(process.env.CF_AIG_TOKEN)),
+  const apiKey = env.apiToken.pipe(
+    Option.orElse(() => env.aigToken),
+    Option.map(Redacted.value),
     Option.orElse(() => stringOption(options, "apiKey")),
   )
   // An empty value still wins over the next source, then counts as missing.

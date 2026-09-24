@@ -1,10 +1,18 @@
 import os from "os"
 import { InstallationVersion } from "../../installation/version"
-import { Effect, Option, Predicate } from "effect"
+import { Config, Effect, Option, Predicate, Redacted } from "effect"
 import { define } from "../internal"
+import { readEnvSnapshot } from "./env-snapshot"
 import { ProviderV2 } from "../../provider"
 
 const providerID = ProviderV2.ID.make("cloudflare-workers-ai")
+
+const WorkersEnv = Config.all({
+  accountId: Config.option(Config.String("CLOUDFLARE_ACCOUNT_ID")),
+  apiKey: Config.option(Config.Redacted("CLOUDFLARE_API_KEY")),
+})
+
+type WorkersEnv = Config.Success<typeof WorkersEnv>
 
 export const CloudflareWorkersAIPlugin = define({
   id: "cloudflare-workers-ai",
@@ -13,10 +21,11 @@ export const CloudflareWorkersAIPlugin = define({
       Effect.fn(function* (evt) {
         const item = evt.provider.get(providerID)
         if (!item) return
+        const env = yield* readEnvSnapshot(WorkersEnv)
         evt.provider.update(item.provider.id, (provider) => {
           if (provider.api.type !== "aisdk") return
           if (provider.api.url) return
-          const accountId = resolveAccountId(provider.request.body)
+          const accountId = resolveAccountId(provider.request.body, env)
           if (Option.isSome(accountId)) provider.api.url = workersEndpoint(accountId.value)
         })
       }),
@@ -26,14 +35,18 @@ export const CloudflareWorkersAIPlugin = define({
         if (evt.model.providerID !== providerID) return
         if (evt.package !== "@ai-sdk/openai-compatible") return
 
-        const accountId = resolveAccountId(evt.options)
+        const env = yield* readEnvSnapshot(WorkersEnv)
+        const accountId = resolveAccountId(evt.options, env)
         if (!hasWorkersEndpoint(evt.model.api) && Option.isNone(accountId)) return
         const mod = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
         evt.sdk = mod.createOpenAICompatible(
-          sdkOptions({
-            ...evt.options,
-            baseURL: evt.options.baseURL ?? Option.getOrUndefined(Option.map(accountId, workersEndpoint)),
-          }) as any,
+          sdkOptions(
+            {
+              ...evt.options,
+              baseURL: evt.options.baseURL ?? Option.getOrUndefined(Option.map(accountId, workersEndpoint)),
+            },
+            env,
+          ) as any,
         )
       }),
     )
@@ -46,8 +59,8 @@ export const CloudflareWorkersAIPlugin = define({
   }),
 })
 
-function resolveAccountId(options: Record<string, unknown>): Option.Option<string> {
-  return Option.fromUndefinedOr(process.env.CLOUDFLARE_ACCOUNT_ID).pipe(
+function resolveAccountId(options: Record<string, unknown>, env: WorkersEnv): Option.Option<string> {
+  return env.accountId.pipe(
     Option.orElse(() => stringOption(options, "accountId")),
     // An empty value still wins over the option, then counts as missing.
     Option.filter((id) => id !== ""),
@@ -63,11 +76,11 @@ function hasWorkersEndpoint(api: { readonly type: string; readonly url?: string 
   return api.type === "aisdk" && Boolean(api.url)
 }
 
-function sdkOptions(options: Record<string, any>) {
+function sdkOptions(options: Record<string, any>, env: WorkersEnv) {
   return {
     ...options,
-    baseURL: expandAccountId(options.baseURL),
-    apiKey: process.env.CLOUDFLARE_API_KEY ?? options.apiKey,
+    baseURL: expandAccountId(options.baseURL, env),
+    apiKey: Option.getOrElse(Option.map(env.apiKey, Redacted.value), () => options.apiKey),
     headers: {
       "User-Agent": `opencode/${InstallationVersion} cloudflare-workers-ai (${os.platform()} ${os.release()}; ${os.arch()})`,
       ...options.headers,
@@ -76,9 +89,12 @@ function sdkOptions(options: Record<string, any>) {
   }
 }
 
-function expandAccountId(baseURL: unknown) {
+function expandAccountId(baseURL: unknown, env: WorkersEnv) {
   if (typeof baseURL !== "string") return baseURL
-  return baseURL.replaceAll("${CLOUDFLARE_ACCOUNT_ID}", process.env.CLOUDFLARE_ACCOUNT_ID ?? "${CLOUDFLARE_ACCOUNT_ID}")
+  return baseURL.replaceAll(
+    "${CLOUDFLARE_ACCOUNT_ID}",
+    Option.getOrElse(env.accountId, () => "${CLOUDFLARE_ACCOUNT_ID}"),
+  )
 }
 
 function stringOption(options: Record<string, unknown>, key: string): Option.Option<string> {

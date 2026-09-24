@@ -1,6 +1,13 @@
-import { Effect } from "effect"
+import { Config, Effect } from "effect"
 import { define } from "../internal"
+import { readEnvSnapshot } from "./env-snapshot"
 import { ProviderV2 } from "../../provider"
+
+// An empty or unset variable reads as "", which the hooks treat as not configured.
+const AzureResourceName = Config.String("AZURE_RESOURCE_NAME").pipe(Config.withDefault(""))
+const CognitiveServicesResourceName = Config.String("AZURE_COGNITIVE_SERVICES_RESOURCE_NAME").pipe(
+  Config.withDefault(""),
+)
 
 function selectLanguage(sdk: any, modelID: string, useChat: boolean) {
   if (useChat && sdk.chat) return sdk.chat(modelID)
@@ -15,12 +22,12 @@ export const AzurePlugin = define({
   effect: Effect.fn(function* (ctx) {
     yield* ctx.catalog.transform(
       Effect.fn(function* (evt) {
+        const envResourceName = yield* readEnvSnapshot(AzureResourceName)
         for (const item of evt.provider.list()) {
           if (item.provider.api.type !== "aisdk") continue
           if (item.provider.api.package !== "@ai-sdk/azure") continue
           const configured = item.provider.request.body.resourceName
-          const resourceName =
-            typeof configured === "string" && configured.trim() !== "" ? configured : process.env.AZURE_RESOURCE_NAME
+          const resourceName = typeof configured === "string" && configured.trim() !== "" ? configured : envResourceName
           if (!resourceName) continue
           evt.provider.update(item.provider.id, (provider) => {
             provider.request.body.resourceName = resourceName
@@ -60,7 +67,7 @@ export const AzureCognitiveServicesPlugin = define({
   effect: Effect.fn(function* (ctx) {
     yield* ctx.catalog.transform(
       Effect.fn(function* (evt) {
-        const resourceName = process.env.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME
+        const resourceName = yield* readEnvSnapshot(CognitiveServicesResourceName)
         if (!resourceName) return
         for (const item of evt.provider.list()) {
           if (item.provider.api.type !== "aisdk") continue
