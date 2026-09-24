@@ -1,6 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { describe, expect } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -117,7 +118,7 @@ const withTool = <A, E, R>(directory: string, body: (registry: ToolRegistry.Inte
 const call = (patchText: string, id = "call-apply-patch") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "apply_patch", input: { patchText } },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "apply_patch", input: { patchText } },
 })
 
 const exists = (target: string) =>

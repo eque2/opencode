@@ -2,6 +2,7 @@ import fs from "fs/promises"
 import { realpathSync } from "node:fs"
 import path from "path"
 import { describe, expect, test } from "bun:test"
+import { ToolCallID } from "@opencode-ai/llm"
 import { Effect, Layer } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -127,7 +128,7 @@ const withTool = <A, E, R>(
 const call = (input: typeof BashTool.Input.Type, id = "call-bash") => ({
   sessionID,
   ...toolIdentity,
-  call: { type: "tool-call" as const, id, name: "bash", input },
+  call: { type: "tool-call" as const, id: ToolCallID.make(id), name: "bash", input },
 })
 
 const it = testEffect(Layer.empty)
