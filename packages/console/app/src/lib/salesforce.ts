@@ -19,17 +19,17 @@ async function login() {
     console.error("Failed to fetch Salesforce access token:", err)
   })
 
-  if (!res) return
+  if (!res) return undefined
 
   if (!res.ok) {
     console.error("Failed to fetch Salesforce access token:", res.status, await res.text())
-    return
+    return undefined
   }
 
   const data = (await res.json()) as { access_token?: string; instance_url?: string }
   if (!data.access_token) {
     console.error("Salesforce auth response did not include an access token")
-    return
+    return undefined
   }
 
   return {

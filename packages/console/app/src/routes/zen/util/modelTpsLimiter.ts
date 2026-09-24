@@ -9,7 +9,7 @@ export function createModelTpsLimiter(providers: { id: string; model: string; tp
     }),
   )
   const ids = Object.keys(tpsGoals)
-  if (ids.length === 0) return
+  if (ids.length === 0) return undefined
 
   const toInterval = (date: Date) =>
     parseInt(

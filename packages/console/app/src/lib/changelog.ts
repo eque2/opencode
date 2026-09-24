@@ -101,6 +101,7 @@ function parseHighlights(body: string): HighlightGroup[] {
           height: imgMatch[2],
         } satisfies HighlightMedia
       }
+      return undefined
     })()
 
     if (!titleMatch || !media) continue

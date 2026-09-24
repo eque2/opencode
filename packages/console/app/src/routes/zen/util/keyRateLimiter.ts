@@ -9,7 +9,7 @@ export function createRateLimiter(
   zenApiKey: string | undefined,
   request: Request,
 ) {
-  if (!zenApiKey) return
+  if (!zenApiKey) return undefined
   const dict = i18n(localeFromRequest(request))
 
   const LIMIT = rateLimit ?? 1000
