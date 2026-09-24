@@ -35,14 +35,14 @@ describe("ModelsDevPlugin", () => {
         get: () =>
           Effect.succeed({
             acme: {
-              id: "acme",
+              id: ModelsDev.ProviderID.make("acme"),
               name: "Acme",
               env: [],
               npm: "@ai-sdk/openai-compatible",
               api: "https://api.acme.test/v1",
               models: {
                 "gpt-5.4": {
-                  id: "gpt-5.4",
+                  id: ModelsDev.ModelID.make("gpt-5.4"),
                   name: "GPT-5.4",
                   family: "gpt",
                   release_date: "2026-01-01",
