@@ -36,17 +36,14 @@ type ModelOutput = typeof Output.Encoded
 
 /** Format raw search matches into the familiar concise model output. */
 export const toModelOutput = (output: ModelOutput) => {
-  const lines = output.length === 0 ? ["No files found"] : [`Found ${output.length} matches`]
-  let current = ""
-  for (const match of output) {
-    if (current !== match.entry.path) {
-      if (current) lines.push("")
-      current = match.entry.path
-      lines.push(`${match.entry.path}:`)
-    }
-    lines.push(`  Line ${match.line}: ${match.text}`)
-  }
-  return lines.join("\n")
+  const header = output.length === 0 ? "No files found" : `Found ${output.length} matches`
+  const body = output.flatMap((match, index) => {
+    const line = `  Line ${match.line}: ${match.text}`
+    const previous = index === 0 ? "" : output[index - 1].entry.path
+    if (previous === match.entry.path) return [line]
+    return previous ? ["", `${match.entry.path}:`, line] : [`${match.entry.path}:`, line]
+  })
+  return [header, ...body].join("\n")
 }
 
 /** Grep leaf that defaults its filesystem root to the active Location. */

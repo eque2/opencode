@@ -2,7 +2,7 @@ export * as ReadToolFileSystem from "./read-filesystem"
 
 import path from "path"
 import { pathToFileURL } from "url"
-import { Array, Context, Effect, HashSet, Layer, Option, Schema } from "effect"
+import { Array, Chunk, Context, Effect, HashSet, Layer, Option, Schema } from "effect"
 import { FileSystem } from "../filesystem"
 import { FSUtil } from "../fs-util"
 import { makeLocationNode } from "../effect/app-node"
@@ -192,12 +192,12 @@ export const read = Effect.fn("ReadTool.read")(function* (
       if (mime) {
         if (info.size > MAX_MEDIA_INGEST_BYTES)
           return yield* Effect.fail(new MediaIngestLimitError({ resource, maximumBytes: MAX_MEDIA_INGEST_BYTES }))
-        const chunks = [first]
+        let chunks: Chunk.Chunk<Uint8Array> = Chunk.of(first)
         let total = first.length
         while (total <= MAX_MEDIA_INGEST_BYTES) {
           const chunk = yield* file.readAlloc(Math.min(64 * 1024, MAX_MEDIA_INGEST_BYTES + 1 - total))
           if (Option.isNone(chunk)) break
-          chunks.push(chunk.value)
+          chunks = Chunk.append(chunks, chunk.value)
           total += chunk.value.length
         }
         if (total > MAX_MEDIA_INGEST_BYTES)
@@ -206,7 +206,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
           uri: pathToFileURL(real).href,
           name: path.basename(real),
           content: Buffer.concat(
-            chunks.map((chunk) => Buffer.from(chunk)),
+            Chunk.toReadonlyArray(chunks).map((chunk) => Buffer.from(chunk)),
             total,
           ).toString("base64"),
           encoding: "base64" as const,
@@ -236,7 +236,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
       }
       const offset = page.offset ?? 1
       const limit = Math.min(page.limit ?? MAX_READ_LINES, MAX_READ_LINES)
-      const lines: string[] = []
+      let lines = Chunk.empty<string>()
       const decoder = new TextDecoder("utf-8", { fatal: true })
       let pending = ""
       let discard = false
@@ -248,17 +248,17 @@ export const read = Effect.fn("ReadTool.read")(function* (
           line++
           return true
         }
-        if (lines.length >= limit || bytes >= MAX_READ_BYTES) {
+        if (Chunk.size(lines) >= limit || bytes >= MAX_READ_BYTES) {
           next = line
           return false
         }
         const text = input.length > MAX_LINE_LENGTH ? input.slice(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : input
-        const size = Buffer.byteLength(text, "utf-8") + (lines.length > 0 ? 1 : 0)
+        const size = Buffer.byteLength(text, "utf-8") + (Chunk.isEmpty(lines) ? 0 : 1)
         if (bytes + size > MAX_READ_BYTES) {
           next = line
           return false
         }
-        lines.push(text)
+        lines = Chunk.append(lines, text)
         bytes += size
         line++
         return true
@@ -288,7 +288,7 @@ export const read = Effect.fn("ReadTool.read")(function* (
       const consumeChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
         let start = 0
         while (start < chunk.length) {
-          if (lines.length >= limit || bytes >= MAX_READ_BYTES) {
+          if (Chunk.size(lines) >= limit || bytes >= MAX_READ_BYTES) {
             next = line
             return false
           }
@@ -312,10 +312,10 @@ export const read = Effect.fn("ReadTool.read")(function* (
         if (!discard) pending += tail
         if (pending) append(pending.endsWith("\r") ? pending.slice(0, -1) : pending)
       }
-      if (lines.length === 0 && offset !== 1) return yield* Effect.fail(new OffsetOutOfRangeError({ offset }))
+      if (Chunk.isEmpty(lines) && offset !== 1) return yield* Effect.fail(new OffsetOutOfRangeError({ offset }))
       return new TextPage({
         type: "text-page",
-        content: lines.join("\n"),
+        content: Chunk.join(lines, "\n"),
         mime: FSUtil.mimeType(real),
         offset,
         truncated: next !== undefined,
