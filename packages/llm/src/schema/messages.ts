@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import { ToolContent, ToolFileContent, ToolTextContent } from "@opencode-ai/schema/llm"
 import { JsonSchema, MessageRole, ProviderMetadata } from "./ids"
 import { CacheHint, CachePolicy, GenerationOptions, HttpOptions, ModelSchema, ProviderOptions } from "./options"
@@ -108,14 +108,11 @@ export const ToolOutput = Object.assign(
   },
 )
 
-const toolResultText = (value: unknown) => {
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value) ?? String(value)
-  } catch {
-    return String(value)
-  }
-}
+const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+/** Text for a `text` tool result: strings pass through, JSON-encodable values encode, anything else stringifies. */
+const toolResultText = (value: unknown) =>
+  typeof value === "string" ? value : Option.getOrElse(encodeJsonText(value), () => String(value))
 
 export const ToolCallPart = Object.assign(
   Schema.Struct({
