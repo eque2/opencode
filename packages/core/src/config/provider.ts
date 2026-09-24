@@ -24,11 +24,13 @@ class Cost extends Schema.Class<Cost>("ConfigV2.Model.Cost")({
   cache: Cache.pipe(Schema.optional),
 }) {}
 
-class Limit extends Schema.Class<Limit>("ConfigV2.Model.Limit")({
+// A plain struct, not a class: the provider config plugin spreads it over the
+// catalog model limit, and a spread would drop a class prototype.
+const Limit = Schema.Struct({
   context: Schema.Int.pipe(Schema.optional),
   input: Schema.Int.pipe(Schema.optional),
   output: Schema.Int.pipe(Schema.optional),
-}) {}
+}).annotate({ identifier: "ConfigV2.Model.Limit" })
 
 const ModelApi = Schema.Union([
   Schema.Struct({
