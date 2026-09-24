@@ -2,7 +2,7 @@ export * as ConfigExternalPlugin from "./external"
 
 import type { Plugin as EffectPlugin } from "@opencode-ai/plugin/v2/effect"
 import type { Plugin as PromisePlugin } from "@opencode-ai/plugin/v2/promise"
-import { Effect, Schema } from "effect"
+import { Effect, Order, Schema } from "effect"
 import path from "path"
 import { fileURLToPath, pathToFileURL } from "url"
 import { Config } from "../../config"
@@ -65,8 +65,7 @@ export const Plugin = define({
               symlink: true,
             })
             .pipe(Effect.orElseSucceed(() => []))
-          files.sort()
-          for (const file of files) configured.push({ package: file })
+          for (const file of files.toSorted(Order.String)) configured.push({ package: file })
         }
       }
 
