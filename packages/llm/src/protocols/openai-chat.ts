@@ -38,12 +38,12 @@ const OpenAIChatFunction = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
   parameters: JsonObject,
-})
+}).annotate({ identifier: "OpenAIChat.Function" })
 
 const OpenAIChatTool = Schema.Struct({
   type: Schema.tag("function"),
   function: OpenAIChatFunction,
-})
+}).annotate({ identifier: "OpenAIChat.Tool" })
 type OpenAIChatTool = Schema.Schema.Type<typeof OpenAIChatTool>
 
 const OpenAIChatAssistantToolCall = Schema.Struct({
@@ -53,7 +53,7 @@ const OpenAIChatAssistantToolCall = Schema.Struct({
     name: Schema.String,
     arguments: Schema.String,
   }),
-})
+}).annotate({ identifier: "OpenAIChat.AssistantToolCall" })
 type OpenAIChatAssistantToolCall = Schema.Schema.Type<typeof OpenAIChatAssistantToolCall>
 
 const OpenAIChatUserContent = Schema.Union([
@@ -105,7 +105,7 @@ export const bodyFields = {
   seed: Schema.optional(Schema.Number),
   stop: optionalArray(Schema.String),
 }
-const OpenAIChatBody = Schema.Struct(bodyFields)
+const OpenAIChatBody = Schema.Struct(bodyFields).annotate({ identifier: "OpenAIChat.Body" })
 export type OpenAIChatBody = Schema.Schema.Type<typeof OpenAIChatBody>
 
 // =============================================================================
@@ -128,35 +128,35 @@ const OpenAIChatUsage = Schema.Struct({
       reasoning_tokens: Schema.optional(Schema.Number),
     }),
   ),
-})
+}).annotate({ identifier: "OpenAIChat.Usage" })
 
 const OpenAIChatToolCallDeltaFunction = Schema.Struct({
   name: optionalNull(Schema.String),
   arguments: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIChat.ToolCallDeltaFunction" })
 
 const OpenAIChatToolCallDelta = Schema.Struct({
   index: Schema.Number,
   id: optionalNull(Schema.String),
   function: optionalNull(OpenAIChatToolCallDeltaFunction),
-})
+}).annotate({ identifier: "OpenAIChat.ToolCallDelta" })
 type OpenAIChatToolCallDelta = Schema.Schema.Type<typeof OpenAIChatToolCallDelta>
 
 const OpenAIChatDelta = Schema.Struct({
   content: optionalNull(Schema.String),
   reasoning_content: optionalNull(Schema.String),
   tool_calls: optionalNull(Schema.Array(OpenAIChatToolCallDelta)),
-})
+}).annotate({ identifier: "OpenAIChat.Delta" })
 
 const OpenAIChatChoice = Schema.Struct({
   delta: optionalNull(OpenAIChatDelta),
   finish_reason: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIChat.Choice" })
 
 const OpenAIChatEvent = Schema.Struct({
   choices: Schema.Array(OpenAIChatChoice),
   usage: optionalNull(OpenAIChatUsage),
-})
+}).annotate({ identifier: "OpenAIChat.Event" })
 type OpenAIChatEvent = Schema.Schema.Type<typeof OpenAIChatEvent>
 type OpenAIChatRequestMessage = LLMRequest["messages"][number]
 

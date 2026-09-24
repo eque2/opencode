@@ -35,35 +35,35 @@ export const PATH = "/responses"
 const OpenAIResponsesInputText = Schema.Struct({
   type: Schema.tag("input_text"),
   text: Schema.String,
-})
+}).annotate({ identifier: "OpenAIResponses.InputText" })
 const OpenAIResponsesInputImage = Schema.Struct({
   type: Schema.tag("input_image"),
   image_url: Schema.String,
-})
+}).annotate({ identifier: "OpenAIResponses.InputImage" })
 const OpenAIResponsesInputContent = Schema.Union([OpenAIResponsesInputText, OpenAIResponsesInputImage])
 type OpenAIResponsesInputContent = Schema.Schema.Type<typeof OpenAIResponsesInputContent>
 
 const OpenAIResponsesOutputText = Schema.Struct({
   type: Schema.tag("output_text"),
   text: Schema.String,
-})
+}).annotate({ identifier: "OpenAIResponses.OutputText" })
 
 const OpenAIResponsesReasoningSummaryText = Schema.Struct({
   type: Schema.tag("summary_text"),
   text: Schema.String,
-})
+}).annotate({ identifier: "OpenAIResponses.ReasoningSummaryText" })
 
 const OpenAIResponsesReasoningItem = Schema.Struct({
   type: Schema.tag("reasoning"),
   id: Schema.optionalKey(Schema.String),
   summary: Schema.Array(OpenAIResponsesReasoningSummaryText),
   encrypted_content: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIResponses.ReasoningItem" })
 
 const OpenAIResponsesItemReference = Schema.Struct({
   type: Schema.tag("item_reference"),
   id: Schema.String,
-})
+}).annotate({ identifier: "OpenAIResponses.ItemReference" })
 
 // `function_call_output.output` accepts either a plain string or an ordered
 // array of content items so tools can return images in addition to text.
@@ -111,7 +111,7 @@ const OpenAIResponsesTool = Schema.Struct({
   description: Schema.String,
   parameters: JsonObject,
   strict: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "OpenAIResponses.Tool" })
 type OpenAIResponsesTool = Schema.Schema.Type<typeof OpenAIResponsesTool>
 
 const OpenAIResponsesToolChoice = Schema.Union([
@@ -152,7 +152,7 @@ const OpenAIResponsesCoreFields = {
 const OpenAIResponsesBody = Schema.Struct({
   ...OpenAIResponsesCoreFields,
   stream: Schema.Literal(true),
-})
+}).annotate({ identifier: "OpenAIResponses.Body" })
 export type OpenAIResponsesBody = Schema.Schema.Type<typeof OpenAIResponsesBody>
 
 const OpenAIResponsesWebSocketMessage = Schema.StructWithRest(
@@ -171,7 +171,7 @@ const OpenAIResponsesUsage = Schema.Struct({
   output_tokens: Schema.optional(Schema.Number),
   output_tokens_details: optionalNull(Schema.Struct({ reasoning_tokens: Schema.optional(Schema.Number) })),
   total_tokens: Schema.optional(Schema.Number),
-})
+}).annotate({ identifier: "OpenAIResponses.Usage" })
 type OpenAIResponsesUsage = Schema.Schema.Type<typeof OpenAIResponsesUsage>
 
 const OpenAIResponsesStreamItem = Schema.Struct({
@@ -195,7 +195,7 @@ const OpenAIResponsesStreamItem = Schema.Struct({
   output: Schema.optional(Schema.Unknown),
   error: Schema.optional(Schema.Unknown),
   encrypted_content: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIResponses.StreamItem" })
 type OpenAIResponsesStreamItem = Schema.Schema.Type<typeof OpenAIResponsesStreamItem>
 
 // OpenAI Responses surfaces provider failures in two related shapes. The
@@ -207,7 +207,7 @@ const OpenAIResponsesErrorPayload = Schema.Struct({
   code: optionalNull(Schema.String),
   message: optionalNull(Schema.String),
   param: optionalNull(Schema.String),
-})
+}).annotate({ identifier: "OpenAIResponses.ErrorPayload" })
 
 const OpenAIResponsesEvent = Schema.Struct({
   type: Schema.String,
@@ -230,7 +230,7 @@ const OpenAIResponsesEvent = Schema.Struct({
   code: Schema.optional(Schema.String),
   message: Schema.optional(Schema.String),
   param: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "OpenAIResponses.Event" })
 type OpenAIResponsesEvent = Schema.Schema.Type<typeof OpenAIResponsesEvent>
 
 interface ParserState {
