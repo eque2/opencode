@@ -81,6 +81,7 @@ const resolveV2Token = (tokens: ResolvedV2Theme, key: string) => {
     }
     current = tokens[match[1]]
   }
+  return undefined
 }
 
 const useTerminalUiBindings = (input: {
