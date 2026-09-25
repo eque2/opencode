@@ -1,10 +1,12 @@
 import { onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
-import { MutableHashMap, MutableHashSet, Option, Schema, SchemaGetter } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Config, Duration, Effect, Fiber, MutableHashMap, MutableHashSet, Option, Schema, SchemaGetter } from "effect"
 import { isRecord } from "../util/record"
 import { useTuiPaths } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { editorIntegration } from "../editor"
+import { isZedTerminal } from "../editor-zed"
 
 const MCP_PROTOCOL_VERSION = "2025-11-25"
 
@@ -115,47 +117,62 @@ type EditorConnection = {
 
 export type EditorIntegration = Readonly<{
   connection?(directory: string): EditorConnection | undefined
-  selection?(directory: string): Promise<unknown>
+  /** Reads the editor selection for a directory, for example from the Zed database. A failure keeps the last selection. */
+  selection?(directory: string): Effect.Effect<unknown, unknown>
 }>
+
+// An empty variable counts as not set, as the former `||` chain did.
+const setVariable = (name: string) =>
+  Config.option(Config.String(name)).pipe(Config.map(Option.filter((value: string) => value.length > 0)))
+
+// CLAUDE_CODE_SSE_PORT wins over OPENCODE_EDITOR_SSE_PORT. A value that does not parse to a port is ignored.
+const EditorPortEnv = Config.all([setVariable("CLAUDE_CODE_SSE_PORT"), setVariable("OPENCODE_EDITOR_SSE_PORT")]).pipe(
+  Config.map(([claude, opencode]) => Option.flatMap(Option.orElse(claude, () => opencode), parsePort)),
+)
 
 export const { use: useEditorContext, provider: EditorContextProvider } = createSimpleContext({
   name: "EditorContext",
   init: (props: { integration?: EditorIntegration; WebSocketImpl?: typeof WebSocket }) => {
     const paths = useTuiPaths()
     const editor = props.integration ?? editorIntegration
-    const value = process.env.CLAUDE_CODE_SSE_PORT || process.env.OPENCODE_EDITOR_SSE_PORT
-    const parsedPort = value ? Number.parseInt(value, 10) : undefined
-    const port =
-      parsedPort && Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : undefined
-    const zedTerminal = process.env.ZED_TERM === "true" || process.env.TERM_PROGRAM?.toLowerCase() === "zed"
     const mentionListeners = MutableHashSet.empty<(mention: EditorMention) => void>()
     const WebSocketImpl = props.WebSocketImpl ?? WebSocket
     const [store, setStore] = createStore<{
       status: "disabled" | "connecting" | "connected"
-      selection: EditorSelection | undefined
+      selection: Option.Option<EditorSelection>
       selectionSent: boolean
-      server: EditorServerInfo | undefined
+      server: Option.Option<EditorServerInfo>
+      // The configured editor port and the Zed terminal flag. The provider reads both from the environment on mount.
+      port: Option.Option<number>
+      zedTerminal: boolean
     }>({
       status: "disabled",
-      selection: undefined,
+      selection: Option.none(),
       selectionSent: false,
-      server: undefined,
+      server: Option.none(),
+      port: Option.none(),
+      zedTerminal: false,
     })
 
-    let socket: WebSocket | undefined
+    let socket: Option.Option<WebSocket> = Option.none()
     let closed = false
-    let reconnect: ReturnType<typeof setTimeout> | undefined
+    // The fiber that connects, or that waits to connect again. A new connection interrupts it, as
+    // clearTimeout cancelled the former reconnect timer.
+    let connecting: Option.Option<Fiber.Fiber<void>> = Option.none()
     let attempt = 0
     let requestID = 0
-    let zedSelection: Promise<void> | undefined
-    let lastZedSelectionKey: string | undefined
+    // True while a Zed selection read runs, so that two reads do not overlap.
+    let zedSelectionRunning = false
+    let lastZedSelectionKey: Option.Option<string> = Option.none()
     let directory = paths.cwd
     let preserveSelectionOnReconnect = false
     // The method of each request that waits for its response, by request id.
     const pending = MutableHashMap.empty<number, string>()
 
-    const setSelection = (selection: EditorSelection | undefined) => {
-      const changed = editorSelectionKey(selection) !== editorSelectionKey(store.selection)
+    const isCurrentSocket = (candidate: WebSocket) => Option.exists(socket, (current) => current === candidate)
+
+    const setSelection = (selection: Option.Option<EditorSelection>) => {
+      const changed = selectionKey(selection) !== selectionKey(store.selection)
       setStore("selection", selection)
       if (changed) setStore("selectionSent", false)
     }
@@ -165,13 +182,14 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
         preserveSelectionOnReconnect = false
         return
       }
-      if (options?.resetZedSelectionKey) lastZedSelectionKey = undefined
-      setSelection(undefined)
+      if (options?.resetZedSelectionKey) lastZedSelectionKey = Option.none()
+      setSelection(Option.none())
     }
 
     const send = (payload: Omit<JsonRpcOutgoing, "jsonrpc">) => {
-      if (!socket || socket.readyState !== 1) return
-      socket.send(encodeJsonRpcOutgoing({ jsonrpc: "2.0", ...payload }))
+      const current = socket
+      if (Option.isNone(current) || current.value.readyState !== 1) return
+      current.value.send(encodeJsonRpcOutgoing({ jsonrpc: "2.0", ...payload }))
     }
 
     const request = (method: string, params: Schema.Json) => {
@@ -180,52 +198,41 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       send({ id: requestID, method, params })
     }
 
-    const connect = () => {
-      if (closed) return
+    const applyZedSelection = (result: unknown) => {
+      if (closed || Option.isSome(socket)) return
+      if (!isRecord(result) || result.type === "unavailable") return
+      const selection = result.type === "selection" ? decodeEditorSelection(result.selection) : Option.none()
+      const key = selectionKey(selection)
+      if (Option.contains(lastZedSelectionKey, key)) return
+      lastZedSelectionKey = Option.some(key)
+      setSelection(selection)
+      setStore("status", Option.isSome(selection) ? "connected" : "disabled")
+    }
 
-      const connection = resolveEditorConnection(directory, port, editor.connection)
-      if (!connection) {
-        if (!zedTerminal) {
-          setStore("status", "disabled")
-          scheduleReconnect()
-          return
-        }
-        if (!editor.selection) {
-          setStore("status", "disabled")
-          scheduleReconnect()
-          return
-        }
+    const readZedSelection = () => {
+      if (zedSelectionRunning || !editor.selection) return
+      zedSelectionRunning = true
+      Effect.runFork(
+        editor.selection(directory).pipe(
+          Effect.tap((result) => Effect.sync(() => applyZedSelection(result))),
+          // Keep the last known Zed selection for transient polling failures.
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              zedSelectionRunning = false
+            }),
+          ),
+        ),
+      )
+    }
 
-        zedSelection ??= editor
-          .selection(directory)
-          .then((result) => {
-            if (closed || socket) return
-            if (!isRecord(result) || result.type === "unavailable") return
-            const decoded = result.type === "selection" ? decodeEditorSelection(result.selection) : Option.none()
-            const selection = Option.getOrUndefined(decoded)
-            const key = editorSelectionKey(selection)
-            if (key !== lastZedSelectionKey) {
-              lastZedSelectionKey = key
-              setSelection(selection)
-              setStore("status", selection ? "connected" : "disabled")
-            }
-          })
-          .catch(() => {
-            // Keep the last known Zed selection for transient polling failures.
-          })
-          .finally(() => {
-            zedSelection = undefined
-          })
-        scheduleZedPoll()
-        return
-      }
-
+    const openSocket = (connection: EditorConnection) => {
       setStore("status", "connecting")
       const current = openEditorSocket(connection, WebSocketImpl)
-      socket = current
+      socket = Option.some(current)
 
       current.addEventListener("open", () => {
-        if (socket !== current) {
+        if (!isCurrentSocket(current)) {
           current.close()
           return
         }
@@ -246,7 +253,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
         const selection = message.method === "selection_changed" ? decodeEditorSelection(message.params) : Option.none()
         if (Option.isSome(selection)) {
-          setSelection({ ...selection.value, source: "websocket" })
+          setSelection(Option.some({ ...selection.value, source: "websocket" }))
           return
         }
 
@@ -266,36 +273,67 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
         const initialize = method.value === "initialize" ? decodeEditorServerInfo(message.result) : Option.none()
         if (Option.isSome(initialize)) {
-          setStore("server", initialize.value)
+          setStore("server", initialize)
           send({ method: "notifications/initialized" })
           return
         }
       })
 
       current.addEventListener("close", () => {
-        if (socket !== current) return
+        if (!isCurrentSocket(current)) return
 
-        socket = undefined
+        socket = Option.none()
         MutableHashMap.clear(pending)
         if (closed) return
 
         setStore("status", "connecting")
-        scheduleReconnect()
+        runConnect(Effect.sleep(nextReconnectDelay()).pipe(Effect.andThen(connectUntilOpen)))
       })
     }
 
-    const scheduleReconnect = () => {
-      if (closed) return
-      if (reconnect) clearTimeout(reconnect)
+    // Backs off 1, 2, 4 and 8 seconds, then 10 seconds, until a socket opens.
+    const nextReconnectDelay = () => {
       attempt += 1
-      const delay = Math.min(1000 * 2 ** (attempt - 1), 10_000)
-      reconnect = setTimeout(connect, delay)
+      return Duration.millis(Math.min(1000 * 2 ** (attempt - 1), 10_000))
     }
 
-    const scheduleZedPoll = () => {
-      if (closed) return
-      if (reconnect) clearTimeout(reconnect)
-      reconnect = setTimeout(connect, 1000)
+    // Tries once to reach the editor. The result is the delay before the next try, or none when a socket
+    // holds the connection. In a Zed terminal with no socket, each try reads the Zed selection.
+    const connectOnce = Effect.gen(function* () {
+      const connection = resolveEditorConnection(directory, store.port, editor.connection)
+      if (Option.isSome(connection)) {
+        openSocket(connection.value)
+        return Option.none<Duration.Duration>()
+      }
+      if (!store.zedTerminal || !editor.selection) {
+        setStore("status", "disabled")
+        return Option.some(nextReconnectDelay())
+      }
+      readZedSelection()
+      return Option.some(Duration.seconds(1))
+    })
+
+    // Connects, then tries again after each delay until a socket holds the connection or the context closes.
+    const connectUntilOpen: Effect.Effect<void> = Effect.suspend(() => {
+      if (closed) return Effect.void
+      return connectOnce.pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.void,
+            onSome: (delay) => Effect.sleep(delay).pipe(Effect.andThen(connectUntilOpen)),
+          }),
+        ),
+      )
+    })
+
+    const cancelConnect = () => {
+      if (Option.isSome(connecting)) Effect.runFork(Fiber.interrupt(connecting.value))
+      connecting = Option.none()
+    }
+
+    const runConnect = (effect: Effect.Effect<void>) => {
+      cancelConnect()
+      connecting = Option.some(Effect.runFork(effect))
     }
 
     const reconnectWithDirectory = (nextDirectory?: string) => {
@@ -307,52 +345,61 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       directory = resolved
       attempt = 0
       MutableHashMap.clear(pending)
-      if (reconnect) clearTimeout(reconnect)
-      reconnect = undefined
-      if (socket) {
-        const current = socket
-        socket = undefined
+      cancelConnect()
+      if (Option.isSome(socket)) {
+        const current = socket.value
+        socket = Option.none()
         current.close()
       }
       setStore("status", "disabled")
-      setStore("server", undefined)
-      connect()
+      setStore("server", Option.none())
+      runConnect(connectUntilOpen)
     }
 
     onMount(() => {
-      connect()
+      runConnect(
+        Effect.gen(function* () {
+          const port = yield* readEnvSnapshot(EditorPortEnv)
+          const zedTerminal = yield* isZedTerminal()
+          setStore({ port, zedTerminal })
+          yield* connectUntilOpen
+        }),
+      )
 
       onCleanup(() => {
         closed = true
-        if (reconnect) clearTimeout(reconnect)
-        socket?.close()
+        cancelConnect()
+        if (Option.isSome(socket)) socket.value.close()
       })
     })
 
     return {
       enabled() {
-        return Boolean(resolveEditorConnection(directory, port, editor.connection) || (zedTerminal && editor.selection))
+        return (
+          Option.isSome(resolveEditorConnection(directory, store.port, editor.connection)) ||
+          (store.zedTerminal && Boolean(editor.selection))
+        )
       },
       connected() {
         return store.status === "connected"
       },
       selection() {
-        return store.selection
+        return Option.getOrUndefined(store.selection)
       },
       clearSelection() {
-        lastZedSelectionKey = undefined
-        zedSelection = undefined
-        setSelection(undefined)
+        lastZedSelectionKey = Option.none()
+        zedSelectionRunning = false
+        setSelection(Option.none())
       },
       preserveSelectionFromNewSession() {
         preserveSelectionOnReconnect = true
       },
       markSelectionSent() {
-        if (!store.selection) return
+        if (Option.isNone(store.selection)) return
         setStore("selectionSent", true)
       },
       labelState(): EditorLabelState {
-        if (!store.selection) return "none"
+        if (Option.isNone(store.selection)) return "none"
         return store.selectionSent ? "sent" : "pending"
       },
       onMention(listener: (mention: EditorMention) => void) {
@@ -362,7 +409,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
         }
       },
       server() {
-        return store.server
+        return Option.getOrUndefined(store.server)
       },
       reconnect(directory?: string) {
         reconnectWithDirectory(directory)
@@ -371,26 +418,36 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
   },
 })
 
-function resolveEditorConnection(
-  directory: string,
-  port: number | undefined,
-  discover: ((directory: string) => EditorConnection | undefined) | undefined,
-): EditorConnection | undefined {
-  if (port) {
-    return {
-      url: `ws://127.0.0.1:${port}`,
-      source: `env:${port}`,
-    }
-  }
-
-  return discover?.(directory)
+function parsePort(value: string): Option.Option<number> {
+  const port = Number.parseInt(value, 10)
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? Option.some(port) : Option.none()
 }
 
+function resolveEditorConnection(
+  directory: string,
+  port: Option.Option<number>,
+  discover: ((directory: string) => EditorConnection | undefined) | undefined,
+): Option.Option<EditorConnection> {
+  if (Option.isSome(port)) {
+    return Option.some({
+      url: `ws://127.0.0.1:${port.value}`,
+      source: `env:${port.value}`,
+    })
+  }
+
+  return Option.fromNullishOr(discover?.(directory))
+}
+
+/** A key that differs when the file, a range or its text differs. An empty key means no selection. */
 export function editorSelectionKey(selection: EditorSelection | undefined) {
-  if (!selection) return ""
+  return selectionKey(Option.fromNullishOr(selection))
+}
+
+function selectionKey(selection: Option.Option<EditorSelection>) {
+  if (Option.isNone(selection)) return ""
   return [
-    selection.filePath,
-    ...selection.ranges.flatMap((range) => [
+    selection.value.filePath,
+    ...selection.value.ranges.flatMap((range) => [
       range.selection.start.line,
       range.selection.start.character,
       range.selection.end.line,

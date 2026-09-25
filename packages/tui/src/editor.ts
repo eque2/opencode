@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import type { Stream } from "node:stream"
-import { Effect } from "effect"
+import type { EditorIntegration } from "./context/editor"
 import { resolveActiveZedSelection } from "./editor-zed"
 
 type EditorStdio = "inherit" | "pipe" | "ignore" | number | Stream
@@ -96,7 +96,7 @@ export function discoverEditorConnection(directory: string) {
   }
 }
 
-export const editorIntegration = {
+export const editorIntegration: EditorIntegration = {
   connection: discoverEditorConnection,
-  selection: (directory: string) => Effect.runPromise(resolveActiveZedSelection(directory)),
+  selection: resolveActiveZedSelection,
 }
