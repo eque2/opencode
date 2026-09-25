@@ -1,5 +1,5 @@
 import { createEffect, onCleanup, type JSX } from "solid-js"
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
@@ -16,6 +16,8 @@ import { useLayout } from "@/context/layout"
 import type { LineComment } from "@/context/comments"
 
 export type DiffStyle = "unified" | "split"
+
+class ReviewFileReadError extends Data.TaggedError("SessionReviewTab.FileReadError")<{ readonly cause: unknown }> {}
 
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 
@@ -57,10 +59,15 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
 
   const readFile = (path: string) =>
     Effect.runPromise(
-      Effect.tryPromise({ try: () => sdk().client.file.read({ path }), catch: (error) => error }).pipe(
+      Effect.tryPromise({
+        try: () => sdk().client.file.read({ path }),
+        catch: (cause) => new ReviewFileReadError({ cause }),
+      }).pipe(
         Effect.map((x) => Option.fromNullishOr(x.data)),
         Effect.catch((error) =>
-          Effect.logDebug("[session-review] failed to read file", { path, error }).pipe(Effect.as(Option.none())),
+          Effect.logDebug("[session-review] failed to read file", { path, error: error.cause }).pipe(
+            Effect.as(Option.none()),
+          ),
         ),
         Effect.map(Option.getOrUndefined),
       ),

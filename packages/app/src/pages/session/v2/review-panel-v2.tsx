@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -33,6 +33,8 @@ import type { ReviewPanelV2State } from "@/pages/session/v2/review-panel-v2-stat
 import { applyFileListKeyDown, SessionFileListV2 } from "@/pages/session/v2/session-file-list-v2"
 
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
+
+class ReviewFileReadError extends Data.TaggedError("ReviewPanelV2.FileReadError")<{ readonly cause: unknown }> {}
 
 export type ReviewPanelV2Props = {
   title?: JSX.Element
@@ -111,10 +113,15 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
 
   const readFile = (path: string) =>
     Effect.runPromise(
-      Effect.tryPromise({ try: () => sdk().client.file.read({ path }), catch: (error) => error }).pipe(
+      Effect.tryPromise({
+        try: () => sdk().client.file.read({ path }),
+        catch: (cause) => new ReviewFileReadError({ cause }),
+      }).pipe(
         Effect.map((x) => Option.fromNullishOr(x.data)),
         Effect.catch((error) =>
-          Effect.logDebug("[session-review-v2] failed to read file", { path, error }).pipe(Effect.as(Option.none())),
+          Effect.logDebug("[session-review-v2] failed to read file", { path, error: error.cause }).pipe(
+            Effect.as(Option.none()),
+          ),
         ),
         Effect.map(Option.getOrUndefined),
       ),

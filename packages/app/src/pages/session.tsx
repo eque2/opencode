@@ -20,7 +20,7 @@ import {
   type ParentProps,
   untrack,
 } from "solid-js"
-import { Array as Arr, DateTime, Effect, MutableHashSet, Option, Predicate } from "effect"
+import { Array as Arr, Data, DateTime, Effect, MutableHashSet, Option, Predicate } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -109,6 +109,9 @@ import { createSessionLineage } from "./session/session-lineage"
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
 const emptyFollowups: FollowupItem[] = []
+
+// Keeps the raw SDK rejection, so the toast and the debug log see the same value as before.
+class SessionRequestError extends Data.TaggedError("SessionPage.RequestError")<{ readonly cause: unknown }> {}
 
 type ChangeMode = "git" | "branch" | "turn"
 type VcsMode = "git" | "branch"
@@ -731,11 +734,13 @@ export default function Page() {
                     location: { directory: sdk().directory },
                     mode: mode === "git" ? "working" : mode,
                   }),
-                catch: (error) => error,
+                catch: (cause) => new SessionRequestError({ cause }),
               }).pipe(
                 Effect.map((result) => result.data),
                 Effect.catch((error) =>
-                  Effect.logDebug("[session-review] failed to load vcs diff", { mode, error }).pipe(Effect.as([])),
+                  Effect.logDebug("[session-review] failed to load vcs diff", { mode, error: error.cause }).pipe(
+                    Effect.as([]),
+                  ),
                 ),
               ),
             )
@@ -793,13 +798,18 @@ export default function Page() {
                   })
                   .then((result) => result.data),
             }),
-          catch: (error) => error,
+          catch: (cause) => new SessionRequestError({ cause }),
         }).pipe(Effect.map((diffs) => valid(diffs.find((diff) => diff.file === file))))
 
       if (directory !== root) {
         const scoped = yield* request(directory).pipe(
           Effect.catch((error) =>
-            Effect.logDebug("[session-review] failed to load scoped vcs diff", { mode, file, directory, error }).pipe(
+            Effect.logDebug("[session-review] failed to load scoped vcs diff", {
+              mode,
+              file,
+              directory,
+              error: error.cause,
+            }).pipe(
               Effect.as(Option.none<VcsFileDiff>()),
             ),
           ),
@@ -808,7 +818,12 @@ export default function Page() {
       }
       return yield* request(root, 3).pipe(
         Effect.catch((error) =>
-          Effect.logDebug("[session-review] failed to load bounded vcs diff", { mode, file, root, error }).pipe(
+          Effect.logDebug("[session-review] failed to load bounded vcs diff", {
+            mode,
+            file,
+            root,
+            error: error.cause,
+          }).pipe(
             Effect.as(Option.none<VcsFileDiff>()),
           ),
         ),
@@ -1814,12 +1829,12 @@ export default function Page() {
                 draft: item,
                 optimisticBusy: item.sessionDirectory === sdk().directory,
               }),
-            catch: (error) => error,
+            catch: (cause) => new SessionRequestError({ cause }),
           }).pipe(
             Effect.catch((err) =>
               Effect.sync(() => {
                 setFollowup("failed", input.sessionID, input.id)
-                fail(err)
+                fail(err.cause)
                 return false
               }),
             ),
@@ -1929,11 +1944,11 @@ export default function Page() {
           },
           request: () =>
             halt(input.sessionID).pipe(
-              Effect.andThen(Effect.tryPromise({ try: () => session.revert.stage(input), catch: (error) => error })),
+              Effect.andThen(Effect.tryPromise({ try: () => session.revert.stage(input), catch: (cause) => new SessionRequestError({ cause }) })),
             ),
           complete: () => {},
           rollback: () => roll(input.sessionID, Option.fromNullishOr(last), target),
-          fail,
+          fail: (error) => fail(error.cause),
         }),
       )
     },
@@ -1973,17 +1988,17 @@ export default function Page() {
                   !next
                     ? Effect.tryPromise({
                         try: () => session.revert.clear({ sessionID }),
-                        catch: (error) => error,
+                        catch: (cause) => new SessionRequestError({ cause }),
                       }).pipe(Effect.asVoid)
                     : Effect.tryPromise({
                         try: () => session.revert.stage({ sessionID, messageID: next.id }),
-                        catch: (error) => error,
+                        catch: (cause) => new SessionRequestError({ cause }),
                       }).pipe(Effect.asVoid),
                 ),
               ),
             complete: () => {},
             rollback: () => roll(sessionID, Option.fromNullishOr(last), target),
-            fail,
+            fail: (error) => fail(error.cause),
           })
         }),
       ),
