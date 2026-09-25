@@ -1,3 +1,4 @@
+import { DateTime } from "effect"
 import { useDialog } from "../ui/dialog"
 import { DialogSelect } from "../ui/dialog-select"
 import { createMemo, createSignal } from "solid-js"
@@ -7,7 +8,7 @@ import { usePromptStash, type StashEntry } from "./prompt/stash"
 import { useCommandShortcut } from "../keymap"
 
 function getRelativeTime(timestamp: number): string {
-  const now = Date.now()
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
   const diff = now - timestamp
   const seconds = Math.floor(diff / 1000)
   const minutes = Math.floor(seconds / 60)
