@@ -21,6 +21,11 @@ export const Parameters = Schema.Struct({
   timeout: Schema.optional(Schema.Number).annotate({ description: "Optional timeout in seconds (max 120)" }),
 })
 
+/** A fetch the tool refuses or cannot complete: its message tells the model why. */
+export class FetchError extends Schema.TaggedError<FetchError>()("WebFetchTool.FetchError", {
+  message: Schema.String,
+}) {}
+
 export const WebFetchTool = Tool.define(
   "webfetch",
   Effect.gen(function* () {
@@ -33,7 +38,7 @@ export const WebFetchTool = Tool.define(
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
-            throw new Error("URL must start with http:// or https://")
+            return yield* new FetchError({ message: "URL must start with http:// or https://" })
           }
 
           yield* ctx.ask({
@@ -95,12 +100,12 @@ export const WebFetchTool = Tool.define(
           // Check content length
           const contentLength = response.headers["content-length"]
           if (contentLength && parseInt(contentLength) > MAX_RESPONSE_SIZE) {
-            throw new Error("Response too large (exceeds 5MB limit)")
+            return yield* new FetchError({ message: "Response too large (exceeds 5MB limit)" })
           }
 
           const arrayBuffer = yield* response.arrayBuffer
           if (arrayBuffer.byteLength > MAX_RESPONSE_SIZE) {
-            throw new Error("Response too large (exceeds 5MB limit)")
+            return yield* new FetchError({ message: "Response too large (exceeds 5MB limit)" })
           }
 
           const contentType = response.headers["content-type"] || ""

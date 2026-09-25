@@ -34,6 +34,11 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+/** An lsp call the tool cannot serve: its message tells the model why. */
+export class LspError extends Schema.TaggedError<LspError>()("LspTool.LspError", {
+  message: Schema.String,
+}) {}
+
 export const LspTool = Tool.define(
   "lsp",
   Effect.gen(function* () {
@@ -71,10 +76,10 @@ export const LspTool = Tool.define(
           const title = detail ? `${args.operation} ${detail}` : args.operation
 
           const exists = yield* fs.existsSafe(file)
-          if (!exists) throw new Error(`File not found: ${file}`)
+          if (!exists) return yield* new LspError({ message: `File not found: ${file}` })
 
           const available = yield* lsp.hasClients(file)
-          if (!available) throw new Error("No LSP server available for this file type.")
+          if (!available) return yield* new LspError({ message: "No LSP server available for this file type." })
 
           yield* lsp.touchFile(file, "document")
 

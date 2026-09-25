@@ -17,6 +17,11 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+/** A grep call the tool refuses: its message tells the model how to correct the call. */
+export class GrepError extends Schema.TaggedError<GrepError>()("GrepTool.GrepError", {
+  message: Schema.String,
+}) {}
+
 export const GrepTool = Tool.define(
   "grep",
   Effect.gen(function* () {
@@ -33,7 +38,7 @@ export const GrepTool = Tool.define(
             output: "No files found",
           }
           if (!params.pattern) {
-            throw new Error("pattern is required")
+            return yield* new GrepError({ message: "pattern is required" })
           }
 
           yield* ctx.ask({

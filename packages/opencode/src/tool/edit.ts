@@ -4,7 +4,7 @@
 // https://github.com/cline/cline/blob/main/evals/diff-edits/diff-apply/diff-06-26-25.ts
 
 import * as path from "path"
-import { Effect, Schema, Semaphore } from "effect"
+import { Effect, Result, Schema, Semaphore } from "effect"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -18,6 +18,11 @@ import { Snapshot } from "@/snapshot"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as Bom from "@/util/bom"
+
+/** An edit the tool refuses: its message tells the model how to correct the call. */
+export class EditError extends Schema.TaggedError<EditError>()("EditTool.EditError", {
+  message: Schema.String,
+}) {}
 
 function normalizeLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n")
@@ -68,11 +73,11 @@ export const EditTool = Tool.define(
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
           if (!params.filePath) {
-            throw new Error("filePath is required")
+            return yield* new EditError({ message: "filePath is required" })
           }
 
           if (params.oldString === params.newString) {
-            throw new Error("No changes to apply: oldString and newString are identical.")
+            return yield* new EditError({ message: "No changes to apply: oldString and newString are identical." })
           }
 
           const instance = yield* InstanceState.context
@@ -91,9 +96,10 @@ export const EditTool = Tool.define(
               if (params.oldString === "") {
                 const existed = yield* afs.existsSafe(filePath)
                 if (existed) {
-                  throw new Error(
-                    "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
-                  )
+                  return yield* new EditError({
+                    message:
+                      "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+                  })
                 }
                 const next = Bom.split(params.newString)
                 const desiredBom = next.bom
@@ -122,8 +128,10 @@ export const EditTool = Tool.define(
               }
 
               const info = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-              if (!info) throw new Error(`File ${filePath} not found`)
-              if (info.type === "Directory") throw new Error(`Path is a directory, not a file: ${filePath}`)
+              if (!info) return yield* new EditError({ message: `File ${filePath} not found` })
+              if (info.type === "Directory") {
+                return yield* new EditError({ message: `Path is a directory, not a file: ${filePath}` })
+              }
               const source = yield* Bom.readFile(afs, filePath)
               contentOld = source.text
 
@@ -131,7 +139,7 @@ export const EditTool = Tool.define(
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
               const replacement = convertToLineEnding(normalizeLineEndings(params.newString), ending)
 
-              const next = Bom.split(replace(contentOld, old, replacement, params.replaceAll))
+              const next = Bom.split(yield* Effect.fromResult(replace(contentOld, old, replacement, params.replaceAll)))
               const desiredBom = source.bom || next.bom
               contentNew = next.text
 
@@ -210,7 +218,7 @@ export const EditTool = Tool.define(
             title: `${path.relative(instance.worktree, filePath)}`,
             output,
           }
-        }).pipe(Effect.provideService(FSUtil.Service, afs)),
+        }).pipe(Effect.provideService(FSUtil.Service, afs), Effect.orDie),
     }
   }),
 )
@@ -680,13 +688,21 @@ export function trimDiff(diff: string): string {
   return trimmedLines.join("\n")
 }
 
-export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
+export function replace(
+  content: string,
+  oldString: string,
+  newString: string,
+  replaceAll = false,
+): Result.Result<string, EditError> {
   if (oldString === newString) {
-    throw new Error("No changes to apply: oldString and newString are identical.")
+    return Result.fail(new EditError({ message: "No changes to apply: oldString and newString are identical." }))
   }
   if (oldString === "") {
-    throw new Error(
-      "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+    return Result.fail(
+      new EditError({
+        message:
+          "oldString cannot be empty when editing an existing file. Provide the exact text to replace, or use write for an intentional full-file replacement.",
+      }),
     )
   }
 
@@ -708,25 +724,35 @@ export function replace(content: string, oldString: string, newString: string, r
       if (index === -1) continue
       notFound = false
       if (isDisproportionateMatch(search, oldString)) {
-        throw new Error(
-          "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+        return Result.fail(
+          new EditError({
+            message:
+              "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+          }),
         )
       }
       if (replaceAll) {
-        return content.replaceAll(search, newString)
+        return Result.succeed(content.replaceAll(search, newString))
       }
       const lastIndex = content.lastIndexOf(search)
       if (index !== lastIndex) continue
-      return content.substring(0, index) + newString + content.substring(index + search.length)
+      return Result.succeed(content.substring(0, index) + newString + content.substring(index + search.length))
     }
   }
 
   if (notFound) {
-    throw new Error(
-      "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+    return Result.fail(
+      new EditError({
+        message:
+          "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+      }),
     )
   }
-  throw new Error("Found multiple matches for oldString. Provide more surrounding context to make the match unique.")
+  return Result.fail(
+    new EditError({
+      message: "Found multiple matches for oldString. Provide more surrounding context to make the match unique.",
+    }),
+  )
 }
 
 function isDisproportionateMatch(search: string, oldString: string) {

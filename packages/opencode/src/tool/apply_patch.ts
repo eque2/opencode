@@ -19,6 +19,12 @@ export const Parameters = Schema.Struct({
   patchText: Schema.String.annotate({ description: "The full patch text that describes all changes to be made" }),
 })
 
+/** A patch the tool rejects: its message tells the model how to correct the patch. */
+export class ApplyPatchError extends Schema.TaggedError<ApplyPatchError>()("ApplyPatchTool.ApplyPatchError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export const ApplyPatchTool = Tool.define(
   "apply_patch",
   Effect.gen(function* () {
@@ -32,7 +38,7 @@ export const ApplyPatchTool = Tool.define(
       ctx: Tool.Context,
     ) {
       if (!params.patchText) {
-        return yield* Effect.fail(new Error("patchText is required"))
+        return yield* new ApplyPatchError({ message: "patchText is required" })
       }
 
       // Parse the patch to get hunks
@@ -47,9 +53,9 @@ export const ApplyPatchTool = Tool.define(
       if (hunks.length === 0) {
         const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
         if (normalized === "*** Begin Patch\n*** End Patch") {
-          return yield* Effect.fail(new Error("patch rejected: empty patch"))
+          return yield* new ApplyPatchError({ message: "patch rejected: empty patch" })
         }
-        return yield* Effect.fail(new Error("apply_patch verification failed: no hunks found"))
+        return yield* new ApplyPatchError({ message: "apply_patch verification failed: no hunks found" })
       }
 
       const instance = yield* InstanceState.context
@@ -107,9 +113,9 @@ export const ApplyPatchTool = Tool.define(
             // Check if file exists for update
             const stats = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
             if (!stats || stats.type === "Directory") {
-              return yield* Effect.fail(
-                new Error(`apply_patch verification failed: Failed to read file to update: ${filePath}`),
-              )
+              return yield* new ApplyPatchError({
+                message: `apply_patch verification failed: Failed to read file to update: ${filePath}`,
+              })
             }
 
             const source = yield* Bom.readFile(afs, filePath)
@@ -160,12 +166,9 @@ export const ApplyPatchTool = Tool.define(
 
           case "delete": {
             const source = yield* Bom.readFile(afs, filePath).pipe(
-              Effect.catch((error) =>
-                Effect.fail(
-                  new Error(
-                    `apply_patch verification failed: ${error instanceof Error ? error.message : String(error)}`,
-                  ),
-                ),
+              Effect.mapError(
+                (error) =>
+                  new ApplyPatchError({ message: `apply_patch verification failed: ${error.message}`, cause: error }),
               ),
             )
             const contentToDelete = source.text

@@ -14,6 +14,11 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+/** A glob call the tool refuses: its message tells the model how to correct the call. */
+export class GlobError extends Schema.TaggedError<GlobError>()("GlobTool.GlobError", {
+  message: Schema.String,
+}) {}
+
 export const GlobTool = Tool.define(
   "glob",
   Effect.gen(function* () {
@@ -39,7 +44,7 @@ export const GlobTool = Tool.define(
           search = path.isAbsolute(search) ? search : path.resolve(ins.directory, search)
           const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
           if (info?.type === "File") {
-            throw new Error(`glob path must be a directory: ${search}`)
+            return yield* new GlobError({ message: `glob path must be a directory: ${search}` })
           }
           yield* assertExternalDirectoryEffect(ctx, search, {
             bypass: false,

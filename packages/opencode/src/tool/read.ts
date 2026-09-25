@@ -20,6 +20,11 @@ const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "
 
 class ReadStop extends Schema.TaggedError<ReadStop>()("ReadStop", {}) {}
 
+/** A read the tool cannot serve: its message tells the model why. */
+export class ReadError extends Schema.TaggedError<ReadError>()("ReadTool.ReadError", {
+  message: Schema.String,
+}) {}
+
 // `offset` and `limit` were originally `z.coerce.number()` — the runtime
 // coercion was useful when the tool was called from a shell but serves no
 // purpose in the LLM tool-call path (the model emits typed JSON). The JSON
@@ -90,12 +95,12 @@ export const ReadTool = Tool.define<
       )
 
       if (items.length > 0) {
-        return yield* Effect.fail(
-          new Error(`File not found: ${filepath}\n\nDid you mean one of these?\n${items.join("\n")}`),
-        )
+        return yield* new ReadError({
+          message: `File not found: ${filepath}\n\nDid you mean one of these?\n${items.join("\n")}`,
+        })
       }
 
-      return yield* Effect.fail(new Error(`File not found: ${filepath}`))
+      return yield* new ReadError({ message: `File not found: ${filepath}` })
     })
 
     const list = Effect.fn("ReadTool.list")(function* (filepath: string) {
@@ -322,14 +327,14 @@ export const ReadTool = Tool.define<
       }
 
       if (isBinaryFile(filepath, sample)) {
-        return yield* Effect.fail(new Error(`Cannot read binary file: ${filepath}`))
+        return yield* new ReadError({ message: `Cannot read binary file: ${filepath}` })
       }
 
       const file = yield* lines(filepath, { limit: params.limit ?? DEFAULT_READ_LIMIT, offset: params.offset || 1 })
       if (file.count < file.offset && !(file.count === 0 && file.offset === 1)) {
-        return yield* Effect.fail(
-          new Error(`Offset ${file.offset} is out of range for this file (${file.count} lines)`),
-        )
+        return yield* new ReadError({
+          message: `Offset ${file.offset} is out of range for this file (${file.count} lines)`,
+        })
       }
 
       let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>\n"].join("\n")
