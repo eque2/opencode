@@ -13,7 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
-import { Clock, Effect, Fiber, HashMap, MutableHashSet, Option, Random, Result, Schedule } from "effect"
+import { Clock, Effect, Fiber, HashMap, MutableHashSet, Option, Predicate, Random, Result, Schedule } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -249,6 +249,11 @@ export function Prompt(props: PromptProps) {
     MutableHashSet.add(timers, fiber)
     fiber.addObserver(() => MutableHashSet.remove(timers, fiber))
   }
+  // Run a handler program to completion even if the prompt unmounts, as the old promises did.
+  // A defect is logged, where an unhandled rejection used to surface.
+  function runHandler(effect: Effect.Effect<unknown>) {
+    Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
+  }
   onCleanup(() => {
     const waiting = Array.from(timers)
     MutableHashSet.clear(timers)
@@ -376,13 +381,16 @@ export function Prompt(props: PromptProps) {
         name: "prompt.submit",
         category: "Prompt",
         hidden: true,
-        run: async () => {
-          if (!input.focused) return
-          const handled = await submit()
-          if (!handled) return
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              if (!input.focused) return
+              const handled = yield* submit
+              if (!handled) return
 
-          dialog.clear()
-        },
+              dialog.clear()
+            }),
+          ),
       },
       {
         title: "Remove editor context",
@@ -399,21 +407,27 @@ export function Prompt(props: PromptProps) {
         name: "prompt.paste",
         category: "Prompt",
         hidden: true,
-        run: async (ctx: CommandContext<Renderable, KeyEvent>) => {
+        run: (ctx: CommandContext<Renderable, KeyEvent>) => {
           ctx.event.preventDefault()
           ctx.event.stopPropagation()
-          const content = await clipboard.read?.()
-          if (content?.mime.startsWith("image/")) {
-            await pasteAttachment({
-              filename: "clipboard",
-              mime: content.mime,
-              content: content.data,
-            })
-            return
-          }
-          if (content?.mime === "text/plain") {
-            await pasteInputText(content.data)
-          }
+          return Effect.runPromise(
+            Effect.gen(function* () {
+              const read = clipboard.read?.bind(clipboard)
+              if (!read) return
+              const content = yield* Effect.promise(() => read())
+              if (content?.mime.startsWith("image/")) {
+                pasteAttachment({
+                  filename: "clipboard",
+                  mime: content.mime,
+                  content: content.data,
+                })
+                return
+              }
+              if (content?.mime === "text/plain") {
+                yield* pasteInputText(content.data)
+              }
+            }),
+          )
         },
       },
       {
@@ -451,92 +465,97 @@ export function Prompt(props: PromptProps) {
         category: "Session",
         name: "prompt.editor",
         slashName: "editor",
-        run: async () => {
-          dialog.clear()
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              dialog.clear()
 
-          // replace summarized text parts with the actual text
-          const text = store.prompt.parts
-            .filter((p) => p.type === "text")
-            .reduce((acc, p) => {
-              if (!p.source) return acc
-              return acc.replace(p.source.text.value, p.text)
-            }, store.prompt.input)
+              // replace summarized text parts with the actual text
+              const text = store.prompt.parts
+                .filter((p) => p.type === "text")
+                .reduce((acc, p) => {
+                  if (!p.source) return acc
+                  return acc.replace(p.source.text.value, p.text)
+                }, store.prompt.input)
 
-          const nonTextParts = store.prompt.parts.filter((p) => p.type !== "text")
+              const nonTextParts = store.prompt.parts.filter((p) => p.type !== "text")
 
-          const value = text
-          const content = await openEditor({
-            renderer,
-            value,
-            cwd:
-              (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
-              project.instance.directory() ||
-              paths.cwd,
-          })
-          if (!content) return
-          const normalized = normalizePromptContent(content)
+              const value = text
+              const content = yield* Effect.promise(() =>
+                openEditor({
+                  renderer,
+                  value,
+                  cwd:
+                    (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
+                    project.instance.directory() ||
+                    paths.cwd,
+                }),
+              )
+              if (!content) return
+              const normalized = normalizePromptContent(content)
 
-          input.setText(normalized)
+              input.setText(normalized)
 
-          // Update positions for nonTextParts based on their location in new content
-          // Filter out parts whose virtual text was deleted
-          // this handles a case where the user edits the text in the editor
-          // such that the virtual text moves around or is deleted
-          const updatedNonTextParts = nonTextParts
-            .map((part) => {
-              let virtualText = ""
-              if (part.type === "file" && part.source?.text) {
-                virtualText = part.source.text.value
-              } else if (part.type === "agent" && part.source) {
-                virtualText = part.source.value
-              }
+              // Update positions for nonTextParts based on their location in new content
+              // Filter out parts whose virtual text was deleted
+              // this handles a case where the user edits the text in the editor
+              // such that the virtual text moves around or is deleted
+              const updatedNonTextParts = nonTextParts
+                .map((part) => {
+                  let virtualText = ""
+                  if (part.type === "file" && part.source?.text) {
+                    virtualText = part.source.text.value
+                  } else if (part.type === "agent" && part.source) {
+                    virtualText = part.source.value
+                  }
 
-              if (!virtualText) return part
+                  if (!virtualText) return part
 
-              const newStart = normalized.indexOf(virtualText)
-              // if the virtual text is deleted, remove the part
-              if (newStart === -1) return null
+                  const newStart = normalized.indexOf(virtualText)
+                  // if the virtual text is deleted, remove the part
+                  if (newStart === -1) return null
 
-              const newEnd = newStart + virtualText.length
+                  const newEnd = newStart + virtualText.length
 
-              if (part.type === "file" && part.source?.text) {
-                return {
-                  ...part,
-                  source: {
-                    ...part.source,
-                    text: {
-                      ...part.source.text,
-                      start: newStart,
-                      end: newEnd,
-                    },
-                  },
-                }
-              }
+                  if (part.type === "file" && part.source?.text) {
+                    return {
+                      ...part,
+                      source: {
+                        ...part.source,
+                        text: {
+                          ...part.source.text,
+                          start: newStart,
+                          end: newEnd,
+                        },
+                      },
+                    }
+                  }
 
-              if (part.type === "agent" && part.source) {
-                return {
-                  ...part,
-                  source: {
-                    ...part.source,
-                    start: newStart,
-                    end: newEnd,
-                  },
-                }
-              }
+                  if (part.type === "agent" && part.source) {
+                    return {
+                      ...part,
+                      source: {
+                        ...part.source,
+                        start: newStart,
+                        end: newEnd,
+                      },
+                    }
+                  }
 
-              return part
-            })
-            .filter((part) => part !== null)
+                  return part
+                })
+                .filter((part) => part !== null)
 
-          setStore("prompt", {
-            input: normalized,
-            // keep only the non-text parts because the text parts were
-            // already expanded inline
-            parts: updatedNonTextParts,
-          })
-          restoreExtmarksFromParts(updatedNonTextParts)
-          input.cursorOffset = Bun.stringWidth(normalized)
-        },
+              setStore("prompt", {
+                input: normalized,
+                // keep only the non-text parts because the text parts were
+                // already expanded inline
+                parts: updatedNonTextParts,
+              })
+              restoreExtmarksFromParts(updatedNonTextParts)
+              input.cursorOffset = Bun.stringWidth(normalized)
+            }),
+          ),
       },
       {
         title: "Skills",
@@ -634,7 +653,7 @@ export function Prompt(props: PromptProps) {
       setStore("extmarkToPartIndex", HashMap.empty())
     },
     submit() {
-      void submit()
+      runHandler(submit)
     },
   }
 
@@ -947,7 +966,7 @@ export function Prompt(props: PromptProps) {
   })
 
   let submitting = false
-  async function submit() {
+  const submit = Effect.gen(function* () {
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
     // input's native onSubmit racing another dispatch). Without this guard,
     // a second call slips past the empty-input check before the first call
@@ -956,14 +975,16 @@ export function Prompt(props: PromptProps) {
     // to a freshly created session.
     if (submitting) return false
     submitting = true
-    try {
-      return await submitInner()
-    } finally {
-      submitting = false
-    }
-  }
+    return yield* submitInner.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          submitting = false
+        }),
+      ),
+    )
+  })
 
-  async function submitInner() {
+  const submitInner = Effect.gen(function* () {
     workspace.clearNotice()
 
     // IME: double-defer may fire before onContentChange flushes the last
@@ -981,19 +1002,18 @@ export function Prompt(props: PromptProps) {
     if (!agent) return false
     const trimmed = store.prompt.input.trim()
     if (trimmed === "exit" || trimmed === "quit" || trimmed === ":q") {
-      void exit()
+      exit()
       return true
     }
     const selectedModel = local.model.current()
     if (!selectedModel) {
-      void promptModelWarning()
+      promptModelWarning()
       return false
     }
 
-    const workspaceSession = props.sessionID ? sync.session.get(props.sessionID) : undefined
-    const workspaceID = workspaceSession?.workspaceID
-    const workspaceStatus = workspaceID ? (project.workspace.status(workspaceID) ?? "error") : undefined
-    if (props.sessionID && workspaceID && workspaceStatus !== "connected") {
+    // A session in a workspace that is not connected (or has no status) cannot take the prompt.
+    const sessionWorkspaceID = props.sessionID ? sync.session.get(props.sessionID)?.workspaceID : ""
+    if (sessionWorkspaceID && project.workspace.status(sessionWorkspaceID) !== "connected") {
       dialog.replace(() => (
         <DialogWorkspaceUnavailable
           onRestore={() => {
@@ -1008,28 +1028,29 @@ export function Prompt(props: PromptProps) {
     const variant = local.model.variant.current()
     let sessionID = props.sessionID
     let finishMoveProgress = false
-    if (sessionID == null) {
+    if (Predicate.isNullish(sessionID)) {
       const selectedWorkspace = workspace.selection()
-      const workspaceID = selectedWorkspace?.type === "existing" ? selectedWorkspace.workspaceID : undefined
 
-      const directory = await move.getDirectory(store.prompt.input)
+      const directory = yield* Effect.promise(() => move.getDirectory(store.prompt.input))
       if (move.pending() && !directory) return false
       finishMoveProgress = Boolean(move.progress())
 
-      const res = await sdk.client.session.create({
-        directory,
-        workspace: workspaceID,
-        agent: agent.name,
-        model: {
-          providerID: selectedModel.providerID,
-          id: selectedModel.modelID,
-          variant,
-        },
-      })
+      const res = yield* Effect.promise(() =>
+        sdk.client.session.create({
+          directory,
+          ...(selectedWorkspace?.type === "existing" ? { workspace: selectedWorkspace.workspaceID } : {}),
+          agent: agent.name,
+          model: {
+            providerID: selectedModel.providerID,
+            id: selectedModel.modelID,
+            variant,
+          },
+        }),
+      )
 
       if (res.error) {
         if (finishMoveProgress) move.finishSubmit()
-        console.log("Creating a session failed:", res.error)
+        yield* Effect.logInfo("Creating a session failed:", res.error)
 
         toast.show({
           message: "Creating a session failed. Open console for more details.",
@@ -1041,6 +1062,7 @@ export function Prompt(props: PromptProps) {
 
       sessionID = res.data.id
     }
+    const targetSessionID = sessionID
 
     const inputText = expandTrackedPastedText(
       store.prompt.input,
@@ -1079,15 +1101,19 @@ export function Prompt(props: PromptProps) {
 
     if (store.mode === "shell") {
       move.startSubmit()
-      void sdk.client.session.shell({
-        sessionID,
-        agent: agent.name,
-        model: {
-          providerID: selectedModel.providerID,
-          modelID: selectedModel.modelID,
-        },
-        command: inputText,
-      })
+      yield* sendInBackground(
+        Effect.promise(() =>
+          sdk.client.session.shell({
+            sessionID: targetSessionID,
+            agent: agent.name,
+            model: {
+              providerID: selectedModel.providerID,
+              modelID: selectedModel.modelID,
+            },
+            command: inputText,
+          }),
+        ),
+      )
       setStore("mode", "normal")
     } else if (
       inputText.startsWith("/") &&
@@ -1101,43 +1127,53 @@ export function Prompt(props: PromptProps) {
       const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
       const args = firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : "")
 
-      void sdk.client.session.command({
-        sessionID,
-        command: command.slice(1),
-        arguments: args,
-        agent: agent.name,
-        model: `${selectedModel.providerID}/${selectedModel.modelID}`,
-        variant,
-        parts: nonTextParts.filter((x) => x.type === "file"),
-      })
+      yield* sendInBackground(
+        Effect.promise(() =>
+          sdk.client.session.command({
+            sessionID: targetSessionID,
+            command: command.slice(1),
+            arguments: args,
+            agent: agent.name,
+            model: `${selectedModel.providerID}/${selectedModel.modelID}`,
+            variant,
+            parts: nonTextParts.filter((x) => x.type === "file"),
+          }),
+        ),
+      )
     } else {
       move.startSubmit()
-      sdk.client.session
-        .prompt(
-          {
-            sessionID,
-            ...selectedModel,
-            agent: agent.name,
-            model: selectedModel,
-            variant,
-            parts: [
-              ...editorParts,
-              {
-                type: "text",
-                text: inputText,
-              },
-              ...nonTextParts,
-            ],
-          },
-          { throwOnError: true },
-        )
-        .catch((error) => {
-          toast.show({
-            title: "Failed to send prompt",
-            message: errorMessage(error),
-            variant: "error",
-          })
-        })
+      yield* sendInBackground(
+        Effect.tryPromise(() =>
+          sdk.client.session.prompt(
+            {
+              sessionID: targetSessionID,
+              ...selectedModel,
+              agent: agent.name,
+              model: selectedModel,
+              variant,
+              parts: [
+                ...editorParts,
+                {
+                  type: "text",
+                  text: inputText,
+                },
+                ...nonTextParts,
+              ],
+            },
+            { throwOnError: true },
+          ),
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() =>
+              toast.show({
+                title: "Failed to send prompt",
+                message: errorMessage(error.cause),
+                variant: "error",
+              }),
+            ),
+          ),
+        ),
+      )
       if (editorParts.length > 0) editor.markSelectionSent()
     }
     history.append({
@@ -1155,16 +1191,30 @@ export function Prompt(props: PromptProps) {
     // temporary hack to make sure the message is sent
     if (!props.sessionID) {
       if (editorParts.length > 0) editor.preserveSelectionFromNewSession()
-      setTimeout(() => {
-        route.navigate({
-          type: "session",
-          sessionID,
-        })
-      }, 50)
+      // Detached, so the navigation still happens if this prompt unmounts first, as the old timeout did.
+      yield* Effect.forkDetach(
+        Effect.sleep("50 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              route.navigate({
+                type: "session",
+                sessionID: targetSessionID,
+              }),
+            ),
+          ),
+        ),
+      )
     }
     input.clear()
     if (finishMoveProgress) move.finishSubmit()
     return true
+  })
+
+  // Start an SDK request now and let it finish on its own fiber, as the unawaited promises did.
+  function sendInBackground(request: Effect.Effect<unknown>) {
+    return Effect.forkDetach(request.pipe(Effect.tapDefect((defect) => Effect.logError(defect))), {
+      startImmediately: true,
+    })
   }
 
   function pasteText(text: string, virtualText: string) {
@@ -1201,54 +1251,55 @@ export function Prompt(props: PromptProps) {
     )
   }
 
-  async function pasteInputText(text: string) {
-    const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
-    const pastedContent = normalizedText.trim()
-    const filepath = pastedFilepath(pastedContent, terminalEnvironment.platform)
-    const isUrl = /^(https?):\/\//.test(filepath)
-    if (!isUrl) {
-      const attachment = await readLocalAttachment(filepath)
-      const filename = path.basename(filepath)
-      if (attachment?.type === "text") {
-        pasteText(attachment.content, `[SVG: ${filename ?? "image"}]`)
+  const pasteInputText = (text: string) =>
+    Effect.gen(function* () {
+      const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+      const pastedContent = normalizedText.trim()
+      const filepath = pastedFilepath(pastedContent, terminalEnvironment.platform)
+      const isUrl = /^(https?):\/\//.test(filepath)
+      if (!isUrl) {
+        const attachment = yield* Effect.promise(() => readLocalAttachment(filepath))
+        const filename = path.basename(filepath)
+        if (attachment?.type === "text") {
+          pasteText(attachment.content, `[SVG: ${filename ?? "image"}]`)
+          return
+        }
+        if (attachment?.type === "binary") {
+          pasteAttachment({
+            filename,
+            filepath,
+            mime: attachment.mime,
+            content: Buffer.from(attachment.content).toString("base64"),
+          })
+          return
+        }
+      }
+
+      const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
+      if (
+        (lineCount >= 3 || pastedContent.length > 150) &&
+        kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary)
+      ) {
+        pasteText(pastedContent, `[Pasted ~${lineCount} lines]`)
         return
       }
-      if (attachment?.type === "binary") {
-        await pasteAttachment({
-          filename,
-          filepath,
-          mime: attachment.mime,
-          content: Buffer.from(attachment.content).toString("base64"),
-        })
-        return
-      }
-    }
 
-    const lineCount = (pastedContent.match(/\n/g)?.length ?? 0) + 1
-    if (
-      (lineCount >= 3 || pastedContent.length > 150) &&
-      kv.get("paste_summary_enabled", !sync.data.config.experimental?.disable_paste_summary)
-    ) {
-      pasteText(pastedContent, `[Pasted ~${lineCount} lines]`)
-      return
-    }
+      input.insertText(normalizedText)
 
-    input.insertText(normalizedText)
-
-    runTimer(
-      nextTimerTurn.pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            if (!input || input.isDestroyed) return
-            input.getLayoutNode().markDirty()
-            renderer.requestRender()
-          }),
+      runTimer(
+        nextTimerTurn.pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (!input || input.isDestroyed) return
+              input.getLayoutNode().markDirty()
+              renderer.requestRender()
+            }),
+          ),
         ),
-      ),
-    )
-  }
+      )
+    })
 
-  async function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
+  function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
     const currentOffset = input.cursorOffset
     const extmarkStart = currentOffset
     const pdf = file.mime === "application/pdf"
@@ -1418,9 +1469,14 @@ export function Prompt(props: PromptProps) {
               onSubmit={() => {
                 // IME: double-defer so the last composed character (e.g. Korean
                 // hangul) is flushed to plainText before we read it for submission.
-                setTimeout(() => setTimeout(() => submit(), 0), 0)
+                runTimer(
+                  nextTimerTurn.pipe(
+                    Effect.andThen(nextTimerTurn),
+                    Effect.andThen(Effect.sync(() => runHandler(submit))),
+                  ),
+                )
               }}
-              onPaste={async (event: PasteEvent) => {
+              onPaste={(event: PasteEvent) => {
                 if (props.disabled) {
                   event.preventDefault()
                   return
@@ -1443,7 +1499,7 @@ export function Prompt(props: PromptProps) {
                 // default paste unless we suppress it first and handle insertion ourselves.
                 event.preventDefault()
 
-                await pasteInputText(normalizedText)
+                runHandler(pasteInputText(normalizedText))
               }}
               ref={(r: TextareaRenderable) => {
                 input = r
