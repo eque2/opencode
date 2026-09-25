@@ -19,7 +19,7 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
-import { DateTime, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
+import { DateTime, Effect, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
 
 const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
   get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
@@ -165,7 +165,7 @@ export function createChildStoreManager(input: {
 
   function ensureChild(directory: string) {
     const key = directoryKey(directory)
-    if (!key) console.error("No directory provided")
+    if (!key) Effect.runFork(Effect.logError("No directory provided"))
     if (!children[key]) {
       const vcs = runWithOwner(input.owner, () =>
         input.persist(
