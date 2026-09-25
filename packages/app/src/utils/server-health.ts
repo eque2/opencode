@@ -37,7 +37,7 @@ function cacheKey(server: ServerConnection.HttpBase) {
 const unhealthy: ServerHealth = { healthy: false }
 
 /** The V1 health request failed. `cause` is the rejection or the SDK error value, which decides a retry. */
-class LegacyHealthError extends Data.TaggedError("ServerHealth.LegacyHealthError")<{ readonly cause: unknown }> {}
+class LegacyHealthError extends Data.TaggedError("App.LegacyHealthError")<{ readonly cause: unknown }> {}
 
 // Both health endpoints answer with this shape. The version is optional on the current endpoint.
 const HealthResponse = Schema.Struct({ healthy: Schema.Boolean, version: Schema.optional(Schema.String) }).annotate({
