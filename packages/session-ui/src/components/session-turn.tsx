@@ -3,6 +3,7 @@ import {
   type SnapshotFileDiff,
   Message as MessageType,
   Part as PartType,
+  type UserMessage,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionStatus } from "@opencode-ai/sdk/v2"
@@ -97,19 +98,20 @@ function summaryDiff(value: SnapshotFileDiff): value is SummaryDiff {
 
 const hidden = HashSet.make("todowrite")
 
-function partState(part: PartType, showReasoningSummaries: boolean) {
+function partState(part: PartType, showReasoningSummaries: boolean): "visible" | "hidden" {
   if (part.type === "tool") {
-    if (HashSet.has(hidden, part.tool)) return
-    if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running")) return
-    return "visible" as const
+    if (HashSet.has(hidden, part.tool)) return "hidden"
+    if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running"))
+      return "hidden"
+    return "visible"
   }
-  if (part.type === "text") return part.text?.trim() ? ("visible" as const) : undefined
+  if (part.type === "text") return part.text?.trim() ? "visible" : "hidden"
   if (part.type === "reasoning") {
-    if (showReasoningSummaries && part.text?.trim()) return "visible" as const
-    return
+    if (showReasoningSummaries && part.text?.trim()) return "visible"
+    return "hidden"
   }
-  if (PART_MAPPING[part.type]) return "visible" as const
-  return
+  if (PART_MAPPING[part.type]) return "visible"
+  return "hidden"
 }
 
 function clean(value: string) {
@@ -120,32 +122,34 @@ function clean(value: string) {
     .trim()
 }
 
-function heading(text: string) {
+function heading(text: string): Option.Option<string> {
   const markdown = text.replace(/\r\n?/g, "\n")
 
   const html = markdown.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
   if (html?.[1]) {
     const value = clean(html[1].replace(/<[^>]+>/g, " "))
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const atx = markdown.match(/^\s{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/m)
   if (atx?.[1]) {
     const value = clean(atx[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const setext = markdown.match(/^([^\n]+)\n(?:=+|-+)\s*$/m)
   if (setext?.[1]) {
     const value = clean(setext[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
 
   const strong = markdown.match(/^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/m)
   if (strong?.[1]) {
     const value = clean(strong[1])
-    if (value) return value
+    if (value) return Option.some(value)
   }
+
+  return Option.none()
 }
 
 export function SessionTurn(
@@ -203,21 +207,21 @@ export function SessionTurn(
     return msg
   })
 
-  const pending = createMemo(() => {
-    if (typeof props.active === "boolean") return
+  const pending = createMemo((): AssistantMessage | undefined => {
+    if (typeof props.active === "boolean") return undefined
     const messages = allMessages() ?? emptyMessages
     return messages.findLast(
       (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
     )
   })
 
-  const pendingUser = createMemo(() => {
+  const pendingUser = createMemo((): UserMessage | undefined => {
     const item = pending()
-    if (!item?.parentID) return
+    if (!item?.parentID) return undefined
     const messages = allMessages() ?? emptyMessages
     const result = Binary.search(messages, item.parentID, (m) => m.id)
     const msg = result.found ? messages[result.index] : messages.find((m) => m.id === item.parentID)
-    if (!msg || msg.role !== "user") return
+    if (!msg || msg.role !== "user") return undefined
     return msg
   })
 
@@ -339,16 +343,15 @@ export function SessionTurn(
     const start = message()?.time.created
     if (typeof start !== "number") return undefined
 
-    const end = assistantMessages().reduce<number | undefined>((max, item) => {
+    const end = assistantMessages().reduce((max, item) => {
       const completed = item.time.completed
       if (typeof completed !== "number") return max
-      if (max === undefined) return completed
-      return Math.max(max, completed)
-    }, undefined)
+      return Option.some(Option.match(max, { onNone: () => completed, onSome: (value) => Math.max(value, completed) }))
+    }, Option.none<number>())
 
-    if (typeof end !== "number") return undefined
-    if (end < start) return undefined
-    return end - start
+    if (Option.isNone(end)) return undefined
+    if (end.value < start) return undefined
+    return end.value - start
   })
   const assistantDerived = createMemo(() => {
     let visible = 0
@@ -361,7 +364,7 @@ export function SessionTurn(
         }
         if (part.type === "reasoning" && part.text) {
           const h = heading(part.text)
-          if (h) reason = h
+          if (Option.isSome(h)) reason = h.value
         }
       }
     }
@@ -437,7 +440,7 @@ export function SessionTurn(
                 <div
                   data-slot="session-turn-diffs"
                   data-component="session-turn-diffs-group"
-                  data-show-all={showAll() || undefined}
+                  {...(showAll() ? { "data-show-all": true } : {})}
                 >
                   <div data-slot="session-turn-diffs-header">
                     <span data-slot="session-turn-diffs-label">
