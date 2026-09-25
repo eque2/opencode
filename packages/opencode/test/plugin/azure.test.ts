@@ -60,14 +60,19 @@ function customFetch(options: Record<string, unknown>) {
 }
 
 function azureShell(scopes: string[]) {
-  return async (args: string[]) => {
-    const scope = args[args.indexOf("--scope") + 1]
-    scopes.push(scope)
-    return {
-      accessToken: `${scope}-token`,
-      expires_on: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
-    }
-  }
+  return (args: ReadonlyArray<string>) =>
+    Effect.sync(() => {
+      const scope = args[args.indexOf("--scope") + 1]
+      scopes.push(scope)
+      return {
+        accessToken: `${scope}-token`,
+        expires_on: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
+      }
+    })
+}
+
+function hooksFor(...args: Parameters<typeof createAzureAuthHooks>) {
+  return Effect.runPromise(createAzureAuthHooks(...args))
 }
 
 async function azureCli(dir: string) {
@@ -169,9 +174,9 @@ describe("plugin.azure", () => {
     expect(oauthMethod(hooks).prompts?.[0].type).toBe("text")
   })
 
-  test("keeps the existing API-key method and adds Entra ID", () => {
+  test("keeps the existing API-key method and adds Entra ID", async () => {
     delete process.env.AZURE_RESOURCE_NAME
-    const hooks = createAzureAuthHooks(azureShell([]), fetch, true)
+    const hooks = await hooksFor(azureShell([]), fetch, true)
 
     expect(hooks.auth?.provider).toBe("azure")
     expect(hooks.auth?.methods.map((method) => [method.type, method.label])).toEqual([
@@ -193,15 +198,15 @@ describe("plugin.azure", () => {
     expect(hooks.auth?.methods[1].prompts).toEqual(hooks.auth?.methods[0].prompts)
   })
 
-  test("hides Azure CLI authentication when the Azure CLI is not installed", () => {
-    const hooks = createAzureAuthHooks(azureShell([]), fetch, false)
+  test("hides Azure CLI authentication when the Azure CLI is not installed", async () => {
+    const hooks = await hooksFor(azureShell([]), fetch, false)
 
     expect(hooks.auth?.methods.map((method) => method.type)).toEqual(["api"])
   })
 
   test("checks Azure CLI and stores the resource name", async () => {
     const scopes: string[] = []
-    const hooks = createAzureAuthHooks(azureShell(scopes), fetch, true)
+    const hooks = await hooksFor(azureShell(scopes), fetch, true)
     const authorization = await oauthMethod(hooks).authorize({ resourceName: "test-resource" })
     if (authorization.method !== "auto") throw new Error("Unexpected Azure authorization method")
 
@@ -215,11 +220,12 @@ describe("plugin.azure", () => {
   })
 
   test("supports Azure CLI versions that only provide expiresOn", async () => {
-    const hooks = createAzureAuthHooks(
-      async () => ({
-        accessToken: "legacy-token",
-        expiresOn: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-      }),
+    const hooks = await hooksFor(
+      () =>
+        Effect.succeed({
+          accessToken: "legacy-token",
+          expiresOn: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        }),
       fetch,
       true,
     )
@@ -230,7 +236,7 @@ describe("plugin.azure", () => {
   })
 
   test("rejects Azure CLI tokens without a usable expiration", async () => {
-    const hooks = createAzureAuthHooks(async () => ({ accessToken: "invalid-token" }), fetch, true)
+    const hooks = await hooksFor(() => Effect.succeed({ accessToken: "invalid-token" }), fetch, true)
     const authorization = await oauthMethod(hooks).authorize({ resourceName: "test-resource" })
     if (authorization.method !== "auto") throw new Error("Unexpected Azure authorization method")
 
@@ -244,7 +250,7 @@ describe("plugin.azure", () => {
 
   test("does not change API-key loading", async () => {
     const scopes: string[] = []
-    const hooks = createAzureAuthHooks(azureShell(scopes), fetch, true)
+    const hooks = await hooksFor(azureShell(scopes), fetch, true)
 
     expect(await loader(hooks)(async () => ({ type: "api", key: "test-key" }), provider)).toEqual({})
     expect(scopes).toEqual([])
@@ -253,7 +259,7 @@ describe("plugin.azure", () => {
   test("uses Azure CLI bearer tokens for Azure inference endpoints", async () => {
     const scopes: string[] = []
     const requests: Headers[] = []
-    const hooks = createAzureAuthHooks(
+    const hooks = await hooksFor(
       azureShell(scopes),
       async (_input, init) => {
         requests.push(new Headers(init?.headers))
