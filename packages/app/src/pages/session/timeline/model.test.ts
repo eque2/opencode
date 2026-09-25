@@ -6,8 +6,28 @@ import { isTimelineReady, loadOlderTimeline, selectUserMessages, selectVisibleUs
 /** The rejection of a history page load in the failure test. */
 class HistoryLoadError extends Data.TaggedError("HistoryLoadError")<{ readonly message: string }> {}
 
-const user = (id: string) => ({ id, role: "user" }) as UserMessage
-const assistant = (id: string) => ({ id, role: "assistant" }) as AssistantMessage
+const user = (id: string): UserMessage => ({
+  id,
+  sessionID: "ses_test",
+  role: "user",
+  time: { created: 0 },
+  agent: "build",
+  model: { providerID: "provider", modelID: "model" },
+})
+const assistant = (id: string): AssistantMessage => ({
+  id,
+  sessionID: "ses_test",
+  role: "assistant",
+  time: { created: 0 },
+  parentID: "msg_parent",
+  modelID: "model",
+  providerID: "provider",
+  mode: "build",
+  agent: "build",
+  path: { cwd: "", root: "" },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+})
 
 describe("timeline model", () => {
   test("selects users and applies the revert boundary", () => {

@@ -13,7 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { absurd, Array as Arr, Data, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
+import { absurd, Array as Arr, Data, Effect, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -512,10 +512,11 @@ export function MessageTimeline(props: {
     const first = virtualizer.range?.startIndex
     return first !== undefined && item.index < first
   }
+  // getItemKey returns strings, so String() returns each key unchanged and types it as the row key.
   const virtualItemByKey = createMemo(() =>
-    MutableHashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
+    MutableHashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [String(item.key), item] as const)),
   )
-  const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key as string))
+  const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => String(item.key)))
   createEffect(() => {
     props.setRevealMessage?.((id) => {
       const index = messageRowIndex().get(id)
@@ -679,10 +680,13 @@ export function MessageTimeline(props: {
   }
 
   const errorMessage = (err: unknown) => {
-    if (err && typeof err === "object" && "data" in err) {
-      const data = (err as { data?: { message?: string } }).data
-      if (data?.message) return data.message
-    }
+    if (
+      Predicate.hasProperty(err, "data") &&
+      Predicate.hasProperty(err.data, "message") &&
+      Predicate.isString(err.data.message) &&
+      err.data.message
+    )
+      return err.data.message
     if (err instanceof Error) return err.message
     return language.t("common.requestFailed")
   }
