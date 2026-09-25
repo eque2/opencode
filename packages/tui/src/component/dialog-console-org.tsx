@@ -1,5 +1,6 @@
 import { createResource, createMemo, createSignal } from "solid-js"
 import { TextAttributes } from "@opentui/core"
+import { Result } from "effect"
 import { DialogSelect } from "../ui/dialog-select"
 import { useSDK } from "../context/sdk"
 import { useDialog } from "../ui/dialog"
@@ -10,13 +11,8 @@ import type { ExperimentalConsoleListOrgsResponse } from "@opencode-ai/sdk/v2"
 
 type OrgOption = ExperimentalConsoleListOrgsResponse["orgs"][number]
 
-const accountHost = (url: string) => {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
-}
+// A URL that does not parse is shown as it is.
+const accountHost = (url: string) => Result.try(() => new URL(url).host).pipe(Result.getOrElse(() => url))
 
 const accountLabel = (item: Pick<OrgOption, "accountEmail" | "accountUrl">) =>
   `${item.accountEmail}  ${accountHost(item.accountUrl)}`
