@@ -1,6 +1,7 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
 import { mockOpenCodeServer } from "../utils/mock-server"
+import { readNodeProbe, writeNodeProbe } from "../utils/node-probe"
 import { expectAppVisible, expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/ReviewTabSwitch"
@@ -58,20 +59,16 @@ test("keeps the v2 review pane mounted when switching session tabs in a workspac
   await expect(page.getByRole("button", { name: "generated-2739.ts" })).toBeVisible()
 })
 
-type Probed = HTMLElement & { __e2eProbe?: string }
-
 async function switchTab(page: Page, title: string) {
   await page.locator("[data-titlebar-tab-slot]", { hasText: title }).click()
 }
 
 async function writeProbe(page: Page) {
-  await page.locator('#review-panel [data-component="session-review-v2"]').evaluate((el, probe) => {
-    ;(el as Probed).__e2eProbe = probe
-  }, PROBE)
+  await writeNodeProbe(page.locator('#review-panel [data-component="session-review-v2"]'), PROBE)
 }
 
 async function readProbe(page: Page) {
-  return page.locator('#review-panel [data-component="session-review-v2"]').evaluate((el) => (el as Probed).__e2eProbe)
+  return readNodeProbe(page.locator('#review-panel [data-component="session-review-v2"]'))
 }
 
 async function setup(page: Page) {

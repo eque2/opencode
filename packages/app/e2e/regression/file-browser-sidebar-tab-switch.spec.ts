@@ -1,6 +1,7 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
 import { mockOpenCodeServer, type MockServerConfig } from "../utils/mock-server"
+import { readNodeProbe, writeNodeProbe } from "../utils/node-probe"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/FileBrowserSidebar"
@@ -93,24 +94,15 @@ test("keeps previous file search results visible while the next search loads", a
   await expect(panel.getByRole("option", { name: "file-00.ts" })).toBeHidden()
 })
 
-type Probed = HTMLElement & { __e2eProbe?: string }
-
 async function writeProbe(page: Page) {
-  await page.locator('#review-panel [data-component="session-review-v2-sidebar-root"]').evaluate((el, probe) => {
-    ;(el as Probed).__e2eProbe = probe
-  }, PROBE)
+  await writeNodeProbe(page.locator('#review-panel [data-component="session-review-v2-sidebar-root"]'), PROBE)
 }
 
 async function readProbe(page: Page) {
-  return page
-    .locator('#review-panel [data-component="session-review-v2-sidebar-root"]')
-    .evaluate((el) => (el as Probed).__e2eProbe)
+  return readNodeProbe(page.locator('#review-panel [data-component="session-review-v2-sidebar-root"]'))
 }
 
-async function setup(
-  page: Page,
-  findFiles?: MockServerConfig["findFiles"],
-) {
+async function setup(page: Page, findFiles?: MockServerConfig["findFiles"]) {
   await mockOpenCodeServer(page, {
     directory,
     project: {
