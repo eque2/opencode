@@ -1,6 +1,6 @@
 import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionV2 } from "@opencode-ai/core/session"
-import { Effect, Encoding, Schema } from "effect"
+import { Effect, Encoding, Option, Schema } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { Api } from "../api"
 import { errorRef } from "./error-ref"
@@ -16,14 +16,17 @@ const Cursor = Schema.Struct({
 
 const CursorJson = Schema.fromJsonString(Cursor)
 const encodeCursorJson = Schema.encodeSync(CursorJson)
-const decodeCursor = Schema.decodeUnknownSync(Cursor)
+const decodeCursorJson = Schema.decodeUnknownEffect(CursorJson)
 
 const cursor = {
   encode(message: SessionMessage.Message, order: "asc" | "desc", direction: "previous" | "next") {
     return Encoding.encodeBase64Url(encodeCursorJson({ id: message.id, order, direction }))
   },
   decode(input: string) {
-    return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
+    return Effect.fromResult(Encoding.decodeBase64UrlString(input)).pipe(
+      Effect.flatMap(decodeCursorJson),
+      Effect.mapError(() => new InvalidCursorError({ message: "Invalid cursor" })),
+    )
   },
 }
 
@@ -36,17 +39,21 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
       Effect.fn(function* (ctx) {
         if (ctx.query.cursor && ctx.query.order !== undefined)
           return yield* new InvalidCursorError({ message: "Cursor cannot be combined with order" })
-        const decoded = yield* Effect.try({
-          try: () => (ctx.query.cursor ? cursor.decode(ctx.query.cursor) : undefined),
-          catch: () => new InvalidCursorError({ message: "Invalid cursor" }),
+        const decoded = yield* Option.fromNullishOr(ctx.query.cursor).pipe(
+          Option.filter((input) => input !== ""),
+          Option.map((input) => cursor.decode(input)),
+          Effect.transposeOption,
+        )
+        const order = Option.match(decoded, {
+          onNone: () => ctx.query.order ?? "desc",
+          onSome: (value) => value.order,
         })
-        const order = decoded?.order ?? ctx.query.order ?? "desc"
         const messages = yield* session
           .messages({
             sessionID: ctx.params.sessionID,
             limit: ctx.query.limit ?? DefaultMessagesLimit,
             order,
-            cursor: decoded ? { id: decoded.id, direction: decoded.direction } : undefined,
+            ...(Option.isSome(decoded) ? { cursor: { id: decoded.value.id, direction: decoded.value.direction } } : {}),
           })
           .pipe(
             Effect.catchTag("Session.NotFoundError", (error) =>
