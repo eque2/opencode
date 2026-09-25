@@ -668,7 +668,183 @@ function renderPromiseClient(groups: ReadonlyArray<Group>): Result.Result<string
         return `${encodeJsonString(group.identifier)}: { ${methods.join(", ")} }`
       }),
     )
-    return `import type { ${imports.join(", ")} } from "./types"\nimport { ClientError } from "./client-error"\n\nexport interface ClientOptions {\n  readonly baseUrl: string\n  readonly fetch?: typeof globalThis.fetch\n  readonly headers?: HeadersInit\n}\n\nexport interface RequestOptions {\n  readonly signal?: AbortSignal\n  readonly headers?: HeadersInit\n}\n\ninterface RequestDescriptor {\n  readonly method: string\n  readonly path: string\n  readonly query?: Record<string, unknown>\n  readonly headers?: Record<string, unknown>\n  readonly body?: unknown\n  readonly successStatus: number\n  readonly declaredStatuses: ReadonlyArray<number>\n}\n\nexport function make(options: ClientOptions) {\n  const fetch = options.fetch ?? globalThis.fetch\n\n  const prepare = (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    const url = new URL(descriptor.path, options.baseUrl)\n    for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)\n    const headers = new Headers(options.headers)\n    for (const [key, value] of Object.entries(descriptor.headers ?? {})) {\n      if (isPrimitive(value)) headers.set(key, String(value))\n    }\n    for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)\n    if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")\n    return {\n      url,\n      init: {\n        method: descriptor.method,\n        signal: requestOptions?.signal,\n        headers,\n        ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),\n      } satisfies RequestInit,\n    }\n  }\n\n  const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {\n    try {\n      const prepared = prepare(descriptor, requestOptions)\n      return await fetch(prepared.url, prepared.init)\n    } catch (cause) {\n      throw new ClientError("Transport", { cause })\n    }\n  }\n\n  const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {\n    if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })\n  }\n\n  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {\n    const response = await execute(descriptor, requestOptions)\n    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)\n    return await json(response) as A\n  }\n\n  const requestEmpty = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<void> => {\n    const response = await execute(descriptor, requestOptions)\n    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)\n    try {\n      await response.body?.cancel()\n    } catch {}\n  }\n\n  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({\n    async *[Symbol.asyncIterator]() {\n      const response = await execute(descriptor, requestOptions)\n      if (response.status !== descriptor.successStatus) await responseError(response, descriptor)\n      if (!isContentType(response, "text/event-stream")) {\n        try {\n          await response.body?.cancel()\n        } catch {}\n        throw new ClientError("UnsupportedContentType")\n      }\n      if (response.body === null) throw new ClientError("MalformedResponse")\n      const reader = response.body.getReader()\n      const decoder = new TextDecoder()\n      let buffer = ""\n      try {\n        while (true) {\n          let next: ReadableStreamReadResult<Uint8Array>\n          try {\n            next = await reader.read()\n          } catch (cause) {\n            throw new ClientError("Transport", { cause })\n          }\n          buffer += decoder.decode(next.value, { stream: !next.done })\n          if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")\n          const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")\n          if (trailingCarriageReturn) buffer = buffer.slice(0, -1)\n          buffer = buffer.replaceAll("\\r\\n", "\\n").replaceAll("\\r", "\\n")\n          if (trailingCarriageReturn) buffer += "\\r"\n          if (next.done && buffer !== "") buffer += "\\n\\n"\n          let boundary = buffer.indexOf("\\n\\n")\n          while (boundary >= 0) {\n            const block = buffer.slice(0, boundary)\n            buffer = buffer.slice(boundary + 2)\n            const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")\n            if (data !== "") {\n              try {\n                yield JSON.parse(data) as A\n              } catch (cause) {\n                throw new ClientError("MalformedResponse", { cause })\n              }\n            }\n            boundary = buffer.indexOf("\\n\\n")\n          }\n          if (next.done) return\n        }\n      } finally {\n        try {\n          await reader.cancel()\n        } catch {}\n        reader.releaseLock()\n      }\n    },\n  })\n\n  return { ${fields.join(", ")} }\n}\n\nfunction appendQuery(params: URLSearchParams, key: string, value: unknown): void {\n  if (value === undefined || value === null) return\n  if (Array.isArray(value)) {\n    for (const item of value) appendQuery(params, key, item)\n    return\n  }\n  if (typeof value === "object") {\n    for (const [child, item] of Object.entries(value)) appendQuery(params, \`\${key}[\${child}]\`, item)\n    return\n  }\n  if (isPrimitive(value)) params.append(key, String(value))\n}\n\nfunction isPrimitive(value: unknown): value is string | number | boolean | bigint {\n  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"\n}\n\nasync function json(response: Response): Promise<unknown> {\n  if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {\n    try {\n      await response.body?.cancel()\n    } catch {}\n    throw new ClientError("UnsupportedContentType")\n  }\n  let text: string\n  try {\n    text = await response.text()\n  } catch (cause) {\n    throw new ClientError("Transport", { cause })\n  }\n  if (text === "") throw new ClientError("MalformedResponse")\n  try {\n    return JSON.parse(text)\n  } catch (cause) {\n    throw new ClientError("MalformedResponse", { cause })\n  }\n}\n\nfunction isContentType(response: Response, expected: string) {\n  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === expected\n}\n`
+    return `import type { ${imports.join(", ")} } from "./types"
+import { ClientError } from "./client-error"
+
+export interface ClientOptions {
+  readonly baseUrl: string
+  readonly fetch?: typeof globalThis.fetch
+  readonly headers?: HeadersInit
+}
+
+export interface RequestOptions {
+  readonly signal?: AbortSignal
+  readonly headers?: HeadersInit
+}
+
+interface RequestDescriptor {
+  readonly method: string
+  readonly path: string
+  readonly query?: Record<string, unknown>
+  readonly headers?: Record<string, unknown>
+  readonly body?: unknown
+  readonly successStatus: number
+  readonly declaredStatuses: ReadonlyArray<number>
+}
+
+export function make(options: ClientOptions) {
+  const fetch = options.fetch ?? globalThis.fetch
+
+  const prepare = (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
+    const url = new URL(descriptor.path, options.baseUrl)
+    for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)
+    const headers = new Headers(options.headers)
+    for (const [key, value] of Object.entries(descriptor.headers ?? {})) {
+      if (isPrimitive(value)) headers.set(key, String(value))
+    }
+    for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)
+    if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")
+    return {
+      url,
+      init: {
+        method: descriptor.method,
+        signal: requestOptions?.signal,
+        headers,
+        ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),
+      } satisfies RequestInit,
+    }
+  }
+
+  const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
+    try {
+      const prepared = prepare(descriptor, requestOptions)
+      return await fetch(prepared.url, prepared.init)
+    } catch (cause) {
+      throw new ClientError("Transport", { cause })
+    }
+  }
+
+  const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
+    if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
+    try {
+      await response.body?.cancel()
+    } catch {}
+    throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
+  }
+
+  const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
+    const response = await execute(descriptor, requestOptions)
+    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    return await json(response) as A
+  }
+
+  const requestEmpty = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<void> => {
+    const response = await execute(descriptor, requestOptions)
+    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    try {
+      await response.body?.cancel()
+    } catch {}
+  }
+
+  const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
+    async *[Symbol.asyncIterator]() {
+      const response = await execute(descriptor, requestOptions)
+      if (response.status !== descriptor.successStatus) await responseError(response, descriptor)
+      if (!isContentType(response, "text/event-stream")) {
+        try {
+          await response.body?.cancel()
+        } catch {}
+        throw new ClientError("UnsupportedContentType")
+      }
+      if (response.body === null) throw new ClientError("MalformedResponse")
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      try {
+        while (true) {
+          let next: ReadableStreamReadResult<Uint8Array>
+          try {
+            next = await reader.read()
+          } catch (cause) {
+            throw new ClientError("Transport", { cause })
+          }
+          buffer += decoder.decode(next.value, { stream: !next.done })
+          if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")
+          const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")
+          if (trailingCarriageReturn) buffer = buffer.slice(0, -1)
+          buffer = buffer.replaceAll("\\r\\n", "\\n").replaceAll("\\r", "\\n")
+          if (trailingCarriageReturn) buffer += "\\r"
+          if (next.done && buffer !== "") buffer += "\\n\\n"
+          let boundary = buffer.indexOf("\\n\\n")
+          while (boundary >= 0) {
+            const block = buffer.slice(0, boundary)
+            buffer = buffer.slice(boundary + 2)
+            const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")
+            if (data !== "") {
+              try {
+                yield JSON.parse(data) as A
+              } catch (cause) {
+                throw new ClientError("MalformedResponse", { cause })
+              }
+            }
+            boundary = buffer.indexOf("\\n\\n")
+          }
+          if (next.done) return
+        }
+      } finally {
+        try {
+          await reader.cancel()
+        } catch {}
+        reader.releaseLock()
+      }
+    },
+  })
+
+  return { ${fields.join(", ")} }
+}
+
+function appendQuery(params: URLSearchParams, key: string, value: unknown): void {
+  if (value === undefined || value === null) return
+  if (Array.isArray(value)) {
+    for (const item of value) appendQuery(params, key, item)
+    return
+  }
+  if (typeof value === "object") {
+    for (const [child, item] of Object.entries(value)) appendQuery(params, \`\${key}[\${child}]\`, item)
+    return
+  }
+  if (isPrimitive(value)) params.append(key, String(value))
+}
+
+function isPrimitive(value: unknown): value is string | number | boolean | bigint {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+}
+
+async function json(response: Response): Promise<unknown> {
+  if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {
+    try {
+      await response.body?.cancel()
+    } catch {}
+    throw new ClientError("UnsupportedContentType")
+  }
+  let text: string
+  try {
+    text = await response.text()
+  } catch (cause) {
+    throw new ClientError("Transport", { cause })
+  }
+  if (text === "") throw new ClientError("MalformedResponse")
+  try {
+    return JSON.parse(text)
+  } catch (cause) {
+    throw new ClientError("MalformedResponse", { cause })
+  }
+}
+
+function isContentType(response: Response, expected: string) {
+  return response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === expected
+}
+`
   })
 }
 
