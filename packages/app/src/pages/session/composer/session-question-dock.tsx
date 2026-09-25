@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component, type JSX } from "solid-js"
-import { Option } from "effect"
+import { Duration, Effect, Option } from "effect"
 import { createStore } from "solid-js/store"
 import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
@@ -14,6 +14,7 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 // Clamps the question text to three lines while the dock is minimized.
 const minimizedQuestionText = {
@@ -96,6 +97,8 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   let customRef: HTMLButtonElement | undefined
   let optsRef: HTMLButtonElement[] = []
   let replied = false
+  // Focuses the custom answer input after Solid inserts it.
+  const customFocus = createFiberSlot()
   let focusFrame: Option.Option<number> = Option.none()
 
   const question = createMemo(() => questions()[store.tab])
@@ -412,10 +415,16 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   }
 
   const focusCustom = (el: HTMLTextAreaElement) => {
-    setTimeout(() => {
-      el.focus()
-      resizeInput(el)
-    }, 0)
+    customFocus.run(
+      Effect.sleep(Duration.zero).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            el.focus()
+            resizeInput(el)
+          }),
+        ),
+      ),
+    )
   }
 
   const toggleCustomMark = (event: MouseEvent) => {

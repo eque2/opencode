@@ -1,8 +1,9 @@
-import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
+import { batch, createMemo, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { Option, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { same } from "@/utils/same"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
 import type { SelectedLineRange } from "@/context/file"
 
@@ -192,21 +193,16 @@ export const getTabReorderIndex = (tabs: readonly string[], from: string, to: st
 
 export const createSizing = () => {
   const [state, setState] = createStore({ active: false })
-  let t: number | undefined
+  // The pending delayed stop. The slot interrupts it when the owner cleans up.
+  const settle = createFiberSlot()
 
   const stop = () => {
-    if (t !== undefined) {
-      clearTimeout(t)
-      t = undefined
-    }
+    settle.interrupt()
     setState("active", false)
   }
 
   const start = () => {
-    if (t !== undefined) {
-      clearTimeout(t)
-      t = undefined
-    }
+    settle.interrupt()
     setState("active", true)
   }
 
@@ -216,16 +212,12 @@ export const createSizing = () => {
     makeEventListener(window, "blur", stop)
   })
 
-  onCleanup(() => {
-    if (t !== undefined) clearTimeout(t)
-  })
-
   return {
     active: () => state.active,
     start,
     touch() {
       start()
-      t = window.setTimeout(stop, 120)
+      settle.run(Effect.sleep("120 millis").pipe(Effect.andThen(Effect.sync(() => setState("active", false)))))
     },
   }
 }
