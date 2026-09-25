@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { ShikiStreamTokenizer } from "@shikijs/stream"
-import { MutableHashMap, Option } from "effect"
+import { Effect, MutableHashMap, Option } from "effect"
 import { createMarkdownParser } from "@opencode-ai/ui/context/marked-parser"
 import { OpenCodeTheme } from "@opencode-ai/ui/context/marked-theme"
 import {
@@ -26,14 +26,14 @@ const streams = MutableHashMap.empty<string, Stream>()
 const projections = MutableHashMap.empty<string, Projection>()
 let highlighter: ReturnType<typeof createHighlighter> | undefined
 const highlightQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
-  run: highlight,
+  run: (request) => Effect.promise(() => highlight(request)),
   supersede: (request) => post({ type: "superseded", id: request.id, key: request.key }),
   dispose: (key) => {
     MutableHashMap.remove(streams, key)
   },
 })
 const projectQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "project" }>>({
-  run: runProject,
+  run: (request) => Effect.promise(() => runProject(request)),
   supersede: (request) => post({ type: "superseded", id: request.id, key: request.key }),
   dispose: (key) => {
     MutableHashMap.remove(projections, key)
