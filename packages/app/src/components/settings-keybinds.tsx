@@ -1,6 +1,7 @@
 import { Component, For, Show, createMemo, lazy, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { Option } from "effect"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -81,42 +82,41 @@ function normalizeKey(key: string) {
   return key.toLowerCase()
 }
 
-function recordKeybind(event: KeyboardEvent) {
-  if (isModifier(event.key)) return
+/** The names whose flag is on, in table order. */
+function enabled(flags: ReadonlyArray<readonly [boolean, string]>) {
+  return flags.flatMap(([on, name]) => (on ? [name] : []))
+}
 
-  const parts: string[] = []
-
-  const mod = IS_MAC ? event.metaKey : event.ctrlKey
-  if (mod) parts.push("mod")
-
-  if (IS_MAC && event.ctrlKey) parts.push("ctrl")
-  if (!IS_MAC && event.metaKey) parts.push("meta")
-  if (event.altKey) parts.push("alt")
-  if (event.shiftKey) parts.push("shift")
+/** The keybind config for a key press, or none for a lone modifier or an empty key. */
+function recordKeybind(event: KeyboardEvent): Option.Option<string> {
+  if (isModifier(event.key)) return Option.none()
 
   const key = normalizeKey(event.key)
-  if (!key) return
-  parts.push(key)
+  if (!key) return Option.none()
 
-  return parts.join("+")
+  const modifiers = enabled([
+    [IS_MAC ? event.metaKey : event.ctrlKey, "mod"],
+    [IS_MAC && event.ctrlKey, "ctrl"],
+    [!IS_MAC && event.metaKey, "meta"],
+    [event.altKey, "alt"],
+    [event.shiftKey, "shift"],
+  ])
+  return Option.some([...modifiers, key].join("+"))
 }
 
 function signatures(config: string | undefined) {
   if (!config) return []
-  const sigs: string[] = []
 
-  for (const kb of parseKeybind(config)) {
-    const parts: string[] = []
-    if (kb.ctrl) parts.push("ctrl")
-    if (kb.alt) parts.push("alt")
-    if (kb.shift) parts.push("shift")
-    if (kb.meta) parts.push("meta")
-    if (kb.key) parts.push(kb.key)
-    if (parts.length === 0) continue
-    sigs.push(parts.join("+"))
-  }
-
-  return sigs
+  return parseKeybind(config).flatMap((kb) => {
+    const parts = enabled([
+      [kb.ctrl, "ctrl"],
+      [kb.alt, "alt"],
+      [kb.shift, "shift"],
+      [kb.meta, "meta"],
+      [kb.key !== "", kb.key],
+    ])
+    return parts.length === 0 ? [] : [parts.join("+")]
+  })
 }
 
 function keybinds(value: unknown): KeybindMap {
@@ -150,20 +150,16 @@ function listFor(command: Pick<CommandContext, "catalog" | "options">, map: Keyb
 }
 
 function groupedFor(list: Map<string, KeybindMeta>) {
+  const entries = Array.from(list)
   const out = new Map<KeybindGroup, string[]>()
-  for (const group of GROUPS) out.set(group, [])
-
-  for (const [id, item] of list) {
-    const ids = out.get(item.group)
-    if (!ids) continue
-    ids.push(id)
-  }
-
-  for (const group of GROUPS) {
-    const ids = out.get(group)
-    if (!ids) continue
-    ids.sort((a, b) => (list.get(a)?.title ?? "").localeCompare(list.get(b)?.title ?? ""))
-  }
+  for (const group of GROUPS)
+    out.set(
+      group,
+      entries
+        .filter(([, item]) => item.group === group)
+        .map(([id]) => id)
+        .sort((a, b) => (list.get(a)?.title ?? "").localeCompare(list.get(b)?.title ?? "")),
+    )
 
   return out
 }
@@ -177,9 +173,6 @@ function filteredFor(
   const value = query.toLowerCase().trim()
   if (!value) return grouped
 
-  const out = new Map<KeybindGroup, string[]>()
-  for (const group of GROUPS) out.set(group, [])
-
   const items = Array.from(list.entries()).map(([id, meta]) => ({
     id,
     title: meta.title,
@@ -192,11 +185,12 @@ function filteredFor(
     threshold: -10000,
   })
 
-  for (const result of results) {
-    const ids = out.get(result.obj.group)
-    if (!ids) continue
-    ids.push(result.obj.id)
-  }
+  const out = new Map<KeybindGroup, string[]>()
+  for (const group of GROUPS)
+    out.set(
+      group,
+      results.filter((result) => result.obj.group === group).map((result) => result.obj.id),
+    )
 
   return out
 }
@@ -234,8 +228,9 @@ function useKeyCapture(input: {
         return
       }
 
-      const next = recordKeybind(event)
-      if (!next) return
+      const recorded = recordKeybind(event)
+      if (Option.isNone(recorded)) return
+      const next = recorded.value
 
       const conflicts = new Map<string, string>()
       for (const sig of signatures(next)) {
@@ -299,12 +294,7 @@ export function createKeybindSettingsController(
 
     for (const id of list().keys()) {
       for (const signature of signatures(effective(id))) {
-        const items = value.get(signature)
-        if (items) {
-          items.push({ id, title: title(id) })
-          continue
-        }
-        value.set(signature, [{ id, title: title(id) }])
+        value.set(signature, [...(value.get(signature) ?? []), { id, title: title(id) }])
       }
     }
 
@@ -351,8 +341,9 @@ export function createKeybindSettingsController(
       return
     }
 
-    const next = recordKeybind(event)
-    if (!next) return
+    const recorded = recordKeybind(event)
+    if (Option.isNone(recorded)) return
+    const next = recorded.value
 
     const conflicts = new Map<string, string>()
     for (const signature of signatures(next)) {
@@ -597,12 +588,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
     const map = new Map<string, { id: string; title: string }[]>()
 
     const add = (key: string, value: { id: string; title: string }) => {
-      const list = map.get(key)
-      if (!list) {
-        map.set(key, [value])
-        return
-      }
-      list.push(value)
+      map.set(key, [...(map.get(key) ?? []), value])
     }
 
     const palette = settings.keybinds.get(PALETTE_ID) ?? DEFAULT_PALETTE_KEYBIND
