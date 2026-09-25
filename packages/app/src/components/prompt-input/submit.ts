@@ -4,11 +4,12 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
+import { Predicate } from "effect"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
-import { useLocal, type ModelSelection } from "@/context/local"
+import { useLocal } from "@/context/local"
 import { usePermission } from "@/context/permission"
 import { type ContextItem, type ImageAttachmentPart, type Prompt, type usePrompt } from "@/context/prompt"
 import { useSDK, type DirectorySDK } from "@/context/sdk"
@@ -49,6 +50,12 @@ type FollowupSendInput = {
   messageID?: string
   optimisticBusy?: boolean
   before?: () => Promise<boolean> | boolean
+}
+
+/** The model selection that a submit reads. `useLocal().model` satisfies it. */
+type SubmitModelSelection = {
+  current: () => { id: string; provider: { id: string } } | undefined
+  variant: { current: () => string | undefined }
 }
 
 const draftText = (prompt: Prompt) => prompt.map((part) => ("content" in part ? part.content : "")).join("")
@@ -228,7 +235,7 @@ type PromptSubmitInput = {
   onQueue?: (draft: FollowupDraft) => void
   onAbort?: () => void
   onSubmit?: () => void
-  model?: ModelSelection
+  model?: SubmitModelSelection
 }
 
 export function createPromptSubmit(input: PromptSubmitInput) {
@@ -249,8 +256,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const errorMessage = (err: unknown) => {
     if (err && typeof err === "object" && "message" in err && typeof err.message === "string") return err.message
     if (err && typeof err === "object" && "data" in err) {
-      const data = (err as { data?: { message?: string } }).data
-      if (data?.message) return data.message
+      const data = err.data
+      if (Predicate.hasProperty(data, "message") && Predicate.isString(data.message) && data.message)
+        return data.message
     }
     if (err instanceof Error) return err.message
     return language.t("common.requestFailed")

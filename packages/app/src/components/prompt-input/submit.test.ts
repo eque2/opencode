@@ -1,9 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import type { Prompt, PromptStore } from "@/context/prompt"
-import type { ModelSelection } from "@/context/local"
+import type { DirectorySDK } from "@/context/sdk"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
+
+type PromptRequest = Parameters<DirectorySDK["api"]["session"]["prompt"]>[0]
+type StoredSession = { id: string; title?: string }
 
 const createdClients: string[] = []
 const createdSessions: string[] = []
@@ -23,13 +26,13 @@ const optimistic: Array<{
   }
 }> = []
 const optimisticSeeded: boolean[] = []
-const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
+const storedSessions: Record<string, StoredSession[]> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
 const syncedDirectories: string[] = []
 const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
 const sentPrompts: string[] = []
-const promptInputs: unknown[] = []
+const promptInputs: PromptRequest[] = []
 const sentCommands: unknown[] = []
 const commands: Array<{ name: string }> = []
 let serverSessionSyncs = 0
@@ -92,7 +95,7 @@ const clientFor = (directory: string) => {
             location: { directory: location },
           }
         },
-        prompt: async (input: unknown) => {
+        prompt: async (input: PromptRequest) => {
           sentPrompts.push(directory)
           promptInputs.push(input)
           return { data: undefined }
@@ -246,16 +249,13 @@ beforeAll(async () => {
         storedSessions[directory] ??= []
         return [
           { session: storedSessions[directory] },
-          (...args: unknown[]) => {
-            if (args[0] !== "session") return
-            const next = args[1]
+          (key: string, next: StoredSession[] | ((list: StoredSession[]) => StoredSession[])) => {
+            if (key !== "session") return
             if (typeof next === "function") {
-              storedSessions[directory] = next(storedSessions[directory]) as Array<{ id: string; title?: string }>
+              storedSessions[directory] = next(storedSessions[directory] ?? [])
               return
             }
-            if (Array.isArray(next)) {
-              storedSessions[directory] = next as Array<{ id: string; title?: string }>
-            }
+            storedSessions[directory] = next
           },
         ]
       },
@@ -326,7 +326,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    const event = { preventDefault: () => undefined } as unknown as Event
+    const event = new Event("submit")
 
     await submit.handleSubmit(event)
     selected = "/repo/worktree-b"
@@ -380,7 +380,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    const event = { preventDefault: () => undefined } as unknown as Event
+    const event = new Event("submit")
 
     await submit.handleSubmit(event)
 
@@ -412,7 +412,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    const result = submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    const result = submit.handleSubmit(new Event("submit"))
     permissionServer = "server-b"
     release()
     await result
@@ -442,7 +442,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await submit.handleSubmit(new Event("submit"))
 
     expect(promotedDrafts).toEqual([{ draftID: "draft-1", server: "project-server", sessionId: "session-1" }])
   })
@@ -469,7 +469,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    const event = { preventDefault: () => undefined } as unknown as Event
+    const event = new Event("submit")
 
     await submit.handleSubmit(event)
     await Bun.sleep(0)
@@ -488,10 +488,8 @@ describe("prompt submit worktree selection", () => {
       files: [],
       agents: [],
     })
-    expect((promptInputs[0] as { id?: string }).id).toStartWith("msg_")
-    expect((promptInputs[0] as { legacyParts?: { id: string; type: string; text?: string }[] }).legacyParts).toEqual([
-      { id: expect.stringMatching(/^prt_/), type: "text", text: "ls" },
-    ])
+    expect(promptInputs[0]?.id).toStartWith("msg_")
+    expect(promptInputs[0]?.legacyParts).toEqual([{ id: expect.stringMatching(/^prt_/), type: "text", text: "ls" }])
   })
 
   test("submits slash commands through the current session API", async () => {
@@ -517,7 +515,7 @@ describe("prompt submit worktree selection", () => {
       setPopover: () => undefined,
     })
 
-    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await submit.handleSubmit(new Event("submit"))
 
     expect(sentCommands).toEqual([
       {
@@ -538,7 +536,7 @@ describe("prompt submit worktree selection", () => {
     const model = {
       current: () => ({ id: "draft-model", provider: { id: "draft-provider" } }),
       variant: { current: () => "draft-variant" },
-    } as unknown as ModelSelection
+    }
     const submit = createPromptSubmit({
       prompt,
       info: () => ({ id: "session-1" }),
@@ -557,7 +555,7 @@ describe("prompt submit worktree selection", () => {
       model,
     })
 
-    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await submit.handleSubmit(new Event("submit"))
 
     expect(optimistic[0]).toMatchObject({
       message: {
@@ -587,7 +585,7 @@ describe("prompt submit worktree selection", () => {
       onSubmit: () => undefined,
     })
 
-    const event = { preventDefault: () => undefined } as unknown as Event
+    const event = new Event("submit")
 
     await submit.handleSubmit(event)
 
