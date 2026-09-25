@@ -144,7 +144,7 @@ export function make(options: ClientOptions) {
     for (const [key, value] of Object.entries(descriptor.query ?? {})) appendQuery(url.searchParams, key, value)
     const headers = new Headers(options.headers)
     for (const [key, value] of Object.entries(descriptor.headers ?? {})) {
-      if (value !== undefined && value !== null) headers.set(key, String(value))
+      if (isPrimitive(value)) headers.set(key, String(value))
     }
     for (const [key, value] of new Headers(requestOptions?.headers)) headers.set(key, value)
     if (descriptor.body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")
@@ -961,7 +961,13 @@ function appendQuery(params: URLSearchParams, key: string, value: unknown): void
     for (const [child, item] of Object.entries(value)) appendQuery(params, `${key}[${child}]`, item)
     return
   }
-  params.append(key, String(value))
+  if (isPrimitive(value)) params.append(key, String(value))
+}
+
+function isPrimitive(value: unknown): value is string | number | boolean | bigint {
+  return (
+    typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+  )
 }
 
 async function json(response: Response): Promise<unknown> {
