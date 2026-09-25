@@ -9,6 +9,7 @@ import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useParams } from "@solidjs/router"
+import { Effect, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { usePlatform, type DisplayBackend } from "@/context/platform"
@@ -29,14 +30,17 @@ import {
 } from "@/context/settings"
 import { decode64 } from "@/utils/base64"
 import { playSoundById, SOUND_OPTIONS } from "@/utils/sound"
+import { makeFiberSlot } from "@/utils/fiber-slot"
 import { ExternalLink } from "./external-link"
 import { SettingsList } from "./settings-list"
 
-let demoSoundState = {
-  cleanup: undefined as (() => void) | undefined,
-  timeout: undefined as NodeJS.Timeout | undefined,
+// The stop function of the demo sound that plays now, and a counter that marks the latest request.
+const demoSoundState: { cleanup: Option.Option<() => void>; run: number } = {
+  cleanup: Option.none(),
   run: 0,
 }
+// Holds the delayed start of the next demo sound.
+const demoSoundDelay = makeFiberSlot()
 
 type ThemeOption = {
   id: string
@@ -59,27 +63,31 @@ type ShellSelectOption = {
 // delay the playback by 100ms during quick selection changes and pause existing sounds.
 const stopDemoSound = () => {
   demoSoundState.run += 1
-  if (demoSoundState.cleanup) {
-    demoSoundState.cleanup()
+  if (Option.isSome(demoSoundState.cleanup)) {
+    demoSoundState.cleanup.value()
   }
-  clearTimeout(demoSoundState.timeout)
-  demoSoundState.cleanup = undefined
+  demoSoundDelay.interrupt()
+  demoSoundState.cleanup = Option.none()
 }
 
-const playDemoSound = (id: string | undefined) => {
+const playDemoSound = (id: Option.Option<string>) => {
   stopDemoSound()
-  if (!id) return
+  if (Option.isNone(id) || !id.value) return
 
   const run = ++demoSoundState.run
-  demoSoundState.timeout = setTimeout(() => {
-    void playSoundById(id).then((cleanup) => {
+  // Only the delay is interruptible. Once the sound starts, the stop function must still reach
+  // demoSoundState, or a newer request stops it through the run check.
+  const start = Effect.promise(() => playSoundById(id.value)).pipe(
+    Effect.map((stop) => {
+      const cleanup = Option.fromNullishOr(stop)
       if (demoSoundState.run !== run) {
-        cleanup?.()
+        if (Option.isSome(cleanup)) cleanup.value()
         return
       }
       demoSoundState.cleanup = cleanup
-    })
-  }, 100)
+    }),
+  )
+  demoSoundDelay.run(Effect.sleep("100 millis").pipe(Effect.andThen(Effect.uninterruptible(start))))
 }
 
 export const SettingsGeneral: Component = () => {
@@ -234,7 +242,7 @@ export const SettingsGeneral: Component = () => {
     label: (o: (typeof soundOptions)[number]) => language.t(o.label),
     onHighlight: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
-      playDemoSound(option.id === "none" ? undefined : option.id)
+      playDemoSound(option.id === "none" ? Option.none() : Option.some(option.id))
     },
     onSelect: (option: (typeof soundOptions)[number] | undefined) => {
       if (!option) return
@@ -245,7 +253,7 @@ export const SettingsGeneral: Component = () => {
       }
       setEnabled(true)
       set(option.id)
-      playDemoSound(option.id)
+      playDemoSound(Option.some(option.id))
     },
     variant: "secondary" as const,
     size: "small" as const,
