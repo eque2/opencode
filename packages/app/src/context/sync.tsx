@@ -97,7 +97,7 @@ export function applyOptimisticAdd(draft: OptimisticStore, input: OptimisticAddI
   const messages = draft.message[input.sessionID]
   if (messages) {
     const result = Binary.search(messages, messageKey(input.message), messageKey)
-    messages.splice(result.index, 0, input.message)
+    draft.message[input.sessionID] = messages.toSpliced(result.index, 0, input.message)
   } else {
     draft.message[input.sessionID] = [input.message]
   }
@@ -108,7 +108,7 @@ export function applyOptimisticRemove(draft: OptimisticStore, input: OptimisticR
   const messages = draft.message[input.sessionID]
   if (messages) {
     const index = messages.findIndex((message) => message.id === input.messageID)
-    if (index >= 0) messages.splice(index, 1)
+    if (index >= 0) draft.message[input.sessionID] = messages.toSpliced(index, 1)
   }
   delete draft.part[input.messageID]
 }

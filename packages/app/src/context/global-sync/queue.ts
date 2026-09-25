@@ -18,14 +18,9 @@ export function createRefreshQueue(input: QueueInput) {
   const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
   const take = (count: number) => {
-    if (MutableHashMap.isEmpty(queued)) return [] as string[]
-    const items: string[] = []
-    for (const [id, directory] of queued) {
-      MutableHashMap.remove(queued, id)
-      items.push(directory)
-      if (items.length >= count) break
-    }
-    return items
+    const picked = [...queued].slice(0, count)
+    for (const [id] of picked) MutableHashMap.remove(queued, id)
+    return picked.map(([, directory]) => directory)
   }
 
   const schedule = () => {
