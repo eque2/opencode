@@ -134,7 +134,6 @@ interface RequestDescriptor {
   readonly body?: unknown
   readonly successStatus: number
   readonly declaredStatuses: ReadonlyArray<number>
-  readonly empty: boolean
 }
 
 export function make(options: ClientOptions) {
@@ -155,7 +154,7 @@ export function make(options: ClientOptions) {
         method: descriptor.method,
         signal: requestOptions?.signal,
         headers,
-        body: descriptor.body === undefined ? undefined : JSON.stringify(descriptor.body),
+        ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),
       } satisfies RequestInit,
     }
   }
@@ -180,13 +179,15 @@ export function make(options: ClientOptions) {
   const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
-    if (descriptor.empty) {
-      try {
-        await response.body?.cancel()
-      } catch {}
-      return undefined as A
-    }
     return (await json(response)) as A
+  }
+
+  const requestEmpty = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<void> => {
+    const response = await execute(descriptor, requestOptions)
+    if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    try {
+      await response.body?.cancel()
+    } catch {}
   }
 
   const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
@@ -250,7 +251,7 @@ export function make(options: ClientOptions) {
     health: {
       get: (requestOptions?: RequestOptions) =>
         request<HealthGetOutput>(
-          { method: "GET", path: `/api/health`, successStatus: 200, declaredStatuses: [401, 400], empty: false },
+          { method: "GET", path: `/api/health`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ),
     },
@@ -263,7 +264,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -277,7 +277,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -300,7 +299,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -317,19 +315,12 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
       active: (requestOptions?: RequestOptions) =>
         request<{ readonly data: SessionsActiveOutput }>(
-          {
-            method: "GET",
-            path: `/api/session/active`,
-            successStatus: 200,
-            declaredStatuses: [401, 400],
-            empty: false,
-          },
+          { method: "GET", path: `/api/session/active`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ).then((value) => value.data),
       get: (input: SessionsGetInput, requestOptions?: RequestOptions) =>
@@ -339,31 +330,34 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      switchAgent: (input: SessionsSwitchAgentInput, requestOptions?: RequestOptions) =>
-        request<SessionsSwitchAgentOutput>(
+      switchAgent: (
+        input: SessionsSwitchAgentInput,
+        requestOptions?: RequestOptions,
+      ): Promise<SessionsSwitchAgentOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/agent`,
             body: { agent: input["agent"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      switchModel: (input: SessionsSwitchModelInput, requestOptions?: RequestOptions) =>
-        request<SessionsSwitchModelOutput>(
+      switchModel: (
+        input: SessionsSwitchModelInput,
+        requestOptions?: RequestOptions,
+      ): Promise<SessionsSwitchModelOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/model`,
             body: { model: input["model"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -375,29 +369,26 @@ export function make(options: ClientOptions) {
             body: { id: input["id"], prompt: input["prompt"], delivery: input["delivery"], resume: input["resume"] },
             successStatus: 200,
             declaredStatuses: [409, 404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      compact: (input: SessionsCompactInput, requestOptions?: RequestOptions) =>
-        request<SessionsCompactOutput>(
+      compact: (input: SessionsCompactInput, requestOptions?: RequestOptions): Promise<SessionsCompactOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/compact`,
             successStatus: 204,
             declaredStatuses: [404, 503, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      wait: (input: SessionsWaitInput, requestOptions?: RequestOptions) =>
-        request<SessionsWaitOutput>(
+      wait: (input: SessionsWaitInput, requestOptions?: RequestOptions): Promise<SessionsWaitOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/wait`,
             successStatus: 204,
             declaredStatuses: [404, 503, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -409,29 +400,26 @@ export function make(options: ClientOptions) {
             body: { messageID: input["messageID"], files: input["files"] },
             successStatus: 200,
             declaredStatuses: [404, 500, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      clear: (input: SessionsClearInput, requestOptions?: RequestOptions) =>
-        request<SessionsClearOutput>(
+      clear: (input: SessionsClearInput, requestOptions?: RequestOptions): Promise<SessionsClearOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/revert/clear`,
             successStatus: 204,
             declaredStatuses: [404, 500, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      commit: (input: SessionsCommitInput, requestOptions?: RequestOptions) =>
-        request<SessionsCommitOutput>(
+      commit: (input: SessionsCommitInput, requestOptions?: RequestOptions): Promise<SessionsCommitOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/revert/commit`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -442,7 +430,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/context`,
             successStatus: 200,
             declaredStatuses: [404, 500, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -454,7 +441,6 @@ export function make(options: ClientOptions) {
             query: { limit: input["limit"], after: input["after"] },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -466,18 +452,16 @@ export function make(options: ClientOptions) {
             query: { after: input["after"] },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ),
-      interrupt: (input: SessionsInterruptInput, requestOptions?: RequestOptions) =>
-        request<SessionsInterruptOutput>(
+      interrupt: (input: SessionsInterruptInput, requestOptions?: RequestOptions): Promise<SessionsInterruptOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/interrupt`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -488,7 +472,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/message/${encodeURIComponent(input.messageID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -502,7 +485,6 @@ export function make(options: ClientOptions) {
             query: { limit: input["limit"], order: input["order"], cursor: input["cursor"] },
             successStatus: 200,
             declaredStatuses: [400, 404, 500, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -516,7 +498,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -530,7 +511,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -542,7 +522,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [404, 503, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -556,7 +535,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -568,12 +546,14 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      connectKey: (input: IntegrationsConnectKeyInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsConnectKeyOutput>(
+      connectKey: (
+        input: IntegrationsConnectKeyInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsConnectKeyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/integration/${encodeURIComponent(input.integrationID)}/connect/key`,
@@ -581,7 +561,6 @@ export function make(options: ClientOptions) {
             body: { key: input["key"], label: input["label"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -594,7 +573,6 @@ export function make(options: ClientOptions) {
             body: { methodID: input["methodID"], inputs: input["inputs"], label: input["label"] },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
@@ -606,12 +584,14 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      attemptComplete: (input: IntegrationsAttemptCompleteInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsAttemptCompleteOutput>(
+      attemptComplete: (
+        input: IntegrationsAttemptCompleteInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsAttemptCompleteOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/integration/attempt/${encodeURIComponent(input.attemptID)}/complete`,
@@ -619,26 +599,27 @@ export function make(options: ClientOptions) {
             body: { code: input["code"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      attemptCancel: (input: IntegrationsAttemptCancelInput, requestOptions?: RequestOptions) =>
-        request<IntegrationsAttemptCancelOutput>(
+      attemptCancel: (
+        input: IntegrationsAttemptCancelInput,
+        requestOptions?: RequestOptions,
+      ): Promise<IntegrationsAttemptCancelOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/integration/attempt/${encodeURIComponent(input.attemptID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
     },
     credentials: {
-      update: (input: CredentialsUpdateInput, requestOptions?: RequestOptions) =>
-        request<CredentialsUpdateOutput>(
+      update: (input: CredentialsUpdateInput, requestOptions?: RequestOptions): Promise<CredentialsUpdateOutput> =>
+        requestEmpty(
           {
             method: "PATCH",
             path: `/api/credential/${encodeURIComponent(input.credentialID)}`,
@@ -646,19 +627,17 @@ export function make(options: ClientOptions) {
             body: { label: input["label"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
-      remove: (input: CredentialsRemoveInput, requestOptions?: RequestOptions) =>
-        request<CredentialsRemoveOutput>(
+      remove: (input: CredentialsRemoveInput, requestOptions?: RequestOptions): Promise<CredentialsRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/credential/${encodeURIComponent(input.credentialID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -672,7 +651,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -684,18 +662,19 @@ export function make(options: ClientOptions) {
             query: { projectID: input?.["projectID"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      removeSaved: (input: PermissionsRemoveSavedInput, requestOptions?: RequestOptions) =>
-        request<PermissionsRemoveSavedOutput>(
+      removeSaved: (
+        input: PermissionsRemoveSavedInput,
+        requestOptions?: RequestOptions,
+      ): Promise<PermissionsRemoveSavedOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/permission/saved/${encodeURIComponent(input.id)}`,
             successStatus: 204,
             declaredStatuses: [401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -715,7 +694,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -726,7 +704,6 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
@@ -737,19 +714,17 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission/${encodeURIComponent(input.requestID)}`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      reply: (input: PermissionsReplyInput, requestOptions?: RequestOptions) =>
-        request<PermissionsReplyOutput>(
+      reply: (input: PermissionsReplyInput, requestOptions?: RequestOptions): Promise<PermissionsReplyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/permission/${encodeURIComponent(input.requestID)}/reply`,
             body: { reply: input["reply"], message: input["message"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -763,7 +738,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"], path: input?.["path"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -775,7 +749,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"], query: input["query"], type: input["type"], limit: input["limit"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -789,7 +762,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -803,7 +775,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -811,7 +782,7 @@ export function make(options: ClientOptions) {
     events: {
       subscribe: (requestOptions?: RequestOptions): AsyncIterable<EventsSubscribeOutput> =>
         sse<EventsSubscribeOutput>(
-          { method: "GET", path: `/api/event`, successStatus: 200, declaredStatuses: [401, 400], empty: false },
+          { method: "GET", path: `/api/event`, successStatus: 200, declaredStatuses: [401, 400] },
           requestOptions,
         ),
     },
@@ -824,7 +795,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -843,7 +813,6 @@ export function make(options: ClientOptions) {
             },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -855,7 +824,6 @@ export function make(options: ClientOptions) {
             query: { location: input["location"] },
             successStatus: 200,
             declaredStatuses: [404, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -868,19 +836,17 @@ export function make(options: ClientOptions) {
             body: { title: input["title"], size: input["size"] },
             successStatus: 200,
             declaredStatuses: [404, 401, 400],
-            empty: false,
           },
           requestOptions,
         ),
-      remove: (input: PtysRemoveInput, requestOptions?: RequestOptions) =>
-        request<PtysRemoveOutput>(
+      remove: (input: PtysRemoveInput, requestOptions?: RequestOptions): Promise<PtysRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/api/pty/${encodeURIComponent(input.ptyID)}`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [404, 401, 400],
-            empty: true,
           },
           requestOptions,
         ),
@@ -894,7 +860,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -905,30 +870,27 @@ export function make(options: ClientOptions) {
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question`,
             successStatus: 200,
             declaredStatuses: [404, 400, 401],
-            empty: false,
           },
           requestOptions,
         ).then((value) => value.data),
-      reply: (input: QuestionsReplyInput, requestOptions?: RequestOptions) =>
-        request<QuestionsReplyOutput>(
+      reply: (input: QuestionsReplyInput, requestOptions?: RequestOptions): Promise<QuestionsReplyOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question/${encodeURIComponent(input.requestID)}/reply`,
             body: { answers: input["answers"] },
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      reject: (input: QuestionsRejectInput, requestOptions?: RequestOptions) =>
-        request<QuestionsRejectOutput>(
+      reject: (input: QuestionsRejectInput, requestOptions?: RequestOptions): Promise<QuestionsRejectOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/api/session/${encodeURIComponent(input.sessionID)}/question/${encodeURIComponent(input.requestID)}/reject`,
             successStatus: 204,
             declaredStatuses: [404, 400, 401],
-            empty: true,
           },
           requestOptions,
         ),
@@ -942,7 +904,6 @@ export function make(options: ClientOptions) {
             query: { location: input?.["location"] },
             successStatus: 200,
             declaredStatuses: [401, 400],
-            empty: false,
           },
           requestOptions,
         ),
@@ -957,12 +918,11 @@ export function make(options: ClientOptions) {
             body: { strategy: input["strategy"], directory: input["directory"], name: input["name"] },
             successStatus: 200,
             declaredStatuses: [400, 401],
-            empty: false,
           },
           requestOptions,
         ),
-      remove: (input: ProjectCopiesRemoveInput, requestOptions?: RequestOptions) =>
-        request<ProjectCopiesRemoveOutput>(
+      remove: (input: ProjectCopiesRemoveInput, requestOptions?: RequestOptions): Promise<ProjectCopiesRemoveOutput> =>
+        requestEmpty(
           {
             method: "DELETE",
             path: `/experimental/project/${encodeURIComponent(input.projectID)}/copy`,
@@ -970,19 +930,20 @@ export function make(options: ClientOptions) {
             body: { directory: input["directory"], force: input["force"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
-      refresh: (input: ProjectCopiesRefreshInput, requestOptions?: RequestOptions) =>
-        request<ProjectCopiesRefreshOutput>(
+      refresh: (
+        input: ProjectCopiesRefreshInput,
+        requestOptions?: RequestOptions,
+      ): Promise<ProjectCopiesRefreshOutput> =>
+        requestEmpty(
           {
             method: "POST",
             path: `/experimental/project/${encodeURIComponent(input.projectID)}/copy/refresh`,
             query: { location: input["location"] },
             successStatus: 204,
             declaredStatuses: [400, 401],
-            empty: true,
           },
           requestOptions,
         ),
