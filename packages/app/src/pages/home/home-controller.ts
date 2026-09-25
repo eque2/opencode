@@ -4,7 +4,15 @@ import { ServerConnection, useServer } from "@/context/server"
 import { useServerSync } from "@/context/server-sync"
 import { useTabs } from "@/context/tabs"
 import { toggleHomeProjectSelection } from "@/pages/layout/helpers"
+import { Data, Effect, Option } from "effect"
 import { createEffect, createMemo } from "solid-js"
+
+/** A request of the Home project add flow that rejected. `cause` is the original rejection. */
+class HomeProjectRequestError extends Data.TaggedError("App.HomeProjectRequestError")<{ readonly cause: unknown }> {}
+
+/** Runs one server request as an Effect. A rejection fails with HomeProjectRequestError. */
+const projectRequest = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new HomeProjectRequestError({ cause }) })
 
 export function createHomeController() {
   const sync = useServerSync()
@@ -93,15 +101,31 @@ export function createHomeController() {
         directories.forEach((item) => {
           if (ctx.projects.list().some((project) => project.worktree === item)) return
           const location = { directory: item }
-          void ctx.sdk.api.file
-            .list({ path: ".", location })
-            .then(async (files) => {
-              if (files.data.length > 0) return ctx.sdk.api.project.current({ location })
-              const result = await ctx.sdk.client.project.initGit({ directory: item })
-              return result.data ?? ctx.sdk.api.project.current({ location })
-            })
-            .then((project) => ctx.sync.child(item, { bootstrap: false })[1]("project", project.id))
-            .catch(() => undefined)
+          const currentID = Effect.map(
+            projectRequest(() => ctx.sdk.api.project.current({ location })),
+            (project) => project.id,
+          )
+          // Linking the project is best effort: any failure leaves it unlinked, as before.
+          Effect.runFork(
+            projectRequest(() => ctx.sdk.api.file.list({ path: ".", location })).pipe(
+              Effect.flatMap((files) =>
+                files.data.length > 0
+                  ? currentID
+                  : projectRequest(() => ctx.sdk.client.project.initGit({ directory: item })).pipe(
+                      Effect.flatMap((result) =>
+                        Option.match(Option.fromNullishOr(result.data), {
+                          onNone: () => currentID,
+                          onSome: (project) => Effect.succeed(project.id),
+                        }),
+                      ),
+                    ),
+              ),
+              Effect.flatMap((projectID) =>
+                Effect.sync(() => ctx.sync.child(item, { bootstrap: false })[1]("project", projectID)),
+              ),
+              Effect.ignoreCause,
+            ),
+          )
           ctx.projects.open(item)
         })
         ctx.projects.touch(directory)
