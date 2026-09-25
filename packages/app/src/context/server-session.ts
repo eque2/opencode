@@ -469,7 +469,7 @@ export function createServerSession(
 
   const peekLineage = (sessionID: string) => {
     const session = data.info[sessionID]
-    if (!session) return
+    if (!session) return undefined
     const visited = MutableHashSet.make(session.id)
     let root = session
     while (root.parentID) {
@@ -477,7 +477,7 @@ export function createServerSession(
         throw new SessionParentCycleError({ message: `Session parent cycle: ${root.parentID}` })
       MutableHashSet.add(visited, root.parentID)
       const parent = data.info[root.parentID]
-      if (!parent) return
+      if (!parent) return undefined
       root = parent
     }
     return { session, root }
@@ -1068,7 +1068,7 @@ export function createServerSession(
 
   const eventSessionID = (event: { type: string; properties?: unknown }) => {
     const properties = event.properties
-    if (!properties || typeof properties !== "object") return
+    if (!properties || typeof properties !== "object") return undefined
     if ("sessionID" in properties && typeof properties.sessionID === "string") return properties.sessionID
     if (
       "info" in properties &&
@@ -1086,6 +1086,7 @@ export function createServerSession(
       typeof properties.part.sessionID === "string"
     )
       return properties.part.sessionID
+    return undefined
   }
 
   const projectV2 = (reduction: V2SessionReduction) => {
