@@ -464,8 +464,7 @@ export default function Page() {
         tabs().setActive(Option.getOrElse(active, () => all[0]))
 
         workspaceTabs().setAll([])
-        // The layout tab API clears the active tab with undefined.
-        workspaceTabs().setActive(undefined)
+        workspaceTabs().clearActive()
       },
       { defer: true },
     ),
