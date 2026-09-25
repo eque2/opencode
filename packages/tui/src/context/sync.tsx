@@ -32,6 +32,7 @@ import { batch, onMount } from "solid-js"
 import path from "path"
 import { useKV } from "./kv"
 import { usePermission } from "./permission"
+import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 
 const emptyConsoleState: ConsoleState = {
   consoleManagedProviders: [],
@@ -56,6 +57,12 @@ function compareMessage(a: Message, b: Message) {
 }
 
 const messageKey = (message: Message) => message.time.created + message.id
+
+// IDs that live events touched while a session hydrates; hydration keeps their live copies.
+type HydrationTracker = {
+  messages: MutableHashSet.MutableHashSet<string>
+  parts: MutableHashSet.MutableHashSet<string>
+}
 
 export const {
   context: SyncContext,
@@ -146,14 +153,16 @@ export const {
     const project = useProject()
     const sdk = useSDK()
 
-    const fullSyncedSessions = new Set<string>()
-    const syncingSessions = new Map<string, Promise<void>>()
-    const hydratingSessions = new Map<string, { messages: Set<string>; parts: Set<string> }>()
+    const fullSyncedSessions = MutableHashSet.empty<string>()
+    const syncingSessions = MutableHashMap.empty<string, Promise<void>>()
+    const hydratingSessions = MutableHashMap.empty<string, HydrationTracker>()
     const touchMessage = (sessionID: string, messageID: string) => {
-      hydratingSessions.get(sessionID)?.messages.add(messageID)
+      const tracker = MutableHashMap.get(hydratingSessions, sessionID)
+      if (Option.isSome(tracker)) MutableHashSet.add(tracker.value.messages, messageID)
     }
     const touchPart = (sessionID: string, partID: string) => {
-      hydratingSessions.get(sessionID)?.parts.add(partID)
+      const tracker = MutableHashMap.get(hydratingSessions, sessionID)
+      if (Option.isSome(tracker)) MutableHashSet.add(tracker.value.parts, partID)
     }
 
     function sessionListQuery(): { scope?: "project"; path?: string } {
@@ -592,11 +601,11 @@ export const {
           return last.time.completed ? "idle" : "working"
         },
         async sync(sessionID: string) {
-          if (fullSyncedSessions.has(sessionID)) return
-          const syncing = syncingSessions.get(sessionID)
-          if (syncing) return syncing
-          const tracker = { messages: new Set<string>(), parts: new Set<string>() }
-          hydratingSessions.set(sessionID, tracker)
+          if (MutableHashSet.has(fullSyncedSessions, sessionID)) return
+          const syncing = MutableHashMap.get(syncingSessions, sessionID)
+          if (Option.isSome(syncing)) return syncing.value
+          const tracker: HydrationTracker = { messages: MutableHashSet.empty(), parts: MutableHashSet.empty() }
+          MutableHashMap.set(hydratingSessions, sessionID, tracker)
           const task = (async () => {
             const [session, messages, todo, diff] = await Promise.all([
               sdk.client.session.get({ sessionID }, { throwOnError: true }),
@@ -612,28 +621,29 @@ export const {
                 draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
                 const infos = (messages.data ?? []).flatMap((message) => {
-                  if (!tracker.messages.has(message.info.id)) return [message.info]
+                  if (!MutableHashSet.has(tracker.messages, message.info.id)) return [message.info]
                   const current = currentMessages.find((item) => item.id === message.info.id)
                   return current ? [current] : []
                 })
                 infos.push(
                   ...currentMessages.filter(
-                    (message) => tracker.messages.has(message.id) && !infos.some((item) => item.id === message.id),
+                    (message) =>
+                      MutableHashSet.has(tracker.messages, message.id) && !infos.some((item) => item.id === message.id),
                   ),
                 )
                 infos.sort(compareMessage)
                 const removed = infos.slice(0, -100)
                 const visible = infos.slice(-100)
-                const visibleIDs = new Set(visible.map((message) => message.id))
+                const visibleIDs = HashSet.fromIterable(visible.map((message) => message.id))
                 for (const message of messages.data ?? []) {
-                  if (!visibleIDs.has(message.info.id)) {
+                  if (!HashSet.has(visibleIDs, message.info.id)) {
                     delete draft.part[message.info.id]
                     continue
                   }
                   const currentParts = draft.part[message.info.id] ?? []
                   const parts = message.parts.flatMap((part) => {
                     const current = currentParts.find((item) => item.id === part.id)
-                    if (tracker.parts.has(part.id)) return current ? [current] : []
+                    if (MutableHashSet.has(tracker.parts, part.id)) return current ? [current] : []
                     if (
                       current &&
                       (part.type === "text" || part.type === "reasoning") &&
@@ -647,7 +657,8 @@ export const {
                   })
                   parts.push(
                     ...currentParts.filter(
-                      (part) => tracker.parts.has(part.id) && !parts.some((item) => item.id === part.id),
+                      (part) =>
+                        MutableHashSet.has(tracker.parts, part.id) && !parts.some((item) => item.id === part.id),
                     ),
                   )
                   draft.part[message.info.id] = parts
@@ -657,12 +668,12 @@ export const {
                 draft.session_diff[sessionID] = diff.data ?? []
               }),
             )
-            fullSyncedSessions.add(sessionID)
+            MutableHashSet.add(fullSyncedSessions, sessionID)
           })().finally(() => {
-            syncingSessions.delete(sessionID)
-            hydratingSessions.delete(sessionID)
+            MutableHashMap.remove(syncingSessions, sessionID)
+            MutableHashMap.remove(hydratingSessions, sessionID)
           })
-          syncingSessions.set(sessionID, task)
+          MutableHashMap.set(syncingSessions, sessionID, task)
           return task
         },
       },
