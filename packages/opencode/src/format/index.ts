@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer, Context, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Context, MutableHashMap, Option, Schema } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { ChildProcess } from "effect/unstable/process"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -40,43 +40,34 @@ const layer = Layer.effect(
 
     const state = yield* InstanceState.make(
       Effect.fn("Format.state")(function* (ctx) {
-        const commands: Record<string, string[] | false> = {}
+        // Only an available formatter is cached; an unavailable one is checked again on the next call.
+        const commands = MutableHashMap.empty<string, string[]>()
         const formatters: Record<string, Formatter.Info> = {}
 
-        async function getCommand(item: Formatter.Info) {
-          let cmd = commands[item.name]
-          if (cmd === false || cmd === undefined) {
-            cmd = await item.enabled({ ...ctx, experimentalOxfmt: flags.experimentalOxfmt })
-            commands[item.name] = cmd
-          }
+        const getCommand = Effect.fnUntraced(function* (item: Formatter.Info) {
+          const cached = MutableHashMap.get(commands, item.name)
+          if (Option.isSome(cached)) return cached
+          const cmd = yield* item.enabled({ ...ctx, experimentalOxfmt: flags.experimentalOxfmt })
+          if (Option.isSome(cmd)) MutableHashMap.set(commands, item.name, cmd.value)
           return cmd
-        }
+        })
 
-        async function isEnabled(item: Formatter.Info) {
-          const cmd = await getCommand(item)
-          return cmd !== false
-        }
+        const isEnabled = (item: Formatter.Info) => getCommand(item).pipe(Effect.map(Option.isSome))
 
-        async function getFormatter(ext: string) {
+        const getFormatter = Effect.fnUntraced(function* (ext: string) {
           const matching = Object.values(formatters).filter((item) => item.extensions.includes(ext))
-          const checks = await Promise.all(
-            matching.map(async (item) => {
-              const cmd = await getCommand(item)
-              return {
-                item,
-                cmd,
-              }
-            }),
+          const checks = yield* Effect.forEach(
+            matching,
+            (item) => getCommand(item).pipe(Effect.map(Option.map((cmd) => ({ item, cmd })))),
+            { concurrency: "unbounded" },
           )
-          return checks
-            .filter((x): x is { item: Formatter.Info; cmd: string[] } => x.cmd !== false)
-            .map((x) => ({ item: x.item, cmd: x.cmd }))
-        }
+          return Arr.getSomes(checks)
+        })
 
         function formatFile(filepath: string) {
           return Effect.gen(function* () {
             yield* Effect.logInfo("formatting", { file: filepath })
-            const formatters = yield* Effect.promise(() => getFormatter(path.extname(filepath)))
+            const formatters = yield* getFormatter(path.extname(filepath))
 
             if (!formatters.length) return false
 
@@ -157,7 +148,8 @@ const layer = Layer.effect(
               ...info,
               name,
               extensions: info.extensions ?? [],
-              enabled: builtIn && !info.command ? builtIn.enabled : async (_context) => info.command ?? false,
+              enabled:
+                builtIn && !info.command ? builtIn.enabled : () => Effect.succeed(Option.fromNullishOr(info.command)),
             }
           }
         }
@@ -178,16 +170,17 @@ const layer = Layer.effect(
 
     const status = Effect.fn("Format.status")(function* () {
       const { formatters, isEnabled } = yield* InstanceState.get(state)
-      const result: Status[] = []
-      for (const formatter of Object.values(formatters)) {
-        const isOn = yield* Effect.promise(() => isEnabled(formatter))
-        result.push({
-          name: formatter.name,
-          extensions: formatter.extensions,
-          enabled: isOn,
-        })
-      }
-      return result
+      return yield* Effect.forEach(Object.values(formatters), (formatter) =>
+        isEnabled(formatter).pipe(
+          Effect.map(
+            (enabled): Status => ({
+              name: formatter.name,
+              extensions: formatter.extensions,
+              enabled,
+            }),
+          ),
+        ),
+      )
     })
 
     const file = Effect.fn("Format.file")(function* (filepath: string) {
