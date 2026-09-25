@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode-ai/client/promise"
 import { createV2SessionReducer } from "./server-session-v2-reducer"
 
-const base = { created: 1, location: { directory: "/repo" }, durable: { aggregateID: "ses_1", seq: 1, version: 1 } }
+const base = {
+  created: 1,
+  location: { directory: "/repo" },
+  durable: { aggregateID: "ses_1", seq: 1, version: 1 as const },
+}
 
 describe("v2 session reducer", () => {
   test("projects promoted input and streaming assistant content", () => {
@@ -107,6 +111,7 @@ describe("v2 session reducer", () => {
     })
     apply({
       ...base,
+      durable: { ...base.durable, version: 2 },
       id: "evt_tool_success",
       type: "session.tool.success",
       data: {
