@@ -1,11 +1,12 @@
 import { Show, createMemo } from "solid-js"
-import { DateTime } from "luxon"
+import { DateTime } from "effect"
 import { useSync } from "@/context/sync"
 import { useSDK } from "@/context/sdk"
 import { useLanguage } from "@/context/language"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Mark } from "@opencode-ai/ui/logo"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
+import { formatRelativeTime } from "@/utils/relative-time"
 
 const MAIN_WORKTREE = "main"
 const CREATE_WORKTREE = "create"
@@ -75,9 +76,11 @@ export function NewSessionView(props: NewSessionViewProps) {
                   <div class="text-12-medium text-text-weak leading-5 min-w-0 max-w-160 break-words text-center">
                     {language.t("session.new.lastModified")}&nbsp;
                     <span class="text-text-strong">
-                      {DateTime.fromMillis(project().time.updated ?? project().time.created)
-                        .setLocale(language.intl())
-                        .toRelative()}
+                      {formatRelativeTime(
+                        DateTime.makeUnsafe(project().time.updated ?? project().time.created),
+                        DateTime.nowUnsafe(),
+                        language.intl(),
+                      )}
                     </span>
                   </div>
                 </div>
