@@ -1,4 +1,4 @@
-import { MutableHashMap, Option } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import type { FileContent } from "@opencode-ai/sdk/v2"
 
 const MAX_FILE_CONTENT_ENTRIES = 40
@@ -44,16 +44,14 @@ function reset() {
   total = 0
 }
 
-export function evictContentLru(keep: Set<string> | undefined, evict: (path: string) => void) {
-  const set = keep ?? new Set<string>()
-
+export function evictContentLru(keep: HashSet.HashSet<string>, evict: (path: string) => void) {
   while (MutableHashMap.size(lru) > MAX_FILE_CONTENT_ENTRIES || total > MAX_FILE_CONTENT_BYTES) {
     const [path] = MutableHashMap.keys(lru)
     if (!path) return
 
-    if (set.has(path)) {
+    if (HashSet.has(keep, path)) {
       touch(path)
-      if (MutableHashMap.size(lru) <= set.size) return
+      if (MutableHashMap.size(lru) <= HashSet.size(keep)) return
       continue
     }
 

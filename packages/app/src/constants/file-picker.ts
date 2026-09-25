@@ -1,4 +1,4 @@
-import { HashMap, Option } from "effect"
+import { Array as Arr, HashMap, Option } from "effect"
 
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
@@ -74,14 +74,12 @@ const MIME_EXT = HashMap.make(
 
 const TEXT_EXT = ["txt", "text", "md", "markdown", "log", "csv"]
 
-export const ACCEPTED_FILE_EXTENSIONS = Array.from(
-  new Set(
-    ACCEPTED_FILE_TYPES.flatMap((item) => {
-      if (item.startsWith(".")) return [item.slice(1)]
-      if (item === "text/*") return TEXT_EXT
-      return Option.toArray(HashMap.get(MIME_EXT, item))
-    }),
-  ),
+export const ACCEPTED_FILE_EXTENSIONS = Arr.dedupe(
+  ACCEPTED_FILE_TYPES.flatMap((item) => {
+    if (item.startsWith(".")) return [item.slice(1)]
+    if (item === "text/*") return TEXT_EXT
+    return Option.toArray(HashMap.get(MIME_EXT, item))
+  }),
 ).sort()
 
 export function filePickerFilters(name: string, ext?: string[]) {

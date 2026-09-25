@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { HashSet } from "effect"
 import {
   evictContentLru,
   getFileContentBytesTotal,
@@ -42,7 +43,7 @@ describe("file content eviction accounting", () => {
     }
 
     const evicted: string[] = []
-    evictContentLru(undefined, (path) => evicted.push(path))
+    evictContentLru(HashSet.empty(), (path) => evicted.push(path))
 
     expect(evicted).toEqual(["f-0"])
     expect(getFileContentEntryCount()).toBe(40)
@@ -56,7 +57,7 @@ describe("file content eviction accounting", () => {
     setFileContentBytes("c", chunk)
 
     const evicted: string[] = []
-    evictContentLru(new Set(["a"]), (path) => evicted.push(path))
+    evictContentLru(HashSet.make("a"), (path) => evicted.push(path))
 
     expect(evicted).toEqual(["b"])
     expect(getFileContentEntryCount()).toBe(2)

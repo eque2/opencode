@@ -1,5 +1,5 @@
 import { createMemo, createSignal, createUniqueId, Show } from "solid-js"
-import type { HashMap } from "effect"
+import { Array as Arr, type HashMap } from "effect"
 import { createQuery, keepPreviousData } from "@tanstack/solid-query"
 import { Icon } from "@opencode-ai/ui/icon"
 import { SessionFilePanelV2, SessionFilePanelV2Empty } from "@opencode-ai/session-ui/v2/session-file-panel-v2"
@@ -56,7 +56,7 @@ export function SessionFileBrowserTab(props: {
   })
   const files = createMemo(() => {
     if (!query() || search.isPending) return emptyFiles
-    return [...new Set(search.data ?? emptyFiles)]
+    return Arr.dedupe(search.data ?? emptyFiles)
   })
   const highlighted = createMemo(() => {
     const values = files()

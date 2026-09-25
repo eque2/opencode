@@ -1,5 +1,5 @@
 import { batch, createEffect, createMemo, onCleanup } from "solid-js"
-import { MutableHashMap, Option } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { showToast } from "@/utils/toast"
@@ -93,7 +93,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       },
     })
 
-    const evictContent = (keep?: Set<string>) => {
+    const evictContent = (keep: HashSet.HashSet<string>) => {
       evictContentLru(keep, (target) => {
         if (!store.file[target]) return
         setStore(
@@ -190,7 +190,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
           if (!content) return
           touchFileContent(file, approxBytes(content))
-          evictContent(new Set([file]))
+          evictContent(HashSet.make(file))
         })
         .catch((e) => {
           if (scope() !== directory) return

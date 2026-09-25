@@ -1,5 +1,5 @@
 import { createStore, produce, reconcile } from "solid-js/store"
-import { MutableHashMap, Option } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 type DirectoryState = {
@@ -67,7 +67,7 @@ export function createFileTreeStore(options: TreeStoreOptions) {
         if (options.scope() !== directory) return
         const prevChildren = tree.dir[dir]?.children ?? []
         const nextChildren = nodes.map((node) => node.path)
-        const nextSet = new Set(nextChildren)
+        const nextSet = HashSet.fromIterable(nextChildren)
 
         setTree(
           "node",
@@ -75,7 +75,7 @@ export function createFileTreeStore(options: TreeStoreOptions) {
             const removedDirs: string[] = []
 
             for (const child of prevChildren) {
-              if (nextSet.has(child)) continue
+              if (HashSet.has(nextSet, child)) continue
               const existing = draft[child]
               if (existing?.type === "directory") removedDirs.push(child)
               delete draft[child]
