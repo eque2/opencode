@@ -4,7 +4,6 @@ import type {
   Path,
   Project,
   ProviderAuthResponse,
-  QuestionRequest,
   ReferenceInfo,
   Session,
 } from "@opencode-ai/sdk/v2/client"
@@ -461,9 +460,7 @@ export async function bootstrapDirectory(input: {
               .then((result) => result.data)
           })().then((questions) => {
             const ids = questions.map((question) => question.sessionID)
-            const grouped = groupBySession(
-              questions.filter((question) => !!question.id && !!question.sessionID) as QuestionRequest[],
-            )
+            const grouped = groupBySession(questions.filter((question) => !!question.id && !!question.sessionID))
             const warm = input.session
               ? Promise.all(ids.map((sessionID) => input.session!.resolve(sessionID))).then(() => undefined)
               : warmSessions({ ids, store: input.store, setStore: input.setStore, api: input.api.session })
