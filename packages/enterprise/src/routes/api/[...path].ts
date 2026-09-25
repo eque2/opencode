@@ -2,11 +2,23 @@ import type { APIEvent } from "@solidjs/start/server"
 import { Hono } from "hono"
 import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
 import { validator } from "hono-openapi"
-import z from "zod"
+import { Result, Schema, SchemaIssue } from "effect"
 import { cors } from "hono/cors"
 import { Share } from "~/core/share"
 import { Resource } from "sst"
 import { timingSafeEqual } from "node:crypto"
+
+const ShareResponse = Schema.Struct({
+  id: Share.ID,
+  url: Schema.String,
+  secret: Schema.String,
+}).annotate({ identifier: "Share" })
+
+const RemoveShareRequest = Schema.Struct({ shareID: Schema.NonEmptyString }).annotate({
+  identifier: "RemoveShareRequest",
+})
+
+const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1()
 
 const app = new Hono()
 
@@ -36,21 +48,13 @@ app
           description: "Success",
           content: {
             "application/json": {
-              schema: resolver(
-                z
-                  .object({
-                    id: z.string(),
-                    url: z.string(),
-                    secret: z.string(),
-                  })
-                  .meta({ ref: "Share" }),
-              ),
+              schema: resolver(Schema.toStandardSchemaV1(ShareResponse)),
             },
           },
         },
       },
     }),
-    validator("json", z.object({ sessionID: z.string() })),
+    validator("json", Schema.toStandardSchemaV1(Schema.Struct({ sessionID: Schema.String }))),
     async (c) => {
       const body = c.req.valid("json")
       const share = await Share.create({ sessionID: body.sessionID })
@@ -73,14 +77,17 @@ app
           description: "Success",
           content: {
             "application/json": {
-              schema: resolver(z.object({})),
+              schema: resolver(Schema.toStandardSchemaV1(Schema.Struct({}))),
             },
           },
         },
       },
     }),
-    validator("param", z.object({ shareID: z.string() })),
-    validator("json", z.object({ secret: z.string(), data: Share.Data.array() })),
+    validator("param", Schema.toStandardSchemaV1(Schema.Struct({ shareID: Schema.String }))),
+    validator(
+      "json",
+      Schema.toStandardSchemaV1(Schema.Struct({ secret: Schema.String, data: Schema.Array(Share.Data) })),
+    ),
     async (c) => {
       const { shareID } = c.req.valid("param")
       const body = c.req.valid("json")
@@ -101,13 +108,13 @@ app
           description: "Success",
           content: {
             "application/json": {
-              schema: resolver(z.array(Share.Data)),
+              schema: resolver(Schema.toStandardSchemaV1(Schema.Array(Share.Data))),
             },
           },
         },
       },
     }),
-    validator("param", z.object({ shareID: z.string() })),
+    validator("param", Schema.toStandardSchemaV1(Schema.Struct({ shareID: Schema.String }))),
     async (c) => {
       const { shareID } = c.req.valid("param")
       c.header("Cache-Control", "public, max-age=30, s-maxage=300, stale-while-revalidate=86400")
@@ -124,14 +131,14 @@ app
           description: "Success",
           content: {
             "application/json": {
-              schema: resolver(z.object({})),
+              schema: resolver(Schema.toStandardSchemaV1(Schema.Struct({}))),
             },
           },
         },
       },
     }),
-    validator("param", z.object({ shareID: z.string() })),
-    validator("json", z.object({ secret: z.string() })),
+    validator("param", Schema.toStandardSchemaV1(Schema.Struct({ shareID: Schema.String }))),
+    validator("json", Schema.toStandardSchemaV1(Schema.Struct({ secret: Schema.String }))),
     async (c) => {
       const { shareID } = c.req.valid("param")
       const body = c.req.valid("json")
@@ -147,9 +154,10 @@ app
     if (actual.length !== secret.length || !timingSafeEqual(actual, secret))
       return c.json({ error: "Unauthorized" }, 401)
 
-    const body = z.object({ shareID: z.string().min(1) }).safeParse(await c.req.json().catch(() => undefined))
-    if (!body.success) return c.json({ error: "Invalid request", issues: body.error.issues }, 400)
-    return Share.removeAdmin({ id: body.data.shareID })
+    const body = Schema.decodeUnknownResult(RemoveShareRequest)(await c.req.json().catch(() => undefined))
+    if (Result.isFailure(body))
+      return c.json({ error: "Invalid request", issues: formatIssues(body.failure.issue).issues }, 400)
+    return Share.removeAdmin({ id: body.success.shareID })
       .then(() => c.json({ success: true, message: "Share removed" }))
       .catch((error) => c.json({ error: error instanceof Error ? error.message : String(error) }, 400))
   })

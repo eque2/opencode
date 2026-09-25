@@ -1,44 +1,56 @@
 import { Message, Model, Part, Session, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import { iife } from "@opencode-ai/core/util/iife"
-import { Array, HashMap, Match, Order, String } from "effect"
-import z from "zod"
+import { Array, HashMap, Match, Order, Predicate, Schema, String } from "effect"
 import { Storage } from "./storage"
 
-function fn<T extends z.ZodType, Result>(schema: T, cb: (input: z.infer<T>) => Result) {
-  return (input: z.infer<T>) => cb(schema.parse(input))
+function fn<S extends Schema.Codec<unknown, unknown>, Result>(schema: S, cb: (input: S["Type"]) => Result) {
+  return (input: S["Encoded"]) => cb(Schema.decodeUnknownSync(schema)(input))
 }
 
 export namespace Share {
-  export const Info = z.object({
-    id: z.string(),
-    secret: z.string(),
-    sessionID: z.string(),
-  })
-  export type Info = z.infer<typeof Info>
+  export const ID = Schema.String.pipe(Schema.brand("Share.ID"))
+  export type ID = typeof ID.Type
 
-  export const Data = z.discriminatedUnion("type", [
-    z.object({
-      type: z.literal("session"),
-      data: z.custom<Session>(),
-    }),
-    z.object({
-      type: z.literal("message"),
-      data: z.custom<Message>(),
-    }),
-    z.object({
-      type: z.literal("part"),
-      data: z.custom<Part>(),
-    }),
-    z.object({
-      type: z.literal("session_diff"),
-      data: z.custom<SnapshotFileDiff[]>(),
-    }),
-    z.object({
-      type: z.literal("model"),
-      data: z.custom<Model[]>(),
-    }),
-  ])
-  export type Data = z.infer<typeof Data>
+  export const Info = Schema.Struct({
+    id: ID,
+    secret: Schema.String,
+    sessionID: Schema.String,
+  }).annotate({ identifier: "Share.Info" })
+  export type Info = typeof Info.Type
+
+  // The client syncs its own session records. The share service stores them as they arrive and
+  // checks only their outer shape: an object for a record, an array for a list.
+  const SessionData = Schema.declare((input: unknown): input is Session => Predicate.isObject(input), {
+    identifier: "Share.SessionData",
+  })
+  const MessageData = Schema.declare((input: unknown): input is Message => Predicate.isObject(input), {
+    identifier: "Share.MessageData",
+  })
+  const PartData = Schema.declare((input: unknown): input is Part => Predicate.isObject(input), {
+    identifier: "Share.PartData",
+  })
+  const DiffData = Schema.declare((input: unknown): input is SnapshotFileDiff[] => Array.isArray(input), {
+    identifier: "Share.DiffData",
+  })
+  const ModelData = Schema.declare((input: unknown): input is Model[] => Array.isArray(input), {
+    identifier: "Share.ModelData",
+  })
+
+  export const Data = Schema.Union([
+    Schema.Struct({ type: Schema.Literal("session"), data: SessionData }),
+    Schema.Struct({ type: Schema.Literal("message"), data: MessageData }),
+    Schema.Struct({ type: Schema.Literal("part"), data: PartData }),
+    Schema.Struct({ type: Schema.Literal("session_diff"), data: DiffData }),
+    Schema.Struct({ type: Schema.Literal("model"), data: ModelData }),
+  ]).annotate({ identifier: "Share.Data" })
+  export type Data = typeof Data.Type
+
+  const CreateInput = Schema.Struct({ sessionID: Schema.String }).annotate({ identifier: "Share.CreateInput" })
+  const Credentials = Schema.Struct({ id: ID, secret: Schema.String }).annotate({ identifier: "Share.Credentials" })
+  const AdminInput = Schema.Struct({ id: ID }).annotate({ identifier: "Share.AdminInput" })
+  const SyncInput = Schema.Struct({ share: Credentials, data: Schema.Array(Data) }).annotate({
+    identifier: "Share.SyncInput",
+  })
 
   type Snapshot = {
     data: Data[]
@@ -63,7 +75,7 @@ export namespace Share {
   const byKey = Order.make<string>((self, that) => String.localeCompare(that)(self))
 
   // A later item replaces an earlier one with the same key.
-  function merge(...items: Data[][]) {
+  function merge(...items: ReadonlyArray<ReadonlyArray<Data>>) {
     const latest = HashMap.fromIterable(items.flat().map((item): [string, Data] => [key(item), item]))
     return Array.sortWith(HashMap.toEntries(latest), ([id]) => id, byKey).map(([, item]) => item)
   }
@@ -107,10 +119,10 @@ export namespace Share {
     return next
   }
 
-  export const create = fn(z.object({ sessionID: z.string() }), async (body) => {
+  export const create = fn(CreateInput, async (body) => {
     const isTest = process.env.NODE_ENV === "test" || body.sessionID.startsWith("test_")
     const info: Info = {
-      id: (isTest ? "test_" : "") + body.sessionID.slice(-8),
+      id: ID.make((isTest ? "test_" : "") + body.sessionID.slice(-8)),
       sessionID: body.sessionID,
       secret: crypto.randomUUID(),
     }
@@ -124,7 +136,7 @@ export namespace Share {
     return Storage.read<Info>(["share", id])
   }
 
-  export const remove = fn(Info.pick({ id: true, secret: true }), async (body) => {
+  export const remove = fn(Credentials, async (body) => {
     const share = await get(body.id)
     if (!share) throw new Errors.NotFound(body.id)
     if (share.secret !== body.secret) throw new Errors.InvalidSecret(body.id)
@@ -140,17 +152,14 @@ export namespace Share {
     }
   })
 
-  export const removeAdmin = fn(Info.pick({ id: true }), async (body) => {
+  export const removeAdmin = fn(AdminInput, async (body) => {
     const share = await get(body.id)
     if (!share) throw new Errors.NotFound(body.id)
     await remove({ id: share.id, secret: share.secret })
   })
 
   export const sync = fn(
-    z.object({
-      share: Info.pick({ id: true, secret: true }),
-      data: Data.array(),
-    }),
+    SyncInput,
     async (input) => {
       const share = await get(input.share.id)
       if (!share) throw new Errors.NotFound(input.share.id)
@@ -165,10 +174,7 @@ export namespace Share {
   }
 
   export const syncOld = fn(
-    z.object({
-      share: Info.pick({ id: true, secret: true }),
-      data: Data.array(),
-    }),
+    SyncInput,
     async (input) => {
       const share = await get(input.share.id)
       if (!share) throw new Errors.NotFound(input.share.id)
