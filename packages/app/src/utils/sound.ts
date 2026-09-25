@@ -1,12 +1,14 @@
+import { Data, Effect, HashMap, MutableHashMap, Option } from "effect"
+
+/** A bundled sound file whose dynamic import failed. */
+class SoundLoadError extends Data.TaggedError("App.SoundLoadError")<{ readonly cause: unknown }> {}
+
 let files: Record<string, () => Promise<string>> | undefined
-let loads: Record<SoundID, () => Promise<string>> | undefined
+let loads: HashMap.HashMap<string, () => Promise<string>> | undefined
 
 function getFiles() {
   if (files) return files
-  files = import.meta.glob("../../../ui/src/assets/audio/*.aac", { import: "default" }) as Record<
-    string,
-    () => Promise<string>
-  >
+  files = import.meta.glob<string>("../../../ui/src/assets/audio/*.aac", { import: "default" })
   return files
 }
 
@@ -63,40 +65,61 @@ export type SoundID = SoundOption["id"]
 
 function getLoads() {
   if (loads) return loads
-  loads = Object.fromEntries(
+  loads = HashMap.fromIterable(
     Object.entries(getFiles()).flatMap(([path, load]) => {
       const file = path.split("/").at(-1)
       if (!file) return []
       return [[file.replace(/\.aac$/, ""), load] as const]
     }),
-  ) as Record<SoundID, () => Promise<string>>
+  )
   return loads
 }
 
-const cache = new Map<SoundID, Promise<string | undefined>>()
+// One shared load per sound. A failed load resolves to none and stays cached, as before.
+const cache = MutableHashMap.empty<string, Promise<Option.Option<string>>>()
 
-export function soundSrc(id: string | undefined) {
-  const loads = getLoads()
-  if (!id || !(id in loads)) return Promise.resolve(undefined)
-  const key = id as SoundID
-  const hit = cache.get(key)
-  if (hit) return hit
-  const next = loads[key]().catch(() => undefined)
-  cache.set(key, next)
+function cachedLoad(id: string, load: () => Promise<string>) {
+  const hit = MutableHashMap.get(cache, id)
+  if (Option.isSome(hit)) return hit.value
+  const next = Effect.runPromise(
+    Effect.tryPromise({ try: load, catch: (cause) => new SoundLoadError({ cause }) }).pipe(Effect.option),
+  )
+  MutableHashMap.set(cache, id, next)
   return next
 }
 
-export function playSound(src: string | undefined) {
-  if (typeof Audio === "undefined") return
-  if (!src) return
-  const audio = new Audio(src)
-  audio.play().catch(() => undefined)
-  return () => {
-    audio.pause()
-    audio.currentTime = 0
-  }
+// The bundled URL of a sound, or none for an empty or unknown id.
+function soundSrcOption(id: string | undefined): Effect.Effect<Option.Option<string>> {
+  if (!id) return Effect.succeedNone
+  return Option.match(HashMap.get(getLoads(), id), {
+    onNone: () => Effect.succeedNone,
+    onSome: (load) => Effect.promise(() => cachedLoad(id, load)),
+  })
 }
 
-export function playSoundById(id: string | undefined) {
-  return soundSrc(id).then((src) => playSound(src))
+export function soundSrc(id: string | undefined): Promise<string | undefined> {
+  return Effect.runPromise(soundSrcOption(id).pipe(Effect.map(Option.getOrUndefined)))
+}
+
+// Starts a sound and gives its stop function, or none when the platform has no Audio.
+function startSound(src: string): Option.Option<() => void> {
+  if (typeof Audio === "undefined") return Option.none()
+  const audio = new Audio(src)
+  // runFork calls play() before it returns, so a user gesture still covers it. A blocked autoplay only stays silent.
+  Effect.runFork(Effect.tryPromise(() => audio.play()).pipe(Effect.ignore))
+  return Option.some(() => {
+    audio.pause()
+    audio.currentTime = 0
+  })
+}
+
+export function playSound(src: string | undefined): (() => void) | undefined {
+  if (!src) return undefined
+  return Option.getOrUndefined(startSound(src))
+}
+
+export function playSoundById(id: string | undefined): Promise<(() => void) | undefined> {
+  return Effect.runPromise(
+    soundSrcOption(id).pipe(Effect.map((src) => Option.getOrUndefined(Option.flatMap(src, startSound)))),
+  )
 }
