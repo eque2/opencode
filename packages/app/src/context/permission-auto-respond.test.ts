@@ -3,11 +3,7 @@ import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { autoRespondsPermission, isDirectoryAutoAccepting, sessionAutoAccept } from "./permission-auto-respond"
 
-const session = (input: { id: string; parentID?: string }) =>
-  ({
-    id: input.id,
-    parentID: input.parentID,
-  }) as Session
+const session = (input: { id: string; parentID?: string }): Pick<Session, "id" | "parentID"> => input
 
 const permission = (sessionID: string) =>
   ({
