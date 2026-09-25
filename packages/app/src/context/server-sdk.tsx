@@ -15,6 +15,7 @@ import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protoc
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
 import { createFiberSlot } from "@/utils/fiber-slot"
 import { Cause, Data, DateTime, Effect, Option, Predicate, Result, Stream } from "effect"
+import { constVoid } from "effect/Function"
 
 /** Raised when the ServerSDK context has no server to talk to. The message is the translated text. */
 class NoServerAvailableError extends Data.TaggedError("NoServerAvailableError")<{ readonly message: string }> {}
@@ -342,15 +343,16 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     )
   })
 
-  const streamLoop = (active: number) =>
-    Effect.gen(function* () {
-      // oxlint-disable-next-line no-unmodified-loop-condition -- `started` is set to false by stop() which also aborts; both flags are checked to allow graceful exit
-      while (!abort.signal.aborted && started && generation === active) {
-        yield* connect
-        if (abort.signal.aborted || !started || generation !== active) return
-        yield* Effect.sleep(RECONNECT_DELAY_MS)
-      }
+  // Reconnects until cleanup aborts, or stop() ends this run, or a newer start() replaces it.
+  const streamLoop = (active: number) => {
+    const live = () => !abort.signal.aborted && started && generation === active
+    return Effect.whileLoop({
+      while: live,
+      body: () =>
+        connect.pipe(Effect.andThen(Effect.suspend(() => (live() ? Effect.sleep(RECONNECT_DELAY_MS) : Effect.void)))),
+      step: constVoid,
     })
+  }
 
   const start = () => {
     if (started) return Option.getOrUndefined(run)
