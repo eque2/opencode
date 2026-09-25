@@ -1,5 +1,5 @@
 import { batch, createMemo, createRoot, onCleanup } from "solid-js"
-import { DateTime, Option } from "effect"
+import { Array as Arr, DateTime, Option } from "effect"
 import { createStore, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useParams } from "@solidjs/router"
@@ -71,17 +71,8 @@ function cloneComment(comment: LineComment): LineComment {
   }
 }
 
-function group(comments: LineComment[]) {
-  return comments.reduce<Record<string, LineComment[]>>((acc, comment) => {
-    const list = acc[comment.file]
-    const next = cloneComment(comment)
-    if (list) {
-      list.push(next)
-      return acc
-    }
-    acc[comment.file] = [next]
-    return acc
-  }, {})
+function group(comments: LineComment[]): Record<string, LineComment[]> {
+  return Arr.groupBy(comments.map(cloneComment), (comment) => comment.file)
 }
 
 function createCommentSessionState(store: Store<CommentStore>, setStore: SetStoreFunction<CommentStore>) {

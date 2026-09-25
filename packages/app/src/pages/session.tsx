@@ -689,15 +689,14 @@ export default function Page() {
     return !!project && project.vcs !== "git"
   })
   const changesOptions = createMemo<ChangeMode[]>(() => {
-    const list: ChangeMode[] = []
     const project = sync().project
     const vcs = sync().data.vcs
-    if (project?.vcs === "git") list.push("git")
-    if (project?.vcs === "git" && vcs?.branch && vcs?.default_branch && vcs.branch !== vcs.default_branch) {
-      list.push("branch")
-    }
-    list.push("turn")
-    return list
+    const git: ChangeMode[] = project?.vcs === "git" ? ["git"] : []
+    const branch: ChangeMode[] =
+      project?.vcs === "git" && vcs?.branch && vcs?.default_branch && vcs.branch !== vcs.default_branch
+        ? ["branch"]
+        : []
+    return [...git, ...branch, "turn"]
   })
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   const wantsReview = createMemo(() =>
