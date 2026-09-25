@@ -330,7 +330,7 @@ function emitPromiseResult(
         { path: "types.ts", content: yield* renderPromiseTypes(groups, options?.outputTypes) },
         {
           path: "client-error.ts",
-          content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  constructor(readonly reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n  }\n}\n`,
+          content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  readonly reason: ClientErrorReason\n\n  constructor(reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n    this.reason = reason\n  }\n}\n`,
         },
         {
           path: "client.ts",
