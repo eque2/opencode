@@ -1,4 +1,5 @@
 import { TextareaRenderable, TextAttributes } from "@opentui/core"
+import { Effect, Option } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { Show, createEffect, createSignal, onMount, type JSX } from "solid-js"
@@ -115,13 +116,24 @@ export function DialogPrompt(props: DialogPromptProps) {
   )
 }
 
-DialogPrompt.show = (dialog: DialogContext, title: string, options?: Omit<DialogPromptProps, "title">) => {
-  return new Promise<string | null>((resolve) => {
-    dialog.replace(
-      () => (
-        <DialogPrompt title={title} {...options} onConfirm={(value) => resolve(value)} onCancel={() => resolve(null)} />
-      ),
-      () => resolve(null),
-    )
-  })
-}
+// Resolves with the entered text, or null when the prompt is cancelled or closed.
+DialogPrompt.show = (
+  dialog: DialogContext,
+  title: string,
+  options?: Omit<DialogPromptProps, "title">,
+): Promise<string | null> =>
+  Effect.runPromise(
+    Effect.callback<Option.Option<string>>((resume) => {
+      dialog.replace(
+        () => (
+          <DialogPrompt
+            title={title}
+            {...options}
+            onConfirm={(value) => resume(Effect.succeedSome(value))}
+            onCancel={() => resume(Effect.succeedNone)}
+          />
+        ),
+        () => resume(Effect.succeedNone),
+      )
+    }).pipe(Effect.map(Option.getOrNull)),
+  )
