@@ -20,6 +20,7 @@ export const AcpCommand = effectCmd({
     const { Server } = yield* Effect.promise(() => import("@/server/server"))
     const { ACP } = yield* Effect.promise(() => import("@/acp/agent"))
     ACPProfile.mark("cli.acp.handler")
+    // eslint-disable-next-line effect/no-process-env-use-config -- (a) env write, not a read: the in-process server reads OPENCODE_CLIENT from process.env through its ConfigProvider, and Effect Config cannot write env
     process.env.OPENCODE_CLIENT = "acp"
     const opts = yield* resolveNetworkOptions(args)
     const server = yield* Effect.promise(() => ACPProfile.measure("cli.acp.server.listen", () => Server.listen(opts)))
