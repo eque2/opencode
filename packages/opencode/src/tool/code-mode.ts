@@ -27,6 +27,8 @@ class ExecutionError extends Schema.TaggedError<ExecutionError>()("CodeMode.Exec
   message: Schema.String,
 }) {}
 
+const encodeResultText = Schema.encodeSync(Schema.fromJsonString(Schema.Json, { space: 2 }))
+
 type CallEntry = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
 
 type Metadata = {
@@ -114,13 +116,16 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
     }
   }
 
-  if (result.structuredContent !== undefined && result.structuredContent !== null) return result.structuredContent
-  if (text.length > 0) return text.join("\n")
-  if (files > 0) {
-    const noun = files === images ? "image" : "file"
-    return `[${files} ${noun}${files === 1 ? "" : "s"} attached to the result]`
-  }
-  return null
+  const noun = files === images ? "image" : "file"
+  // The program reads JSON null for a result that carries no content.
+  return Option.getOrNull(
+    Option.fromNullishOr<unknown>(result.structuredContent).pipe(
+      Option.orElse(() => (text.length > 0 ? Option.some(text.join("\n")) : Option.none())),
+      Option.orElse(() =>
+        files > 0 ? Option.some(`[${files} ${noun}${files === 1 ? "" : "s"} attached to the result]`) : Option.none(),
+      ),
+    ),
+  )
 }
 
 // The input shown in the tool call list: a non-empty object as is, any other value boxed, and
@@ -303,12 +308,8 @@ export const CodeModeTool = Tool.define(
           return yield* new ExecutionError({ message: withLogs([result.error.message, ...hints].join("\n")) })
         }
 
-        // The interpreter validates returned values as plain JSON, so stringify cannot throw;
-        // it yields undefined only for a program that returns undefined.
-        const output =
-          typeof result.value === "string"
-            ? result.value
-            : (JSON.stringify(result.value, null, 2) ?? String(result.value))
+        // The interpreter returns plain JSON data, so the encoding cannot fail.
+        const output = typeof result.value === "string" ? result.value : encodeResultText(result.value)
 
         return {
           title: CODE_MODE_TOOL,

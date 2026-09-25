@@ -511,7 +511,7 @@ export const ShellTool = Tool.define(
         },
       })
 
-      const code: number | null = yield* Effect.scoped(
+      const code: Option.Option<number> = yield* Effect.scoped(
         Effect.gen(function* () {
           // The output file lives in a child scope that is registered before the reader fiber
           // is forked, so the scope interrupts the reader before it closes the file.
@@ -584,8 +584,8 @@ export const ShellTool = Tool.define(
 
           const exit = yield* Effect.raceAll([
             handle.exitCode.pipe(Effect.map((code) => ({ kind: "exit" as const, code }))),
-            abort.pipe(Effect.map(() => ({ kind: "abort" as const, code: null }))),
-            timeout.pipe(Effect.map(() => ({ kind: "timeout" as const, code: null }))),
+            abort.pipe(Effect.as({ kind: "abort" as const })),
+            timeout.pipe(Effect.as({ kind: "timeout" as const })),
           ])
 
           if (exit.kind === "abort") {
@@ -597,7 +597,7 @@ export const ShellTool = Tool.define(
             yield* handle.kill({ forceKillAfter: "3 seconds" }).pipe(Effect.orDie)
           }
 
-          return exit.kind === "exit" ? exit.code : null
+          return exit.kind === "exit" ? Option.some(exit.code) : Option.none()
         }),
       ).pipe(Effect.orDie)
 
@@ -632,7 +632,8 @@ export const ShellTool = Tool.define(
         title: input.command,
         metadata: {
           output: last || preview(output),
-          exit: code,
+          // The exit code is null on the wire when the tool stopped the command.
+          exit: Option.getOrNull(code),
           truncated: cut,
           ...(cut && file ? { outputPath: file } : {}),
         },

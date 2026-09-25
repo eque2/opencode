@@ -32,7 +32,7 @@ import { ApplyPatchTool } from "./apply_patch"
 import { Glob } from "@opencode-ai/core/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Option, Result } from "effect"
+import { Effect, Layer, Context, Option, Predicate, Result } from "effect"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../format"
@@ -355,15 +355,15 @@ const layer = Layer.effect(
 )
 
 function isZodType(value: unknown): value is z.ZodType {
-  return typeof value === "object" && value !== null && "_zod" in value
+  return Predicate.isObjectOrArray(value) && "_zod" in value
 }
 
 function isPluginTool(value: unknown): value is ToolDefinition {
-  return typeof value === "object" && value !== null && "args" in value && "description" in value && "execute" in value
+  return Predicate.isObjectOrArray(value) && "args" in value && "description" in value && "execute" in value
 }
 
 function isJsonSchemaDefinition(value: unknown): value is JSONSchema7Definition {
-  return typeof value === "boolean" || (typeof value === "object" && value !== null && !Array.isArray(value))
+  return Predicate.isBoolean(value) || Predicate.isObject(value)
 }
 
 function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
@@ -398,7 +398,7 @@ function zodMetadataRegistry(schema: z.ZodType) {
   const registry = z.registry<Record<string, unknown>>()
   const seen = new WeakSet<object>()
   const collect = (value: unknown) => {
-    if (typeof value !== "object" || value === null) return
+    if (!Predicate.isObjectOrArray(value)) return
     if (seen.has(value)) return
     seen.add(value)
 
@@ -422,7 +422,7 @@ function zodMetadataRegistry(schema: z.ZodType) {
 
 function normalizeZodJsonSchema(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => normalizeZodJsonSchema(item))
-  if (typeof value !== "object" || value === null) return value
+  if (!Predicate.isObjectOrArray(value)) return value
   return Object.fromEntries(
     Object.entries(value)
       .filter((entry) =>
@@ -435,7 +435,7 @@ function normalizeZodJsonSchema(value: unknown): unknown {
 }
 
 function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 export const node = LayerNode.make({
