@@ -19,7 +19,7 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
-import { HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
+import { DateTime, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
 
 const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
   get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
@@ -64,7 +64,7 @@ export function createChildStoreManager(input: {
 
   const markKey = (key: DirectoryKey) => {
     if (!key) return
-    lifecycle.set(key, { lastAccessAt: Date.now() })
+    lifecycle.set(key, { lastAccessAt: DateTime.toEpochMillis(DateTime.nowUnsafe()) })
     runEviction(key)
   }
 
@@ -155,7 +155,7 @@ export function createChildStoreManager(input: {
       pins: new Set(stores.filter(pinned)),
       max: MAX_DIR_STORES,
       ttl: DIR_IDLE_TTL_MS,
-      now: Date.now(),
+      now: DateTime.toEpochMillis(DateTime.nowUnsafe()),
     }).filter((directory) => directory !== skip)
     if (list.length === 0) return
     for (const directory of list) {
