@@ -11,7 +11,12 @@ export namespace WebCrypto {
     Effect.tryPromise({
       try: () => crypto.subtle.digest(algorithm, Uint8Array.from(data)),
       catch: (cause) =>
-        PlatformError.badArgument({ module: "Crypto", method: "digest", description: "Could not compute digest", cause }),
+        PlatformError.badArgument({
+          module: "Crypto",
+          method: "digest",
+          description: "Could not compute digest",
+          cause,
+        }),
     }).pipe(Effect.map((buffer) => new Uint8Array(buffer)))
 
   export const layer = Layer.succeed(
