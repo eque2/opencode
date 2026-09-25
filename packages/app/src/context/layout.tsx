@@ -111,6 +111,9 @@ type TabHandoff = {
   at: number
 }
 
+/** The persisted tab handoff. An absent `tabs` key means no handoff is pending. */
+type TabHandoffState = { tabs?: TabHandoff }
+
 export type LocalProject = Partial<Project> & { worktree: string; expanded: boolean }
 export type HomeProjectSelection = { server: ServerConnection.Key; directory?: string }
 
@@ -252,9 +255,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           Object.entries(sessionTabs).map(([key, tabs]) => {
             if (!Predicate.isObject(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
 
-            const current = {
+            const current: SessionTabs = {
               all: tabs.all.filter((tab): tab is string => typeof tab === "string"),
-              active: typeof tabs.active === "string" ? tabs.active : undefined,
+              ...(typeof tabs.active === "string" ? { active: tabs.active } : {}),
             }
             const normalized = normalizeStoredSessionTabs(key, current)
             if (current.all.length !== tabs.all.length) changed = true
@@ -319,9 +322,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         sessionTabs: {} as Record<string, SessionTabs>,
         sessionView: {} as Record<string, SessionView>,
-        handoff: {
-          tabs: undefined as TabHandoff | undefined,
-        },
+        handoff: {} as TabHandoffState,
         home: {
           selection: { server: server.key } as HomeProjectSelection,
         },
@@ -335,7 +336,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const MAX_SESSION_KEYS = 50
     const PENDING_MESSAGE_TTL_MS = 2 * 60 * 1000
     const usage = {
-      active: undefined as string | undefined,
+      active: Option.none<string>(),
       pruned: false,
       used: MutableHashMap.empty<string, number>(),
     }
@@ -401,7 +402,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     }
 
     function touch(sessionKey: string) {
-      usage.active = sessionKey
+      usage.active = Option.some(sessionKey)
       MutableHashMap.set(usage.used, sessionKey, DateTime.toEpochMillis(DateTime.nowUnsafe()))
 
       if (!ready()) return
@@ -416,7 +417,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       getSnapshot: (sessionKey) => store.sessionView[sessionKey]?.scroll,
       onFlush: (sessionKey, next) => {
         const current = store.sessionView[sessionKey]
-        const keep = usage.active ?? sessionKey
+        const keep = Option.getOrElse(usage.active, () => sessionKey)
         if (!current) {
           setStore("sessionView", sessionKey, { scroll: next })
           prune(keep)
@@ -434,9 +435,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       if (!ready()) return
       if (usage.pruned) return
       const active = usage.active
-      if (!active) return
+      if (Option.isNone(active)) return
       usage.pruned = true
-      prune(active)
+      prune(active.value)
     })
 
     onMount(() => {
@@ -660,7 +661,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         clearTabs() {
           if (!store.handoff?.tabs) return
-          setStore("handoff", "tabs", undefined)
+          setStore(
+            "handoff",
+            produce((draft) => {
+              delete draft.tabs
+            }),
+          )
         },
       },
       projects: {
@@ -807,7 +813,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               pendingMessage: messageID,
               pendingMessageAt: at,
             })
-            prune(usage.active ?? sessionKey)
+            prune(Option.getOrElse(usage.active, () => sessionKey))
             return
           }
 
@@ -1052,17 +1058,38 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               setStore("sessionTabs", session, "active", next)
             }
           },
+          /** Clears the active tab. setActive(undefined) does the same. */
+          clearActive() {
+            const session = key()
+            if (!store.sessionTabs[session]) {
+              setStore("sessionTabs", session, { all: [] })
+              return
+            }
+            setStore(
+              "sessionTabs",
+              session,
+              produce((draft) => {
+                delete draft.active
+              }),
+            )
+          },
           setAll(all: string[]) {
             const session = key()
             const next = normalizeAll(all).filter((tab) => tab !== "review")
             batch(() => {
               if (!store.sessionTabs[session]) {
-                setStore("sessionTabs", session, { all: next, active: undefined })
+                setStore("sessionTabs", session, { all: next })
               } else {
                 setStore("sessionTabs", session, "all", next)
               }
               const preview = ephemeral.sessionTabPreview[session]
-              if (preview && !next.includes(preview)) setEphemeral("sessionTabPreview", session, undefined)
+              if (preview && !next.includes(preview))
+                setEphemeral(
+                  "sessionTabPreview",
+                  produce((draft) => {
+                    delete draft[session]
+                  }),
+                )
             })
           },
           // The tab API keeps its Promise contract; the update itself runs synchronously in this call.

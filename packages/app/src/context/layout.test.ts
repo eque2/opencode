@@ -54,7 +54,6 @@ describe("pruneSessionKeys", () => {
 
   test("does not prune without keep key", () => {
     const drop = pruneSessionKeys({
-      keep: undefined,
       max: 1,
       used: MutableHashMap.make(["k1", 1], ["k2", 2]),
       view: ["k1"],
