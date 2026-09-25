@@ -1203,7 +1203,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       autoAccept: () => accepting(),
       mode: () => store.mode,
       working,
-      editor: () => editorRef,
+      // The editor ref is unset until Solid mounts the contenteditable element.
+      editor: () => Option.fromNullishOr(editorRef),
       queueScroll,
       promptLength,
       addToHistory,
@@ -1211,10 +1212,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         resetHistoryNavigation(true)
       },
       setMode: (mode) => setStore("mode", mode),
-      setPopover: (popover) => {
-        if (!popover) return closePopover()
-        setStore({ popover: Option.some(popover), slashMenu: false, slashMenuQuery: "" })
-      },
+      closePopover,
       newSessionWorktree: () => props.newSessionWorktree,
       onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
       shouldQueue: props.shouldQueue,

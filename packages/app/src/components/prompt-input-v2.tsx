@@ -109,7 +109,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
   const language = useLanguage()
   const platform = usePlatform()
   const prompt = props.state ?? usePrompt()
-  let editor: HTMLDivElement | undefined
+  let editor = Option.none<HTMLDivElement>()
 
   const interaction = createPromptInputV2State()
   const mode = () => interaction[0].mode
@@ -234,14 +234,15 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     mode,
     working,
     editor: () => editor,
-    queueScroll: () => requestAnimationFrame(() => editor?.scrollIntoView({ block: "nearest" })),
+    queueScroll: () =>
+      requestAnimationFrame(() => {
+        if (Option.isSome(editor)) editor.value.scrollIntoView({ block: "nearest" })
+      }),
     promptLength,
     addToHistory: (value, mode) => controller.addHistory(value, mode),
     resetHistoryNavigation: () => controller.resetHistory(),
     setMode: (next) => controller.dispatch({ type: next === "shell" ? "mode.shell" : "mode.normal" }),
-    setPopover: (popover) => {
-      if (!popover) controller.dispatch({ type: "popover.close" })
-    },
+    closePopover: () => controller.dispatch({ type: "popover.close" }),
     newSessionWorktree: () => props.newSessionWorktree,
     onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
     shouldQueue: props.shouldQueue,
@@ -394,7 +395,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
     onEditor(element) {
       if (!(element instanceof HTMLDivElement)) return
-      editor = element
+      editor = Option.some(element)
       props.ref?.(element)
     },
     onSuggestionSelect(item) {

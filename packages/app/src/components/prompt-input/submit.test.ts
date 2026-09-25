@@ -59,7 +59,7 @@ const prompt = {
   cursor: () => 0,
   dirty: () => true,
   model: {
-    current: () => Option.getOrUndefined(Option.none()),
+    current: () => promptStore.model,
     set: () => {},
   },
   reset: () => {},
@@ -75,9 +75,6 @@ const prompt = {
   capture: () => prompt,
 }
 
-// The test composer has no editor element.
-const editor = Option.none<HTMLDivElement>()
-
 const promptLength = (value: Prompt) =>
   value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0)
 
@@ -89,13 +86,14 @@ const submitInput = (session: Option.Option<{ id: string }>): SubmitInput => ({
   autoAccept: () => false,
   mode: () => "normal",
   working: () => false,
-  editor: () => Option.getOrUndefined(editor),
+  // The test composer has no editor element.
+  editor: () => Option.none(),
   queueScroll: () => {},
   promptLength,
   addToHistory: () => {},
   resetHistoryNavigation: () => {},
   setMode: () => {},
-  setPopover: () => {},
+  closePopover: () => {},
 })
 
 const clientFor = (directory: string) => {

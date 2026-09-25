@@ -72,9 +72,6 @@ type SubmitModelSelection = {
   variant: { current: () => string | undefined }
 }
 
-/** No popover. The prompt-input setPopover callback takes this as null. */
-const closedPopover = Option.none<"at" | "slash">()
-
 export type FollowupDraft = {
   sessionID: string
   sessionDirectory: string
@@ -257,13 +254,13 @@ type PromptSubmitInput = {
   autoAccept: Accessor<boolean>
   mode: Accessor<"normal" | "shell">
   working: Accessor<boolean>
-  editor: () => HTMLDivElement | undefined
+  editor: () => Option.Option<HTMLDivElement>
   queueScroll: () => void
   promptLength: (prompt: Prompt) => number
   addToHistory: (prompt: Prompt, mode: "normal" | "shell") => void
   resetHistoryNavigation: () => void
   setMode: (mode: "normal" | "shell") => void
-  setPopover: (popover: "at" | "slash" | null) => void
+  closePopover: () => void
   newSessionWorktree?: Accessor<string | undefined>
   onNewSessionWorktreeReset?: () => void
   shouldQueue?: Accessor<boolean>
@@ -512,7 +509,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const clearInput = () => {
       submission.clear()
       input.setMode("normal")
-      input.setPopover(Option.getOrNull(closedPopover))
+      input.closePopover()
     }
 
     const restoreInput = () => {
@@ -521,12 +518,12 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       restored.target.set(restored.prompt, input.promptLength(restored.prompt))
       if (!submission.current(prompt.capture())) return true
       input.setMode(mode)
-      input.setPopover(Option.getOrNull(closedPopover))
+      input.closePopover()
       requestAnimationFrame(() => {
         const editor = input.editor()
-        if (!editor) return
-        editor.focus()
-        setCursorPosition(editor, input.promptLength(currentPrompt))
+        if (Option.isNone(editor)) return
+        editor.value.focus()
+        setCursorPosition(editor.value, input.promptLength(currentPrompt))
         input.queueScroll()
       })
       return true
