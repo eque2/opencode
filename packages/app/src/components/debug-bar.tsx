@@ -6,7 +6,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { Chunk, MutableHashMap, Option } from "effect"
+import { Chunk, MutableHashMap, Option, Result } from "effect"
 
 type Mem = Performance & {
   memory?: {
@@ -352,14 +352,20 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       if (typeof PerformanceObserver === "undefined") return false
       if (!(PerformanceObserver.supportedEntryTypes ?? []).includes(type)) return false
       const ob = new PerformanceObserver((list) => fn(list.getEntries()))
-      try {
-        ob.observe(init)
-        obs = Chunk.append(obs, ob)
-        return true
-      } catch {
-        ob.disconnect()
-        return false
-      }
+      // observe throws when the browser rejects the options for this entry type.
+      return Result.match(
+        Result.try(() => ob.observe(init)),
+        {
+          onSuccess: () => {
+            obs = Chunk.append(obs, ob)
+            return true
+          },
+          onFailure: () => {
+            ob.disconnect()
+            return false
+          },
+        },
+      )
     }
 
     if (
@@ -379,7 +385,10 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     if (
       watch("longtask", { buffered: true, type: "longtask" }, (entries) => {
         const at = performance.now()
-        long = Chunk.appendAll(long, Chunk.fromIterable(entries.map((entry) => ({ at: entry.startTime, dur: entry.duration }))))
+        long = Chunk.appendAll(
+          long,
+          Chunk.fromIterable(entries.map((entry) => ({ at: entry.startTime, dur: entry.duration }))),
+        )
         syncLong(at)
       })
     ) {
