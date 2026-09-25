@@ -25,18 +25,18 @@ const createTransformer = (id: string, axis: "x" | "y"): Transformer => ({
 const createAxisConstraint = (axis: "x" | "y", transformerId: string) => (): JSXElement => {
   const context = useDragDropContext()
   if (!context) return null
-  const [, { onDragStart, onDragEnd, addTransformer, removeTransformer }] = context
+  const [, actions] = context
   const transformer = createTransformer(transformerId, axis)
   const dispose = createRoot((dispose) => {
-    onDragStart((event) => {
+    actions.onDragStart((event) => {
       const id = getDraggableId(event)
       if (!id) return
-      addTransformer("draggables", id, transformer)
+      actions.addTransformer("draggables", id, transformer)
     })
-    onDragEnd((event) => {
+    actions.onDragEnd((event) => {
       const id = getDraggableId(event)
       if (!id) return
-      removeTransformer("draggables", id, transformer.id)
+      actions.removeTransformer("draggables", id, transformer.id)
     })
     return dispose
   })
