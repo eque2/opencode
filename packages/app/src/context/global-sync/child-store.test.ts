@@ -7,7 +7,7 @@ import { queryOptions } from "@tanstack/solid-query"
 import type { State } from "./types"
 import type { ChildQueryOptions } from "./child-store"
 import { ServerScope } from "@/utils/server-scope"
-import { HashMap } from "effect"
+import { Effect, HashMap } from "effect"
 
 let createChildStoreManager: typeof import("./child-store").createChildStoreManager
 const querySingles: Array<() => { queryKey?: readonly unknown[]; enabled?: boolean }> = []
@@ -61,32 +61,41 @@ const child = () =>
 // functions never run.
 const queryOptionsApi: ChildQueryOptions = {
   providers: (directory) =>
-    queryOptions({ queryKey: [ServerScope.local, directory, "providers"], queryFn: async () => provider }),
+    queryOptions({
+      queryKey: [ServerScope.local, directory, "providers"],
+      queryFn: () => Effect.runPromise(Effect.succeed(provider)),
+    }),
   path: (directory) =>
     queryOptions<Path>({
       queryKey: [ServerScope.local, directory, "path"],
-      queryFn: async () => ({
-        state: "",
-        config: "",
-        worktree: "",
-        directory: directory ?? "",
-        home: "",
-      }),
+      queryFn: () =>
+        Effect.runPromise(
+          Effect.succeed({
+            state: "",
+            config: "",
+            worktree: "",
+            directory: directory ?? "",
+            home: "",
+          }),
+        ),
     }),
-  mcp: (directory) => ({ queryKey: [ServerScope.local, directory, "mcp"], queryFn: async () => ({}) }),
+  mcp: (directory) => ({
+    queryKey: [ServerScope.local, directory, "mcp"],
+    queryFn: () => Effect.runPromise(Effect.succeed({})),
+  }),
   mcpResources: (directory) => ({
     queryKey: [ServerScope.local, directory, "mcpResources"],
-    queryFn: async () => ({}),
+    queryFn: () => Effect.runPromise(Effect.succeed({})),
   }),
   lsp: (directory: string) =>
     queryOptions({
       queryKey: [ServerScope.local, directory, "lsp"] as const,
-      queryFn: async (): Promise<LspStatus[]> => [],
+      queryFn: () => Effect.runPromise(Effect.succeed<LspStatus[]>([])),
     }),
   references: (directory) =>
     queryOptions<ReferenceInfo[]>({
       queryKey: [ServerScope.local, directory, "references"],
-      queryFn: async () => [],
+      queryFn: () => Effect.runPromise(Effect.succeed([])),
     }),
 }
 
@@ -104,7 +113,7 @@ function createOwner(callback: (owner: Owner) => void) {
   })
 }
 
-beforeAll(async () => {
+beforeAll(() => {
   mock.module("@tanstack/solid-query", () => ({
     queryOptions,
     useQuery: (options: () => { queryKey?: readonly unknown[]; enabled?: boolean }) => {
@@ -124,7 +133,13 @@ beforeAll(async () => {
     },
   }))
 
-  createChildStoreManager = (await import("./child-store")).createChildStoreManager
+  return Effect.runPromise(
+    Effect.promise(() => import("./child-store")).pipe(
+      Effect.map((module) => {
+        createChildStoreManager = module.createChildStoreManager
+      }),
+    ),
+  )
 })
 
 describe("createChildStoreManager", () => {
