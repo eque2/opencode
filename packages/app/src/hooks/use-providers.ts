@@ -58,15 +58,14 @@ export function useProviders(directory: Accessor<string | undefined>) {
     },
     paid: () => {
       const connected = HashSet.fromIterable(providers().connected)
-      const paid = [
-        ...Iterable.filter(
+      return Array.from(
+        Iterable.filter(
           providers().all,
           ([id, provider]) =>
             HashSet.has(connected, id) &&
             (id !== "opencode" || Object.values(provider.models).some((m) => m.cost?.input)),
         ),
-      ]
-      return paid
+      )
     },
   }
 }
