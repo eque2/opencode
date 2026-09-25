@@ -600,7 +600,7 @@ function ProviderConnection(props: {
     const current = createMemo(() => {
       const all = prompts()
       const index = all.findIndex((prompt, index) => index >= formStore.index && matches(prompt, formStore.value))
-      if (index === -1) return
+      if (index === -1) return undefined
       return {
         index,
         prompt: all[index],
@@ -634,12 +634,12 @@ function ProviderConnection(props: {
     const item = () => current()
     const text = createMemo(() => {
       const prompt = item()?.prompt
-      if (!prompt || prompt.type !== "text") return
+      if (!prompt || prompt.type !== "text") return undefined
       return prompt
     })
     const select = createMemo(() => {
       const prompt = item()?.prompt
-      if (!prompt || prompt.type !== "select") return
+      if (!prompt || prompt.type !== "select") return undefined
       return prompt
     })
 

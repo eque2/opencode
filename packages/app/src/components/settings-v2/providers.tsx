@@ -79,10 +79,10 @@ export const SettingsProvidersV2: Component<{
   })
 
   const source = (item: ProviderItem): ProviderSource | undefined => {
-    if (!("source" in item)) return
+    if (!("source" in item)) return undefined
     const value = item.source
     if (value === "env" || value === "api" || value === "config" || value === "custom") return value
-    return
+    return undefined
   }
 
   const type = (item: ProviderItem) => {
