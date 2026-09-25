@@ -88,7 +88,7 @@ export function createPromptInputV2Attachments(
     editor: () => HTMLElement | undefined
     focusEditor: () => void
     addPart: (part: PromptInputV2Prompt[number]) => boolean
-    setDraggingType: (type: "image" | "@mention" | null) => void
+    setDraggingType: (type: Option.Option<"image" | "@mention">) => void
   },
 ) {
   const capture = () => {
@@ -179,7 +179,7 @@ export function createPromptInputV2Attachments(
   const handleDrop = async (event: DragEvent) => {
     if (input.isDialogActive()) return
     event.preventDefault()
-    input.setDraggingType(null)
+    input.setDraggingType(Option.none())
     const plainText = event.dataTransfer?.getData("text/plain")
     if (plainText?.startsWith("file:")) {
       const path = plainText.slice("file:".length)
@@ -195,11 +195,11 @@ export function createPromptInputV2Attachments(
     makeEventListener(document, "dragover", (event) => {
       if (input.isDialogActive()) return
       event.preventDefault()
-      if (event.dataTransfer?.types.includes("Files")) input.setDraggingType("image")
-      else if (event.dataTransfer?.types.includes("text/plain")) input.setDraggingType("@mention")
+      if (event.dataTransfer?.types.includes("Files")) input.setDraggingType(Option.some("image"))
+      else if (event.dataTransfer?.types.includes("text/plain")) input.setDraggingType(Option.some("@mention"))
     })
     makeEventListener(document, "dragleave", (event) => {
-      if (!input.isDialogActive() && !event.relatedTarget) input.setDraggingType(null)
+      if (!input.isDialogActive() && !event.relatedTarget) input.setDraggingType(Option.none())
     })
     makeEventListener(document, "drop", handleDrop)
   })

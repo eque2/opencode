@@ -717,9 +717,9 @@ export function PromptInputV2SubmitButton(props: {
   )
 }
 
-function PromptInputV2SuggestionIcon(props: { item: PromptInputV2Suggestion }) {
+function PromptInputV2SuggestionIcon(props: { item: PromptInputV2Suggestion }): JSX.Element {
   if (props.item.kind === "agent") return <Icon name="brain" size="small" class="shrink-0 text-icon-info-active" />
-  if (props.item.kind === "command") return null
+  if (props.item.kind === "command") return undefined
   return (
     <FileIcon
       node={{ path: props.item.path ?? props.item.label, type: props.item.kind === "reference" ? "directory" : "file" }}

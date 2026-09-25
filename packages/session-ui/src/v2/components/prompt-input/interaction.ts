@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { HashSet, Option } from "effect"
 import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
@@ -97,7 +97,7 @@ export function createPromptInputV2Controller(input: {
         editor: () => editor,
         focusEditor: () => editor?.focus(),
         addPart,
-        setDraggingType: (type) => dispatch({ type: type ? "drag.enter" : "drag.leave" }),
+        setDraggingType: (type) => dispatch({ type: Option.isSome(type) ? "drag.enter" : "drag.leave" }),
       })
     : undefined
   const attach = () => {

@@ -1,4 +1,4 @@
-import { Array as Arr } from "effect"
+import { Array as Arr, Option } from "effect"
 import { batch, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import type {
@@ -64,8 +64,8 @@ export function createPromptInputV2Store(input: PromptInputV2StoreInput) {
     setModel: (model: PromptInputV2Model | undefined) => {
       setStore()("model", model)
     },
-    setVariant: (variant: string | null) => {
-      if (store().model) setStore()("model", "variant", variant)
+    setVariant: (variant: Option.Option<string>) => {
+      if (store().model) setStore()("model", "variant", Option.getOrNull(variant))
     },
     addContext: (item: PromptInputV2Comment) => {
       if (store().context.items.some((entry) => entry.key === item.key)) return
