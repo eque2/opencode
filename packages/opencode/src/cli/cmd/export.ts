@@ -12,7 +12,8 @@ function redact(kind: string, id: string, value: string) {
   return value.trim() ? `[redacted:${kind}:${id}]` : value
 }
 
-function data(kind: string, id: string, value: Record<string, unknown> | undefined) {
+// Generic over the record type, so a Json metadata record keeps its type when it is not redacted.
+function data<Value extends object>(kind: string, id: string, value: Value | undefined) {
   if (!value) return value
   return Object.keys(value).length ? { redacted: `${kind}:${id}` } : value
 }
