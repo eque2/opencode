@@ -364,7 +364,8 @@ function HomeProjectSlot(
   },
 ) {
   const initial = props.items.find((item) => item.worktree === props.worktree)
-  if (!initial) return
+  // A worktree with no project renders nothing.
+  if (!initial) return undefined
   const project = createMemo<LocalProject>(
     (previous) => props.items.find((item) => item.worktree === props.worktree) ?? previous,
     initial,
