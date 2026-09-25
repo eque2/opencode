@@ -1343,6 +1343,7 @@ function Playground() {
     message: { [session().id]: state.messages },
     part: state.parts,
     provider: {
+      // eslint-disable-next-line effect/no-map-use-hashmap -- DataProvider NormalizedProviderListResponse.all (context/data.tsx) is a native Map<string, Provider> that message-part reads with .get; packages/app builds the same Map
       all: new Map([
         ["anthropic", { id: "anthropic", models: { "claude-sonnet-4-20250514": { name: "Claude Sonnet" } } }],
       ]),
