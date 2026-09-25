@@ -21,7 +21,7 @@ export function createTimelineModel(input: {
     () => input.sessionID(),
     (id) => {
       clearRefresh()
-      if (!id) return
+      if (!id) return undefined
 
       const cached = untrack(() => sync().data.message[id] !== undefined)
       const stale = cached && !serverSync().session.fresh(id, sessionFreshness)

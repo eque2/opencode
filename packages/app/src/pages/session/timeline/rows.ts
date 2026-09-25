@@ -313,9 +313,9 @@ export namespace MessageComment {
   }
 
   export const fromPart = (part: Part): MessageComment | undefined => {
-    if (part.type !== "text" || !part.synthetic) return
+    if (part.type !== "text" || !part.synthetic) return undefined
     const next = readCommentMetadata(part.metadata) ?? parseCommentNote(part.text)
-    if (!next) return
+    if (!next) return undefined
     return {
       path: next.path,
       comment: next.comment,

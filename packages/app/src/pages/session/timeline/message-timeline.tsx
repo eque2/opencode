@@ -109,10 +109,11 @@ const timelineCache = MutableHashMap.empty<
 >()
 
 const taskDescription = (part: PartType, sessionID: string) => {
-  if (part.type !== "tool" || part.tool !== "task") return
-  if (!("metadata" in part.state) || part.state.metadata?.sessionId !== sessionID) return
+  if (part.type !== "tool" || part.tool !== "task") return undefined
+  if (!("metadata" in part.state) || part.state.metadata?.sessionId !== sessionID) return undefined
   const value = part.state.input?.description
   if (typeof value === "string" && value) return value
+  return undefined
 }
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
@@ -308,7 +309,7 @@ export function MessageTimeline(props: {
   })
   const info = createMemo(() => {
     const id = sessionID()
-    if (!id) return
+    if (!id) return undefined
     return sync().session.get(id)
   })
   const titleValue = createMemo(() => info()?.title)
@@ -318,7 +319,7 @@ export function MessageTimeline(props: {
   const parentID = createMemo(() => info()?.parentID)
   const parent = createMemo(() => {
     const id = parentID()
-    if (!id) return
+    if (!id) return undefined
     return sync().session.get(id)
   })
   const parentMessages = createMemo(() => {
@@ -331,7 +332,7 @@ export function MessageTimeline(props: {
   const getMsgPart = (messageID: string, partID: string) => getMsgParts(messageID).find((part) => part.id === partID)
   const childTaskDescription = createMemo(() => {
     const id = sessionID()
-    if (!id) return
+    if (!id) return undefined
     return parentMessages()
       .flatMap((message) => getMsgParts(message.id))
       .map((part) => taskDescription(part, id))
@@ -1001,14 +1002,14 @@ export function MessageTimeline(props: {
 
   const turnDurationMs = (userMessageID: string) => {
     const message = messageByID().get(userMessageID)
-    if (!message || message.role !== "user") return
+    if (!message || message.role !== "user") return undefined
     const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce((max, item) => {
       const completed = item.time.completed
       if (typeof completed !== "number") return max
       return Option.some(Option.isSome(max) ? Math.max(max.value, completed) : completed)
     }, Option.none<number>())
-    if (Option.isNone(end)) return
-    if (end.value < message.time.created) return
+    if (Option.isNone(end)) return undefined
+    if (end.value < message.time.created) return undefined
     return end.value - message.time.created
   }
 
@@ -1067,17 +1068,17 @@ export function MessageTimeline(props: {
 
     const message = createMemo(() => {
       const group = row().group
-      if (group.type !== "part") return
+      if (group.type !== "part") return undefined
       return messageByID().get(group.ref.messageID)
     })
     const part = createMemo(() => {
       const group = row().group
-      if (group.type !== "part") return
+      if (group.type !== "part") return undefined
       return getMsgPart(group.ref.messageID, group.ref.partID)
     })
     const defaultOpen = createMemo(() => {
       const item = part()
-      if (!item) return
+      if (!item) return undefined
       return partDefaultOpen(item, settings.general.shellToolPartsExpanded(), settings.general.editToolPartsExpanded())
     })
 
@@ -1191,6 +1192,7 @@ export function MessageTimeline(props: {
         const message = createMemo(() => {
           const m = messageByID().get(row().userMessageID)
           if (m?.role === "user") return m
+          return undefined
         })
         const messageComments = createMemo(() => {
           if (!settings.general.newLayoutDesigns()) return []
@@ -1326,9 +1328,10 @@ export function MessageTimeline(props: {
     const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
     const tool = () => {
       const value = row()
-      if (value._tag !== "AssistantPart" || value.group.type !== "part") return
+      if (value._tag !== "AssistantPart" || value.group.type !== "part") return undefined
       const part = getMsgPart(value.group.ref.messageID, value.group.ref.partID)
       if (part?.type === "tool") return part
+      return undefined
     }
     const asyncFile = () => ["edit", "write", "apply_patch"].includes(tool()?.tool ?? "")
     const [ready, setReady] = createSignal(initialItem.size <= timelineFallbackItemSize || !asyncFile())
