@@ -146,6 +146,9 @@ type LayoutUiState = {
 /** The layout reads the global provider catalog, so it names no project directory. */
 const globalCatalog = Option.none<string>()
 
+/** A root session has no parent. The session list API takes that as `parentID: null`. */
+const rootSessionParent = Option.none<string>()
+
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const [store, setStore, , ready] = persisted(
@@ -1328,7 +1331,7 @@ export default function LegacyLayout(props: ParentProps) {
         layoutRequest(() =>
           listAllSessions(serverSDK().api.session, {
             directory: item,
-            parentID: null,
+            parentID: Option.getOrNull(rootSessionParent),
             order: "desc",
           }),
         ).pipe(
@@ -2595,5 +2598,5 @@ function UpdateAvailableToast(props: {
     dismissToast(toastId)
   })
 
-  return null
+  return undefined
 }
