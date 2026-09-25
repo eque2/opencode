@@ -2,7 +2,7 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
 import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/message-part"
-import { Array as Arr, MutableHashMap, Option, Predicate } from "effect"
+import { Array as Arr, MutableHashMap, Option, Predicate, Schema } from "effect"
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
@@ -38,6 +38,7 @@ export namespace Timeline {
 
   const noTurns: readonly Turn[] = []
   const noRows: readonly TimelineRow.TimelineRow[] = []
+  const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
   export function constructSessionMessageRows(
     messages: SessionMessageInfo[],
@@ -261,32 +262,26 @@ export namespace Timeline {
   function unwrapErrorMessage(message: string) {
     const text = message.replace(/^Error:\s*/, "").trim()
 
-    const parse = (value: string) => {
-      try {
-        return JSON.parse(value) as unknown
-      } catch {
-        return undefined
-      }
-    }
+    // A JSON string that holds JSON text is decoded a second time.
+    const read = (value: string) =>
+      Option.flatMap(decodeJson(value), (first) =>
+        Predicate.isString(first) ? decodeJson(first.trim()) : Option.some(first),
+      )
 
-    const read = (value: string) => {
-      const first = parse(value)
-      if (typeof first !== "string") return first
-      return parse(first.trim())
-    }
+    const json = read(text).pipe(
+      Option.orElse(() => {
+        const start = text.indexOf("{")
+        const end = text.lastIndexOf("}")
+        return start !== -1 && end > start ? read(text.slice(start, end + 1)) : Option.none()
+      }),
+      Option.filter(record),
+    )
 
-    let json = read(text)
+    if (Option.isNone(json)) return message
+    const body = json.value
 
-    if (json === undefined) {
-      const start = text.indexOf("{")
-      const end = text.lastIndexOf("}")
-      if (start !== -1 && end > start) json = read(text.slice(start, end + 1))
-    }
-
-    if (!record(json)) return message
-
-    if (record(json.error)) {
-      const err = json.error
+    if (record(body.error)) {
+      const err = body.error
       const type = Predicate.isString(err.type) ? err.type : ""
       const msg = Predicate.isString(err.message) ? err.message : ""
       if (type && msg) return `${type}: ${msg}`
@@ -295,9 +290,9 @@ export namespace Timeline {
       if (Predicate.isString(err.code) && err.code) return err.code
     }
 
-    if (Predicate.isString(json.message) && json.message) return json.message
+    if (Predicate.isString(body.message) && body.message) return body.message
 
-    if (Predicate.isString(json.error) && json.error) return json.error
+    if (Predicate.isString(body.error) && body.error) return body.error
 
     return message
   }
