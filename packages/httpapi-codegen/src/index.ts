@@ -531,6 +531,7 @@ const promiseRuntimeReason =
 const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
 const tryCatchRule = "effect/no-try-catch-use-effect"
+const jsonParseRule = "effect/no-json-parse-use-schema"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
   `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
@@ -828,7 +829,9 @@ export function make(options: ClientOptions) {
             if (data !== "") {
               ${runtimeDirective(tryCatchRule)}
               try {
-                yield JSON.parse(data) as A
+                ${runtimeDirective(jsonParseRule)}
+                const value: unknown = JSON.parse(data)
+                yield value as A
               } catch (cause) {
                 ${runtimeDirective(throwRule)}
                 throw new ClientError("MalformedResponse", { cause })
@@ -893,6 +896,7 @@ async function json(response: Response): Promise<unknown> {
   if (text === "") throw new ClientError("MalformedResponse")
   ${runtimeDirective(tryCatchRule)}
   try {
+    ${runtimeDirective(jsonParseRule)}
     return JSON.parse(text)
   } catch (cause) {
     ${runtimeDirective(throwRule)}

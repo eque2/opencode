@@ -261,7 +261,9 @@ export function make(options: ClientOptions) {
             if (data !== "") {
               // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
               try {
-                yield JSON.parse(data) as A
+                // eslint-disable-next-line effect/no-json-parse-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+                const value: unknown = JSON.parse(data)
+                yield value as A
               } catch (cause) {
                 // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
                 throw new ClientError("MalformedResponse", { cause })
@@ -1029,6 +1031,7 @@ async function json(response: Response): Promise<unknown> {
   if (text === "") throw new ClientError("MalformedResponse")
   // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   try {
+    // eslint-disable-next-line effect/no-json-parse-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     return JSON.parse(text)
   } catch (cause) {
     // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
