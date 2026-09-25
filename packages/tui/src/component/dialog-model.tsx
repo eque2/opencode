@@ -1,6 +1,6 @@
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
-import { map, pipe, flatMap, entries, filter, sortBy, take } from "remeda"
+import { map, pipe, entries, sortBy, take } from "remeda"
 import { DialogSelect } from "../ui/dialog-select"
 import { useDialog } from "../ui/dialog"
 import { createDialogProviderOptions, DialogProvider } from "./dialog-provider"
@@ -58,19 +58,16 @@ export function DialogModel(props: { providerID?: string }) {
       "Recent",
     )
 
-    const providerOptions = pipe(
+    const providerOptions = sortBy(
       sync.data.provider,
-      sortBy(
-        (provider) => provider.id !== "opencode",
-        (provider) => provider.name,
-      ),
-      flatMap((provider) =>
-        pipe(
-          provider.models,
-          entries(),
-          filter(([_, info]) => info.status !== "deprecated"),
-          filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true)),
-          map(([model, info]) => ({
+      (provider) => provider.id !== "opencode",
+      (provider) => provider.name,
+    ).flatMap((provider) =>
+      sortModelOptions(
+        entries(provider.models)
+          .filter(([_, info]) => info.status !== "deprecated")
+          .filter(([_, info]) => (props.providerID ? info.providerID === props.providerID : true))
+          .map(([model, info]) => ({
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
             releaseDate: info.release_date,
@@ -83,8 +80,8 @@ export function DialogModel(props: { providerID?: string }) {
             onSelect() {
               onSelect(provider.id, model)
             },
-          })),
-          filter((option) => {
+          }))
+          .filter((option) => {
             if (!showSections) return true
             if (
               favorites.some(
@@ -100,8 +97,7 @@ export function DialogModel(props: { providerID?: string }) {
               return false
             return true
           }),
-          (options) => sortModelOptions(options, props.providerID !== undefined),
-        ),
+        props.providerID !== undefined,
       ),
     )
 
