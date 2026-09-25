@@ -849,23 +849,22 @@ function contextToolDetail(part: ToolPart): string | undefined {
 function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
   const input = (part.state.input ?? {}) as Record<string, unknown>
   const path = typeof input.path === "string" ? input.path : "/"
-  const filePath = typeof input.filePath === "string" ? input.filePath : undefined
-  const pattern = typeof input.pattern === "string" ? input.pattern : undefined
-  const include = typeof input.include === "string" ? input.include : undefined
-  const offset = typeof input.offset === "number" ? input.offset : undefined
-  const limit = typeof input.limit === "number" ? input.limit : undefined
+  const filePath = typeof input.filePath === "string" ? input.filePath : ""
+  const pattern = Option.liftPredicate(input.pattern, isNonEmptyString)
+  const include = Option.liftPredicate(input.include, isNonEmptyString)
+  const offset = Option.liftPredicate(input.offset, Predicate.isNumber)
+  const limit = Option.liftPredicate(input.limit, Predicate.isNumber)
 
   switch (part.tool) {
-    case "read": {
-      const args: string[] = []
-      if (offset !== undefined) args.push("offset=" + offset)
-      if (limit !== undefined) args.push("limit=" + limit)
+    case "read":
       return {
         title: i18n.t("ui.tool.read"),
-        subtitle: filePath ? getFilename(filePath) : "",
-        args,
+        subtitle: getFilename(filePath),
+        args: Array.getSomes([
+          Option.map(offset, (value) => "offset=" + value),
+          Option.map(limit, (value) => "limit=" + value),
+        ]),
       }
-    }
     case "list":
       return {
         title: i18n.t("ui.tool.list"),
@@ -875,18 +874,17 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
       return {
         title: i18n.t("ui.tool.glob"),
         subtitle: getDirectory(path),
-        args: pattern ? ["pattern=" + pattern] : [],
+        args: Array.getSomes([Option.map(pattern, (value) => "pattern=" + value)]),
       }
-    case "grep": {
-      const args: string[] = []
-      if (pattern) args.push("pattern=" + pattern)
-      if (include) args.push("include=" + include)
+    case "grep":
       return {
         title: i18n.t("ui.tool.grep"),
         subtitle: getDirectory(path),
-        args,
+        args: Array.getSomes([
+          Option.map(pattern, (value) => "pattern=" + value),
+          Option.map(include, (value) => "include=" + value),
+        ]),
       }
-    }
     default: {
       const info = getToolInfo(part.tool, input, "metadata" in part.state ? part.state.metadata : undefined)
       return {
@@ -1804,9 +1802,10 @@ ToolRegistry.register({
   render(props) {
     const data = useData()
     const i18n = useI18n()
-    const args: string[] = []
-    if (props.input.offset) args.push("offset=" + props.input.offset)
-    if (props.input.limit) args.push("limit=" + props.input.limit)
+    const args = Array.getSomes([
+      Option.liftPredicate(props.input.offset, Predicate.isTruthy).pipe(Option.map((value) => "offset=" + value)),
+      Option.liftPredicate(props.input.limit, Predicate.isTruthy).pipe(Option.map((value) => "limit=" + value)),
+    ])
     const loaded = createMemo(() => {
       if (props.status !== "completed") return []
       const value = props.metadata.loaded
@@ -1899,9 +1898,10 @@ ToolRegistry.register({
   name: "grep",
   render(props) {
     const i18n = useI18n()
-    const args: string[] = []
-    if (props.input.pattern) args.push("pattern=" + props.input.pattern)
-    if (props.input.include) args.push("include=" + props.input.include)
+    const args = Array.getSomes([
+      Option.liftPredicate(props.input.pattern, Predicate.isTruthy).pipe(Option.map((value) => "pattern=" + value)),
+      Option.liftPredicate(props.input.include, Predicate.isTruthy).pipe(Option.map((value) => "include=" + value)),
+    ])
     return (
       <BasicTool
         {...props}
