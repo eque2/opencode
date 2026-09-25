@@ -13,7 +13,7 @@ import type {
   TuiAttentionSoundPackInfo,
 } from "@opencode-ai/plugin/tui"
 import { AttentionSoundName, type TuiConfig } from "./config"
-import { MutableHashMap, Option, Predicate, Schema } from "effect"
+import { Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
 import stripAnsi from "strip-ansi"
 import * as TuiAudio from "./audio"
 import defaultSoundPath from "@opencode-ai/ui/audio/bip-bop-01.mp3" with { type: "file" }
@@ -163,76 +163,80 @@ export function createTuiAttention(input: {
     )
   }
 
-  async function playSound(name: TuiAttentionSoundName, volume: number) {
-    try {
+  // Try each candidate file in order until one loads and plays.
+  const playSound = (name: TuiAttentionSoundName, volume: number) =>
+    Effect.gen(function* () {
       for (const file of soundCandidates(name)) {
-        const current = await audio.loadSoundFile(file).catch((error) => {
-          console.debug("failed to load attention sound", { file, error })
-          return null
-        })
+        const current = yield* Effect.tryPromise(() => audio.loadSoundFile(file)).pipe(
+          Effect.map(Option.fromNullishOr),
+          Effect.catch((error) =>
+            Effect.logDebug("failed to load attention sound", { file, error: error.cause }).pipe(
+              Effect.as(Option.none()),
+            ),
+          ),
+        )
         if (disposed) return false
-        if (current == null) continue
-        if (audio.play(current, { volume }) != null) return true
+        if (Option.isNone(current)) continue
+        if (Predicate.isNotNullish(audio.play(current.value, { volume }))) return true
       }
       return false
-    } catch (error) {
-      console.debug("failed to play attention sound", { error })
-      return false
-    }
-  }
+    }).pipe(
+      Effect.catchDefect((error) => Effect.logDebug("failed to play attention sound", { error }).pipe(Effect.as(false))),
+    )
+
+  const deliver = (request: TuiAttentionNotifyInput) =>
+    Effect.gen(function* () {
+      if (!input.config.attention.enabled) return skipped("attention_disabled")
+      if (disposed || input.renderer.isDestroyed) return skipped("renderer_destroyed")
+
+      const message = normalizeText(request.message, "", MESSAGE_LIMIT)
+      if (!message) return skipped("empty_message")
+
+      const notificationSkip = focusSkip(requestedWhen(request.notification, "blurred"), focus)
+      const notificationRequested = input.config.attention.notifications && request.notification !== false
+      const shouldNotify = notificationRequested && Option.isNone(notificationSkip)
+      const notification = shouldNotify
+        ? yield* Effect.try(() =>
+            input.renderer.triggerNotification(message, normalizeText(request.title, DEFAULT_TITLE, TITLE_LIMIT)),
+          ).pipe(
+            Effect.catch((error) =>
+              Effect.logDebug("failed to trigger attention notification", { error: error.cause }).pipe(
+                Effect.as(false),
+              ),
+            ),
+          )
+        : false
+      const volume = soundVolume(request, input.config)
+      const soundSkip = Option.isSome(volume) ? focusSkip(requestedWhen(request.sound, "always"), focus) : Option.none()
+      const soundName =
+        Predicate.isObject(request.sound) && Schema.is(AttentionSoundName)(request.sound.name)
+          ? request.sound.name
+          : "default"
+      const sound =
+        Option.isSome(volume) && Option.isNone(soundSkip) ? yield* playSound(soundName, volume.value) : false
+
+      if (!notification && !sound) {
+        if (notificationRequested && Option.isSome(notificationSkip)) return skipped(notificationSkip.value)
+        if (Option.isSome(soundSkip)) return skipped(soundSkip.value)
+      }
+
+      return {
+        ok: notification || sound,
+        notification,
+        sound,
+      }
+    }).pipe(
+      // A throw anywhere in the request still resolves to "not delivered".
+      Effect.catchDefect((error) =>
+        Effect.logDebug("failed to handle attention notification", { error }).pipe(
+          Effect.as({ ok: false, notification: false, sound: false }),
+        ),
+      ),
+    )
 
   return {
-    async notify(request) {
-      try {
-        if (!input.config.attention.enabled) return skipped("attention_disabled")
-        if (disposed || input.renderer.isDestroyed) return skipped("renderer_destroyed")
-
-        const message = normalizeText(request.message, "", MESSAGE_LIMIT)
-        if (!message) return skipped("empty_message")
-
-        const notificationSkip = focusSkip(requestedWhen(request.notification, "blurred"), focus)
-        const notificationRequested = input.config.attention.notifications && request.notification !== false
-        const shouldNotify = notificationRequested && Option.isNone(notificationSkip)
-        const notification = shouldNotify
-          ? (() => {
-              try {
-                return input.renderer.triggerNotification(
-                  message,
-                  normalizeText(request.title, DEFAULT_TITLE, TITLE_LIMIT),
-                )
-              } catch (error) {
-                console.debug("failed to trigger attention notification", { error })
-                return false
-              }
-            })()
-          : false
-        const volume = soundVolume(request, input.config)
-        const soundSkip = Option.isSome(volume) ? focusSkip(requestedWhen(request.sound, "always"), focus) : Option.none()
-        const soundName =
-          Predicate.isObject(request.sound) && Schema.is(AttentionSoundName)(request.sound.name)
-            ? request.sound.name
-            : "default"
-        const sound =
-          Option.isSome(volume) && Option.isNone(soundSkip) ? await playSound(soundName, volume.value) : false
-
-        if (!notification && !sound) {
-          if (notificationRequested && Option.isSome(notificationSkip)) return skipped(notificationSkip.value)
-          if (Option.isSome(soundSkip)) return skipped(soundSkip.value)
-        }
-
-        return {
-          ok: notification || sound,
-          notification,
-          sound,
-        }
-      } catch (error) {
-        console.debug("failed to handle attention notification", { error })
-        return {
-          ok: false,
-          notification: false,
-          sound: false,
-        }
-      }
+    notify(request) {
+      return Effect.runPromise(deliver(request))
     },
     soundboard: {
       registerPack(pack) {
