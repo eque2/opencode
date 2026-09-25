@@ -225,7 +225,7 @@ const layer: Layer.Layer<
         })
       }
 
-      yield* project.addSandbox(ctx.project.id, info.directory).pipe(Effect.catch(() => Effect.void))
+      return yield* project.addSandbox(ctx.project.id, info.directory).pipe(Effect.catch(() => Effect.void))
     })
 
     const boot = Effect.fnUntraced(function* (info: Info, startCommand?: string) {

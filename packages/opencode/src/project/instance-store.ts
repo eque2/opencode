@@ -153,12 +153,18 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
 
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
       const entry = cache.get(ctx.directory)
-      if (!entry) return yield* disposeContext(ctx)
+      if (!entry) {
+        yield* disposeContext(ctx)
+        return
+      }
 
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
-      if (Exit.isFailure(exit)) return yield* removeEntry(ctx.directory, entry).pipe(Effect.asVoid)
+      if (Exit.isFailure(exit)) {
+        yield* removeEntry(ctx.directory, entry)
+        return
+      }
       if (exit.value !== ctx) return
-      yield* disposeEntry(ctx.directory, entry, ctx).pipe(Effect.asVoid)
+      yield* disposeEntry(ctx.directory, entry, ctx)
     })
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {
@@ -166,8 +172,11 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       const entry = cache.get(directory)
       if (!entry) return
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
-      if (Exit.isFailure(exit)) return yield* removeEntry(directory, entry).pipe(Effect.asVoid)
-      yield* disposeEntry(directory, entry, exit.value).pipe(Effect.asVoid)
+      if (Exit.isFailure(exit)) {
+        yield* removeEntry(directory, entry)
+        return
+      }
+      yield* disposeEntry(directory, entry, exit.value)
     })
 
     const disposeAllOnce = Effect.fnUntraced(function* () {

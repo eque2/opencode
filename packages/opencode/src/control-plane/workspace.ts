@@ -341,7 +341,7 @@ const layer = Layer.effect(
 
       const history = (yield* response.json) as HistoryEvent[]
 
-      yield* Effect.forEach(
+      return yield* Effect.forEach(
         history,
         (event) =>
           events
@@ -619,9 +619,10 @@ const layer = Layer.effect(
         }
 
         if (Option.isNone(targetID)) {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: Option.getOrUndefined(targetID) })
-
-          return
+          return yield* session.setWorkspace({
+            sessionID: input.sessionID,
+            workspaceID: Option.getOrUndefined(targetID),
+          })
         }
 
         const workspaceID = targetID.value
@@ -635,9 +636,7 @@ const layer = Layer.effect(
         const target = yield* WorkspaceAdapterRuntime.target(space)
 
         if (target.type === "local") {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
-
-          return
+          return yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
         }
 
         const rows = yield* db
@@ -665,8 +664,8 @@ const layer = Layer.effect(
         yield* Effect.forEach(
           batches,
           (events, i) =>
-            Effect.gen(function* () {
-              const response = yield* http.execute(
+            http
+              .execute(
                 HttpClientRequest.post(route(target.url, "/sync/replay"), {
                   headers: new Headers(target.headers),
                   body: HttpBody.jsonUnsafe({
@@ -675,18 +674,25 @@ const layer = Layer.effect(
                   }),
                 }),
               )
-
-              if (response.status < 200 || response.status >= 300) {
-                const body = yield* response.text
-                return yield* new SessionWarpHttpError({
-                  message: `Failed to warp session ${input.sessionID} into workspace ${workspaceID}: HTTP ${response.status} ${body}`,
-                  workspaceID,
-                  sessionID: input.sessionID,
-                  status: response.status,
-                  body,
-                })
-              }
-            }),
+              .pipe(
+                Effect.flatMap((response) =>
+                  response.status >= 200 && response.status < 300
+                    ? Effect.void
+                    : response.text.pipe(
+                        Effect.flatMap((body) =>
+                          Effect.fail(
+                            new SessionWarpHttpError({
+                              message: `Failed to warp session ${input.sessionID} into workspace ${workspaceID}: HTTP ${response.status} ${body}`,
+                              workspaceID,
+                              sessionID: input.sessionID,
+                              status: response.status,
+                              body,
+                            }),
+                          ),
+                        ),
+                      ),
+                ),
+              ),
           { discard: true },
         )
 
@@ -707,7 +713,7 @@ const layer = Layer.effect(
           })
         }
 
-        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
+        return yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
       })
     })
 
@@ -777,8 +783,7 @@ const layer = Layer.effect(
 
     const get = Effect.fn("Workspace.get")(function* (id: WorkspaceV2.ID) {
       const row = yield* db.select().from(WorkspaceTable).where(eq(WorkspaceTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) return
-      return fromRow(row)
+      return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), fromRow))
     })
 
     const remove = Effect.fn("Workspace.remove")(function* (id: WorkspaceV2.ID) {
@@ -797,7 +802,7 @@ const layer = Layer.effect(
       )
 
       const row = yield* db.select().from(WorkspaceTable).where(eq(WorkspaceTable.id, id)).get().pipe(Effect.orDie)
-      if (!row) return
+      if (!row) return undefined
 
       yield* stopSync(id)
 
