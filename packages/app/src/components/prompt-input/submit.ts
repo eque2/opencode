@@ -513,8 +513,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
 
     const restoreInput = () => {
-      const restored = submission.restore()
-      if (!restored) return false
+      const restoration = submission.restore()
+      if (Option.isNone(restoration)) return false
+      const restored = restoration.value
       restored.target.set(restored.prompt, input.promptLength(restored.prompt))
       if (!submission.current(prompt.capture())) return true
       input.setMode(mode)

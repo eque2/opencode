@@ -7,7 +7,7 @@ function sessionTreeRequest<T>(
   sessionID?: string,
   include: (item: T) => boolean = () => true,
 ) {
-  if (!sessionID) return
+  if (!sessionID) return undefined
 
   const map = MutableHashMap.empty<string, Chunk.Chunk<string>>()
   const childrenOf = (id: string) => MutableHashMap.get(map, id).pipe(Option.getOrElse(() => Chunk.empty<string>()))
@@ -34,7 +34,7 @@ function sessionTreeRequest<T>(
   }
 
   const id = Chunk.findFirst(ids, (id) => request[id]?.some(include) ?? false)
-  if (Option.isNone(id)) return
+  if (Option.isNone(id)) return undefined
   return request[id.value]?.find(include)
 }
 

@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { type ContextItem, type Prompt, type usePrompt } from "@/context/prompt"
 
 type PromptTarget = ReturnType<ReturnType<typeof usePrompt>["capture"]>
@@ -9,7 +10,7 @@ export function createPromptSubmissionState(input: {
 }) {
   const initial = input.target
   let target = input.target
-  let cleared: Prompt | undefined
+  let cleared = Option.none<Prompt>()
 
   return {
     prompt: input.prompt,
@@ -18,16 +19,17 @@ export function createPromptSubmissionState(input: {
     clear() {
       if (initial !== target) initial.reset()
       target.reset()
-      cleared = target.current()
+      cleared = Option.some(target.current())
     },
     retarget(next: PromptTarget) {
       input.context.forEach((item) => next.context.add(item))
       target = next
     },
     current: (value: PromptTarget) => target === value,
+    /** The submission to restore, or none when the prompt changed after the submission cleared it. */
     restore() {
-      if (cleared !== undefined && target.current() !== cleared) return
-      return { target, prompt: input.prompt, context: input.context }
+      if (Option.exists(cleared, (prompt) => target.current() !== prompt)) return Option.none()
+      return Option.some({ target, prompt: input.prompt, context: input.context })
     },
   }
 }

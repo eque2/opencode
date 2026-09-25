@@ -42,12 +42,12 @@ export function createCommentMetadata(input: PromptComment) {
 }
 
 export function readCommentMetadata(value: unknown) {
-  if (!value || typeof value !== "object") return
+  if (!value || typeof value !== "object") return undefined
   const meta = (value as { opencodeComment?: unknown }).opencodeComment
-  if (!meta || typeof meta !== "object") return
+  if (!meta || typeof meta !== "object") return undefined
   const path = (meta as { path?: unknown }).path
   const comment = (meta as { comment?: unknown }).comment
-  if (typeof path !== "string" || typeof comment !== "string") return
+  if (typeof path !== "string" || typeof comment !== "string") return undefined
   const preview = (meta as { preview?: unknown }).preview
   const origin = (meta as { origin?: unknown }).origin
   const range = selection((meta as { selection?: unknown }).selection)
@@ -76,7 +76,7 @@ export function parseCommentNote(text: string) {
   const match = text.match(
     /^The user made the following comment regarding (this file|line (\d+)|lines (\d+) through (\d+)) of (.+?): ([\s\S]+)$/,
   )
-  if (!match) return
+  if (!match) return undefined
   // "line N" fills group 2; "lines N through M" fills groups 3 and 4; "this file" fills neither.
   const lines = match[2]
     ? Option.some({ start: Number(match[2]), end: Number(match[2]) })
