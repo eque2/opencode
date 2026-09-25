@@ -446,21 +446,20 @@ export function toBindingConfig(keybinds: Keybinds): BindingConfig<Renderable, K
   return Object.fromEntries(Object.entries(keybinds)) as BindingConfig<Renderable, KeyEvent>
 }
 
-const decodeBindingValue = Schema.decodeUnknownSync(BindingValueSchema)
+// An unknown keybind name is an excess property, so it fails the decode like an invalid binding value.
+const decodeOverrides = Schema.decodeUnknownSync(KeybindOverrides, { onExcessProperty: "error" })
 
 export function defaultValue(name: KeybindName) {
   return Definitions[name].default
 }
 
+/**
+ * Decodes keybind overrides and fills each keybind without an override with its default. An unknown keybind
+ * name or an invalid binding value throws a SchemaError.
+ */
 export function parse(keybinds: KeybindOverrides): Keybinds {
-  const invalid = unknownKeys(keybinds)
-  if (invalid.length) throw new Error(`Unrecognized keybind${invalid.length === 1 ? "" : "s"}: ${invalid.join(", ")}`)
-  return Object.fromEntries(
-    Object.entries(Definitions).map(([name, item]) => [
-      name,
-      decodeBindingValue(keybinds[name as KeybindName] ?? item.default),
-    ]),
-  ) as Keybinds
+  const overrides = decodeOverrides(keybinds)
+  return Record.map(Definitions, (item, name) => overrides[name] ?? item.default)
 }
 
 export const Keybinds = { parse }
