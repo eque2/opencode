@@ -123,10 +123,10 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
     dragLeave,
     inputChange,
     iconClick,
-    close() {
+    close: () => {
       dialog.close()
     },
-    setIconInput(input: HTMLInputElement) {
+    setIconInput: (input: HTMLInputElement) => {
       iconInput = input
     },
   }
