@@ -1,6 +1,6 @@
 import { Global } from "@opencode-ai/core/global"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import os from "os"
 import { Duration, Effect } from "effect"
 import { effectCmd } from "../../effect-cmd"
@@ -53,6 +53,7 @@ const InfoCommand = effectCmd({
     const { Config } = yield* Effect.promise(() => import("@/config/config"))
     const { ConfigPlugin } = yield* Effect.promise(() => import("@/config/plugin"))
     const config = yield* Config.Service.use((cfg) => cfg.get())
+    const flags = yield* RuntimeFlags.Service
     const termProgram = process.env.TERM_PROGRAM
       ? `${process.env.TERM_PROGRAM}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ""}`
       : undefined
@@ -62,7 +63,7 @@ const InfoCommand = effectCmd({
     console.log(`os: ${os.type()} ${os.release()} ${os.arch()}`)
     console.log(`terminal: ${terminal || "unknown"}`)
     console.log("plugins:")
-    if (Flag.OPENCODE_PURE) {
+    if (flags.pure) {
       console.log("external plugins disabled (--pure)")
       return
     }

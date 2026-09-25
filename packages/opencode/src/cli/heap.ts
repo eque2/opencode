@@ -1,6 +1,7 @@
 import path from "path"
 import { writeHeapSnapshot } from "node:v8"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
+import { Effect } from "effect"
 import { Global } from "@opencode-ai/core/global"
 const MINUTE = 60_000
 const LIMIT = 2 * 1024 * 1024 * 1024
@@ -10,7 +11,7 @@ let lock = false
 let armed = true
 
 export function start() {
-  if (!Flag.OPENCODE_AUTO_HEAP_SNAPSHOT) return
+  if (!Effect.runSync(FlagConfig.OPENCODE_AUTO_HEAP_SNAPSHOT)) return
   if (timer) return
 
   const run = async () => {
