@@ -6,7 +6,7 @@ import { Integration } from "@opencode-ai/core/integration"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import type { IntegrationEnvMethod, IntegrationKeyMethod, IntegrationOAuthMethod } from "@opencode-ai/sdk/v2/types"
-import { Effect } from "effect"
+import { Effect, Struct } from "effect"
 
 type Overrides = Partial<Omit<PluginContext, "options">>
 
@@ -261,12 +261,11 @@ function internalMethod(
 }
 
 function agentInfo(value: AgentV2.Info) {
-  return {
-    ...value,
-    model: value.model && { ...value.model },
-    request: { headers: { ...value.request.headers }, body: { ...value.request.body } },
-    permissions: value.permissions.map((permission) => ({ ...permission })),
-  }
+  return Struct.evolve(value, {
+    model: (model) => model && { ...model },
+    request: (request) => ({ headers: { ...request.headers }, body: { ...request.body } }),
+    permissions: (permissions) => permissions.map((permission) => ({ ...permission })),
+  })
 }
 
 function providerInfo(value: ProviderV2.MutableInfo) {
@@ -277,27 +276,33 @@ function providerInfo(value: ProviderV2.MutableInfo) {
   }
 }
 
-function modelInfo(value: ModelV2.Info | ModelV2.MutableInfo) {
-  return {
-    ...value,
-    api: { ...value.api, settings: value.api.settings && { ...value.api.settings } },
-    capabilities: {
-      ...value.capabilities,
-      input: [...value.capabilities.input],
-      output: [...value.capabilities.output],
-    },
-    request: {
-      ...value.request,
-      headers: { ...value.request.headers },
-      body: { ...value.request.body },
-    },
-    variants: value.variants.map((variant) => ({
-      ...variant,
-      headers: { ...variant.headers },
-      body: { ...variant.body },
-    })),
-    time: { ...value.time },
-    cost: value.cost.map((cost) => ({ ...cost, tier: cost.tier && { ...cost.tier }, cache: { ...cost.cache } })),
-    limit: { ...value.limit },
-  }
+// The catalog draft hands out read-only models from model.get and mutable models everywhere else.
+// Struct.evolve splits its evolver type over that union, which leaves the transform parameters
+// without a contextual type, so each transform names its input type.
+type ModelSource = ModelV2.Info | ModelV2.MutableInfo
+
+function modelInfo(value: ModelSource) {
+  return Struct.evolve(value, {
+    api: (api: ModelSource["api"]) => ({ ...api, settings: api.settings && { ...api.settings } }),
+    capabilities: (capabilities: ModelSource["capabilities"]) => ({
+      ...capabilities,
+      input: [...capabilities.input],
+      output: [...capabilities.output],
+    }),
+    request: (request: ModelSource["request"]) => ({
+      ...request,
+      headers: { ...request.headers },
+      body: { ...request.body },
+    }),
+    variants: (variants: ModelSource["variants"]) =>
+      variants.map((variant) => ({
+        ...variant,
+        headers: { ...variant.headers },
+        body: { ...variant.body },
+      })),
+    time: (time: ModelSource["time"]) => ({ ...time }),
+    cost: (cost: ModelSource["cost"]) =>
+      cost.map((item) => ({ ...item, tier: item.tier && { ...item.tier }, cache: { ...item.cache } })),
+    limit: (limit: ModelSource["limit"]) => ({ ...limit }),
+  })
 }
