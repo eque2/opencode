@@ -33,7 +33,7 @@ export const Event = LspEvent
 const Position = Schema.Struct({
   line: NonNegativeInt,
   character: NonNegativeInt,
-})
+}).annotate({ identifier: "Position" })
 
 export const Range = Schema.Struct({
   start: Position,
