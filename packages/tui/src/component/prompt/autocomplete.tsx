@@ -331,33 +331,22 @@ export function Autocomplete(props: {
         },
       })
 
-      const options: AutocompleteOption[] = []
-
       // Add file options. Trust the order returned by fff (frecency, fuzzy
       // score, filename bonus, etc. are already factored in).
-      if (!result.error && result.data) {
-        const width = props.anchor().width - 4
-        options.push(
-          ...result.data.data.map((item): AutocompleteOption => {
-            const { filename, part } = createFilePart(
-              item,
-              path.join(result.data.location.directory, item.path),
-              lineRange,
-            )
-            return {
-              display: Locale.truncateMiddle(filename, width),
-              value: filename,
-              isDirectory: item.type === "directory",
-              path: item.path,
-              onSelect: () => {
-                insertPart(filename, part)
-              },
-            }
-          }),
-        )
-      }
-
-      return options
+      if (result.error || !result.data) return []
+      const width = props.anchor().width - 4
+      return result.data.data.map((item): AutocompleteOption => {
+        const { filename, part } = createFilePart(item, path.join(result.data.location.directory, item.path), lineRange)
+        return {
+          display: Locale.truncateMiddle(filename, width),
+          value: filename,
+          isDirectory: item.type === "directory",
+          path: item.path,
+          onSelect: () => {
+            insertPart(filename, part)
+          },
+        }
+      })
     },
     {
       initialValue: [],
@@ -367,11 +356,10 @@ export function Autocomplete(props: {
   const mcpResources = createMemo(() => {
     if (!store.visible || store.visible === "/") return []
 
-    const options: AutocompleteOption[] = []
     const width = props.anchor().width - 4
 
-    for (const res of Object.values(sync.data.mcp_resource)) {
-      options.push({
+    return Object.values(sync.data.mcp_resource).map(
+      (res): AutocompleteOption => ({
         display: Locale.truncateMiddle(res.name, width),
         // Match the name only; matching the URI caused unrelated fuzzy hits.
         value: res.name,
@@ -394,10 +382,8 @@ export function Autocomplete(props: {
             },
           })
         },
-      })
-    }
-
-    return options
+      }),
+    )
   })
 
   const agents = createMemo(() => {
@@ -446,25 +432,23 @@ export function Autocomplete(props: {
   )
 
   const commands = createMemo((): AutocompleteOption[] => {
-    const results: AutocompleteOption[] = [...slashes()]
-
-    for (const serverCommand of sync.data.command) {
-      if (serverCommand.source === "skill") continue
-      const label = serverCommand.source === "mcp" ? ":mcp" : ""
-      results.push({
-        display: "/" + serverCommand.name + label,
-        description: serverCommand.description,
-        onSelect: () => {
-          const newText = "/" + serverCommand.name + " "
-          const cursor = props.input().logicalCursor
-          props.input().deleteRange(0, 0, cursor.row, cursor.col)
-          props.input().insertText(newText)
-          props.input().cursorOffset = Bun.stringWidth(newText)
-        },
+    const serverCommands = sync.data.command
+      .filter((serverCommand) => serverCommand.source !== "skill")
+      .map((serverCommand): AutocompleteOption => {
+        const label = serverCommand.source === "mcp" ? ":mcp" : ""
+        return {
+          display: "/" + serverCommand.name + label,
+          description: serverCommand.description,
+          onSelect: () => {
+            const newText = "/" + serverCommand.name + " "
+            const cursor = props.input().logicalCursor
+            props.input().deleteRange(0, 0, cursor.row, cursor.col)
+            props.input().insertText(newText)
+            props.input().cursorOffset = Bun.stringWidth(newText)
+          },
+        }
       })
-    }
-
-    results.sort((a, b) => a.display.localeCompare(b.display))
+    const results = [...slashes(), ...serverCommands].toSorted((a, b) => a.display.localeCompare(b.display))
 
     const max = firstBy(results, [(x) => x.display.length, "desc"])?.display.length
     if (!max) return results

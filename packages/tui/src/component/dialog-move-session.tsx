@@ -114,9 +114,10 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     const data = directoryData()
     const current = currentRoot()?.directory
     if (directories.loading && !data && !current) return [{ title: "Loading project directories…", value: undefined }]
-    const roots = [...(data ?? [])]
-    if (current && !roots.some((item) => item.directory === current)) roots.unshift({ directory: current })
-    roots.sort((a, b) => {
+    const loaded = data ?? []
+    const unsorted: ProjectDirectory[] =
+      current && !loaded.some((item) => item.directory === current) ? [{ directory: current }, ...loaded] : loaded
+    const roots = unsorted.toSorted((a, b) => {
       if (a.directory === current) return -1
       if (b.directory === current) return 1
       if (Boolean(a.strategy) !== Boolean(b.strategy)) return a.strategy ? 1 : -1
