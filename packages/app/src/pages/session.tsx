@@ -20,7 +20,7 @@ import {
   type ParentProps,
   untrack,
 } from "solid-js"
-import { DateTime, Effect, Option, Predicate } from "effect"
+import { Array as Arr, DateTime, Effect, MutableHashSet, Option, Predicate } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -540,15 +540,7 @@ export default function Page() {
   }
 
   function normalizeTabs(list: string[]) {
-    const seen = new Set<string>()
-    const next: string[] = []
-    for (const item of list) {
-      const value = normalizeTab(item)
-      if (seen.has(value)) continue
-      seen.add(value)
-      next.push(value)
-    }
-    return next
+    return Arr.dedupe(list.map(normalizeTab))
   }
 
   const openReviewPanel = () => {
@@ -1670,12 +1662,12 @@ export default function Page() {
 
   let captureHistoryAnchor = () => {}
   let restoreHistoryAnchor = (_done: boolean) => {}
-  const historyRequests = new Set<string>()
+  const historyRequests = MutableHashSet.empty<string>()
   let historyContinuationFrame = Option.none<number>()
   const loadOlder = () => {
     const owner = sessionOwnership.capture()
-    if (historyLoading() || historyRequests.has(owner.key)) return
-    historyRequests.add(owner.key)
+    if (historyLoading() || MutableHashSet.has(historyRequests, owner.key)) return
+    MutableHashSet.add(historyRequests, owner.key)
     const before = timeline.messages().length
     Effect.runFork(
       Effect.gen(function* () {
@@ -1684,7 +1676,7 @@ export default function Page() {
             before: () => owner.run(captureHistoryAnchor),
             after: (done) => owner.run(() => restoreHistoryAnchor(done)),
           }),
-        ).pipe(Effect.ensuring(Effect.sync(() => historyRequests.delete(owner.key))))
+        ).pipe(Effect.ensuring(Effect.sync(() => MutableHashSet.remove(historyRequests, owner.key))))
         if (!owner.current() || timeline.messages().length <= before) return
         if (!autoScroll.userScrolled() || !scroller || scroller.scrollTop >= 200 || !historyMore()) return
         if (Option.isSome(historyContinuationFrame)) cancelAnimationFrame(historyContinuationFrame.value)
@@ -1699,7 +1691,7 @@ export default function Page() {
   }
   const onHistoryScroll = () => {
     if (
-      historyRequests.has(sessionOwnership.key()) ||
+      MutableHashSet.has(historyRequests, sessionOwnership.key()) ||
       historyLoading() ||
       !autoScroll.userScrolled() ||
       !scroller ||
