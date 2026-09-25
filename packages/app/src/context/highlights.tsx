@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { createEffect, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -19,7 +20,7 @@ type ParsedRelease = {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 function getText(value: unknown): string | undefined {
