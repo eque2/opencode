@@ -6,7 +6,6 @@ import {
   on,
   Component,
   Show,
-  onCleanup,
   createMemo,
   createSignal,
   createRenderEffect,
@@ -70,6 +69,7 @@ import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { createPromptInputTransientState } from "./prompt-input/transient-state"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { showToast } from "@/utils/toast"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
@@ -535,10 +535,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     props.controls.session.id
     if (props.controls.session.id) return
     if (!suggest()) return
-    const interval = setInterval(() => {
-      setStore("placeholder", (prev) => (prev + 1) % EXAMPLES.length)
-    }, 6500)
-    onCleanup(() => clearInterval(interval))
+    // The slot belongs to this effect run, so a re-run or disposal interrupts the rotation.
+    createFiberSlot().run(
+      Effect.forever(
+        Effect.delay(
+          Effect.sync(() => setStore("placeholder", (prev) => (prev + 1) % EXAMPLES.length)),
+          "6500 millis",
+        ),
+      ),
+    )
   })
 
   const [composing, setComposing] = createSignal(false)
