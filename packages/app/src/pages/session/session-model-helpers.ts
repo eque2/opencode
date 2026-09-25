@@ -1,4 +1,5 @@
 import type { UserMessage } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 
 type Local = {
   session: {
@@ -50,14 +51,16 @@ export const syncPromptModel = (local: ModelSelection, prompt: PromptState) => {
 export const restorePromptModel = (local: ModelSelection, prompt: PromptState) => {
   const model = prompt.model.current()
   if (!model) return false
+  // The prompt stores "no variant" as null or a missing key; the local selection reads it as undefined.
+  const variant = Option.getOrUndefined(Option.fromNullishOr(model.variant))
   const current = local.model.current()
   if (
     current?.provider.id === model.providerID &&
     current.id === model.modelID &&
-    local.model.variant.current() === (model.variant ?? undefined)
+    local.model.variant.current() === variant
   )
     return true
   local.model.set({ providerID: model.providerID, modelID: model.modelID })
-  local.model.variant.set(model.variant ?? undefined)
+  local.model.variant.set(variant)
   return true
 }

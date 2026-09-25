@@ -14,7 +14,8 @@ export const useSessionHashScroll = (input: {
   loadMore: (sessionID: string) => Promise<void>
   currentMessageId: () => string | undefined
   pendingMessage: () => string | undefined
-  setPendingMessage: (value: string | undefined) => void
+  setPendingMessage: (value: string) => void
+  clearPendingMessage: () => void
   setActiveMessage: (message: UserMessage | undefined) => void
   autoScroll: { pause: () => void; forceScrollToBottom: () => void }
   scroller: () => HTMLDivElement | undefined
@@ -47,7 +48,7 @@ export const useSessionHashScroll = (input: {
   const clearMessageHash = () => {
     cancel()
     input.consumePendingMessage(input.sessionKey())
-    if (input.pendingMessage()) input.setPendingMessage(undefined)
+    if (input.pendingMessage()) input.clearPendingMessage()
     if (!location.hash) return
     clearing = true
     navigate(location.pathname + location.search, { replace: true })
@@ -164,7 +165,7 @@ export const useSessionHashScroll = (input: {
     const msg = HashMap.get(messageById(), targetId)
     if (Option.isNone(msg)) return
 
-    if (pending) input.setPendingMessage(undefined)
+    if (pending) input.clearPendingMessage()
     if (input.currentMessageId() === targetId && !pending) return
 
     input.autoScroll.pause()

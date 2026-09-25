@@ -258,7 +258,7 @@ export function MessageTimeline(props: {
   actions?: UserActions
   scroll: { overflow: boolean; bottom: boolean; jump: boolean }
   onResumeScroll: () => void
-  setScrollRef: (el: HTMLDivElement | undefined) => void
+  setScrollRef: (el: Option.Option<HTMLDivElement>) => void
   onScheduleScrollState: (el: HTMLDivElement) => void
   onAutoScrollHandleScroll: () => void
   onMarkScrollGesture: (target?: EventTarget | null) => void
@@ -605,7 +605,7 @@ export function MessageTimeline(props: {
   const bindListRoot = (root: HTMLDivElement) => {
     if (root === listRoot()) return
     setListRoot(root)
-    props.setScrollRef(root)
+    props.setScrollRef(Option.some(root))
   }
 
   const handleListWheel = (event: WheelEvent & { currentTarget: HTMLDivElement }) => {
@@ -676,7 +676,7 @@ export function MessageTimeline(props: {
   }
 
   onCleanup(() => {
-    props.setScrollRef(Option.getOrUndefined(Option.none()))
+    props.setScrollRef(Option.none())
   })
 
   const viewShare = () => {

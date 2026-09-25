@@ -395,8 +395,8 @@ export default function Page() {
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
-      // Solid Router removes a search param whose value is undefined.
-      setSearchParams({ ...searchParams, prompt: Option.getOrUndefined(Option.none()) })
+      // Solid Router's mergeSearchString deletes a search param whose value is "", null or undefined.
+      setSearchParams({ ...searchParams, prompt: "" })
     })
   })
 
@@ -465,7 +465,7 @@ export default function Page() {
 
         workspaceTabs().setAll([])
         // The layout tab API clears the active tab with undefined.
-        workspaceTabs().setActive(Option.getOrUndefined(Option.none()))
+        workspaceTabs().setActive(undefined)
       },
       { defer: true },
     ),
@@ -1655,11 +1655,13 @@ export default function Page() {
 
   let fill = () => {}
 
-  const setScrollRef = (el: HTMLDivElement | undefined) => {
-    scroller = el
-    autoScroll.scrollRef(el)
-    if (!el) return
-    scheduleScrollState(el)
+  // The timeline passes Option.none() when its list root unmounts.
+  // The scroller and autoScroll.scrollRef hold undefined for none.
+  const setScrollRef = (el: Option.Option<HTMLDivElement>) => {
+    scroller = Option.getOrUndefined(el)
+    autoScroll.scrollRef(Option.getOrUndefined(el))
+    if (Option.isNone(el)) return
+    scheduleScrollState(el.value)
     fill()
   }
 
@@ -2104,6 +2106,12 @@ export default function Page() {
     currentMessageId: () => store.messageId,
     pendingMessage: () => ui.pendingMessage,
     setPendingMessage: (value) => setUi("pendingMessage", value),
+    clearPendingMessage: () =>
+      setUi(
+        produce((draft) => {
+          delete draft.pendingMessage
+        }),
+      ),
     setActiveMessage,
     autoScroll: {
       pause: autoScroll.pause,

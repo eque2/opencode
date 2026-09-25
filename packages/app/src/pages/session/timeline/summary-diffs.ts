@@ -2,7 +2,8 @@ import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import { MutableHashSet } from "effect"
 import type { SummaryDiff } from "./timeline-row"
 
-export function uniqueSummaryDiffs(diffs: SnapshotFileDiff[] | undefined) {
+// The diffs are optional because a user message summary may have none (rows.ts passes `summary?.diffs`).
+export function uniqueSummaryDiffs(diffs?: SnapshotFileDiff[]) {
   const files = MutableHashSet.empty<string>()
   return (diffs ?? [])
     .reduceRight<SummaryDiff[]>((result, diff) => {

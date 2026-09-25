@@ -41,22 +41,22 @@ function stabilizeContextKey(
   claimed: MutableHashSet.MutableHashSet<string>,
 ) {
   if (row._tag !== "AssistantPart" || row.group.type !== "context") return row
-  const existing = row.group.refs.reduce<PriorContext | undefined>((result, ref) => {
+  const existing = row.group.refs.reduce((result, ref) => {
     const candidate = HashMap.get(contextByPart, `${row.userMessageID}:${ref.partID}`)
     if (Option.isNone(candidate)) return result
     const key = TimelineRow.key(candidate.value.row)
     if (MutableHashSet.has(claimed, key)) return result
     const owner = HashMap.get(reserved, key)
     if (Option.isSome(owner) && owner.value !== rowIndex) return result
-    return !result || candidate.value.index < result.index ? candidate.value : result
-  }, undefined)
-  if (!existing) return row
-  const key = TimelineRow.key(existing.row)
-  MutableHashSet.add(claimed, key)
-  if (row.group.key === existing.row.group.key) return row
+    return Option.isNone(result) || candidate.value.index < result.value.index ? candidate : result
+  }, Option.none<PriorContext>())
+  if (Option.isNone(existing)) return row
+  const prior = existing.value.row
+  MutableHashSet.add(claimed, TimelineRow.key(prior))
+  if (row.group.key === prior.group.key) return row
   return new TimelineRow.AssistantPart({
     userMessageID: row.userMessageID,
-    group: { ...row.group, key: existing.row.group.key },
+    group: { ...row.group, key: prior.group.key },
     previousAssistantPart: row.previousAssistantPart,
   })
 }

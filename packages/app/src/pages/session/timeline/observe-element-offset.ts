@@ -1,5 +1,5 @@
 import { observeElementOffset, type Virtualizer } from "@tanstack/solid-virtual"
-import { Predicate } from "effect"
+import { Option, Predicate } from "effect"
 
 export function observeElementOffsetReconnectAware<TScrollElement extends Element, TItemElement extends Element>(
   instance: Virtualizer<TScrollElement, TItemElement>,
@@ -21,18 +21,18 @@ export function observeElementOffsetReconnectAware<TScrollElement extends Elemen
     }
 
   let removed = false
-  let frame: number | undefined
+  let frame = Option.none<number>()
   const clearCheck = () => {
-    if (frame === undefined) return
-    targetWindow.cancelAnimationFrame(frame)
-    frame = undefined
+    if (Option.isNone(frame)) return
+    targetWindow.cancelAnimationFrame(frame.value)
+    frame = Option.none()
   }
   const startCheck = () => {
     clearCheck()
     const deadline = targetWindow.performance.now() + instance.options.isScrollingResetDelay
     let framesAfterDeadline = 0
     const check = (time: number) => {
-      frame = undefined
+      frame = Option.none()
       if (element.isConnected) {
         const offset = instance.options.horizontal
           ? element.scrollLeft * (instance.options.isRtl ? -1 : 1)
@@ -42,9 +42,9 @@ export function observeElementOffsetReconnectAware<TScrollElement extends Elemen
       }
       if (time >= deadline) framesAfterDeadline += 1
       if (framesAfterDeadline >= 2) return
-      frame = targetWindow.requestAnimationFrame(check)
+      frame = Option.some(targetWindow.requestAnimationFrame(check))
     }
-    frame = targetWindow.requestAnimationFrame(check)
+    frame = Option.some(targetWindow.requestAnimationFrame(check))
   }
   const observer = new targetWindow.MutationObserver((records) => {
     if (!active) return
