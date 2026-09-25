@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -40,7 +40,7 @@ export type ReviewPanelV2Props = {
   diffs: () => ReviewDiff[]
   diffsReady: () => boolean
   diffVersion?: number
-  loadDiff?: (path: string, version?: number) => Promise<RenderDiff | undefined>
+  loadDiff?: (path: string, version?: number) => Effect.Effect<Option.Option<RenderDiff>>
   activeFile?: string
   onSelectFile: (path: string) => void
   diffStyle: SessionReviewDiffStyle
@@ -87,11 +87,19 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
     if (!diff || !load || !reviewDiffNeedsLoad(diff)) return
     return { diff, load, version: props.diffVersion }
   })
-  const [loadedDiff] = createResource(detailSource, async ({ diff, load, version }) => {
-    const value = await load(diff.file, version)
-    if (value?.file !== diff.file) return
-    return { source: diff, version, value }
-  })
+  const [loadedDiff] = createResource(detailSource, ({ diff, load, version }) =>
+    Effect.runPromise(
+      load(diff.file, version).pipe(
+        Effect.map((loaded) =>
+          loaded.pipe(
+            Option.filter((value) => value.file === diff.file),
+            Option.map((value) => ({ source: diff, version, value })),
+            Option.getOrUndefined,
+          ),
+        ),
+      ),
+    ),
+  )
 
   const activeItem = createMemo(() => {
     const source = sourceActiveItem()
@@ -101,14 +109,16 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
     return source
   })
 
-  const readFile = async (path: string) =>
-    sdk()
-      .client.file.read({ path })
-      .then((x) => x.data)
-      .catch((error) => {
-        console.debug("[session-review-v2] failed to read file", { path, error })
-        return undefined
-      })
+  const readFile = (path: string) =>
+    Effect.runPromise(
+      Effect.tryPromise({ try: () => sdk().client.file.read({ path }), catch: (error) => error }).pipe(
+        Effect.map((x) => Option.fromNullishOr(x.data)),
+        Effect.catch((error) =>
+          Effect.logDebug("[session-review-v2] failed to read file", { path, error }).pipe(Effect.as(Option.none())),
+        ),
+        Effect.map(Option.getOrUndefined),
+      ),
+    )
 
   return (
     <SessionReviewV2

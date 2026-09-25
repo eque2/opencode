@@ -20,7 +20,7 @@ import {
   type ParentProps,
   untrack,
 } from "solid-js"
-import { Option, Predicate } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -691,13 +691,21 @@ export default function Page() {
       enabled,
       queryFn: mode
         ? () =>
-            sdk()
-              .api.vcs.diff({ location: { directory: sdk().directory }, mode: mode === "git" ? "working" : mode })
-              .then((result) => result.data)
-              .catch((error) => {
-                console.debug("[session-review] failed to load vcs diff", { mode, error })
-                return []
-              })
+            Effect.runPromise(
+              Effect.tryPromise({
+                try: () =>
+                  sdk().api.vcs.diff({
+                    location: { directory: sdk().directory },
+                    mode: mode === "git" ? "working" : mode,
+                  }),
+                catch: (error) => error,
+              }).pipe(
+                Effect.map((result) => result.data),
+                Effect.catch((error) =>
+                  Effect.logDebug("[session-review] failed to load vcs diff", { mode, error }).pipe(Effect.as([])),
+                ),
+              ),
+            )
         : skipToken,
     }
   })
@@ -720,50 +728,59 @@ export default function Page() {
     if (reviewMode() === "git" || reviewMode() === "branch") return !vcsQuery.isPending
     return true
   }
-  const loadReviewDiff = async (file: string, version?: number): Promise<VcsFileDiff | undefined> => {
-    const mode = vcsMode()
-    if (!mode) return
-    const root = reviewRootDirectory(sync().project?.worktree ?? sdk().directory)
-    const directory = reviewDiffDirectory(root, file)
-    const source = reviewDiffs().find((diff) => diff.file === file)
-    const valid = (diff: VcsFileDiff | undefined) => {
-      if (!diff || !source) return
-      if (diff.additions !== source.additions || diff.deletions !== source.deletions) return
-      if (reviewDiffNeedsLoad(diff)) return
-      return diff
-    }
-    const request = (scope: string, context?: number) =>
-      queryClient
-        .fetchQuery({
-          queryKey: [serverSDK().scope, ...vcsKey(), mode, "directory", scope, context, version] as const,
-          staleTime: Number.POSITIVE_INFINITY,
-          retry: 2,
-          queryFn: () =>
-            sdk()
-              .api.vcs.diff({
-                location: { directory: scope },
-                mode: mode === "git" ? "working" : mode,
-                context,
-              })
-              .then((result) => result.data),
-        })
-        .then((diffs) => diffs.find((diff) => diff.file === file))
+  const loadReviewDiff = (file: string, version?: number): Effect.Effect<Option.Option<VcsFileDiff>> =>
+    Effect.gen(function* () {
+      const mode = vcsMode()
+      if (!mode) return Option.none()
+      const root = reviewRootDirectory(sync().project?.worktree ?? sdk().directory)
+      const directory = reviewDiffDirectory(root, file)
+      const source = reviewDiffs().find((diff) => diff.file === file)
+      const valid = (diff: VcsFileDiff | undefined) =>
+        Option.filter(
+          Option.fromNullishOr(diff),
+          (item) =>
+            !!source &&
+            item.additions === source.additions &&
+            item.deletions === source.deletions &&
+            !reviewDiffNeedsLoad(item),
+        )
+      const request = (scope: string, context?: number) =>
+        Effect.tryPromise({
+          try: () =>
+            queryClient.fetchQuery({
+              queryKey: [serverSDK().scope, ...vcsKey(), mode, "directory", scope, context, version] as const,
+              staleTime: Number.POSITIVE_INFINITY,
+              retry: 2,
+              queryFn: () =>
+                sdk()
+                  .api.vcs.diff({
+                    location: { directory: scope },
+                    mode: mode === "git" ? "working" : mode,
+                    context,
+                  })
+                  .then((result) => result.data),
+            }),
+          catch: (error) => error,
+        }).pipe(Effect.map((diffs) => valid(diffs.find((diff) => diff.file === file))))
 
-    if (directory !== root) {
-      try {
-        const scoped = valid(await request(directory))
-        if (scoped) return scoped
-      } catch (error) {
-        console.debug("[session-review] failed to load scoped vcs diff", { mode, file, directory, error })
+      if (directory !== root) {
+        const scoped = yield* request(directory).pipe(
+          Effect.catch((error) =>
+            Effect.logDebug("[session-review] failed to load scoped vcs diff", { mode, file, directory, error }).pipe(
+              Effect.as(Option.none<VcsFileDiff>()),
+            ),
+          ),
+        )
+        if (Option.isSome(scoped)) return scoped
       }
-    }
-    try {
-      const bounded = valid(await request(root, 3))
-      if (bounded) return bounded
-    } catch (error) {
-      console.debug("[session-review] failed to load bounded vcs diff", { mode, file, root, error })
-    }
-  }
+      return yield* request(root, 3).pipe(
+        Effect.catch((error) =>
+          Effect.logDebug("[session-review] failed to load bounded vcs diff", { mode, file, root, error }).pipe(
+            Effect.as(Option.none<VcsFileDiff>()),
+          ),
+        ),
+      )
+    })
 
   const newSessionWorktree = createMemo(() => {
     if (store.newSessionWorktree === "create") return "create"
