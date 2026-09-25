@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import type { Prompt } from "@/context/prompt"
 import {
   canNavigateHistoryAtCursor,
@@ -12,6 +12,19 @@ import {
 } from "./history"
 
 const DEFAULT_PROMPT: Prompt = [{ type: "text", content: "", start: 0, end: 0 }]
+
+/** A precondition of a test did not hold, so the rest of the test cannot run. */
+class TestFailure extends Data.TaggedError("Test.Failure")<{ readonly message: string }> {}
+
+/** Succeeds with a navigation result that moved through history, and fails the test otherwise. */
+const expectHandled = (result: ReturnType<typeof navigatePromptHistory>) =>
+  result.handled ? Effect.succeed(result) : Effect.fail(new TestFailure({ message: "expected handled" }))
+
+/** Succeeds with the file part at an index, and fails the test otherwise. */
+const expectFile = (prompt: Prompt, index: number) => {
+  const part = prompt[index]
+  return part?.type === "file" ? Effect.succeed(part) : Effect.fail(new TestFailure({ message: "expected file" }))
+}
 
 const text = (value: string): Prompt => [{ type: "text", content: value, start: 0, end: value.length }]
 const comment = (id: string, value = "note"): PromptHistoryComment => ({
@@ -42,59 +55,65 @@ describe("prompt-input history", () => {
     expect(dedupedComments).toBe(commentsOnly)
   })
 
-  test("navigatePromptHistory restores saved prompt when moving down from newest", () => {
-    const entries = [text("third"), text("second"), text("first")]
-    const up = navigatePromptHistory({
-      direction: "up",
-      entries,
-      historyIndex: -1,
-      currentPrompt: text("draft"),
-      currentComments: [comment("draft")],
-      savedPrompt: Option.none(),
-    })
-    expect(up.handled).toBe(true)
-    if (!up.handled) throw new Error("expected handled")
-    expect(up.historyIndex).toBe(0)
-    expect(up.cursor).toBe("start")
-    expect(up.entry.comments).toEqual([])
+  test("navigatePromptHistory restores saved prompt when moving down from newest", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const entries = [text("third"), text("second"), text("first")]
+        const result = navigatePromptHistory({
+          direction: "up",
+          entries,
+          historyIndex: -1,
+          currentPrompt: text("draft"),
+          currentComments: [comment("draft")],
+          savedPrompt: Option.none(),
+        })
+        expect(result.handled).toBe(true)
+        const up = yield* expectHandled(result)
+        expect(up.historyIndex).toBe(0)
+        expect(up.cursor).toBe("start")
+        expect(up.entry.comments).toEqual([])
 
-    const down = navigatePromptHistory({
-      direction: "down",
-      entries,
-      historyIndex: up.historyIndex,
-      currentPrompt: text("ignored"),
-      currentComments: [],
-      savedPrompt: up.savedPrompt,
-    })
-    expect(down.handled).toBe(true)
-    if (!down.handled) throw new Error("expected handled")
-    expect(down.historyIndex).toBe(-1)
-    expect(down.entry.prompt[0]?.type === "text" ? down.entry.prompt[0].content : "").toBe("draft")
-    expect(down.entry.comments).toEqual([comment("draft")])
-  })
+        const next = navigatePromptHistory({
+          direction: "down",
+          entries,
+          historyIndex: up.historyIndex,
+          currentPrompt: text("ignored"),
+          currentComments: [],
+          savedPrompt: up.savedPrompt,
+        })
+        expect(next.handled).toBe(true)
+        const down = yield* expectHandled(next)
+        expect(down.historyIndex).toBe(-1)
+        expect(down.entry.prompt[0]?.type === "text" ? down.entry.prompt[0].content : "").toBe("draft")
+        expect(down.entry.comments).toEqual([comment("draft")])
+      }),
+    ))
 
-  test("navigatePromptHistory keeps entry comments when moving through history", () => {
-    const entries = [
-      {
-        prompt: text("with comment"),
-        comments: [comment("c1")],
-      },
-    ]
+  test("navigatePromptHistory keeps entry comments when moving through history", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const entries = [
+          {
+            prompt: text("with comment"),
+            comments: [comment("c1")],
+          },
+        ]
 
-    const up = navigatePromptHistory({
-      direction: "up",
-      entries,
-      historyIndex: -1,
-      currentPrompt: text("draft"),
-      currentComments: [],
-      savedPrompt: Option.none(),
-    })
+        const result = navigatePromptHistory({
+          direction: "up",
+          entries,
+          historyIndex: -1,
+          currentPrompt: text("draft"),
+          currentComments: [],
+          savedPrompt: Option.none(),
+        })
 
-    expect(up.handled).toBe(true)
-    if (!up.handled) throw new Error("expected handled")
-    expect(up.entry.prompt[0]?.type === "text" ? up.entry.prompt[0].content : "").toBe("with comment")
-    expect(up.entry.comments).toEqual([comment("c1")])
-  })
+        expect(result.handled).toBe(true)
+        const up = yield* expectHandled(result)
+        expect(up.entry.prompt[0]?.type === "text" ? up.entry.prompt[0].content : "").toBe("with comment")
+        expect(up.entry.comments).toEqual([comment("c1")])
+      }),
+    ))
 
   test("normalizePromptHistoryEntry supports legacy prompt arrays", () => {
     const entry = normalizePromptHistoryEntry(text("legacy"))
@@ -102,27 +121,30 @@ describe("prompt-input history", () => {
     expect(entry.comments).toEqual([])
   })
 
-  test("helpers clone prompt and count text content length", () => {
-    const original: Prompt = [
-      { type: "text", content: "one", start: 0, end: 3 },
-      {
-        type: "file",
-        path: "src/a.ts",
-        content: "@src/a.ts",
-        start: 3,
-        end: 12,
-        selection: { startLine: 1, startChar: 1, endLine: 2, endChar: 1 },
-      },
-      { type: "image", id: "1", filename: "img.png", mime: "image/png", blob: { id: "blob", url: "blob:test" } },
-    ]
-    const copy = clonePromptParts(original)
-    expect(copy).not.toBe(original)
-    expect(promptLength(copy)).toBe(12)
-    if (copy[1]?.type !== "file") throw new Error("expected file")
-    copy[1].selection!.startLine = 9
-    if (original[1]?.type !== "file") throw new Error("expected file")
-    expect(original[1].selection?.startLine).toBe(1)
-  })
+  test("helpers clone prompt and count text content length", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const original: Prompt = [
+          { type: "text", content: "one", start: 0, end: 3 },
+          {
+            type: "file",
+            path: "src/a.ts",
+            content: "@src/a.ts",
+            start: 3,
+            end: 12,
+            selection: { startLine: 1, startChar: 1, endLine: 2, endChar: 1 },
+          },
+          { type: "image", id: "1", filename: "img.png", mime: "image/png", blob: { id: "blob", url: "blob:test" } },
+        ]
+        const copy = clonePromptParts(original)
+        expect(copy).not.toBe(original)
+        expect(promptLength(copy)).toBe(12)
+        const copied = yield* expectFile(copy, 1)
+        copied.selection!.startLine = 9
+        const source = yield* expectFile(original, 1)
+        expect(source.selection?.startLine).toBe(1)
+      }),
+    ))
 
   test("canNavigateHistoryAtCursor only allows prompt boundaries", () => {
     const value = "a\nb\nc"

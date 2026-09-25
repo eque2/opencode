@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Data, Option } from "effect"
 
 const prefixes = {
   session: "ses",
@@ -14,6 +14,10 @@ let lastTimestamp = 0
 let counter = 0
 
 type Prefix = keyof typeof prefixes
+
+/** A given ID does not start with the prefix of its kind. */
+class IdentifierPrefixError extends Data.TaggedError("App.IdentifierPrefixError")<{ readonly message: string }> {}
+
 export namespace Identifier {
   export function ascending(prefix: Prefix, given?: string) {
     return generateID(prefix, false, given)
@@ -29,11 +33,10 @@ function generateID(prefix: Prefix, descending: boolean, given?: string): string
     return create(prefix, descending)
   }
 
-  if (!given.startsWith(prefixes[prefix])) {
-    throw new Error(`ID ${given} does not start with ${prefixes[prefix]}`)
-  }
-
-  return given
+  return Option.getOrThrowWith(
+    Option.liftPredicate(given, (id) => id.startsWith(prefixes[prefix])),
+    () => new IdentifierPrefixError({ message: `ID ${given} does not start with ${prefixes[prefix]}` }),
+  )
 }
 
 function create(prefix: Prefix, descending: boolean, timestamp?: number): string {
