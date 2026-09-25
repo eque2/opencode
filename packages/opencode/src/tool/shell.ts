@@ -1,4 +1,4 @@
-import { Array, Effect, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
+import { Array, Chunk, Effect, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
 import os from "os"
 import * as Tool from "./tool"
 import path from "path"
@@ -98,7 +98,8 @@ type Scan = {
   always: ReadonlyArray<string>
 }
 
-type Chunk = {
+// A decoded piece of the command output and its size in UTF-8 bytes.
+type OutputPiece = {
   text: string
   size: number
 }
@@ -496,7 +497,7 @@ export const ShellTool = Tool.define(
       const keep = limits.maxBytes * 2
       let full = ""
       let last = ""
-      const list: Chunk[] = []
+      let list = Chunk.empty<OutputPiece>()
       let used = 0
       let file = ""
       let sink = Option.none<FileSystem.File>()
@@ -520,12 +521,13 @@ export const ShellTool = Tool.define(
           yield* Effect.forkScoped(
             Stream.runForEach(Stream.decodeText(handle.all), (chunk) => {
               const size = Buffer.byteLength(chunk, "utf-8")
-              list.push({ text: chunk, size })
+              list = Chunk.append(list, { text: chunk, size })
               used += size
-              while (used > keep && list.length > 1) {
-                const item = list.shift()
-                if (!item) break
-                used -= item.size
+              while (used > keep && Chunk.size(list) > 1) {
+                const item = Chunk.head(list)
+                if (Option.isNone(item)) break
+                list = Chunk.drop(list, 1)
+                used -= item.value.size
                 cut = true
               }
 
@@ -606,7 +608,10 @@ export const ShellTool = Tool.define(
         )
       }
       if (aborted) meta.push("User aborted the command")
-      const raw = list.map((item) => item.text).join("")
+      const raw = Chunk.join(
+        Chunk.map(list, (item) => item.text),
+        "",
+      )
       const end = tail(raw, limits.maxLines, limits.maxBytes)
       if (end.cut) cut = true
       if (!file && end.cut) {

@@ -230,7 +230,7 @@ export const CodeModeTool = Tool.define(
         const catalog = [...groupByServer(mcpTools, servers).values()].flat()
 
         const calls: CallEntry[] = []
-        const attachments: Attachment[] = []
+        let attachments: Attachment[] = []
         const publish = () =>
           ctx.metadata({ title: CODE_MODE_TOOL, metadata: { toolCalls: calls.map((c) => ({ ...c })) } })
 
@@ -245,7 +245,9 @@ export const CodeModeTool = Tool.define(
               callID: `${ctx.callID ?? entry.key}/${childCalls}`,
               ctx,
             })
-            return projectMcpResult(result, (attachment: Attachment) => void attachments.push(attachment))
+            return projectMcpResult(result, (attachment: Attachment) => {
+              attachments = [...attachments, attachment]
+            })
           }).pipe(
             Effect.catchCause((cause) => {
               if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
