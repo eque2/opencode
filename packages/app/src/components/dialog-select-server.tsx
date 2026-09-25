@@ -300,9 +300,7 @@ export function useServerManagementController(options: { onSelect?: () => void; 
             return
           }
           if (!settings.general.newLayoutDesigns()) {
-            const protocol = yield* Effect.promise(() =>
-              detectServerProtocol(conn.http, platform.fetch ?? globalThis.fetch),
-            )
+            const protocol = yield* detectServerProtocol(conn.http, platform.fetch ?? globalThis.fetch)
             if (protocol === "v2") {
               setStore("addServer", { error: language.t("dialog.server.add.error") })
               return
@@ -360,9 +358,7 @@ export function useServerManagementController(options: { onSelect?: () => void; 
             return
           }
           if (!settings.general.newLayoutDesigns()) {
-            const protocol = yield* Effect.promise(() =>
-              detectServerProtocol(conn.http, platform.fetch ?? globalThis.fetch),
-            )
+            const protocol = yield* detectServerProtocol(conn.http, platform.fetch ?? globalThis.fetch)
             if (protocol === "v2") {
               setStore("editServer", { error: language.t("dialog.server.add.error") })
               return
