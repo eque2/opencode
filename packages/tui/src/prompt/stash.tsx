@@ -1,9 +1,10 @@
 import path from "path"
+import { Effect } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
-import { appendText, readText, writeText } from "../util/persistence"
+import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
 import type { PromptInfo } from "./history"
 
 export type StashEntry = {
@@ -34,12 +35,22 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
   init: () => {
     const paths = useTuiPaths()
     const stashPath = path.join(paths.state, "prompt-stash.jsonl")
-    onMount(async () => {
-      const lines = parsePromptStash(await readText(stashPath).catch(() => ""))
-      setStore("entries", lines)
-      if (lines.length > 0)
-        writeText(stashPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+    onMount(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          const lines = parsePromptStash(yield* readText(stashPath).pipe(Effect.orElseSucceed(() => "")))
+          setStore("entries", lines)
+          if (lines.length > 0)
+            yield* writeText(stashPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").pipe(
+              Effect.ignore,
+            )
+        }).pipe(Effect.provide(fileSystemLayer)),
+      )
     })
+
+    function rewrite(text: string) {
+      Effect.runFork(writeText(stashPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
+    }
 
     const [store, setStore] = createStore({ entries: [] as StashEntry[] })
 
@@ -61,28 +72,24 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         )
 
         if (trimmed) {
-          writeText(stashPath, store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+          rewrite(store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n")
           return
         }
-        appendText(stashPath, JSON.stringify(stash) + "\n").catch(() => {})
+        Effect.runFork(
+          appendText(stashPath, JSON.stringify(stash) + "\n").pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
+        )
       },
       pop() {
         if (store.entries.length === 0) return undefined
         const entry = store.entries[store.entries.length - 1]
         setStore(produce((draft) => void draft.entries.pop()))
-        writeText(
-          stashPath,
-          store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "",
-        ).catch(() => {})
+        rewrite(store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "")
         return entry
       },
       remove(index: number) {
         if (index < 0 || index >= store.entries.length) return
         setStore(produce((draft) => void draft.entries.splice(index, 1)))
-        writeText(
-          stashPath,
-          store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "",
-        ).catch(() => {})
+        rewrite(store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "")
       },
     }
   },

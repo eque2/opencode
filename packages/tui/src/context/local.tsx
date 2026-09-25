@@ -8,7 +8,8 @@ import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
-import { readJson, writeJsonAtomic } from "../util/persistence"
+import { Effect, Schema } from "effect"
+import { fileSystemLayer, readJson, writeJsonAtomic } from "../util/persistence"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
 import { useRoute } from "./route"
@@ -23,6 +24,25 @@ export type LocalTheme = {
   error: RGBA
   info: RGBA
 }
+
+const ModelRef = Schema.Struct({
+  providerID: Schema.String,
+  modelID: Schema.String,
+}).annotate({ identifier: "TuiLocal.ModelRef" })
+
+// model.json keeps the recent and favorite models and the selected variant for each model.
+const ModelState = Schema.Struct({
+  recent: Schema.optional(Schema.mutable(Schema.Array(ModelRef))),
+  favorite: Schema.optional(Schema.mutable(Schema.Array(ModelRef))),
+  variant: Schema.optional(Schema.Record(Schema.String, Schema.UndefinedOr(Schema.String))),
+}).annotate({ identifier: "TuiLocal.ModelState" })
+const ModelStateFile = Schema.fromJsonString(ModelState)
+
+// session.json keeps the pinned session IDs.
+const SessionState = Schema.Struct({
+  pinned: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
+}).annotate({ identifier: "TuiLocal.SessionState" })
+const SessionStateFile = Schema.fromJsonString(SessionState)
 
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
@@ -172,27 +192,38 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return
         }
         state.pending = false
-        void writeJsonAtomic(filePath, {
-          recent: modelStore.recent,
-          favorite: modelStore.favorite,
-          variant: modelStore.variant,
-        })
+        Effect.runFork(
+          writeJsonAtomic(filePath, ModelStateFile, {
+            recent: modelStore.recent,
+            favorite: modelStore.favorite,
+            variant: modelStore.variant,
+          }).pipe(
+            Effect.catchCause((cause) => Effect.logError("Failed to write model state", cause)),
+            Effect.provide(fileSystemLayer),
+          ),
+        )
       }
 
-      readJson<unknown>(filePath)
-        .then((x) => {
-          if (!x || typeof x !== "object") return
-          const value = x as Record<string, unknown>
-          if (Array.isArray(value.recent)) setModelStore("recent", value.recent)
-          if (Array.isArray(value.favorite)) setModelStore("favorite", value.favorite)
-          if (typeof value.variant === "object" && value.variant !== null)
-            setModelStore("variant", value.variant as Record<string, string | undefined>)
-        })
-        .catch(() => {})
-        .finally(() => {
-          setModelStore("ready", true)
-          if (state.pending) save()
-        })
+      // A missing or invalid model.json leaves the defaults in place.
+      Effect.runFork(
+        readJson(filePath, ModelStateFile).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              if (value.recent) setModelStore("recent", value.recent)
+              if (value.favorite) setModelStore("favorite", value.favorite)
+              if (value.variant) setModelStore("variant", value.variant)
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              setModelStore("ready", true)
+              if (state.pending) save()
+            }),
+          ),
+          Effect.provide(fileSystemLayer),
+        ),
+      )
 
       const fallbackModel = createMemo(() => {
         if (args.model) {
@@ -428,26 +459,32 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return
         }
         state.pending = false
-        void writeJsonAtomic(filePath, {
-          pinned: sessionStore.pinned,
-        })
+        Effect.runFork(
+          writeJsonAtomic(filePath, SessionStateFile, { pinned: sessionStore.pinned }).pipe(
+            Effect.catchCause((cause) => Effect.logError("Failed to write session state", cause)),
+            Effect.provide(fileSystemLayer),
+          ),
+        )
       }
 
-      readJson<unknown>(filePath)
-        .then((x) => {
-          if (!x || typeof x !== "object") return
-          const pinned = (x as Record<string, unknown>).pinned
-          if (Array.isArray(pinned))
-            setSessionStore(
-              "pinned",
-              pinned.filter((item): item is string => typeof item === "string"),
-            )
-        })
-        .catch(() => {})
-        .finally(() => {
-          setSessionStore("ready", true)
-          if (state.pending) save()
-        })
+      // A missing or invalid session.json leaves no pinned sessions.
+      Effect.runFork(
+        readJson(filePath, SessionStateFile).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              if (value.pinned) setSessionStore("pinned", value.pinned)
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.sync(() => {
+              setSessionStore("ready", true)
+              if (state.pending) save()
+            }),
+          ),
+          Effect.provide(fileSystemLayer),
+        ),
+      )
 
       const slots = createMemo(() => {
         const existing = new Set(sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id))

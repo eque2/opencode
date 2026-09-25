@@ -1,10 +1,11 @@
 import path from "path"
+import { Effect } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import type { AgentPart, FilePart, TextPart } from "@opencode-ai/sdk/v2"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
-import { appendText, readText, writeText } from "../util/persistence"
+import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
 
 export type PromptInfo = {
   input: string
@@ -51,13 +52,19 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
   init: () => {
     const paths = useTuiPaths()
     const historyPath = path.join(paths.state, "prompt-history.jsonl")
-    onMount(async () => {
-      const lines = parsePromptHistory(await readText(historyPath).catch(() => ""))
-      setStore("history", lines)
+    onMount(() => {
+      Effect.runFork(
+        Effect.gen(function* () {
+          const lines = parsePromptHistory(yield* readText(historyPath).pipe(Effect.orElseSucceed(() => "")))
+          setStore("history", lines)
 
-      // Rewrite valid retained entries to self-heal corruption and enforce the limit.
-      if (lines.length > 0)
-        writeText(historyPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+          // Rewrite valid retained entries to self-heal corruption and enforce the limit.
+          if (lines.length > 0)
+            yield* writeText(historyPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").pipe(
+              Effect.ignore,
+            )
+        }).pipe(Effect.provide(fileSystemLayer)),
+      )
     })
 
     const [store, setStore] = createStore({
@@ -101,10 +108,13 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
         )
 
         if (trimmed) {
-          writeText(historyPath, store.history.map((line) => JSON.stringify(line)).join("\n") + "\n").catch(() => {})
+          const text = store.history.map((line) => JSON.stringify(line)).join("\n") + "\n"
+          Effect.runFork(writeText(historyPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
           return
         }
-        appendText(historyPath, JSON.stringify(entry) + "\n").catch(() => {})
+        Effect.runFork(
+          appendText(historyPath, JSON.stringify(entry) + "\n").pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
+        )
       },
     }
   },
