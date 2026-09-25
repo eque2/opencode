@@ -154,14 +154,14 @@ export const ReadTool = Tool.define<
         Stream.map((bytes) => decoder.decode(bytes, { stream: true })),
         Stream.splitLines,
         Stream.runForEach((text) =>
-          Effect.gen(function* () {
-            if (flags.done) return yield* new ReadStop()
+          Effect.suspend(() => {
+            if (flags.done) return Effect.fail(new ReadStop())
             flags.count += 1
-            if (flags.count <= start) return
+            if (flags.count <= start) return Effect.void
 
             if (raw.length >= opts.limit) {
               flags.more = true
-              return
+              return Effect.void
             }
 
             const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
@@ -169,13 +169,13 @@ export const ReadTool = Tool.define<
             if (flags.bytes + size <= MAX_BYTES) {
               raw.push(line)
               flags.bytes += size
-              return
+              return Effect.void
             }
 
             flags.cut = true
             flags.more = true
             flags.done = true
-            return yield* new ReadStop()
+            return Effect.fail(new ReadStop())
           }),
         ),
         Effect.catchTag("ReadStop", () => Effect.void),

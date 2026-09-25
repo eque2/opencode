@@ -83,28 +83,18 @@ export const LspTool = Tool.define(
 
           yield* lsp.touchFile(file, "document")
 
-          const result: unknown[] = yield* (() => {
-            switch (args.operation) {
-              case "goToDefinition":
-                return lsp.definition(position)
-              case "findReferences":
-                return lsp.references(position)
-              case "hover":
-                return lsp.hover(position)
-              case "documentSymbol":
-                return lsp.documentSymbol(uri)
-              case "workspaceSymbol":
-                return lsp.workspaceSymbol(args.query ?? "")
-              case "goToImplementation":
-                return lsp.implementation(position)
-              case "prepareCallHierarchy":
-                return lsp.prepareCallHierarchy(position)
-              case "incomingCalls":
-                return lsp.incomingCalls(position)
-              case "outgoingCalls":
-                return lsp.outgoingCalls(position)
-            }
-          })()
+          const requests = {
+            goToDefinition: () => lsp.definition(position),
+            findReferences: () => lsp.references(position),
+            hover: () => lsp.hover(position),
+            documentSymbol: () => lsp.documentSymbol(uri),
+            workspaceSymbol: () => lsp.workspaceSymbol(args.query ?? ""),
+            goToImplementation: () => lsp.implementation(position),
+            prepareCallHierarchy: () => lsp.prepareCallHierarchy(position),
+            incomingCalls: () => lsp.incomingCalls(position),
+            outgoingCalls: () => lsp.outgoingCalls(position),
+          } satisfies Record<(typeof operations)[number], () => Effect.Effect<unknown>>
+          const result: unknown[] = yield* requests[args.operation]()
 
           return {
             title,
