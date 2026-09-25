@@ -1,5 +1,5 @@
 import { Binary } from "@opencode-ai/core/util/binary"
-import { Predicate } from "effect"
+import { HashSet, Predicate } from "effect"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type {
   Event,
@@ -19,8 +19,8 @@ import { dropSessionCaches } from "./session-cache"
 import { diffs as list, message as clean } from "@/utils/diffs"
 import { messageKey } from "@/utils/session-message"
 
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-const SESSION_CONTENT_EVENTS = new Set([
+const SKIP_PARTS = HashSet.fromIterable<string>(["patch", "step-start", "step-finish"])
+const SESSION_CONTENT_EVENTS = HashSet.fromIterable<string>([
   "session.diff",
   "todo.updated",
   "session.status",
@@ -141,7 +141,7 @@ export function cleanupDroppedSessionCaches(
   next: Session[],
   setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
 ) {
-  const keep = new Set(next.map((item) => item.id))
+  const keep = HashSet.fromIterable(next.map((item) => item.id))
   const stale = [
     ...Object.keys(store.message),
     ...Object.keys(store.session_diff),
@@ -152,7 +152,7 @@ export function cleanupDroppedSessionCaches(
     ...Object.values(store.part)
       .map((parts) => parts?.find((part) => !!part?.sessionID)?.sessionID)
       .filter((sessionID): sessionID is string => !!sessionID),
-  ].filter((sessionID, index, list) => !keep.has(sessionID) && list.indexOf(sessionID) === index)
+  ].filter((sessionID, index, list) => !HashSet.has(keep, sessionID) && list.indexOf(sessionID) === index)
   if (stale.length === 0) return
   for (const sessionID of stale) {
     setSessionTodo?.(sessionID, undefined)
@@ -179,7 +179,7 @@ export function applyDirectoryEvent(input: {
   permission?: State["permission"]
 }) {
   const event = input.event
-  if (input.sessionContent === false && SESSION_CONTENT_EVENTS.has(event.type)) return
+  if (input.sessionContent === false && HashSet.has(SESSION_CONTENT_EVENTS, event.type)) return
   const limit = Math.max(input.store.limit, input.retainedLimit ?? 0)
   switch (event.type) {
     case "server.instance.disposed": {
@@ -365,7 +365,7 @@ export function applyDirectoryEvent(input: {
     }
     case "message.part.updated": {
       const part = event.properties.part
-      if (SKIP_PARTS.has(part.type)) break
+      if (HashSet.has(SKIP_PARTS, part.type)) break
       input.setStore(
         produce((draft) => {
           delete draft.part_text_accum_delta[part.id]
