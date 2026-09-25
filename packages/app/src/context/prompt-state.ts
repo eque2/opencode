@@ -180,8 +180,8 @@ function promptStore(initial?: InitialPrompt): PromptStore {
   return {
     prompt:
       text === undefined ? clonePrompt(DEFAULT_PROMPT) : [{ type: "text", content: text, start: 0, end: text.length }],
-    cursor: text === undefined ? undefined : text.length,
-    model: initial?.model ? { ...initial.model } : undefined,
+    ...(text === undefined ? {} : { cursor: text.length }),
+    ...(initial?.model ? { model: { ...initial.model } } : {}),
     context: {
       items: [],
     },
