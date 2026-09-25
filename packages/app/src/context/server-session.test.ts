@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import type { retry } from "@opencode-ai/core/util/retry"
 import type { OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
@@ -71,6 +72,10 @@ const singleResponse = (info: Message, parts: Part[] = []): SingleMessageRespons
 
 const deferredResponse = () => Promise.withResolvers<MessageResponse>()
 
+// The SDK client always returns a Promise, and core retry chains on it, so the mocks settle plain values too.
+const settled = <A>(value: A | Promise<A>): Promise<A> =>
+  value instanceof Promise ? value : Effect.runPromise(Effect.succeed(value))
+
 function messageClient(...responses: Array<MessageResponse | Promise<MessageResponse>>) {
   let index = 0
   const requests: unknown[] = []
@@ -82,7 +87,7 @@ function messageClient(...responses: Array<MessageResponse | Promise<MessageResp
         requests.push(input)
         waiting.get(requests.length)?.()
         waiting.delete(requests.length)
-        return responses[index++]
+        return settled(responses[index++])
       },
     },
   } as unknown as OpencodeClient
@@ -109,13 +114,13 @@ function rootMessageClient(
       get: async () => ({ data: session("child", "root") }),
       messages: (input: unknown) => {
         requests.push(input)
-        return pages[pageIndex++]
+        return settled(pages[pageIndex++])
       },
       message: (input: unknown) => {
         rootRequests.push(input)
         rootWaiting.get(rootRequests.length)?.()
         rootWaiting.delete(rootRequests.length)
-        return roots[rootIndex++]
+        return settled(roots[rootIndex++])
       },
     },
   } as unknown as OpencodeClient
