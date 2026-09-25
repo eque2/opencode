@@ -523,7 +523,7 @@ function ProjectTrigger(props: ComponentProps<"button"> & { controller: PromptPr
         )}
       </Show>
       <span class="min-w-0 truncate leading-5">
-        {project() ? displayName(project()!) : local.controller.labels.new()}
+        {project() ? displayName(project()) : local.controller.labels.new()}
       </span>
       <Icon name="chevron-down" size="small" class="shrink-0 text-v2-icon-icon-muted" />
     </button>
