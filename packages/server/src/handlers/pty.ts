@@ -157,12 +157,10 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
               : false
             if (!valid) return HttpServerResponse.empty({ status: 403 })
           }
-          const parsedCursor = url.searchParams.get("cursor")
-          const cursorNumber = parsedCursor === null ? undefined : Number(parsedCursor)
-          const cursor =
-            cursorNumber !== undefined && Number.isSafeInteger(cursorNumber) && cursorNumber >= -1
-              ? cursorNumber
-              : undefined
+          const cursor = Option.fromNullishOr(url.searchParams.get("cursor")).pipe(
+            Option.map((value) => Number(value)),
+            Option.filter((value) => Number.isSafeInteger(value) && value >= -1),
+          )
 
           const socket = yield* Effect.orDie(ctx.request.upgrade)
           const writer = yield* socket.writer
@@ -183,7 +181,7 @@ export const PtyHandler = HttpApiBuilder.group(Api, "server.pty", (handlers) =>
           const outbox = yield* Queue.unbounded<string | Uint8Array | Socket.CloseEvent>()
           const attached = yield* pty
             .attach(ctx.params.ptyID, {
-              cursor,
+              cursor: Option.getOrUndefined(cursor),
               onData: (chunk) => Queue.offerUnsafe(outbox, chunk),
               onEnd: () => Queue.offerUnsafe(outbox, new Socket.CloseEvent(1000)),
             })
