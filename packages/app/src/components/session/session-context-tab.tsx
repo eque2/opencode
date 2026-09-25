@@ -21,7 +21,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContext } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
-import { HashMap, Option, Schema } from "effect"
+import { Data, Effect, HashMap, Option, Schema } from "effect"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   system: "var(--syntax-info)",
@@ -39,6 +39,8 @@ function Stat(props: { label: string; value: JSX.Element }) {
     </div>
   )
 }
+
+class SessionExportError extends Data.TaggedError("SessionExportError")<{ readonly cause: unknown }> {}
 
 const encodeRawMessage = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
@@ -244,29 +246,48 @@ export function SessionContextTab() {
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]
 
-  const exportSession = async () => {
+  const exportSessionProgram = (sessionID: string) =>
+    Effect.gen(function* () {
+      const data = yield* Effect.tryPromise({
+        try: () =>
+          fetchSessionExport({
+            sessionID,
+            client: sdk().client,
+          }),
+        catch: (cause) => new SessionExportError({ cause }),
+      })
+      yield* Effect.try({
+        try: () => {
+          const filename = sessionExportFilename(data.info)
+          downloadSessionExport(filename, data)
+          showToast({
+            variant: "success",
+            icon: "circle-check",
+            title: language.t("toast.session.export.success.title"),
+            description: language.t("toast.session.export.success.description", { filename }),
+          })
+        },
+        catch: (cause) => new SessionExportError({ cause }),
+      })
+    }).pipe(
+      Effect.catchTag("SessionExportError", (error) =>
+        Effect.sync(() =>
+          showToast({
+            variant: "error",
+            title: language.t("toast.session.export.failed.title"),
+            description:
+              error.cause instanceof Error
+                ? error.cause.message
+                : language.t("toast.session.export.failed.description"),
+          }),
+        ),
+      ),
+    )
+
+  const exportSession = () => {
     const sessionID = params.id
     if (!sessionID) return
-    try {
-      const data = await fetchSessionExport({
-        sessionID,
-        client: sdk().client,
-      })
-      const filename = sessionExportFilename(data.info)
-      downloadSessionExport(filename, data)
-      showToast({
-        variant: "success",
-        icon: "circle-check",
-        title: language.t("toast.session.export.success.title"),
-        description: language.t("toast.session.export.success.description", { filename }),
-      })
-    } catch (err) {
-      showToast({
-        variant: "error",
-        title: language.t("toast.session.export.failed.title"),
-        description: err instanceof Error ? err.message : language.t("toast.session.export.failed.description"),
-      })
-    }
+    Effect.runFork(exportSessionProgram(sessionID))
   }
 
   let scroll: HTMLDivElement | undefined
