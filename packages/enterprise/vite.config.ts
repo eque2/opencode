@@ -20,6 +20,7 @@ const nitroConfig: any = (() => {
 export default defineConfig({
   plugins: [
     tailwindcss(),
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- @solidjs/start types solidStart() against its own nested vite 7.1.10, which is not assignable to the root vite PluginOption
     solidStart() as PluginOption,
     nitro({
       ...nitroConfig,
