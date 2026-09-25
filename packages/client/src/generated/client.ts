@@ -166,18 +166,20 @@ export function make(options: ClientOptions) {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       return await fetch(prepared.url, prepared.init)
     } catch (cause) {
+      // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       throw new ClientError("Transport", { cause })
     }
   }
 
   // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
-    // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+    // eslint-disable-next-line effect/no-throw-use-effect, effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
     try {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
     } catch {}
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
   }
 
@@ -214,9 +216,13 @@ export function make(options: ClientOptions) {
           // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           await response.body?.cancel()
         } catch {}
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         throw new ClientError("UnsupportedContentType")
       }
-      if (response.body === null) throw new ClientError("MalformedResponse")
+      if (response.body === null) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
+        throw new ClientError("MalformedResponse")
+      }
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
@@ -227,9 +233,11 @@ export function make(options: ClientOptions) {
             // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
             next = await reader.read()
           } catch (cause) {
+            // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
             throw new ClientError("Transport", { cause })
           }
           buffer += decoder.decode(next.value, { stream: !next.done })
+          // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")
           const trailingCarriageReturn = !next.done && buffer.endsWith("\r")
           if (trailingCarriageReturn) buffer = buffer.slice(0, -1)
@@ -248,6 +256,7 @@ export function make(options: ClientOptions) {
               try {
                 yield JSON.parse(data) as A
               } catch (cause) {
+                // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
                 throw new ClientError("MalformedResponse", { cause })
               }
             }
@@ -995,6 +1004,7 @@ async function json(response: Response): Promise<unknown> {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
     } catch {}
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
@@ -1002,12 +1012,15 @@ async function json(response: Response): Promise<unknown> {
     // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     text = await response.text()
   } catch (cause) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("Transport", { cause })
   }
+  // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   if (text === "") throw new ClientError("MalformedResponse")
   try {
     return JSON.parse(text)
   } catch (cause) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     throw new ClientError("MalformedResponse", { cause })
   }
 }

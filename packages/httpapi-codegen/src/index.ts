@@ -529,6 +529,7 @@ function renderImportedProjection(
 const promiseRuntimeReason =
   "(c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle"
 const asyncAwaitRule = "effect/no-async-await-use-effect"
+const throwRule = "effect/no-throw-use-effect"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
   `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
@@ -734,18 +735,20 @@ export function make(options: ClientOptions) {
       ${runtimeDirective(asyncAwaitRule)}
       return await fetch(prepared.url, prepared.init)
     } catch (cause) {
+      ${runtimeDirective(throwRule)}
       throw new ClientError("Transport", { cause })
     }
   }
 
   ${runtimeDirective(asyncAwaitRule)}
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
-    ${runtimeDirective(asyncAwaitRule)}
+    ${runtimeDirective(throwRule, asyncAwaitRule)}
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
     try {
       ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
     } catch {}
+    ${runtimeDirective(throwRule)}
     throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
   }
 
@@ -782,9 +785,13 @@ export function make(options: ClientOptions) {
           ${runtimeDirective(asyncAwaitRule)}
           await response.body?.cancel()
         } catch {}
+        ${runtimeDirective(throwRule)}
         throw new ClientError("UnsupportedContentType")
       }
-      if (response.body === null) throw new ClientError("MalformedResponse")
+      if (response.body === null) {
+        ${runtimeDirective(throwRule)}
+        throw new ClientError("MalformedResponse")
+      }
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
@@ -795,9 +802,11 @@ export function make(options: ClientOptions) {
             ${runtimeDirective(asyncAwaitRule)}
             next = await reader.read()
           } catch (cause) {
+            ${runtimeDirective(throwRule)}
             throw new ClientError("Transport", { cause })
           }
           buffer += decoder.decode(next.value, { stream: !next.done })
+          ${runtimeDirective(throwRule)}
           if (buffer.length > 1_048_576) throw new ClientError("MalformedResponse")
           const trailingCarriageReturn = !next.done && buffer.endsWith("\\r")
           if (trailingCarriageReturn) buffer = buffer.slice(0, -1)
@@ -813,6 +822,7 @@ export function make(options: ClientOptions) {
               try {
                 yield JSON.parse(data) as A
               } catch (cause) {
+                ${runtimeDirective(throwRule)}
                 throw new ClientError("MalformedResponse", { cause })
               }
             }
@@ -857,6 +867,7 @@ async function json(response: Response): Promise<unknown> {
       ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
     } catch {}
+    ${runtimeDirective(throwRule)}
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
@@ -864,12 +875,15 @@ async function json(response: Response): Promise<unknown> {
     ${runtimeDirective(asyncAwaitRule)}
     text = await response.text()
   } catch (cause) {
+    ${runtimeDirective(throwRule)}
     throw new ClientError("Transport", { cause })
   }
+  ${runtimeDirective(throwRule)}
   if (text === "") throw new ClientError("MalformedResponse")
   try {
     return JSON.parse(text)
   } catch (cause) {
+    ${runtimeDirective(throwRule)}
     throw new ClientError("MalformedResponse", { cause })
   }
 }
