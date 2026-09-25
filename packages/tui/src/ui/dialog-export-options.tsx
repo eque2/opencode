@@ -2,7 +2,8 @@ import { TextareaRenderable, TextAttributes } from "@opentui/core"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
-import { onMount, Show } from "solid-js"
+import { onCleanup, onMount, Show } from "solid-js"
+import { Effect, Fiber } from "effect"
 import { useTuiConfig } from "../config"
 import { useBindings } from "../keymap"
 
@@ -76,10 +77,20 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
 
   onMount(() => {
     dialog.setSize("medium")
-    setTimeout(() => {
-      if (!textarea || textarea.isDestroyed) return
-      textarea.focus()
-    }, 1)
+    // Focus after the dialog finishes mounting; the pending focus stops if the dialog closes first.
+    const focus = Effect.runFork(
+      Effect.sleep("1 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!textarea || textarea.isDestroyed) return
+            textarea.focus()
+          }),
+        ),
+      ),
+    )
+    onCleanup(() => {
+      Effect.runFork(Fiber.interrupt(focus))
+    })
     textarea.gotoLineEnd()
   })
 

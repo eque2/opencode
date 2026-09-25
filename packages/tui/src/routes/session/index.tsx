@@ -16,7 +16,7 @@ import {
 } from "solid-js"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
-import { DateTime, HashSet, Predicate } from "effect"
+import { DateTime, Effect, Fiber, HashSet, Option, Predicate } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -421,11 +421,29 @@ export function Session() {
     dialog.clear()
   }
 
+  // Scroll to the bottom after the next layout pass. A new request restarts the 50 ms delay,
+  // and a pending scroll stops when the session view unmounts.
+  let bottomScroll: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelBottomScroll = () => {
+    if (Option.isSome(bottomScroll)) Effect.runFork(Fiber.interrupt(bottomScroll.value))
+    bottomScroll = Option.none()
+  }
+  onCleanup(cancelBottomScroll)
+
   function toBottom() {
-    setTimeout(() => {
-      if (!scroll || scroll.isDestroyed) return
-      scroll.scrollTo(scroll.scrollHeight)
-    }, 50)
+    cancelBottomScroll()
+    bottomScroll = Option.some(
+      Effect.runFork(
+        Effect.sleep("50 millis").pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (!scroll || scroll.isDestroyed) return
+              scroll.scrollTo(scroll.scrollHeight)
+            }),
+          ),
+        ),
+      ),
+    )
   }
 
   const local = useLocal()

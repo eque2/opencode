@@ -1,3 +1,4 @@
+import { Effect, Fiber } from "effect"
 import { createMemo, Match, onCleanup, onMount, Show, Switch } from "solid-js"
 import { useTheme } from "../../context/theme"
 import { useSync } from "../../context/sync"
@@ -25,27 +26,20 @@ export function Footer() {
   })
 
   onMount(() => {
-    // Track all timeouts to ensure proper cleanup
-    const timeouts: ReturnType<typeof setTimeout>[] = []
-
-    function tick() {
-      if (connected()) return
-      if (!store.welcome) {
-        setStore("welcome", true)
-        timeouts.push(setTimeout(() => tick(), 5000))
-        return
-      }
-
-      if (store.welcome) {
-        setStore("welcome", false)
-        timeouts.push(setTimeout(() => tick(), 10_000))
-        return
-      }
-    }
-    timeouts.push(setTimeout(() => tick(), 10_000))
+    // Until a provider connects, alternate the welcome hint: 10 seconds hidden, then 5 seconds shown.
+    const welcome = Effect.runFork(
+      Effect.gen(function* () {
+        yield* Effect.sleep("10 seconds")
+        while (!connected()) {
+          const show = !store.welcome
+          setStore("welcome", show)
+          yield* Effect.sleep(show ? "5 seconds" : "10 seconds")
+        }
+      }),
+    )
 
     onCleanup(() => {
-      timeouts.forEach(clearTimeout)
+      Effect.runFork(Fiber.interrupt(welcome))
     })
   })
 
