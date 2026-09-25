@@ -6,6 +6,7 @@ import type { HexColor, ResolvedV2Theme } from "@opencode-ai/ui/theme/types"
 import { isHexColor } from "@opencode-ai/ui/theme/validate"
 import { showToast } from "@/utils/toast"
 import type { FitAddon, Ghostty, Terminal as Term } from "ghostty-web"
+import { Predicate, Result, Schema } from "effect"
 import { type ComponentProps, createEffect, createMemo, onCleanup, onMount, splitProps } from "solid-js"
 import { SerializeAddon } from "@/addons/serialize"
 import { matchKeybind, parseKeybind } from "@/context/command"
@@ -43,6 +44,8 @@ const loadGhostty = () => {
     })
   return shared
 }
+
+const decodeControlFrame = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
 
 type TerminalColors = {
   background: string
@@ -649,16 +652,16 @@ export const Terminal = (props: TerminalProps) => {
           if (event.data instanceof ArrayBuffer) {
             const bytes = new Uint8Array(event.data)
             if (bytes[0] !== 0) return
-            const json = decoder.decode(bytes.subarray(1))
-            try {
-              const meta = JSON.parse(json) as { cursor?: unknown }
-              const next = meta?.cursor
-              if (typeof next === "number" && Number.isSafeInteger(next) && next >= 0) {
-                cursor = next
-                seek = next
-              }
-            } catch (err) {
-              debugTerminal("invalid websocket control frame", err)
+            const meta = decodeControlFrame(decoder.decode(bytes.subarray(1)))
+            if (Result.isFailure(meta)) {
+              debugTerminal("invalid websocket control frame", meta.failure)
+              return
+            }
+            if (!Predicate.hasProperty(meta.success, "cursor")) return
+            const next = meta.success.cursor
+            if (typeof next === "number" && Number.isSafeInteger(next) && next >= 0) {
+              cursor = next
+              seek = next
             }
             return
           }
