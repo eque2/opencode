@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../prompt/history"
@@ -27,7 +28,7 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   init: (props: { initialRoute?: Route }) => {
     const startup = useTuiStartup()
     const [store, setStore] = createStore<Route>(
-      props.initialRoute ?? initialRoute(startup.initialRoute) ?? { type: "home" },
+      props.initialRoute ?? initialRoute(startup.initialRoute).pipe(Option.getOrElse((): Route => ({ type: "home" }))),
     )
 
     return {
@@ -41,15 +42,16 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   },
 })
 
-function initialRoute(value: unknown): Route | undefined {
-  if (!value || typeof value !== "object" || !("type" in value)) return
-  if (value.type === "home") return { type: "home" }
+function initialRoute(value: unknown): Option.Option<Route> {
+  if (!value || typeof value !== "object" || !("type" in value)) return Option.none()
+  if (value.type === "home") return Option.some({ type: "home" })
   if (value.type === "session" && "sessionID" in value && typeof value.sessionID === "string") {
-    return { type: "session", sessionID: value.sessionID }
+    return Option.some({ type: "session", sessionID: value.sessionID })
   }
   if (value.type === "plugin" && "id" in value && typeof value.id === "string") {
-    return { type: "plugin", id: value.id }
+    return Option.some({ type: "plugin", id: value.id })
   }
+  return Option.none()
 }
 
 export type RouteContext = ReturnType<typeof useRoute>
