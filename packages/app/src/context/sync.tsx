@@ -6,8 +6,6 @@ import type { Message, Part } from "@opencode-ai/sdk/v2/client"
 import { messageKey } from "@/utils/session-message"
 import { MutableHashMap, Option } from "effect"
 
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
-
 function sortParts(parts: Part[]) {
   return parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id))
 }
