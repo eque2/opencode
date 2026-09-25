@@ -1,4 +1,5 @@
 import type { Part, TextPart } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 import type { AgentPart, FileAttachmentPart, ImageAttachmentPart, Prompt } from "@/context/prompt"
 import { createLegacyBlobReference } from "@/utils/draft-store"
 
@@ -39,15 +40,16 @@ function selectionFromFileUrl(url: string): Extract<Inline, { type: "file" }>["s
   }
 }
 
-function textPartValue(parts: Part[]) {
+/** The longest text part that the user wrote, if there is one. */
+function textPartValue(parts: Part[]): Option.Option<TextPart> {
   const candidates = parts
     .filter((part): part is TextPart => part.type === "text")
     .filter((part) => !part.synthetic && !part.ignored)
-  return candidates.reduce((best: TextPart | undefined, part) => {
-    if (!best) return part
-    if (part.text.length > best.text.length) return part
+  return candidates.reduce((best: Option.Option<TextPart>, part) => {
+    if (Option.isNone(best)) return Option.some(part)
+    if (part.text.length > best.value.text.length) return Option.some(part)
     return best
-  }, undefined)
+  }, Option.none())
 }
 
 /**
@@ -55,8 +57,7 @@ function textPartValue(parts: Part[]) {
  * This is used by undo to restore the original user prompt.
  */
 export function extractPromptFromParts(parts: Part[], opts?: { directory?: string; attachmentName?: string }): Prompt {
-  const textPart = textPartValue(parts)
-  const text = textPart?.text ?? ""
+  const text = Option.match(textPartValue(parts), { onNone: () => "", onSome: (part) => part.text })
   const directory = opts?.directory
   const attachmentName = opts?.attachmentName ?? "attachment"
 
