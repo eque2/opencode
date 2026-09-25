@@ -225,11 +225,8 @@ export const SettingsGeneral: Component = () => {
       }),
     ]
 
-    if (current && !options.some((o) => o.value === current)) {
-      options.push({ id: current, value: current, label: current })
-    }
-
-    return options
+    if (!current || options.some((o) => o.value === current)) return options
+    return [...options, { id: current, value: current, label: current }]
   })
 
   const onDisplayBackendChange = (checked: boolean) => {
