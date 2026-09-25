@@ -152,7 +152,7 @@ beforeAll(() =>
       }))
 
       mock.module("@opencode-ai/ui/toast", () => ({
-        Toast: { Region: () => null },
+        Toast: { Region: () => [] },
         showToast: () => 0,
       }))
 

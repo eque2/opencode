@@ -72,6 +72,9 @@ type SubmitModelSelection = {
   variant: { current: () => string | undefined }
 }
 
+/** No popover. The prompt-input setPopover callback takes this as null. */
+const closedPopover = Option.none<"at" | "slash">()
+
 export type FollowupDraft = {
   sessionID: string
   sessionDirectory: string
@@ -467,7 +470,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             local.session.promote(sessionDirectory, info.id, {
               agent: currentAgent.name,
               model: { providerID: currentModel.provider.id, modelID: currentModel.id },
-              variant: variant ?? null,
+              variant: Option.getOrNull(Option.fromNullishOr(variant)),
             })
             layout.handoff.setTabs(base64Encode(sessionDirectory), info.id)
             const draftID = search.draftId
@@ -505,7 +508,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const clearInput = () => {
       submission.clear()
       input.setMode("normal")
-      input.setPopover(null)
+      input.setPopover(Option.getOrNull(closedPopover))
     }
 
     const restoreInput = () => {
@@ -514,7 +517,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       restored.target.set(restored.prompt, input.promptLength(restored.prompt))
       if (!submission.current(prompt.capture())) return true
       input.setMode(mode)
-      input.setPopover(null)
+      input.setPopover(Option.getOrNull(closedPopover))
       requestAnimationFrame(() => {
         const editor = input.editor()
         if (!editor) return
