@@ -22,7 +22,7 @@ import { clientOnly } from "@solidjs/start"
 import { Meta, Title } from "@solidjs/meta"
 import { Base64 } from "js-base64"
 import { getRequestEvent } from "solid-js/web"
-import { DateTime, Effect, Option, Schema } from "effect"
+import { Array, DateTime, Effect, Option, Schema } from "effect"
 
 const ClientOnlyWorkerPoolProvider = clientOnly(() =>
   import("@opencode-ai/session-ui/pierre/worker").then((m) => ({
@@ -188,14 +188,11 @@ export default function () {
             >
               {(info) => {
                 const ogImage = createMemo(() => {
-                  const models = new Set<string>()
                   const messages = data().message[data().sessionID] ?? []
-                  for (const msg of messages) {
-                    if (msg.role === "assistant" && msg.modelID) {
-                      models.add(msg.modelID)
-                    }
-                  }
-                  const modelIDs = Array.from(models)
+                  // dedupe keeps the first occurrence, so modelIDs[0] is the first model used.
+                  const modelIDs = Array.dedupe(
+                    messages.flatMap((msg) => (msg.role === "assistant" && msg.modelID ? [msg.modelID] : [])),
+                  )
                   const encodedTitle = encodeURIComponent(
                     Base64.encode(encodeURIComponent(info().title.substring(0, 700))),
                   )
