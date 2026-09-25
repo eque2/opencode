@@ -9,7 +9,7 @@ import {
 import type { Binding } from "@opentui/keymap"
 import { Effect, Equivalence, Fiber, HashMap, Option } from "effect"
 import { useTheme, selectedForeground } from "../context/theme"
-import { entries, filter, flatMap, groupBy, pipe } from "remeda"
+import { entries, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTerminalDimensions } from "@opentui/solid"
@@ -166,10 +166,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   const filtered = createMemo(() => {
     if (props.skipFilter || props.renderFilter === false) return props.options.filter((x) => x.disabled !== true)
     const needle = store.filter.toLowerCase()
-    const options = pipe(
-      props.options,
-      filter((x) => x.disabled !== true),
-    )
+    const options = props.options.filter((x) => x.disabled !== true)
     if (!needle) return options
 
     // prioritize title matches (weight: 2) over category matches (weight: 1).
