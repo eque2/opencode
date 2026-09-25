@@ -5,6 +5,7 @@ import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { Option } from "effect"
 import { useGlobal } from "@/context/global"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
@@ -25,6 +26,7 @@ import {
   currentPickerSuggestions,
   displayPickerPath,
   pickerParent,
+  pickerPathOption,
   pickerRoot,
 } from "./directory-picker-domain"
 import "./dialog-select-directory-v2.css"
@@ -87,7 +89,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
       fallbackPath()?.home ||
       fallbackPath()?.directory,
   )
-  const search = createDirectorySearch({ sdk, home, base: () => root() || start() })
+  const search = createDirectorySearch({ sdk, home, base: () => pickerPathOption(root() || start()) })
   const [suggestions] = createResource(input, async (value) => {
     const cleaned = cleanPickerInput(value)
     const typed = cleaned.replace(/\/+$/, "")
@@ -153,8 +155,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
   }
 
   async function navigate(path: string) {
-    const value = policy.navigation(pickerAbsoluteInput(cleanPickerInput(path), home(), root() || start() || home()))
-    if (!value) return
+    const target = policy.navigation(pickerAbsoluteInput(cleanPickerInput(path), home(), root() || start() || home()))
+    if (Option.isNone(target)) return
+    const value = target.value
     const token = ++navigation
     setLoading(true)
     setRootValid(false)
@@ -179,7 +182,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     const value = displayPickerPath(match.absolute, input(), home())
     setInput(match.type === "directory" && !value.endsWith("/") ? value + "/" : value)
     if (match.type === "file") {
-      setSelected(policy.selection(root(), pickerFileSearchQuery(root(), match.absolute, home())) ?? "")
+      setSelected(
+        Option.getOrElse(policy.selection(root(), pickerFileSearchQuery(root(), match.absolute, home())), () => ""),
+      )
       setSuggestionsOpen(false)
       setActiveSuggestion(-1)
     }
@@ -191,7 +196,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
       return
     }
     setInput(displayPickerPath(suggestion.absolute, input(), home()))
-    setSelected(policy.selection(root(), pickerFileSearchQuery(root(), suggestion.absolute, home())) ?? "")
+    setSelected(
+      Option.getOrElse(policy.selection(root(), pickerFileSearchQuery(root(), suggestion.absolute, home())), () => ""),
+    )
     setSuggestionsOpen(false)
     setActiveSuggestion(-1)
   }
@@ -227,8 +234,8 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
 
   function resolve() {
     const path = policy.result(root(), selected(), rootValid())
-    if (!path) return
-    props.onSelect(props.multiple ? [path] : path)
+    if (Option.isNone(path)) return
+    props.onSelect(props.multiple ? [path.value] : path.value)
     dialog.close()
   }
 
@@ -267,7 +274,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
       },
       onSelectionChange(paths) {
         const path = paths.at(-1)
-        setSelected(path ? (policy.selection(root(), path) ?? "") : "")
+        setSelected(path ? Option.getOrElse(policy.selection(root(), path), () => "") : "")
       },
     })
     if (!container) return
@@ -371,13 +378,19 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
             <div class="directory-picker-v2-state">{language.t("dialog.directory.readError")}</div>
           </Show>
         </div>
-        <div class="directory-picker-v2-selection">{policy.result(root(), selected(), rootValid())}</div>
+        <div class="directory-picker-v2-selection">
+          {Option.getOrElse(policy.result(root(), selected(), rootValid()), () => "")}
+        </div>
       </DialogBody>
       <DialogFooter>
         <ButtonV2 variant="neutral" onClick={() => dialog.close()}>
           {language.t("common.cancel")}
         </ButtonV2>
-        <ButtonV2 variant="contrast" disabled={!policy.result(root(), selected(), rootValid())} onClick={resolve}>
+        <ButtonV2
+          variant="contrast"
+          disabled={Option.isNone(policy.result(root(), selected(), rootValid()))}
+          onClick={resolve}
+        >
           {action[policy.action]}
         </ButtonV2>
       </DialogFooter>

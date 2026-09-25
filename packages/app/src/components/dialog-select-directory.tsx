@@ -8,7 +8,7 @@ import { createMemo, createResource, createSignal } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
 import { useGlobal } from "@/context/global"
-import { cleanPickerInput, createDirectorySearch, displayPickerPath } from "./directory-picker-domain"
+import { cleanPickerInput, createDirectorySearch, displayPickerPath, pickerPathOption } from "./directory-picker-domain"
 import type { Path } from "@opencode-ai/sdk/v2/client"
 
 interface DialogSelectDirectoryProps {
@@ -80,7 +80,7 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
   const directories = createDirectorySearch({
     sdk,
     home,
-    base: start,
+    base: () => pickerPathOption(start()),
   })
 
   const recentProjects = createMemo(() => {

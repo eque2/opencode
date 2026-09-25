@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 export function treeEntries(parent: string, nodes: ReadonlyArray<{ name: string; type: "file" | "directory" }>) {
   const prefix = parent.replace(/^\/+|\/+$/g, "")
   return nodes.map((node) => {
@@ -30,13 +32,13 @@ export function pickerMode(mode: "directory" | "file", base?: string) {
         return treeEntries(parent, nodes)
       },
       navigation(path: string) {
-        return treePathWithin(base, path) ? path : undefined
+        return treePathWithin(base, path) ? pickerPathOption(path) : Option.none<string>()
       },
       result(root: string, selected: string) {
-        return selected || undefined
+        return pickerPathOption(selected)
       },
       selection(root: string, path: string) {
-        if (!treePathWithin(base, root)) return
+        if (!treePathWithin(base, root)) return Option.none<string>()
         return selectedTreePath(root, path, "file", base)
       },
     }
@@ -51,11 +53,11 @@ export function pickerMode(mode: "directory" | "file", base?: string) {
       )
     },
     navigation(path: string) {
-      return path
+      return pickerPathOption(path)
     },
     result(root: string, selected: string, valid = true) {
-      if (!valid) return
-      return selected || (root ? nativePickerPath(root) : undefined)
+      if (!valid) return Option.none<string>()
+      return pickerPathOption(selected || (root ? nativePickerPath(root) : ""))
     },
     selection(root: string, path: string) {
       return selectedTreePath(root, path, "directory")
@@ -80,8 +82,13 @@ export function pickerAbsoluteInput(input: string, home: string, current: string
   return canonicalPickerPath(absolute)
 }
 
+/** Reads a picker path that may be blank. An empty text is no path. */
+export function pickerPathOption(value: string | undefined): Option.Option<string> {
+  return value ? Option.some(value) : Option.none()
+}
+
 export function treePathWithin(base: string | undefined, path: string) {
-  return pickerRelativePath(base, path) !== undefined
+  return Option.isSome(pickerRelativePath(base, path))
 }
 
 export function canonicalPickerPath(path: string) {
@@ -100,17 +107,17 @@ export function canonicalPickerPath(path: string) {
   return joinPickerPath(root, resolved.join("/"))
 }
 
-export function pickerRelativePath(base: string | undefined, path: string) {
-  if (!base) return
+export function pickerRelativePath(base: string | undefined, path: string): Option.Option<string> {
+  if (!base) return Option.none()
   const rootPath = canonicalPickerPath(base)
   const targetPath = canonicalPickerPath(path)
   const insensitive = /^[A-Za-z]:\//.test(rootPath) || rootPath.startsWith("//")
   const root = insensitive ? rootPath.toLowerCase() : rootPath
   const target = insensitive ? targetPath.toLowerCase() : targetPath
-  if (target === root) return ""
+  if (target === root) return Option.some("")
   const prefix = root.endsWith("/") ? root : root + "/"
-  if (!target.startsWith(prefix)) return
-  return targetPath.slice(prefix.length)
+  if (!target.startsWith(prefix)) return Option.none()
+  return Option.some(targetPath.slice(prefix.length))
 }
 
 export function currentPickerSuggestions<T>(result: { query: string; items: readonly T[] } | undefined, query: string) {
@@ -229,15 +236,20 @@ export function absoluteTreePath(root: string, path: string) {
   return `${base}/${relative}`
 }
 
-export function selectedTreePath(root: string, path: string, mode: "directory" | "file", base?: string) {
+export function selectedTreePath(
+  root: string,
+  path: string,
+  mode: "directory" | "file",
+  base?: string,
+): Option.Option<string> {
   const directory = path.endsWith("/")
   if (mode === "file") {
-    if (directory) return
-    if (!base) return path
+    if (directory) return Option.none()
+    if (!base) return Option.some(path)
     const absolute = absoluteTreePath(root, path)
     return pickerRelativePath(base, absolute)
   }
-  return directory ? nativePickerPath(absoluteTreePath(root, path)) : undefined
+  return directory ? Option.some(nativePickerPath(absoluteTreePath(root, path))) : Option.none()
 }
 
 export function nativePickerPath(path: string) {
@@ -321,21 +333,22 @@ export function displayPickerPath(path: string, input: string, home: string) {
   return pickerTilde(value, home) || value
 }
 
-export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string | undefined; home: () => string }) {
+export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option.Option<string>; home: () => string }) {
   const cache = new Map<string, Promise<Array<{ name: string; absolute: string }>>>()
   let current = 0
 
-  const scoped = (value: string) => {
+  const scoped = (value: string): Option.Option<{ directory: string; path: string }> => {
     const raw = normalizePickerDrive(value)
     const root = pickerRoot(raw)
-    if (root) return { directory: trimPickerPath(root), path: raw.slice(root.length) }
-    const base = args.base()
-    if (!base) return
-    if (!raw) return { directory: trimPickerPath(base), path: "" }
+    if (root) return Option.some({ directory: trimPickerPath(root), path: raw.slice(root.length) })
+    const found = Option.filter(args.base(), (base) => base !== "")
+    if (Option.isNone(found)) return Option.none()
+    const base = found.value
+    if (!raw) return Option.some({ directory: trimPickerPath(base), path: "" })
     const home = args.home()
-    if (raw === "~") return { directory: trimPickerPath(home || base), path: "" }
-    if (raw.startsWith("~/")) return { directory: trimPickerPath(home || base), path: raw.slice(2) }
-    return { directory: trimPickerPath(base), path: raw }
+    if (raw === "~") return Option.some({ directory: trimPickerPath(home || base), path: "" })
+    if (raw.startsWith("~/")) return Option.some({ directory: trimPickerPath(home || base), path: raw.slice(2) })
+    return Option.some({ directory: trimPickerPath(base), path: raw })
   }
 
   const directories = async (directory: string) => {
@@ -368,8 +381,9 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => string
     const token = ++current
     const active = () => token === current
     const value = cleanPickerInput(filter)
-    const input = scoped(value)
-    if (!input) return [] as string[]
+    const scope = scoped(value)
+    if (Option.isNone(scope)) return [] as string[]
+    const input = scope.value
     const raw = normalizePickerDrive(value)
     const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
     const query = normalizePickerDrive(input.path)

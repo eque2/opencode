@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { Option } from "effect"
 import {
   absoluteTreePath,
   activeTreeNavigation,
@@ -59,23 +60,23 @@ test("includes files in file autocomplete while preserving directory navigation"
 test("centralizes file and directory selection policy", () => {
   const file = pickerMode("file", "/repo")
   expect(file.includeFiles).toBeTrue()
-  expect(file.selection("/repo/src", "index.ts")).toBe("src/index.ts")
-  expect(file.selection("/repo", "src/")).toBeUndefined()
-  expect(file.result("/repo", "src/index.ts")).toBe("src/index.ts")
-  expect(file.selection("/tmp", "example.txt")).toBeUndefined()
-  expect(file.navigation("/repo/src")).toBe("/repo/src")
-  expect(file.navigation("/tmp")).toBeUndefined()
+  expect(file.selection("/repo/src", "index.ts")).toEqual(Option.some("src/index.ts"))
+  expect(file.selection("/repo", "src/")).toEqual(Option.none())
+  expect(file.result("/repo", "src/index.ts")).toEqual(Option.some("src/index.ts"))
+  expect(file.selection("/tmp", "example.txt")).toEqual(Option.none())
+  expect(file.navigation("/repo/src")).toEqual(Option.some("/repo/src"))
+  expect(file.navigation("/tmp")).toEqual(Option.none())
 
   const directory = pickerMode("directory")
   expect(directory.includeFiles).toBeFalse()
-  expect(directory.selection("/repo", "src/")).toBe("/repo/src")
-  expect(directory.selection("C:/Users/luke", "repos/")).toBe("C:\\Users\\luke\\repos")
-  expect(directory.selection("//Server/Share", "repo/")).toBe("\\\\Server\\Share\\repo")
-  expect(directory.navigation("/tmp")).toBe("/tmp")
-  expect(directory.result("/repo", "")).toBe("/repo")
-  expect(directory.result("C:/Users/luke", "")).toBe("C:\\Users\\luke")
-  expect(directory.result("//Server/Share/repo", "")).toBe("\\\\Server\\Share\\repo")
-  expect(directory.result("/repo", "", false)).toBeUndefined()
+  expect(directory.selection("/repo", "src/")).toEqual(Option.some("/repo/src"))
+  expect(directory.selection("C:/Users/luke", "repos/")).toEqual(Option.some("C:\\Users\\luke\\repos"))
+  expect(directory.selection("//Server/Share", "repo/")).toEqual(Option.some("\\\\Server\\Share\\repo"))
+  expect(directory.navigation("/tmp")).toEqual(Option.some("/tmp"))
+  expect(directory.result("/repo", "")).toEqual(Option.some("/repo"))
+  expect(directory.result("C:/Users/luke", "")).toEqual(Option.some("C:\\Users\\luke"))
+  expect(directory.result("//Server/Share/repo", "")).toEqual(Option.some("\\\\Server\\Share\\repo"))
+  expect(directory.result("/repo", "", false)).toEqual(Option.none())
 })
 
 test("accepts mutations only from the active navigation", () => {
@@ -87,11 +88,13 @@ test("preserves POSIX case while matching Windows drives case-insensitively", ()
   expect(treePathWithin("/repo", "/Repo")).toBeFalse()
   expect(treePathWithin("C:/Repo", "c:/repo/src")).toBeTrue()
   expect(treePathWithin("//Server/Share/Repo", "//server/share/repo/src")).toBeTrue()
-  expect(pickerMode("file", "//Server/Share/Repo").selection("//server/share/repo/src", "file.ts")).toBe("src/file.ts")
+  expect(pickerMode("file", "//Server/Share/Repo").selection("//server/share/repo/src", "file.ts")).toEqual(
+    Option.some("src/file.ts"),
+  )
   expect(treePathWithin("/repo", "/repo/../tmp")).toBeFalse()
   expect(treePathWithin("/", "/src")).toBeTrue()
-  expect(pickerMode("file", "C:/Repo").selection("c:/repo/src", "file.ts")).toBe("src/file.ts")
-  expect(pickerMode("file", "C:/").selection("C:/", "file.ts")).toBe("file.ts")
+  expect(pickerMode("file", "C:/Repo").selection("c:/repo/src", "file.ts")).toEqual(Option.some("src/file.ts"))
+  expect(pickerMode("file", "C:/").selection("C:/", "file.ts")).toEqual(Option.some("file.ts"))
 })
 
 test("displays paths using the selected server path format", () => {
@@ -144,7 +147,7 @@ test("resolves directory autocomplete from the current browser root", async () =
     },
   } as unknown as Parameters<typeof createDirectorySearch>[0]["sdk"]
   let base = "/repo"
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => base })
+  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some(base) })
 
   await search("components")
   base = "/repo/src"
@@ -162,7 +165,7 @@ test("keeps indexed directory results for servers that support empty search", as
       },
     },
   } as unknown as Parameters<typeof createDirectorySearch>[0]["sdk"]
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => "/home/luke" })
+  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
 
   expect(await search("")).toEqual(["/home/luke/projects"])
 })
@@ -186,7 +189,7 @@ test("lists the default directory when empty search is unsupported", async () =>
       },
     },
   } as unknown as Parameters<typeof createDirectorySearch>[0]["sdk"]
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => "/home/luke" })
+  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
 
   const results = await search("")
   expect(results).toHaveLength(60)
@@ -209,7 +212,7 @@ test("matches the default directory listing when typed search is unsupported", a
       },
     },
   } as unknown as Parameters<typeof createDirectorySearch>[0]["sdk"]
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => "/home/luke" })
+  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
 
   expect(await search("documents")).toEqual(["/home/luke/Documents"])
 })
@@ -231,7 +234,7 @@ test("searches from an absolute root without a default base", async () => {
       },
     },
   } as unknown as Parameters<typeof createDirectorySearch>[0]["sdk"]
-  const search = createDirectorySearch({ sdk, home: () => "", base: () => undefined })
+  const search = createDirectorySearch({ sdk, home: () => "", base: () => Option.none() })
 
   expect(await search("/")).toEqual(["/Users", "/tmp"])
   expect(directories).toEqual(["/"])
@@ -303,8 +306,10 @@ test("wraps autocomplete keyboard navigation", () => {
 })
 
 test("returns absolute directories and relative files", () => {
-  expect(selectedTreePath("/home/luke/repo", "src/", "directory")).toBe("/home/luke/repo/src")
-  expect(selectedTreePath("/home/luke/repo", "src/index.ts", "file")).toBe("src/index.ts")
-  expect(selectedTreePath("/home/luke/repo/src", "index.ts", "file", "/home/luke/repo")).toBe("src/index.ts")
-  expect(selectedTreePath("/home/luke/repo", "src/", "file")).toBeUndefined()
+  expect(selectedTreePath("/home/luke/repo", "src/", "directory")).toEqual(Option.some("/home/luke/repo/src"))
+  expect(selectedTreePath("/home/luke/repo", "src/index.ts", "file")).toEqual(Option.some("src/index.ts"))
+  expect(selectedTreePath("/home/luke/repo/src", "index.ts", "file", "/home/luke/repo")).toEqual(
+    Option.some("src/index.ts"),
+  )
+  expect(selectedTreePath("/home/luke/repo", "src/", "file")).toEqual(Option.none())
 })
