@@ -732,32 +732,31 @@ export function fromError(
       ).toObject()
     case e instanceof Error:
       return new NamedError.Unknown({ message: errorMessage(e) }, { cause: e }).toObject()
-    default:
-      try {
-        const parsed = ProviderError.parseStreamError(e)
-        if (parsed) {
-          if (parsed.type === "context_overflow") {
-            return new ContextOverflowError(
-              {
-                message: parsed.message,
-                responseBody: parsed.responseBody,
-              },
-              { cause: e },
-            ).toObject()
-          }
-          return new APIError(
-            {
-              message: parsed.message,
-              isRetryable: parsed.isRetryable,
-              responseBody: parsed.responseBody,
-            },
-            {
-              cause: e,
-            },
-          ).toObject()
-        }
-      } catch {}
-      return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e }).toObject()
+    default: {
+      // A stream error that cannot be parsed, or whose parser throws, is reported as unknown.
+      const parsed = Option.liftThrowable(ProviderError.parseStreamError)(e).pipe(Option.flatMap(Option.fromNullishOr))
+      if (Option.isNone(parsed)) return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e }).toObject()
+      const stream = parsed.value
+      if (stream.type === "context_overflow") {
+        return new ContextOverflowError(
+          {
+            message: stream.message,
+            responseBody: stream.responseBody,
+          },
+          { cause: e },
+        ).toObject()
+      }
+      return new APIError(
+        {
+          message: stream.message,
+          isRetryable: stream.isRetryable,
+          responseBody: stream.responseBody,
+        },
+        {
+          cause: e,
+        },
+      ).toObject()
+    }
   }
 }
 

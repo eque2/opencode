@@ -633,7 +633,7 @@ const layer: Layer.Layer<
 
     const remove: Interface["remove"] = Effect.fnUntraced(function* (sessionID: SessionID) {
       const session = yield* get(sessionID)
-      try {
+      yield* Effect.gen(function* () {
         // `remove` needs to work in all cases, such as broken sessions that
         // run cleanup without instance state.
         const hasInstance = yield* InstanceState.directory.pipe(
@@ -649,9 +649,7 @@ const layer: Layer.Layer<
 
         yield* events.publish(SessionV1.Event.Deleted, { sessionID, info: session })
         yield* events.remove(sessionID)
-      } catch (error) {
-        yield* Effect.logError("failed to remove session", { sessionID, error })
-      }
+      }).pipe(Effect.tapCause((cause) => Effect.logError("failed to remove session", { sessionID, cause })))
     })
 
     const updateMessage = <T extends SessionV1.Info>(msg: T): Effect.Effect<T> =>
