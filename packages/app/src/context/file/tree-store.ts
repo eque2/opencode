@@ -72,12 +72,10 @@ export function createFileTreeStore(options: TreeStoreOptions) {
         setTree(
           "node",
           produce((draft) => {
-            const removedDirs: string[] = []
+            const removed = prevChildren.filter((child) => !HashSet.has(nextSet, child))
+            const removedDirs = removed.filter((child) => draft[child]?.type === "directory")
 
-            for (const child of prevChildren) {
-              if (HashSet.has(nextSet, child)) continue
-              const existing = draft[child]
-              if (existing?.type === "directory") removedDirs.push(child)
+            for (const child of removed) {
               delete draft[child]
             }
 

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk } from "effect"
 import { invalidateFromWatcher } from "./watcher"
 
 describe("file watcher invalidation", () => {
   test("reloads open files and refreshes loaded parent on add", () => {
-    const loads: string[] = []
-    const refresh: string[] = []
+    let loads = Chunk.empty<string>()
+    let refresh = Chunk.empty<string>()
     invalidateFromWatcher(
       {
         type: "file.watcher.updated",
@@ -16,19 +17,23 @@ describe("file watcher invalidation", () => {
       {
         normalize: (input) => input,
         hasFile: (path) => path === "src/new.ts",
-        loadFile: (path) => loads.push(path),
+        loadFile: (path) => {
+          loads = Chunk.append(loads, path)
+        },
         node: () => undefined,
         isDirLoaded: (path) => path === "src",
-        refreshDir: (path) => refresh.push(path),
+        refreshDir: (path) => {
+          refresh = Chunk.append(refresh, path)
+        },
       },
     )
 
-    expect(loads).toEqual(["src/new.ts"])
-    expect(refresh).toEqual(["src"])
+    expect(Chunk.toReadonlyArray(loads)).toEqual(["src/new.ts"])
+    expect(Chunk.toReadonlyArray(refresh)).toEqual(["src"])
   })
 
   test("reloads files that are open in tabs", () => {
-    const loads: string[] = []
+    let loads = Chunk.empty<string>()
 
     invalidateFromWatcher(
       {
@@ -42,7 +47,9 @@ describe("file watcher invalidation", () => {
         normalize: (input) => input,
         hasFile: () => false,
         isOpen: (path) => path === "src/open.ts",
-        loadFile: (path) => loads.push(path),
+        loadFile: (path) => {
+          loads = Chunk.append(loads, path)
+        },
         node: () => ({
           path: "src/open.ts",
           type: "file",
@@ -55,11 +62,11 @@ describe("file watcher invalidation", () => {
       },
     )
 
-    expect(loads).toEqual(["src/open.ts"])
+    expect(Chunk.toReadonlyArray(loads)).toEqual(["src/open.ts"])
   })
 
   test("refreshes only changed loaded directory nodes", () => {
-    const refresh: string[] = []
+    let refresh = Chunk.empty<string>()
 
     invalidateFromWatcher(
       {
@@ -75,7 +82,9 @@ describe("file watcher invalidation", () => {
         loadFile: () => {},
         node: () => ({ path: "src", type: "directory", name: "src", absolute: "/repo/src", ignored: false }),
         isDirLoaded: (path) => path === "src",
-        refreshDir: (path) => refresh.push(path),
+        refreshDir: (path) => {
+          refresh = Chunk.append(refresh, path)
+        },
       },
     )
 
@@ -99,15 +108,17 @@ describe("file watcher invalidation", () => {
           ignored: false,
         }),
         isDirLoaded: () => true,
-        refreshDir: (path) => refresh.push(path),
+        refreshDir: (path) => {
+          refresh = Chunk.append(refresh, path)
+        },
       },
     )
 
-    expect(refresh).toEqual(["src"])
+    expect(Chunk.toReadonlyArray(refresh)).toEqual(["src"])
   })
 
   test("ignores invalid or git watcher updates", () => {
-    const refresh: string[] = []
+    let refresh = Chunk.empty<string>()
 
     invalidateFromWatcher(
       {
@@ -125,7 +136,9 @@ describe("file watcher invalidation", () => {
         },
         node: () => undefined,
         isDirLoaded: () => true,
-        refreshDir: (path) => refresh.push(path),
+        refreshDir: (path) => {
+          refresh = Chunk.append(refresh, path)
+        },
       },
     )
 
@@ -140,10 +153,12 @@ describe("file watcher invalidation", () => {
         loadFile: () => {},
         node: () => undefined,
         isDirLoaded: () => true,
-        refreshDir: (path) => refresh.push(path),
+        refreshDir: (path) => {
+          refresh = Chunk.append(refresh, path)
+        },
       },
     )
 
-    expect(refresh).toEqual([])
+    expect(Chunk.toReadonlyArray(refresh)).toEqual([])
   })
 })

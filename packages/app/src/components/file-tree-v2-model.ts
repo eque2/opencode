@@ -1,4 +1,4 @@
-import { Array as Arr, HashMap, MutableHashMap, Option } from "effect"
+import { Array as Arr, Chunk, HashMap, MutableHashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 export type FileTreeV2Model = {
@@ -63,14 +63,14 @@ export function buildFileTreeV2Model(paths: readonly string[]): FileTreeV2Model 
 }
 
 export function flattenFileTreeV2(model: FileTreeV2Model, expanded: (path: string) => boolean) {
-  const rows: FileTreeV2Row[] = []
+  let rows = Chunk.empty<FileTreeV2Row>()
   const stack = Option.getOrElse(HashMap.get(model.children, ""), () => [])
     .toReversed()
     .map((node) => ({ node, level: 0 }))
 
   while (stack.length > 0) {
     const row = stack.pop()!
-    rows.push(row)
+    rows = Chunk.append(rows, row)
     if (row.node.type !== "directory" || !expanded(row.node.path)) continue
     const children = Option.getOrElse(HashMap.get(model.children, row.node.path), () => [])
     for (let index = children.length - 1; index >= 0; index--) {
@@ -78,21 +78,21 @@ export function flattenFileTreeV2(model: FileTreeV2Model, expanded: (path: strin
     }
   }
 
-  return rows
+  return Chunk.toArray(rows)
 }
 
 export function flattenLiveFileTreeV2(
   children: (path: string) => readonly FileNode[],
   expanded: (path: string) => boolean,
 ) {
-  const rows: FileTreeV2Row[] = []
+  let rows = Chunk.empty<FileTreeV2Row>()
   const stack = children("")
     .toReversed()
     .map((node) => ({ node: toLiveNode(node), level: 0 }))
 
   while (stack.length > 0) {
     const row = stack.pop()!
-    rows.push(row)
+    rows = Chunk.append(rows, row)
     if (row.node.type !== "directory" || !expanded(row.node.path)) continue
     const nested = children(row.node.originalPath)
     for (let index = nested.length - 1; index >= 0; index--) {
@@ -100,7 +100,7 @@ export function flattenLiveFileTreeV2(
     }
   }
 
-  return rows
+  return Chunk.toArray(rows)
 }
 
 function toLiveNode(node: FileNode): FileTreeV2Node {

@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test"
+import { Chunk } from "effect"
 import { FileTree, type FileTreeDirectoryHandle } from "@pierre/trees"
 
 test("reports directory expansion changes", () => {
-  const changes: Array<{ path: string; expanded: boolean }> = []
+  let changes = Chunk.empty<{ path: string; expanded: boolean }>()
   const tree = new FileTree({
     paths: ["src/"],
-    onExpansionChange: (change) => changes.push(change),
+    onExpansionChange: (change) => {
+      changes = Chunk.append(changes, change)
+    },
   })
 
   const src = tree.getItem("src/")
@@ -15,7 +18,7 @@ test("reports directory expansion changes", () => {
   directory.expand()
   directory.collapse()
 
-  expect(changes).toEqual([
+  expect(Chunk.toReadonlyArray(changes)).toEqual([
     { path: "src/", expanded: true },
     { path: "src/", expanded: false },
   ])
