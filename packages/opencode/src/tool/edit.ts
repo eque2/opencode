@@ -451,14 +451,13 @@ export const WhitespaceNormalizedReplacer: Replacer = function* (content, find) 
         const words = find.trim().split(/\s+/)
         if (words.length > 0) {
           const pattern = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
-          try {
-            const regex = new RegExp(pattern)
-            const match = line.match(regex)
+          // An invalid regex pattern cannot match, so it is skipped.
+          const regex = Result.try(() => new RegExp(pattern))
+          if (Result.isSuccess(regex)) {
+            const match = line.match(regex.success)
             if (match) {
               yield match[0]
             }
-          } catch {
-            // Invalid regex pattern, skip
           }
         }
       }

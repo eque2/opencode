@@ -42,13 +42,11 @@ export const ApplyPatchTool = Tool.define(
       }
 
       // Parse the patch to get hunks
-      let hunks: Patch.Hunk[]
-      try {
-        const parseResult = Patch.parsePatch(params.patchText)
-        hunks = parseResult.hunks
-      } catch (error) {
-        return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
-      }
+      const hunks = yield* Effect.try({
+        try: () => Patch.parsePatch(params.patchText).hunks,
+        catch: (error) =>
+          new ApplyPatchError({ message: `apply_patch verification failed: ${String(error)}`, cause: error }),
+      })
 
       if (hunks.length === 0) {
         const normalized = params.patchText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim()
@@ -120,21 +118,15 @@ export const ApplyPatchTool = Tool.define(
 
             const source = yield* Bom.readFile(afs, filePath)
             const oldContent = source.text
-            let newContent = oldContent
-            let bom = source.bom
 
             // Apply the update chunks to get new content
-            try {
-              const fileUpdate = Patch.deriveNewContentsFromChunks(
-                filePath,
-                hunk.chunks,
-                Bom.join(source.text, source.bom),
-              )
-              newContent = fileUpdate.content
-              bom = fileUpdate.bom
-            } catch (error) {
-              return yield* Effect.fail(new Error(`apply_patch verification failed: ${error}`))
-            }
+            const fileUpdate = yield* Effect.try({
+              try: () => Patch.deriveNewContentsFromChunks(filePath, hunk.chunks, Bom.join(source.text, source.bom)),
+              catch: (error) =>
+                new ApplyPatchError({ message: `apply_patch verification failed: ${String(error)}`, cause: error }),
+            })
+            const newContent = fileUpdate.content
+            const bom = fileUpdate.bom
 
             const diff = trimDiff(createTwoFilesPatch(filePath, filePath, oldContent, newContent))
 
