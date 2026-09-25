@@ -413,7 +413,12 @@ export function SessionContextTab() {
           <Accordion multiple>
             <For each={messages()}>
               {(message) => (
-                <RawMessage message={message} getParts={getParts} onRendered={restoreScroll} time={formatter().time} />
+                <RawMessage
+                  message={message}
+                  getParts={getParts}
+                  onRendered={restoreScroll}
+                  time={(value) => formatter().time(value)}
+                />
               )}
             </For>
           </Accordion>
