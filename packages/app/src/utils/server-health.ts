@@ -1,9 +1,10 @@
 import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { authTokenFromCredentials, createSdkForServer } from "./server"
 import { ClientError, OpenCode } from "@opencode-ai/client"
-import { DateTime, Effect, MutableHashMap, Option, Schema } from "effect"
-import { Accessor, createEffect, onCleanup } from "solid-js"
+import { DateTime, Effect, MutableHashMap, Option, Schedule, Schema } from "effect"
+import { Accessor, createEffect } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 
 export type ServerHealth = { healthy: boolean; version?: string }
@@ -171,35 +172,40 @@ export function useCheckServerHealth() {
 export const useServerHealth = (servers: Accessor<ServerConnection.Any[]>, enabled: Accessor<boolean>) => {
   const checkServerHealth = useCheckServerHealth()
   const [status, setStatus] = createStore({} as Record<ServerConnection.Key, ServerHealth | undefined>)
+  const poll = createFiberSlot()
+
+  // Checks every server at once. Each result shows as soon as it arrives, and the full set then
+  // replaces the store, which drops servers that left the list.
+  const refresh = (list: ServerConnection.Any[]) =>
+    Effect.forEach(
+      list,
+      (conn) => {
+        const key = ServerConnection.key(conn)
+        return Effect.promise(() => checkServerHealth(conn.http)).pipe(
+          Effect.tap((result) => Effect.sync(() => setStatus(key, result))),
+          Effect.map((result) => [key, result] as const),
+        )
+      },
+      { concurrency: "unbounded" },
+    ).pipe(Effect.flatMap((results) => Effect.sync(() => setStatus(reconcile(Object.fromEntries(results))))))
 
   createEffect(() => {
     if (!enabled()) {
+      poll.interrupt()
       setStatus(reconcile({}))
       return
     }
     const list = servers()
-    let dead = false
-
-    const refresh = async () => {
-      const results: Record<string, ServerHealth> = {}
-      await Promise.all(
-        list.map(async (conn) => {
-          const key = ServerConnection.key(conn)
-          const result = await checkServerHealth(conn.http)
-          results[key] = result
-          if (!dead) setStatus(key, result)
-        }),
-      )
-      if (dead) return
-      setStatus(reconcile(results))
-    }
-
-    void refresh()
-    const id = setInterval(() => void refresh(), pollMs)
-    onCleanup(() => {
-      dead = true
-      clearInterval(id)
-    })
+    // A refresh starts now and every pollMs after, as setInterval did. Each refresh runs in a
+    // child fiber, so a slow server does not delay the next tick, and interrupting the poll
+    // also stops the refreshes that are still running.
+    poll.run(
+      refresh(list).pipe(
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+        Effect.forkChild,
+        Effect.repeat(Schedule.spaced(pollMs)),
+      ),
+    )
   })
 
   return status
