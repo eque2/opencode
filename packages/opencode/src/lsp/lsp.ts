@@ -60,8 +60,11 @@ export const DocumentSymbol = Schema.Struct({
 }).annotate({ identifier: "DocumentSymbol" })
 export type DocumentSymbol = typeof DocumentSymbol.Type
 
+// The id of a language server, such as "typescript" or a configured server name.
+const ServerID = Schema.String.pipe(Schema.brand("LSP.ServerID"))
+
 export const Status = Schema.Struct({
-  id: Schema.String,
+  id: ServerID,
   name: Schema.String,
   root: Schema.String,
   status: Schema.Literals(["connected", "error"]),
@@ -349,7 +352,7 @@ const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       return s.clients.map(
         (client): Status => ({
-          id: client.serverID,
+          id: ServerID.make(client.serverID),
           name: s.servers[client.serverID].id,
           root: path.relative(ctx.directory, client.root),
           status: "connected",
