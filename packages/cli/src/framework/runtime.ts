@@ -14,7 +14,8 @@ type RuntimeHandler = (input: unknown) => Effect.Effect<void, unknown, Daemon.Se
 type Loader<Node extends Spec.Any> = () => Promise<{
   default: (input: Input<Node>) => Effect.Effect<void, any, Daemon.Service>
 }>
-type ProvidedCommand = Command.Command<string, unknown, unknown, unknown, Daemon.Service>
+// Input is contravariant, so `never` is the input type that every command in the tree shares.
+type ProvidedCommand = Command.Command<string, never, unknown, unknown, Daemon.Service>
 
 export type Handlers<Node extends Spec.Any> = keyof Node["commands"] extends never
   ? Loader<Node>
@@ -48,7 +49,11 @@ export function handlers<const Root extends Spec.Any>(root: Root, handlers: Hand
       return
     }
     if (value.$) result.push({ spec: node.spec, load: value.$ as () => Promise<{ default: RuntimeHandler }> })
-    for (const [name, child] of Object.entries(node.commands)) add(child, value[name] as RuntimeHandlers)
+    for (const [name, child] of Object.entries(node.commands)) {
+      const subtree = value[name]
+      // Handlers<Root> requires every command key, so a missing subtree cannot pass the type check.
+      if (subtree !== undefined) add(child, subtree)
+    }
   }
 
   add(root, handlers as RuntimeHandlers)
@@ -56,7 +61,7 @@ export function handlers<const Root extends Spec.Any>(root: Root, handlers: Hand
 }
 
 export function run(commands: Spec.Any, handlers: ReadonlyArray<LazyHandler>, options: { readonly version: string }) {
-  return Command.run(provide(commands, handlers), options) as Effect.Effect<void, unknown, Command.Environment>
+  return Command.run(provide(commands, handlers), options)
 }
 
 function provide(node: Spec.Any, handlers: ReadonlyArray<LazyHandler>): ProvidedCommand {
@@ -70,10 +75,8 @@ function provide(node: Spec.Any, handlers: ReadonlyArray<LazyHandler>): Provided
         ),
       )
     : node.spec
-  if (!Object.keys(node.commands).length) return spec as ProvidedCommand
-  return spec.pipe(
-    Command.withSubcommands(Object.values(node.commands).map((child) => provide(child, handlers))),
-  ) as ProvidedCommand
+  if (!Object.keys(node.commands).length) return spec
+  return spec.pipe(Command.withSubcommands(Object.values(node.commands).map((child) => provide(child, handlers))))
 }
 
 export * as Runtime from "./runtime"
