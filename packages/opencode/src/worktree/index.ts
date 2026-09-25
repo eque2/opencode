@@ -179,7 +179,7 @@ const layer: Layer.Layer<
     }) {
       const ctx = yield* InstanceState.context
       for (const attempt of Array.from({ length: MAX_NAME_ATTEMPTS }, (_, i) => i)) {
-        const name = input.name ? (attempt === 0 ? input.name : `${input.name}-${Slug.create()}`) : Slug.create()
+        const name = input.name ? (attempt === 0 ? input.name : `${input.name}-${yield* Slug.make}`) : yield* Slug.make
         const branch = input.detached ? undefined : `opencode/${name}`
         const directory = pathSvc.join(input.root, name)
 

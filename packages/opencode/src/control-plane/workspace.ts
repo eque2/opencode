@@ -489,7 +489,7 @@ const layer = Layer.effect(
       const config = yield* WorkspaceAdapterRuntime.configure(adapter, {
         ...input,
         id,
-        name: Slug.create(),
+        name: yield* Slug.make,
         directory: null,
         extra: input.extra ?? null,
       })
