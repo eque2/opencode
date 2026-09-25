@@ -15,6 +15,11 @@ type FrecencyEntry = typeof FrecencyEntry.Type
 
 const FrecencyLine = Schema.fromJsonString(FrecencyEntry)
 const decodeFrecencyLine = Schema.decodeUnknownOption(FrecencyLine)
+const encodeFrecencyLine = Schema.encodeSync(FrecencyLine)
+
+function formatFrecency(entries: readonly FrecencyEntry[]) {
+  return entries.map((entry) => `${encodeFrecencyLine(entry)}\n`).join("")
+}
 
 export const MAX_FRECENCY_ENTRIES = 1000
 
@@ -53,10 +58,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
               lines.map((entry) => [entry.path, { frequency: entry.frequency, lastOpen: entry.lastOpen }]),
             ),
           )
-          if (lines.length > 0)
-            yield* writeText(frecencyPath, lines.map((entry) => JSON.stringify(entry)).join("\n") + "\n").pipe(
-              Effect.ignore,
-            )
+          if (lines.length > 0) yield* writeText(frecencyPath, formatFrecency(lines)).pipe(Effect.ignore)
         }).pipe(Effect.provide(fileSystemLayer)),
       )
     })
@@ -68,7 +70,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
       const newEntry = { frequency: (store.data[absolutePath]?.frequency || 0) + 1, lastOpen: Date.now() }
       setStore("data", absolutePath, newEntry)
       Effect.runFork(
-        appendText(frecencyPath, JSON.stringify({ path: absolutePath, ...newEntry }) + "\n").pipe(
+        appendText(frecencyPath, formatFrecency([{ path: absolutePath, ...newEntry }])).pipe(
           Effect.ignore,
           Effect.provide(fileSystemLayer),
         ),
@@ -79,7 +81,7 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
         .sort(([, a], [, b]) => b.lastOpen - a.lastOpen)
         .slice(0, MAX_FRECENCY_ENTRIES)
       setStore("data", Object.fromEntries(sorted))
-      const text = sorted.map(([entryPath, entry]) => JSON.stringify({ path: entryPath, ...entry })).join("\n") + "\n"
+      const text = formatFrecency(sorted.map(([entryPath, entry]) => ({ path: entryPath, ...entry })))
       Effect.runFork(writeText(frecencyPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
     }
 

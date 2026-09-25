@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Equal, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import type { AgentPart, FilePart, TextPart } from "@opencode-ai/sdk/v2"
@@ -97,6 +97,16 @@ const PromptHistoryEntry = Schema.Struct({
 
 const PromptHistoryLine = Schema.fromJsonString(PromptHistoryEntry)
 const decodePromptHistoryLine = Schema.decodeUnknownOption(PromptHistoryLine)
+// PromptInfo types text part metadata as unknown, so each entry is checked as it is encoded.
+// An entry that is not JSON-encodable has no line.
+const encodePromptHistoryLine = Schema.encodeUnknownOption(PromptHistoryLine)
+
+function formatPromptHistory(entries: readonly PromptInfo[]) {
+  return entries
+    .flatMap((entry) => Option.toArray(encodePromptHistoryLine(entry)))
+    .map((line) => `${line}\n`)
+    .join("")
+}
 
 export const MAX_HISTORY_ENTRIES = 50
 
@@ -111,7 +121,8 @@ export function parsePromptHistory(text: string): PromptInfo[] {
 
 export function isDuplicateEntry(previous: PromptInfo | undefined, next: PromptInfo): boolean {
   if (!previous) return false
-  return JSON.stringify(previous) === JSON.stringify(next)
+  const encoded = encodePromptHistoryLine(next)
+  return Option.isSome(encoded) && Equal.equals(encodePromptHistoryLine(previous), encoded)
 }
 
 export const { use: usePromptHistory, provider: PromptHistoryProvider } = createSimpleContext({
@@ -126,10 +137,7 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
           setStore("history", lines)
 
           // Rewrite valid retained entries to self-heal corruption and enforce the limit.
-          if (lines.length > 0)
-            yield* writeText(historyPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").pipe(
-              Effect.ignore,
-            )
+          if (lines.length > 0) yield* writeText(historyPath, formatPromptHistory(lines)).pipe(Effect.ignore)
         }).pipe(Effect.provide(fileSystemLayer)),
       )
     })
@@ -174,14 +182,13 @@ export const { use: usePromptHistory, provider: PromptHistoryProvider } = create
           }),
         )
 
-        if (trimmed) {
-          const text = store.history.map((line) => JSON.stringify(line)).join("\n") + "\n"
-          Effect.runFork(writeText(historyPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
-          return
-        }
-        Effect.runFork(
-          appendText(historyPath, JSON.stringify(entry) + "\n").pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
-        )
+        const write = trimmed
+          ? writeText(historyPath, formatPromptHistory(store.history))
+          : Option.match(encodePromptHistoryLine(entry), {
+              onNone: () => Effect.logWarning("Prompt history entry is not JSON-encodable; it is not saved"),
+              onSome: (line) => appendText(historyPath, `${line}\n`),
+            })
+        Effect.runFork(write.pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
       },
     }
   },

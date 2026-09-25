@@ -21,6 +21,16 @@ const PromptStashEntry = Schema.Struct({
 
 const PromptStashLine = Schema.fromJsonString(PromptStashEntry)
 const decodePromptStashLine = Schema.decodeUnknownOption(PromptStashLine)
+// StashEntry parts type text part metadata as unknown, so each entry is checked as it is encoded.
+// An entry that is not JSON-encodable has no line.
+const encodePromptStashLine = Schema.encodeUnknownOption(PromptStashLine)
+
+function formatPromptStash(entries: readonly StashEntry[]) {
+  return entries
+    .flatMap((entry) => Option.toArray(encodePromptStashLine(entry)))
+    .map((line) => `${line}\n`)
+    .join("")
+}
 
 export const MAX_STASH_ENTRIES = 50
 
@@ -43,16 +53,15 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         Effect.gen(function* () {
           const lines = parsePromptStash(yield* readText(stashPath).pipe(Effect.orElseSucceed(() => "")))
           setStore("entries", lines)
-          if (lines.length > 0)
-            yield* writeText(stashPath, lines.map((line) => JSON.stringify(line)).join("\n") + "\n").pipe(
-              Effect.ignore,
-            )
+          if (lines.length > 0) yield* writeText(stashPath, formatPromptStash(lines)).pipe(Effect.ignore)
         }).pipe(Effect.provide(fileSystemLayer)),
       )
     })
 
-    function rewrite(text: string) {
-      Effect.runFork(writeText(stashPath, text).pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
+    function rewrite(entries: readonly StashEntry[]) {
+      Effect.runFork(
+        writeText(stashPath, formatPromptStash(entries)).pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
+      )
     }
 
     const [store, setStore] = createStore({ entries: [] as StashEntry[] })
@@ -75,24 +84,26 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         )
 
         if (trimmed) {
-          rewrite(store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n")
+          rewrite(store.entries)
           return
         }
-        Effect.runFork(
-          appendText(stashPath, JSON.stringify(stash) + "\n").pipe(Effect.ignore, Effect.provide(fileSystemLayer)),
-        )
+        const append = Option.match(encodePromptStashLine(stash), {
+          onNone: () => Effect.logWarning("Prompt stash entry is not JSON-encodable; it is not saved"),
+          onSome: (line) => appendText(stashPath, `${line}\n`),
+        })
+        Effect.runFork(append.pipe(Effect.ignore, Effect.provide(fileSystemLayer)))
       },
       pop() {
         if (store.entries.length === 0) return undefined
         const entry = store.entries[store.entries.length - 1]
         setStore(produce((draft) => void draft.entries.pop()))
-        rewrite(store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "")
+        rewrite(store.entries)
         return entry
       },
       remove(index: number) {
         if (index < 0 || index >= store.entries.length) return
         setStore(produce((draft) => void draft.entries.splice(index, 1)))
-        rewrite(store.entries.length > 0 ? store.entries.map((line) => JSON.stringify(line)).join("\n") + "\n" : "")
+        rewrite(store.entries)
       },
     }
   },
