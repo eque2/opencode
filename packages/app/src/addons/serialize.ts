@@ -185,7 +185,7 @@ function equalFlags(cell1: IBufferCell, cell2: IBufferCell): boolean {
     !!cell1.isBlink() === !!cell2.isBlink() &&
     !!cell1.isInvisible() === !!cell2.isInvisible() &&
     !!cell1.isItalic() === !!cell2.isItalic() &&
-    !!cell1.isDim() === !!cell2.isDim() &&
+    cell1.isDim() === cell2.isDim() &&
     !!cell1.isStrikethrough() === !!cell2.isStrikethrough()
   )
 }
@@ -333,7 +333,7 @@ class StringSerializeHandler extends BaseSerializeHandler {
           if (!!cell.isItalic() !== !!oldCell.isItalic()) {
             sgrSeq.push(cell.isItalic() ? 3 : 23)
           }
-          if (!!cell.isDim() !== !!oldCell.isDim()) {
+          if (cell.isDim() !== oldCell.isDim()) {
             sgrSeq.push(cell.isDim() ? 2 : 22)
           }
           if (!!cell.isStrikethrough() !== !!oldCell.isStrikethrough()) {
