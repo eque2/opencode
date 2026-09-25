@@ -58,13 +58,20 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
-import { Data, DateTime, HashMap, MutableHashMap, Option } from "effect"
+import { Data, DateTime, Effect, HashMap, MutableHashMap, Option } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 /** Raised when the server sync context is created outside a Solid owner, which it needs for its child stores. */
 class ServerSyncOwnerError extends Data.TaggedError("ServerSyncOwnerError")<{ readonly message: string }> {}
 
 /** Raised when the ServerSync context has no server to sync with. The message is the translated text. */
 class NoServerAvailableError extends Data.TaggedError("NoServerAvailableError")<{ readonly message: string }> {}
+
+/** Completes on the next animation frame. Interrupting it cancels the frame request. */
+const nextFrame = Effect.callback<void>((resume) => {
+  const handle = requestAnimationFrame(() => resume(Effect.void))
+  return Effect.sync(() => cancelAnimationFrame(handle))
+})
 
 type GlobalStore = {
   ready: boolean
@@ -309,13 +316,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   let bootedAt = 0
   let bootingRoot = false
-  let eventFrame: number | undefined
-  let eventTimer: ReturnType<typeof setTimeout> | undefined
-
-  onCleanup(() => {
-    if (eventFrame !== undefined) cancelAnimationFrame(eventFrame)
-    if (eventTimer !== undefined) clearTimeout(eventTimer)
-  })
+  // The owner's cleanup interrupts a pending event-stream start, which also cancels its frame request.
+  const eventStart = createFiberSlot()
 
   const setProjects = (next: Project[] | ((draft: Project[]) => Project[])) => {
     setGlobalStore("project", next)
@@ -635,20 +637,18 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   })
 
   onMount(() => {
-    if (typeof requestAnimationFrame === "function") {
-      eventFrame = requestAnimationFrame(() => {
-        eventFrame = undefined
-        eventTimer = setTimeout(() => {
-          eventTimer = undefined
-          void serverSDK.event.start()
-        }, 0)
-      })
-    } else {
-      eventTimer = setTimeout(() => {
-        eventTimer = undefined
-        void serverSDK.event.start()
-      }, 0)
-    }
+    // Start the event stream after the next frame (when the platform has frames) and one timer turn.
+    // The stream handles its own errors, and nothing waits for it, so `void` discards its promise.
+    eventStart.run(
+      (typeof requestAnimationFrame === "function" ? nextFrame : Effect.void).pipe(
+        Effect.andThen(Effect.sleep("0 millis")),
+        Effect.andThen(
+          Effect.sync(() => {
+            void serverSDK.event.start()
+          }),
+        ),
+      ),
+    )
   })
 
   const projectApi = {
