@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { Option } from "effect"
+import { createStore } from "solid-js/store"
 import { getSessionContext } from "./session-context-metrics"
 
 const assistant = (
@@ -90,11 +91,14 @@ describe("getSessionContext", () => {
   })
 
   test("recomputes when message array is mutated in place", () => {
-    const messages: Message[] = [assistant("a1", { input: 10, output: 10, reasoning: 10, read: 10, write: 10 }, 0.25)]
+    const [messages, setMessages] = createStore<Message[]>([
+      assistant("a1", { input: 10, output: 10, reasoning: 10, read: 10, write: 10 }, 0.25),
+    ])
     const providers = [{ id: "openai", models: {} }]
 
     const one = getSessionContext(messages, providers)
-    messages.push(assistant("a2", { input: 100, output: 20, reasoning: 0, read: 0, write: 0 }, 0.75))
+    // The store setter appends at the next index, which mutates the same array in place.
+    setMessages(messages.length, assistant("a2", { input: 100, output: 20, reasoning: 0, read: 0, write: 0 }, 0.75))
     const two = getSessionContext(messages, providers)
 
     expect(one?.message.id).toBe("a1")
