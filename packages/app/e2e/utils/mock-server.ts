@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test"
+import { Predicate } from "effect"
 
 const emptyList = new Set(["/skill", "/command", "/lsp", "/formatter", "/vcs/status", "/vcs/diff"])
 const emptyObject = new Set(["/global/config", "/config", "/provider/auth", "/mcp", "/experimental/resource"])
@@ -120,7 +121,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
       return json(route, {
         location: {
           directory: config.directory,
-          project: { id: (config.project as { id?: string }).id, directory: config.directory },
+          project: { id: projectID(config.project), directory: config.directory },
         },
         data: [],
       })
@@ -155,7 +156,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
     }
     if (path === "/api/project") return json(route, [config.project])
     if (path === "/api/project/current")
-      return json(route, { id: (config.project as { id?: string }).id, directory: config.directory })
+      return json(route, { id: projectID(config.project), directory: config.directory })
     if (path.startsWith("/api/project/") && route.request().method() === "PATCH") return json(route, config.project)
     if (path === "/api/path")
       return json(route, {
@@ -207,11 +208,12 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
       })
     }
     if (path === "/api/session/active") {
-      const statuses = (config.sessionStatus ?? {}) as Record<string, { type?: string }>
+      // A function-valued sessionStatus feeds only /session/status; this route reads a plain status record.
+      const statuses = typeof config.sessionStatus === "function" ? {} : (config.sessionStatus ?? {})
       return json(route, {
         data: Object.fromEntries(
           Object.entries(statuses).flatMap(([id, status]) =>
-            status.type === "idle" ? [] : [[id, { type: "running" }]],
+            Predicate.isObject(status) && status.type === "idle" ? [] : [[id, { type: "running" }]],
           ),
         ),
       })
@@ -316,14 +318,19 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
 function location(config: MockServerConfig) {
   return {
     directory: config.directory,
-    project: { id: (config.project as { id?: string }).id, directory: config.directory },
+    project: { id: projectID(config.project), directory: config.directory },
   }
 }
 
-function currentPermission(value: unknown) {
-  const permission = value as Record<string, unknown>
-  if (permission.action) return permission
-  const tool = permission.tool as { messageID?: string; callID?: string } | undefined
+function projectID(project: unknown) {
+  return Predicate.isObject(project) && typeof project.id === "string" ? project.id : undefined
+}
+
+function currentPermission(permission: unknown) {
+  if (!Predicate.isObject(permission) || permission.action) return permission
+  const tool = Predicate.isObject(permission.tool) ? permission.tool : undefined
+  const messageID = tool?.messageID
+  const callID = tool?.callID
   return {
     id: permission.id,
     sessionID: permission.sessionID,
@@ -332,7 +339,9 @@ function currentPermission(value: unknown) {
     save: permission.always,
     metadata: permission.metadata,
     source:
-      tool?.messageID && tool.callID ? { type: "tool", messageID: tool.messageID, callID: tool.callID } : undefined,
+      typeof messageID === "string" && messageID && typeof callID === "string" && callID
+        ? { type: "tool", messageID, callID }
+        : undefined,
   }
 }
 
@@ -364,10 +373,9 @@ export function currentSession(session: { id: string } & Record<string, unknown>
 }
 
 function currentMessage(value: unknown) {
-  const item = value as {
-    info: Record<string, unknown> & { id: string; role: "user" | "assistant"; time: { created: number } }
-    parts: Array<Record<string, unknown> & { type: string }>
-  }
+  if (!Predicate.isObject(value) || !Predicate.isObject(value.info) || !Array.isArray(value.parts)) return value
+  const item = { info: value.info, parts: value.parts.filter(Predicate.isObject) }
+  const created = Predicate.isObject(item.info.time) ? item.info.time.created : undefined
   if (item.info.role === "user") {
     return {
       id: item.info.id,
@@ -389,14 +397,14 @@ function currentMessage(value: unknown) {
     error: item.info.error,
     content: item.parts.flatMap<unknown>((part) => {
       if (part.type === "text" || part.type === "reasoning") return [{ type: part.type, text: part.text ?? "" }]
-      if (part.type !== "tool") return []
-      const state = part.state as Record<string, unknown>
+      if (part.type !== "tool" || !Predicate.isObject(part.state)) return []
+      const state = part.state
       return [
         {
           type: "tool",
           id: part.id,
           name: part.tool,
-          time: state.time ?? { created: item.info.time.created },
+          time: state.time ?? { created },
           state:
             state.status === "pending"
               ? { status: "streaming", input: state.raw ?? JSON.stringify(state.input ?? {}) }
