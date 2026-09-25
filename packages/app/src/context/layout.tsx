@@ -1,4 +1,4 @@
-import { DateTime, Predicate } from "effect"
+import { DateTime, Predicate, Random } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -36,6 +36,9 @@ const DEFAULT_REVIEW_PANEL_OPENED = false
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
 const isAvatarColorKey = (key: string): key is AvatarColorKey => AVATAR_COLOR_KEYS.some((item) => item === key)
+
+// Avatar colors are picked in sync Solid effects outside any fiber, so they read the default Random service directly.
+const random = Random.Random.defaultValue()
 
 export function getAvatarColors(key?: string) {
   if (key && isAvatarColorKey(key)) {
@@ -440,8 +443,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     function pickAvailableColor(used: Set<string>): AvatarColorKey {
       const available = AVATAR_COLOR_KEYS.filter((c) => !used.has(c))
-      if (available.length === 0) return AVATAR_COLOR_KEYS[Math.floor(Math.random() * AVATAR_COLOR_KEYS.length)]
-      return available[Math.floor(Math.random() * available.length)]
+      if (available.length === 0)
+        return AVATAR_COLOR_KEYS[Math.floor(random.nextDoubleUnsafe() * AVATAR_COLOR_KEYS.length)]
+      return available[Math.floor(random.nextDoubleUnsafe() * available.length)]
     }
 
     function enrich(project: { worktree: string; expanded: boolean }) {
