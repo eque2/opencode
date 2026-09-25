@@ -21,7 +21,7 @@ const BindingObject = Schema.StructWithRest(
     preventDefault: Schema.optional(Schema.Boolean),
     fallthrough: Schema.optional(Schema.Boolean),
   }),
-  [Schema.Record(Schema.String, Schema.Unknown)],
+  [Schema.Record(Schema.String, Schema.Json)],
 )
 
 const BindingItem = Schema.Union([Schema.String, KeyStroke, BindingObject])

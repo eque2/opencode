@@ -1,5 +1,6 @@
 export * as TuiConfig from "."
 
+import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Schema } from "effect"
 import { createContext, type JSX, useContext } from "solid-js"
@@ -16,8 +17,10 @@ export const AttentionSoundName = Schema.Literals([
 ])
 export type AttentionSoundName = Schema.Schema.Type<typeof AttentionSoundName>
 
-export const PluginOptions = Schema.Record(Schema.String, Schema.Unknown)
-export const PluginSpec = Schema.Union([Schema.String, Schema.mutable(Schema.Tuple([Schema.String, PluginOptions]))])
+// Plugin options pass unchecked to the plugin as @opencode-ai/plugin PluginOptions. The core V1 config
+// states that boundary once (ConfigPluginV1.Options), and the TUI plugin specs reuse the same schemas.
+export const PluginOptions = ConfigPluginV1.Options
+export const PluginSpec = ConfigPluginV1.Spec
 
 export const LeaderTimeoutDefault = 2000
 export const LeaderTimeout = Schema.Int.check(Schema.isGreaterThan(0)).annotate({
