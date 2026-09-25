@@ -1,5 +1,5 @@
 import { dlopen, ptr } from "bun:ffi"
-import { Option, Result } from "effect"
+import { Effect, Fiber, Option, Result, Schedule } from "effect"
 import type { ReadStream } from "node:tty"
 
 const STD_INPUT_HANDLE = -10
@@ -100,15 +100,15 @@ export function win32InstallCtrlCGuard(): (() => void) | undefined {
   // Ensure it's cleared immediately too (covers any earlier mode changes).
   later()
 
-  const interval = setInterval(enforce, 100)
-  interval.unref()
+  // Poll as a backstop: the first check runs after one period, as setInterval did.
+  const poll = Effect.runFork(Effect.schedule(Effect.sync(enforce), Schedule.spaced("100 millis")))
 
   let done = false
   unhook = () => {
     if (done) return
     done = true
 
-    clearInterval(interval)
+    Effect.runFork(Fiber.interrupt(poll))
     restoreRawMode()
 
     k32.SetConsoleMode(handle, initial)
