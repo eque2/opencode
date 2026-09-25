@@ -1,5 +1,6 @@
 import { checksum } from "@opencode-ai/core/util/encode"
 import type { FilePartSource } from "@opencode-ai/sdk/v2/client"
+import { Effect } from "effect"
 import { batch, createMemo, type Accessor } from "solid-js"
 import { createStore, type SetStoreFunction } from "solid-js/store"
 import type { FileSelection } from "@/context/file"
@@ -265,7 +266,7 @@ export function createPromptReady(session: Accessor<PromptSession>) {
 
 export function createPromptState(initial?: InitialPrompt) {
   const [store, setStore] = createStore<PromptStore>(promptStore(initial))
-  const ready = Object.assign(() => true, { promise: Promise.resolve(true) })
+  const ready = Object.assign(() => true, { promise: Effect.runPromise(Effect.succeed(true)) })
   return {
     ready,
     ...createPromptStateValue(store, setStore),
