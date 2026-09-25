@@ -22,7 +22,7 @@ function useLanguageMock() {
     "error.chain.checkConfig": "Revise provider/model no config",
   }
   return {
-    t(key: string, vars?: Record<string, string | number>) {
+    t: (key: string, vars?: Record<string, string | number>) => {
       const text = dict[key]
       if (!text) return key
       return fill(text, vars)
