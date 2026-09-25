@@ -77,7 +77,20 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
   }
 
   const inline: Inline[] = []
-  const images: ImageAttachmentPart[] = []
+  // A file part with no inline source text and a data URL is a pasted image, which goes after the text.
+  const images = parts.flatMap((part): ImageAttachmentPart[] =>
+    part.type === "file" && !part.source?.text && part.url.startsWith("data:")
+      ? [
+          {
+            type: "image",
+            id: part.id,
+            filename: part.filename ?? attachmentName,
+            mime: part.mime,
+            blob: createLegacyBlobReference(part.url),
+          },
+        ]
+      : [],
+  )
 
   for (const part of parts) {
     if (part.type === "file") {
@@ -101,16 +114,6 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
           selection: selectionFromFileUrl(filePart.url),
         })
         continue
-      }
-
-      if (filePart.url.startsWith("data:")) {
-        images.push({
-          type: "image",
-          id: filePart.id,
-          filename: filePart.filename ?? attachmentName,
-          mime: filePart.mime,
-          blob: createLegacyBlobReference(filePart.url),
-        })
       }
     }
 
