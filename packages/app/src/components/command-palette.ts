@@ -93,7 +93,8 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
   const appTabs = useTabs()
   const { tabs: sessionTabs } = useSessionLayout()
   const openFile = createCommandPaletteFileOpener(props.onOpenFile)
-  const state = { cleanup: undefined as (() => void) | void, committed: false }
+  // The cleanup of the highlighted command preview, and whether a selection committed the preview.
+  const state: { cleanup: Option.Option<() => void>; committed: boolean } = { cleanup: Option.none(), committed: false }
   const filesOnly = () => props.filesOnly?.() ?? false
 
   const allowedCommands = createMemo(() => {
@@ -155,16 +156,15 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
   })
 
   const highlight = (item: CommandPaletteEntry | undefined) => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    if (item?.type !== "command") return
-    state.cleanup = item.option?.onHighlight?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+    state.cleanup = Option.none()
+    state.cleanup = commandPreviewCleanup(item)
   }
 
   const select = (item: CommandPaletteEntry | undefined) => {
     if (!item) return
     state.committed = true
-    state.cleanup = undefined
+    state.cleanup = Option.none()
     dialog.close()
     if (item.type === "command") {
       item.option?.onSelect?.("palette")
@@ -190,7 +190,7 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
 
   onCleanup(() => {
     if (state.committed) return
-    state.cleanup?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
   })
 
   return {
@@ -205,6 +205,13 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
     select,
     close: () => dialog.close(),
   }
+}
+
+/** Runs the preview of a highlighted command and gives its cleanup, or none for any other entry. */
+export function commandPreviewCleanup(item: CommandPaletteEntry | undefined): Option.Option<() => void> {
+  if (item?.type !== "command") return Option.none()
+  const cleanup = item.option?.onHighlight?.()
+  return typeof cleanup === "function" ? Option.some(cleanup) : Option.none()
 }
 
 export function createCommandPaletteCommandEntry(option: CommandOption, category: string): CommandPaletteEntry {

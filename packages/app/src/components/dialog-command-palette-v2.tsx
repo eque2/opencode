@@ -16,6 +16,7 @@ import { useTabs } from "@/context/tabs"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import { getRelativeTime } from "@/utils/time"
 import {
+  commandPreviewCleanup,
   createCommandPaletteCommandEntry,
   createCommandPaletteFileEntry,
   createCommandPaletteModel,
@@ -75,7 +76,8 @@ export function DialogHomeCommandPaletteV2(props: {
   const global = useGlobal()
   const language = useLanguage()
   const serverCtx = global.ensureServerCtx(props.server)
-  const state = { cleanup: undefined as (() => void) | void, committed: false }
+  // The cleanup of the highlighted command preview, and whether a selection committed the preview.
+  const state: { cleanup: Option.Option<() => void>; committed: boolean } = { cleanup: Option.none(), committed: false }
   const commandEntries = createMemo(() => {
     const category = language.t("palette.group.commands")
     return commandPaletteOptions(command.options).map((option) => createCommandPaletteCommandEntry(option, category))
@@ -90,15 +92,14 @@ export function DialogHomeCommandPaletteV2(props: {
   })
 
   const highlight = (item: CommandPaletteEntry | undefined) => {
-    state.cleanup?.()
-    state.cleanup = undefined
-    if (item?.type !== "command") return
-    state.cleanup = item.option?.onHighlight?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
+    state.cleanup = Option.none()
+    state.cleanup = commandPreviewCleanup(item)
   }
   const select = (item: CommandPaletteEntry | undefined) => {
     if (!item) return
     state.committed = true
-    state.cleanup = undefined
+    state.cleanup = Option.none()
     dialog.close()
     if (item.type === "command") {
       item.option?.onSelect?.("palette")
@@ -114,7 +115,7 @@ export function DialogHomeCommandPaletteV2(props: {
 
   onCleanup(() => {
     if (state.committed) return
-    state.cleanup?.()
+    if (Option.isSome(state.cleanup)) state.cleanup.value()
   })
 
   return (
@@ -261,10 +262,10 @@ function PaletteRow(props: {
   onActive: () => void
   onSelect: () => void
 }) {
-  const session = () =>
-    props.item.server && props.item.directory && props.item.sessionID
-      ? { server: props.item.server, directory: props.item.directory, sessionID: props.item.sessionID }
-      : undefined
+  const session = () => {
+    if (!props.item.server || !props.item.directory || !props.item.sessionID) return undefined
+    return { server: props.item.server, directory: props.item.directory, sessionID: props.item.sessionID }
+  }
 
   return (
     <button
@@ -272,7 +273,7 @@ function PaletteRow(props: {
       class="command-palette-v2-row group"
       role="option"
       aria-selected={props.active}
-      data-active={props.active ? "" : undefined}
+      bool:data-active={props.active}
       onMouseMove={(event) => {
         // Ignore hover from a static cursor when keyboard scrolling moves rows underneath it.
         if (event.movementX === 0 && event.movementY === 0) return
