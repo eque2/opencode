@@ -15,7 +15,7 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
-import { Data, Effect, Option, Schema } from "effect"
+import { Data, Effect, Option, Predicate, Schema } from "effect"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -32,6 +32,14 @@ const errorJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
 /** The clipboard rejected the provider code. */
 class CopyError extends Data.TaggedError("DialogProvider.CopyError")<{ readonly cause: unknown }> {}
+
+/**
+ * Runs a dialog flow in the background. DialogSelect, DialogPrompt and onMount drop the result of a
+ * handler, so an SDK rejection used to go unhandled. Such a defect now goes to Effect.logError.
+ */
+function runFlow(flow: Effect.Effect<void>) {
+  Effect.runFork(flow.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
+}
 const CUSTOM_PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 
 type ProviderOptionBase = {
@@ -94,27 +102,91 @@ export function createDialogProviderOptions() {
   const { theme } = useTheme()
   const onboarded = useConnected()
 
-  async function promptCustomProviderID(): Promise<string | undefined> {
-    const value = await DialogPrompt.show(dialog, "Other", {
-      placeholder: "Provider id",
-      description: () => (
-        <text fg={theme.textMuted}>
-          This only stores a credential. Configure the provider in opencode.json to use it.
-        </text>
-      ),
-    })
-    if (value === null) return
+  // Asks until the id is valid. None means the user closed the prompt.
+  const promptCustomProviderID = (): Effect.Effect<Option.Option<string>> =>
+    Effect.gen(function* () {
+      const value = yield* Effect.promise(() =>
+        DialogPrompt.show(dialog, "Other", {
+          placeholder: "Provider id",
+          description: () => (
+            <text fg={theme.textMuted}>
+              This only stores a credential. Configure the provider in opencode.json to use it.
+            </text>
+          ),
+        }),
+      )
+      if (Predicate.isNull(value)) return Option.none()
 
-    const providerID = normalizeCustomProviderID(value)
-    if (Option.isSome(providerID)) return providerID.value
+      const providerID = normalizeCustomProviderID(value)
+      if (Option.isSome(providerID)) return providerID
 
-    toast.show({
-      variant: "error",
-      message:
-        "Provider ids must start with a lowercase letter or number and only use lowercase letters, numbers, hyphens, and underscores",
+      toast.show({
+        variant: "error",
+        message:
+          "Provider ids must start with a lowercase letter or number and only use lowercase letters, numbers, hyphens, and underscores",
+      })
+      return yield* promptCustomProviderID()
     })
-    return promptCustomProviderID()
-  }
+
+  const connectProvider = (providerID: string) =>
+    Effect.gen(function* () {
+      const methods = sync.data.provider_auth[providerID] ?? [
+        {
+          type: "api",
+          label: "API key",
+        },
+      ]
+      const index = methods.length > 1 ? yield* chooseAuthMethod(dialog, methods) : Option.some(0)
+      if (Option.isNone(index)) return
+      const method = methods[index.value]
+      if (method.type === "oauth") {
+        let inputs = Option.none<Record<string, string>>()
+        if (method.prompts?.length) {
+          const value = yield* PromptsMethod({
+            dialog,
+            prompts: method.prompts,
+          })
+          if (Option.isNone(value)) return
+          inputs = value
+        }
+
+        const result = yield* Effect.promise(() =>
+          sdk.client.provider.oauth.authorize({
+            providerID,
+            method: index.value,
+            // The SDK takes an optional record. With no prompts the value is undefined, which the JSON body leaves out.
+            inputs: Option.getOrUndefined(inputs),
+          }),
+        )
+        if (result.error) {
+          toast.show({
+            variant: "error",
+            message: errorJson(result.error),
+          })
+          dialog.clear()
+          return
+        }
+        if (result.data?.method === "code") {
+          dialog.replace(() => (
+            <CodeMethod providerID={providerID} title={method.label} index={index.value} authorization={result.data} />
+          ))
+        }
+        if (result.data?.method === "auto") {
+          dialog.replace(() => (
+            <AutoMethod providerID={providerID} title={method.label} index={index.value} authorization={result.data} />
+          ))
+        }
+      }
+      if (method.type === "api") {
+        let metadata = Option.none<Record<string, string>>()
+        if (method.prompts?.length) {
+          const value = yield* PromptsMethod({ dialog, prompts: method.prompts })
+          if (Option.isNone(value)) return
+          metadata = value
+        }
+        dialog.replace(() => <ApiMethod providerID={providerID} title={method.label} metadata={metadata} />)
+      }
+    })
 
   const options = createMemo(() => {
     return pipe(
@@ -126,10 +198,16 @@ export function createDialogProviderOptions() {
             value: provider.value,
             description: provider.description,
             category: provider.category,
-            async onSelect() {
-              const providerID = await promptCustomProviderID()
-              if (!providerID) return
-              return dialog.replace(() => <ApiMethod providerID={providerID} title="API key" custom />)
+            onSelect() {
+              runFlow(
+                Effect.gen(function* () {
+                  const providerID = yield* promptCustomProviderID()
+                  if (Option.isNone(providerID)) return
+                  dialog.replace(() => (
+                    <ApiMethod providerID={providerID.value} title="API key" metadata={Option.none()} custom />
+                  ))
+                }),
+              )
             },
           }
         }
@@ -145,81 +223,9 @@ export function createDialogProviderOptions() {
           ...(consoleManaged ? { footer: sync.data.console_state.activeOrgName } : {}),
           category: provider.category,
           ...(connected && onboarded() ? { gutter: () => <text fg={theme.success}>✓</text> } : {}),
-          async onSelect() {
+          onSelect() {
             if (consoleManaged) return
-
-            const methods = sync.data.provider_auth[providerID] ?? [
-              {
-                type: "api",
-                label: "API key",
-              },
-            ]
-            let index: number | null = 0
-            if (methods.length > 1) {
-              index = await new Promise<number | null>((resolve) => {
-                dialog.replace(
-                  () => (
-                    <DialogSelect
-                      title="Select auth method"
-                      options={methods.map((x, index) => ({
-                        title: x.label,
-                        value: index,
-                      }))}
-                      onSelect={(option) => resolve(option.value)}
-                    />
-                  ),
-                  () => resolve(null),
-                )
-              })
-            }
-            if (index == null) return
-            const method = methods[index]
-            if (method.type === "oauth") {
-              let inputs: Record<string, string> | undefined
-              if (method.prompts?.length) {
-                const value = await PromptsMethod({
-                  dialog,
-                  prompts: method.prompts,
-                })
-                if (!value) return
-                inputs = value
-              }
-
-              const result = await sdk.client.provider.oauth.authorize({
-                providerID,
-                method: index,
-                inputs,
-              })
-              if (result.error) {
-                toast.show({
-                  variant: "error",
-                  message: errorJson(result.error),
-                })
-                dialog.clear()
-                return
-              }
-              if (result.data?.method === "code") {
-                dialog.replace(() => (
-                  <CodeMethod providerID={providerID} title={method.label} index={index} authorization={result.data} />
-                ))
-              }
-              if (result.data?.method === "auto") {
-                dialog.replace(() => (
-                  <AutoMethod providerID={providerID} title={method.label} index={index} authorization={result.data} />
-                ))
-              }
-            }
-            if (method.type === "api") {
-              let metadata: Record<string, string> | undefined
-              if (method.prompts?.length) {
-                const value = await PromptsMethod({ dialog, prompts: method.prompts })
-                if (!value) return
-                metadata = value
-              }
-              return dialog.replace(() => (
-                <ApiMethod providerID={providerID} title={method.label} metadata={metadata} />
-              ))
-            }
+            runFlow(connectProvider(providerID))
           },
         }
       }),
@@ -269,25 +275,31 @@ function AutoMethod(props: AutoMethodProps) {
     ],
   }))
 
-  onMount(async () => {
-    const result = await sdk.client.provider.oauth.callback({
-      providerID: props.providerID,
-      method: props.index,
-    })
-    if (result.error) {
-      toast.show({
-        variant: "error",
-        message:
-          "name" in result.error && result.error.name === "ProviderAuthOauthCallbackFailed"
-            ? "OAuth authorization failed. Try /connect again."
-            : errorJson(result.error),
-      })
-      dialog.clear()
-      return
-    }
-    await sdk.client.instance.dispose()
-    await sync.bootstrap()
-    dialog.replace(() => <DialogModel providerID={props.providerID} />)
+  onMount(() => {
+    runFlow(
+      Effect.gen(function* () {
+        const result = yield* Effect.promise(() =>
+          sdk.client.provider.oauth.callback({
+            providerID: props.providerID,
+            method: props.index,
+          }),
+        )
+        if (result.error) {
+          toast.show({
+            variant: "error",
+            message:
+              "name" in result.error && result.error.name === "ProviderAuthOauthCallbackFailed"
+                ? "OAuth authorization failed. Try /connect again."
+                : errorJson(result.error),
+          })
+          dialog.clear()
+          return
+        }
+        yield* Effect.promise(() => sdk.client.instance.dispose())
+        yield* Effect.promise(() => sync.bootstrap())
+        dialog.replace(() => <DialogModel providerID={props.providerID} />)
+      }),
+    )
   })
 
   return (
@@ -329,19 +341,25 @@ function CodeMethod(props: CodeMethodProps) {
     <DialogPrompt
       title={props.title}
       placeholder="Authorization code"
-      onConfirm={async (value) => {
-        const { error } = await sdk.client.provider.oauth.callback({
-          providerID: props.providerID,
-          method: props.index,
-          code: value,
-        })
-        if (!error) {
-          await sdk.client.instance.dispose()
-          await sync.bootstrap()
-          dialog.replace(() => <DialogModel providerID={props.providerID} />)
-          return
-        }
-        setError(true)
+      onConfirm={(value) => {
+        runFlow(
+          Effect.gen(function* () {
+            const { error } = yield* Effect.promise(() =>
+              sdk.client.provider.oauth.callback({
+                providerID: props.providerID,
+                method: props.index,
+                code: value,
+              }),
+            )
+            if (!error) {
+              yield* Effect.promise(() => sdk.client.instance.dispose())
+              yield* Effect.promise(() => sync.bootstrap())
+              dialog.replace(() => <DialogModel providerID={props.providerID} />)
+              return
+            }
+            setError(true)
+          }),
+        )
       }}
       description={() => (
         <box gap={1}>
@@ -359,7 +377,7 @@ function CodeMethod(props: CodeMethodProps) {
 interface ApiMethodProps {
   providerID: string
   title: string
-  metadata?: Record<string, string>
+  metadata: Option.Option<Record<string, string>>
   custom?: boolean
 }
 function ApiMethod(props: ApiMethodProps) {
@@ -399,78 +417,111 @@ function ApiMethod(props: ApiMethodProps) {
           ),
         })[props.providerID]
       }
-      onConfirm={async (value) => {
+      onConfirm={(value) => {
         if (!value) return
-        await sdk.client.auth.set({
-          providerID: props.providerID,
-          auth: {
-            type: "api",
-            key: value,
-            ...(props.metadata ? { metadata: props.metadata } : {}),
-          },
-        })
-        await sdk.client.instance.dispose()
-        await sync.bootstrap()
-        if (props.custom && !sync.data.provider_next.all.some((provider) => provider.id === props.providerID)) {
-          toast.show({
-            variant: "info",
-            message: `Saved credential for ${props.providerID}. Configure it in opencode.json to use it.`,
-          })
-          dialog.clear()
-          return
-        }
-        dialog.replace(() => <DialogModel providerID={props.providerID} />)
+        runFlow(
+          Effect.gen(function* () {
+            const metadata = props.metadata
+            yield* Effect.promise(() =>
+              sdk.client.auth.set({
+                providerID: props.providerID,
+                auth: {
+                  type: "api",
+                  key: value,
+                  ...(Option.isSome(metadata) ? { metadata: metadata.value } : {}),
+                },
+              }),
+            )
+            yield* Effect.promise(() => sdk.client.instance.dispose())
+            yield* Effect.promise(() => sync.bootstrap())
+            if (props.custom && !sync.data.provider_next.all.some((provider) => provider.id === props.providerID)) {
+              toast.show({
+                variant: "info",
+                message: `Saved credential for ${props.providerID}. Configure it in opencode.json to use it.`,
+              })
+              dialog.clear()
+              return
+            }
+            dialog.replace(() => <DialogModel providerID={props.providerID} />)
+          }),
+        )
       }}
     />
   )
+}
+
+/** Asks the user to pick an auth method. None means the dialog closed first. */
+function chooseAuthMethod(dialog: ReturnType<typeof useDialog>, methods: ProviderAuthMethod[]) {
+  return Effect.callback<Option.Option<number>>((resume) => {
+    dialog.replace(
+      () => (
+        <DialogSelect
+          title="Select auth method"
+          options={methods.map((x, index) => ({
+            title: x.label,
+            value: index,
+          }))}
+          onSelect={(option) => resume(Effect.succeed(Option.some(option.value)))}
+        />
+      ),
+      () => resume(Effect.succeed(Option.none())),
+    )
+  })
 }
 
 interface PromptsMethodProps {
   dialog: ReturnType<typeof useDialog>
   prompts: NonNullable<ProviderAuthMethod["prompts"]>[number][]
 }
-async function PromptsMethod(props: PromptsMethodProps) {
-  const inputs: Record<string, string> = {}
-  for (const prompt of props.prompts) {
-    if (prompt.when) {
-      const value = inputs[prompt.when.key]
-      if (value === undefined) continue
-      const matches = prompt.when.op === "eq" ? value === prompt.when.value : value !== prompt.when.value
-      if (!matches) continue
-    }
+/** Asks each applicable prompt in turn. None means the user closed a prompt. */
+function PromptsMethod(props: PromptsMethodProps): Effect.Effect<Option.Option<Record<string, string>>> {
+  return Effect.gen(function* () {
+    const inputs: Record<string, string> = {}
+    for (const prompt of props.prompts) {
+      if (prompt.when) {
+        const value = inputs[prompt.when.key]
+        if (value === undefined) continue
+        const matches = prompt.when.op === "eq" ? value === prompt.when.value : value !== prompt.when.value
+        if (!matches) continue
+      }
 
-    if (prompt.type === "select") {
-      const value = await new Promise<string | null>((resolve) => {
+      if (prompt.type === "select") {
+        const value = yield* Effect.callback<Option.Option<string>>((resume) => {
+          props.dialog.replace(
+            () => (
+              <DialogSelect
+                title={prompt.message}
+                options={prompt.options.map((x) => ({
+                  title: x.label,
+                  value: x.value,
+                  description: x.hint,
+                }))}
+                onSelect={(option) => resume(Effect.succeed(Option.some(option.value)))}
+              />
+            ),
+            () => resume(Effect.succeed(Option.none())),
+          )
+        })
+        if (Option.isNone(value)) return Option.none()
+        inputs[prompt.key] = value.value
+        continue
+      }
+
+      const value = yield* Effect.callback<Option.Option<string>>((resume) => {
         props.dialog.replace(
           () => (
-            <DialogSelect
+            <DialogPrompt
               title={prompt.message}
-              options={prompt.options.map((x) => ({
-                title: x.label,
-                value: x.value,
-                description: x.hint,
-              }))}
-              onSelect={(option) => resolve(option.value)}
+              placeholder={prompt.placeholder}
+              onConfirm={(value) => resume(Effect.succeed(Option.some(value)))}
             />
           ),
-          () => resolve(null),
+          () => resume(Effect.succeed(Option.none())),
         )
       })
-      if (value === null) return null
-      inputs[prompt.key] = value
-      continue
+      if (Option.isNone(value)) return Option.none()
+      inputs[prompt.key] = value.value
     }
-
-    const value = await new Promise<string | null>((resolve) => {
-      props.dialog.replace(
-        () => (
-          <DialogPrompt title={prompt.message} placeholder={prompt.placeholder} onConfirm={(value) => resolve(value)} />
-        ),
-        () => resolve(null),
-      )
-    })
-    if (value === null) return null
-    inputs[prompt.key] = value
-  }
-  return inputs
+    return Option.some(inputs)
+  })
 }
