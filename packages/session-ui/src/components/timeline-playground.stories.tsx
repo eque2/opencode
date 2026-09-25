@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Data, DateTime, Effect, Random, Record, Result, Schema } from "effect"
+import { Array as Arr, Data, DateTime, Effect, Option, Random, Record, Result, Schema } from "effect"
 import { createSignal, createMemo, createEffect, on, For, Show, batch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import type {
@@ -542,25 +542,30 @@ function normalize(raw: unknown): Result.Result<ImportedSession, ImportError> {
       return Result.fail(new ImportError({ message: "No session found in JSON" }))
     }
 
-    const part = new Map<string, Row[]>()
-    const messages = raw.flatMap((row) => {
-      if (!record(row) || !record(row.data)) return []
-      if (row.type === "part" && typeof row.data.messageID === "string") {
-        const list = part.get(row.data.messageID) ?? []
-        list.push(row.data)
-        part.set(row.data.messageID, list)
-        return []
-      }
-      if (row.type !== "message" || typeof row.data.id !== "string") return []
-      return [{ id: row.data.id, info: row.data }]
-    })
+    const rows: ReadonlyArray<unknown> = raw
+    /** The `data` objects of the rows with the given `type`, in file order. */
+    const data = (type: string) =>
+      rows.flatMap((row) => (record(row) && row.type === type && record(row.data) ? [row.data] : []))
+    const parts = Arr.groupBy(
+      data("part").flatMap((part) => (typeof part.messageID === "string" ? [{ messageID: part.messageID, part }] : [])),
+      (entry) => entry.messageID,
+    )
 
     return Result.succeed({
       info,
-      messages: messages.map((msg) => ({
-        info: msg.info,
-        parts: part.get(msg.id) ?? [],
-      })),
+      messages: data("message").flatMap((message) =>
+        typeof message.id === "string"
+          ? [
+              {
+                info: message,
+                parts: Record.get(parts, message.id).pipe(
+                  Option.map((group) => group.map((entry) => entry.part)),
+                  Option.getOrElse(() => []),
+                ),
+              },
+            ]
+          : [],
+      ),
     })
   }
 
@@ -1299,13 +1304,12 @@ function Playground() {
   }
 
   const updateStyle = () => {
-    const rules: string[] = []
-    for (const ctrl of CSS_CONTROLS) {
+    const rules = CSS_CONTROLS.flatMap((ctrl) => {
       const val = css[ctrl.key]
-      if (val === undefined) continue
+      if (val === undefined) return []
       const value = ctrl.unit ? `${val}${ctrl.unit}` : val
-      rules.push(`${ctrl.selector} { ${ctrl.property}: ${value} !important; }`)
-    }
+      return [`${ctrl.selector} { ${ctrl.property}: ${value} !important; }`]
+    })
     if (styleEl) styleEl.textContent = rules.join("\n")
   }
 
@@ -1607,30 +1611,21 @@ function Playground() {
 
   // ---- CSS export ----
   const exportCss = () => {
-    const lines: string[] = ["/* Timeline Playground CSS Overrides */", ""]
-    const groups = new Map<string, string[]>()
-
-    for (const ctrl of CSS_CONTROLS) {
+    const overrides = CSS_CONTROLS.flatMap((ctrl) => {
       const val = css[ctrl.key]
-      if (val === undefined) continue
+      if (val === undefined) return []
       const value = ctrl.unit ? `${val}${ctrl.unit}` : val
-      const group = ctrl.group
-      if (!groups.has(group)) groups.set(group, [])
-      groups.get(group)!.push(`/* ${ctrl.label}: ${value} */`)
-      groups.get(group)!.push(`${ctrl.selector} { ${ctrl.property}: ${value}; }`)
-    }
+      const rules = [`/* ${ctrl.label}: ${value} */`, `${ctrl.selector} { ${ctrl.property}: ${value}; }`]
+      return [{ group: ctrl.group, rules }]
+    })
+    // groupBy keeps the first-seen order of the group names, as the Map did
+    const groups = Object.entries(Arr.groupBy(overrides, (override) => override.group))
+    const body =
+      groups.length === 0
+        ? ["/* No overrides applied */"]
+        : groups.flatMap(([group, items]) => [`/* --- ${group} --- */`, ...items.flatMap((item) => item.rules), ""])
 
-    if (groups.size === 0) {
-      lines.push("/* No overrides applied */")
-    } else {
-      for (const [group, rules] of groups) {
-        lines.push(`/* --- ${group} --- */`)
-        lines.push(...rules)
-        lines.push("")
-      }
-    }
-
-    const text = lines.join("\n")
+    const text = ["/* Timeline Playground CSS Overrides */", "", ...body].join("\n")
     navigator.clipboard.writeText(text).catch(() => {})
     return text
   }
@@ -1713,14 +1708,7 @@ function Playground() {
 
   // ---- Group collapse state for CSS ----
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({})
-  const groups = createMemo(() => {
-    const result = new Map<string, CSSControl[]>()
-    for (const ctrl of CSS_CONTROLS) {
-      if (!result.has(ctrl.group)) result.set(ctrl.group, [])
-      result.get(ctrl.group)!.push(ctrl)
-    }
-    return result
-  })
+  const groups = createMemo(() => Object.entries(Arr.groupBy(CSS_CONTROLS, (ctrl) => ctrl.group)))
 
   // ---- Shared button styles ----
   const sectionLabel = {
@@ -1950,7 +1938,7 @@ function Playground() {
                 Reset all
               </button>
 
-              <For each={[...groups().entries()]}>
+              <For each={groups()}>
                 {([group, controls]) => (
                   <div style={{ "margin-bottom": "4px" }}>
                     <button
