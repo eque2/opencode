@@ -1,4 +1,4 @@
-import { Array as Arr } from "effect"
+import { Array as Arr, MutableHashMap, Option } from "effect"
 import type { Accessor } from "solid-js"
 
 export function ensureSessionKey(key: string, touch: (key: string) => void, seed: (key: string) => void) {
@@ -19,7 +19,7 @@ export function createSessionKeyReader(sessionKey: string | Accessor<string>, en
 export function pruneSessionKeys(input: {
   keep?: string
   max: number
-  used: Map<string, number>
+  used: MutableHashMap.MutableHashMap<string, number>
   view: string[]
   tabs: string[]
 }) {
@@ -30,7 +30,7 @@ export function pruneSessionKeys(input: {
 
   const score = (key: string) => {
     if (key === input.keep) return Number.MAX_SAFE_INTEGER
-    return input.used.get(key) ?? 0
+    return Option.getOrElse(MutableHashMap.get(input.used, key), () => 0)
   }
 
   return keys.sort((a, b) => score(b) - score(a)).slice(input.max)

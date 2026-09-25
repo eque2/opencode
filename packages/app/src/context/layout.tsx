@@ -1,4 +1,14 @@
-import { Array as Arr, DateTime, HashSet, MutableHashSet, Predicate, Random } from "effect"
+import {
+  Array as Arr,
+  DateTime,
+  HashMap,
+  HashSet,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Random,
+} from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -314,7 +324,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const usage = {
       active: undefined as string | undefined,
       pruned: false,
-      used: new Map<string, number>(),
+      used: MutableHashMap.empty<string, number>(),
     }
 
     const SESSION_STATE_KEYS = [
@@ -373,13 +383,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       )
 
       for (const key of drop) {
-        usage.used.delete(key)
+        MutableHashMap.remove(usage.used, key)
       }
     }
 
     function touch(sessionKey: string) {
       usage.active = sessionKey
-      usage.used.set(sessionKey, DateTime.toEpochMillis(DateTime.nowUnsafe()))
+      MutableHashMap.set(usage.used, sessionKey, DateTime.toEpochMillis(DateTime.nowUnsafe()))
 
       if (!ready()) return
       if (usage.pruned) return
@@ -432,7 +442,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     })
 
     const [colors, setColors] = createStore<Record<string, AvatarColorKey>>({})
-    const colorRequested = new Map<string, AvatarColorKey>()
+    const colorRequested = MutableHashMap.empty<string, AvatarColorKey>()
 
     function pickAvailableColor(used: MutableHashSet.MutableHashSet<string>): AvatarColorKey {
       const available = AVATAR_COLOR_KEYS.filter((c) => !MutableHashSet.has(used, c))
@@ -458,20 +468,17 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       return base
     }
 
-    const roots = createMemo(() => {
-      const map = new Map<string, string>()
-      for (const project of serverSync().data.project) {
-        const sandboxes = project.sandboxes ?? []
-        for (const sandbox of sandboxes) {
-          map.set(sandbox, project.worktree)
-        }
-      }
-      return map
-    })
+    const roots = createMemo(() =>
+      HashMap.fromIterable(
+        serverSync().data.project.flatMap((project) =>
+          (project.sandboxes ?? []).map((sandbox) => [sandbox, project.worktree] as const),
+        ),
+      ),
+    )
 
     const rootFor = (directory: string) => {
       const map = roots()
-      if (map.size === 0) return directory
+      if (HashMap.isEmpty(map)) return directory
 
       const visited = MutableHashSet.empty<string>()
       const chain = [directory]
@@ -480,12 +487,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const current = chain[chain.length - 1]
         if (!current) return directory
 
-        const next = map.get(current)
-        if (!next) return current
+        const next = HashMap.get(map, current)
+        if (Option.isNone(next) || !next.value) return current
 
-        if (MutableHashSet.has(visited, next)) return directory
-        MutableHashSet.add(visited, next)
-        chain.push(next)
+        if (MutableHashSet.has(visited, next.value)) return directory
+        MutableHashSet.add(visited, next.value)
+        chain.push(next.value)
       }
 
       return directory
@@ -540,7 +547,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       if (projects.length === 0) return
 
       for (const project of projects) {
-        if (project.icon?.color) colorRequested.delete(project.worktree)
+        if (project.icon?.color) MutableHashMap.remove(colorRequested, project.worktree)
       }
 
       const used = MutableHashSet.empty<string>()
@@ -560,9 +567,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         }
         if (!project.id) continue
 
-        const requested = colorRequested.get(worktree)
-        if (requested === color) continue
-        colorRequested.set(worktree, color)
+        if (Option.contains(MutableHashMap.get(colorRequested, worktree), color)) continue
+        MutableHashMap.set(colorRequested, worktree, color)
 
         if (project.id === "global") {
           serverSync().project.meta(worktree, { icon: { color } })
@@ -583,7 +589,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               )
             })
         })().catch(() => {
-          if (colorRequested.get(worktree) === color) colorRequested.delete(worktree)
+          if (Option.contains(MutableHashMap.get(colorRequested, worktree), color))
+            MutableHashMap.remove(colorRequested, worktree)
         })
       }
     })
