@@ -1,5 +1,6 @@
 import { Message, Model, Part, Session, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
-import { Array, Effect, HashMap, Match, Option, Order, Predicate, Schema, String } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Array, Config, Effect, HashMap, Match, Option, Order, Predicate, Schema, String } from "effect"
 import { Storage } from "./storage"
 
 export namespace Share {
@@ -163,7 +164,8 @@ export namespace Share {
 
   export const create = Effect.fn("Share.create")(function* (input: typeof CreateInput.Encoded) {
     const body = yield* Schema.decodeUnknownEffect(CreateInput)(input)
-    const isTest = process.env.NODE_ENV === "test" || body.sessionID.startsWith("test_")
+    const nodeEnv = yield* readEnvSnapshot(Config.option(Config.String("NODE_ENV")))
+    const isTest = Option.contains(nodeEnv, "test") || body.sessionID.startsWith("test_")
     const info: Info = {
       id: ID.make((isTest ? "test_" : "") + body.sessionID.slice(-8)),
       sessionID: body.sessionID,

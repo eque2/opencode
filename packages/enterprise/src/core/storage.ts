@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch"
-import { lazy } from "@opencode-ai/core/util/lazy"
-import { Effect, Option, Schema } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Config, Effect, Option, Redacted, Schema } from "effect"
 
 export namespace Storage {
   export class StorageError extends Schema.TaggedError<StorageError>()("Enterprise.StorageError", {
@@ -112,34 +112,52 @@ export namespace Storage {
     }
   }
 
-  function s3(): Adapter {
-    const bucket = process.env.OPENCODE_STORAGE_BUCKET!
-    const region = process.env.OPENCODE_STORAGE_REGION || "us-east-1"
+  const Credentials = Config.all({
+    accessKeyId: Config.String("OPENCODE_STORAGE_ACCESS_KEY_ID"),
+    secretAccessKey: Config.Redacted("OPENCODE_STORAGE_SECRET_ACCESS_KEY"),
+  })
+
+  const S3Config = Config.all({
+    credentials: Credentials,
+    bucket: Config.String("OPENCODE_STORAGE_BUCKET"),
+    // An empty region falls back to us-east-1, as a missing one does.
+    region: Config.String("OPENCODE_STORAGE_REGION").pipe(
+      Config.map((region) => region || "us-east-1"),
+      Config.withDefault("us-east-1"),
+    ),
+  })
+
+  const R2Config = Config.all({
+    credentials: Credentials,
+    bucket: Config.String("OPENCODE_STORAGE_BUCKET"),
+    accountId: Config.String("OPENCODE_STORAGE_ACCOUNT_ID"),
+  })
+
+  const s3 = Effect.gen(function* () {
+    const config = yield* readEnvSnapshot(S3Config)
     const client = new AwsClient({
-      region,
-      accessKeyId: process.env.OPENCODE_STORAGE_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.OPENCODE_STORAGE_SECRET_ACCESS_KEY!,
+      region: config.region,
+      accessKeyId: config.credentials.accessKeyId,
+      secretAccessKey: Redacted.value(config.credentials.secretAccessKey),
     })
-    return createAdapter(client, `https://s3.${region}.amazonaws.com`, bucket)
-  }
+    return createAdapter(client, `https://s3.${config.region}.amazonaws.com`, config.bucket)
+  })
 
-  function r2() {
-    const accountId = process.env.OPENCODE_STORAGE_ACCOUNT_ID!
+  const r2 = Effect.gen(function* () {
+    const config = yield* readEnvSnapshot(R2Config)
     const client = new AwsClient({
-      accessKeyId: process.env.OPENCODE_STORAGE_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.OPENCODE_STORAGE_SECRET_ACCESS_KEY!,
+      accessKeyId: config.credentials.accessKeyId,
+      secretAccessKey: Redacted.value(config.credentials.secretAccessKey),
     })
-    return createAdapter(client, `https://${accountId}.r2.cloudflarestorage.com`, process.env.OPENCODE_STORAGE_BUCKET!)
-  }
+    return createAdapter(client, `https://${config.accountId}.r2.cloudflarestorage.com`, config.bucket)
+  })
 
-  const s3Adapter = lazy(s3)
-  const r2Adapter = lazy(r2)
-
-  const adapter = Effect.suspend(() => {
-    const type = process.env.OPENCODE_STORAGE_ADAPTER
-    if (type === "r2") return Effect.succeed(r2Adapter())
-    if (type === "s3") return Effect.succeed(s3Adapter())
-    return Effect.fail(new NotConfiguredError())
+  // Each operation builds its adapter from a fresh snapshot of the environment (see readEnvSnapshot).
+  const adapter = Effect.gen(function* () {
+    const type = yield* readEnvSnapshot(Config.option(Config.String("OPENCODE_STORAGE_ADAPTER")))
+    if (Option.contains(type, "r2")) return yield* r2
+    if (Option.contains(type, "s3")) return yield* s3
+    return yield* new NotConfiguredError()
   })
 
   function resolve(key: ReadonlyArray<string>) {
