@@ -1,4 +1,4 @@
-import { Data } from "effect"
+import { Data, Predicate } from "effect"
 
 export type ConfigInvalidError = {
   name: "ConfigInvalidError"
@@ -65,21 +65,31 @@ export function isLocalSessionNotFoundError(error: unknown, sessionID: string) {
 
 export function isSessionNotFoundError(error: unknown, sessionID: string) {
   const unwrapped = unwrapNamedError(error)
-  if (typeof unwrapped !== "object" || unwrapped === null) return false
-  const value = unwrapped as Record<string, unknown>
-  return value._tag === "SessionNotFoundError" && value.sessionID === sessionID
+  if (!Predicate.isObjectOrArray(unwrapped)) return false
+  return (
+    Predicate.isTagged(unwrapped, "SessionNotFoundError") &&
+    Predicate.hasProperty(unwrapped, "sessionID") &&
+    unwrapped.sessionID === sessionID
+  )
+}
+
+/** Checks for a NamedError-shaped value: an object with this `name` and an object `data`. */
+function isNamedErrorLike(error: unknown, name: string) {
+  if (!Predicate.isObjectOrArray(error)) return false
+  return (
+    Predicate.hasProperty(error, "name") &&
+    error.name === name &&
+    Predicate.hasProperty(error, "data") &&
+    Predicate.isObjectOrArray(error.data)
+  )
 }
 
 function isConfigInvalidErrorLike(error: unknown): error is ConfigInvalidError {
-  if (typeof error !== "object" || error === null) return false
-  const o = error as Record<string, unknown>
-  return o.name === "ConfigInvalidError" && typeof o.data === "object" && o.data !== null
+  return isNamedErrorLike(error, "ConfigInvalidError")
 }
 
 function isProviderModelNotFoundErrorLike(error: unknown): error is ProviderModelNotFoundError {
-  if (typeof error !== "object" || error === null) return false
-  const o = error as Record<string, unknown>
-  return o.name === "ProviderModelNotFoundError" && typeof o.data === "object" && o.data !== null
+  return isNamedErrorLike(error, "ProviderModelNotFoundError")
 }
 
 export function parseReadableConfigInvalidError(errorInput: ConfigInvalidError, translator?: Translator) {
