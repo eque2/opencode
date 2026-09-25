@@ -543,7 +543,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       disabled: !params.id,
       onSelect: () => {
         const id = params.id
-        if (id) void sessionArchive.archive(id)
+        if (id) runDetached(sessionArchive.archive(id))
       },
     }),
   ]

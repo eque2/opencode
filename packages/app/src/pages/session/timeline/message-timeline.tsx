@@ -924,8 +924,8 @@ export function MessageTimeline(props: {
 
     sessionArchive.navigateAfterRemoval(
       sessionID,
-      session.parentID,
-      Option.getOrUndefined(Option.map(nextSession, (next) => next.id)),
+      Option.fromNullishOr(session.parentID),
+      Option.map(nextSession, (next) => next.id),
     )
 
     sync().set(
@@ -1650,7 +1650,7 @@ export function MessageTimeline(props: {
                                 <DropdownMenu.Item onSelect={() => exportSession(id)}>
                                   <DropdownMenu.ItemLabel>{language.t("common.export")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
-                                <DropdownMenu.Item onSelect={() => void sessionArchive.archive(id)}>
+                                <DropdownMenu.Item onSelect={() => runDetached(sessionArchive.archive(id))}>
                                   <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Separator />
@@ -1724,7 +1724,7 @@ export function MessageTimeline(props: {
                               <MenuV2.Item onSelect={() => exportSession(id)}>
                                 {language.t("common.export")}...
                               </MenuV2.Item>
-                              <MenuV2.Item onSelect={() => void sessionArchive.archive(id)}>
+                              <MenuV2.Item onSelect={() => runDetached(sessionArchive.archive(id))}>
                                 {language.t("common.archive")}
                               </MenuV2.Item>
                               <MenuV2.Separator />
