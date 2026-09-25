@@ -15,7 +15,7 @@ export type PerformancePageDiagnostics = {
 const pages = new WeakMap<Page, PerformancePageDiagnostics>()
 
 export const benchmark = base.extend<BenchmarkFixtures>({
-  // oxlint-disable-next-line no-empty-pattern -- Playwright test.extend parses the fixture source and rejects any first parameter that is not an object pattern; this fixture has no dependencies
+  // oxlint-disable-next-line no-empty-pattern -- (a) Playwright test.extend parses the fixture source and rejects a first parameter that is not an object pattern or that uses a rest property; this fixture has no dependencies
   reportState: async ({}, use) => use({}),
   report: async ({ reportState }, use) => {
     await use((metrics, context = {}) => {
