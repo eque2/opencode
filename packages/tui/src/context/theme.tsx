@@ -20,7 +20,7 @@ import {
   type Theme,
   type ThemeJson,
 } from "../theme"
-import { Effect, MutableHashSet, Option, Result } from "effect"
+import { Duration, Effect, Fiber, MutableHashSet, Option, Result } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -242,14 +242,32 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     }
     renderer.prependInputHandler(handleThemeNotification)
 
-    let themeRefreshTimeouts: ReturnType<typeof setTimeout>[] = []
+    // A refresh request re-reads the terminal palette after each delay, and the custom theme files after the last
+    // one. The delays run side by side in one fiber, and a new request interrupts it and starts again.
+    let refreshFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
+    const interruptRefresh = () => {
+      if (Option.isSome(refreshFiber)) Effect.runFork(Fiber.interrupt(refreshFiber.value))
+      refreshFiber = Option.none()
+    }
+    const lastRefreshDelay = THEME_REFRESH_DELAYS[THEME_REFRESH_DELAYS.length - 1]
     const refresh = () => {
-      for (const timeout of themeRefreshTimeouts) clearTimeout(timeout)
-      themeRefreshTimeouts = THEME_REFRESH_DELAYS.map((delay) =>
-        setTimeout(() => {
-          refreshSystemTheme()
-          if (delay === THEME_REFRESH_DELAYS[THEME_REFRESH_DELAYS.length - 1]) void syncCustomThemes()
-        }, delay),
+      interruptRefresh()
+      refreshFiber = Option.some(
+        Effect.runFork(
+          Effect.forEach(
+            THEME_REFRESH_DELAYS,
+            (delay) =>
+              Effect.sleep(Duration.millis(delay)).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    refreshSystemTheme()
+                    if (delay === lastRefreshDelay) void syncCustomThemes()
+                  }),
+                ),
+              ),
+            { concurrency: "unbounded", discard: true },
+          ).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+        ),
       )
     }
     let unsubscribeRefresh: (() => void) | undefined
@@ -259,8 +277,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       renderer.off(CliRenderEvents.THEME_MODE, handle)
       renderer.removeInputHandler(handleThemeNotification)
       unsubscribeRefresh?.()
-      for (const timeout of themeRefreshTimeouts) clearTimeout(timeout)
-      themeRefreshTimeouts.length = 0
+      interruptRefresh()
     })
 
     // Resolves a known theme. A theme whose colors do not resolve is logged and skipped, so the next choice applies.
