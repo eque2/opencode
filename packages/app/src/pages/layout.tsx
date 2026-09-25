@@ -147,7 +147,7 @@ export default function LegacyLayout(props: ParentProps) {
 
   const [state, setState] = createStore({
     autoselect: !initialDirectory,
-    busyWorkspaces: {} as Record<string, boolean>,
+    busyWorkspaces: {} as Partial<Record<string, boolean>>,
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
     nav: undefined as HTMLElement | undefined,
