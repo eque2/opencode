@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { DateTime, Record } from "effect"
+import { DateTime, Effect, Random, Record } from "effect"
 import { createSignal, createMemo, createEffect, on, For, Show, batch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import type {
@@ -1374,8 +1374,12 @@ function Playground() {
   }
 
   const addReasoning = () => {
-    const idx = Math.floor(Math.random() * REASONING_SAMPLES.length)
-    appendParts([reasoningPart(REASONING_SAMPLES[idx])])
+    Effect.runFork(
+      Effect.gen(function* () {
+        const idx = yield* Random.nextIntBetween(0, REASONING_SAMPLES.length, { halfOpen: true })
+        appendParts([reasoningPart(REASONING_SAMPLES[idx])])
+      }),
+    )
   }
 
   const addTool = (name: keyof typeof TOOL_SAMPLES) => {
