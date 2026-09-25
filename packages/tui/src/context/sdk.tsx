@@ -1,6 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import type { GlobalEvent } from "@opencode-ai/sdk/v2"
-import { DateTime } from "effect"
+import { DateTime, MutableHashSet } from "effect"
 import { useTuiFlags } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { batch, onCleanup, onMount } from "solid-js"
@@ -34,15 +34,15 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
 
     let sdk = createSDK()
 
-    const handlers = new Set<(event: GlobalEvent) => void>()
+    const handlers = MutableHashSet.empty<(event: GlobalEvent) => void>()
     const emitter = {
       emit(_type: "event", event: GlobalEvent) {
         for (const handler of handlers) handler(event)
       },
       on(_type: "event", handler: (event: GlobalEvent) => void) {
-        handlers.add(handler)
+        MutableHashSet.add(handlers, handler)
         return () => {
-          handlers.delete(handler)
+          MutableHashSet.remove(handlers, handler)
         }
       },
     }
@@ -137,7 +137,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       abort.abort()
       sse?.abort()
       if (timer) clearTimeout(timer)
-      handlers.clear()
+      MutableHashSet.clear(handlers)
     })
 
     return {
