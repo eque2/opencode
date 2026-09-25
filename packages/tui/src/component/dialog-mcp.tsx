@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
 import { useSync } from "../context/sync"
@@ -7,6 +7,9 @@ import { DialogSelect, type DialogSelectRef, type DialogSelectOption } from "../
 import { useTheme } from "../context/theme"
 import { TextAttributes } from "@opentui/core"
 import { useSDK } from "../context/sdk"
+
+/** Toggling an MCP server or refreshing the MCP status failed. */
+class ToggleError extends Data.TaggedError("DialogMcp.ToggleError")<{ readonly cause: unknown }> {}
 
 function Status(props: { enabled: boolean; loading: boolean }) {
   const { theme } = useTheme()
@@ -48,25 +51,32 @@ export function DialogMcp() {
     {
       command: "dialog.mcp.toggle",
       title: "toggle",
-      onTrigger: async (option: DialogSelectOption<string>) => {
+      onTrigger: (option: DialogSelectOption<string>) => {
         // Prevent toggling while an operation is already in progress
         if (Option.isSome(loading())) return
 
         setLoading(Option.some(option.value))
-        try {
-          await local.mcp.toggle(option.value)
-          // Refresh MCP status from server
-          const status = await sdk.client.mcp.status()
-          if (status.data) {
-            sync.set("mcp", status.data)
-          } else {
-            console.error("Failed to refresh MCP status: no data returned")
-          }
-        } catch (error) {
-          console.error("Failed to toggle MCP:", error)
-        } finally {
-          setLoading(Option.none())
-        }
+        Effect.runFork(
+          Effect.gen(function* () {
+            yield* Effect.tryPromise({
+              try: () => local.mcp.toggle(option.value),
+              catch: (cause) => new ToggleError({ cause }),
+            })
+            // Refresh MCP status from server
+            const status = yield* Effect.tryPromise({
+              try: () => sdk.client.mcp.status(),
+              catch: (cause) => new ToggleError({ cause }),
+            })
+            if (status.data) {
+              sync.set("mcp", status.data)
+              return
+            }
+            yield* Effect.logError("Failed to refresh MCP status: no data returned")
+          }).pipe(
+            Effect.catch((error) => Effect.logError("Failed to toggle MCP:", error.cause)),
+            Effect.ensuring(Effect.sync(() => setLoading(Option.none()))),
+          ),
+        )
       },
     },
   ])
