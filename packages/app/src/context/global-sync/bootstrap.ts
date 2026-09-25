@@ -278,7 +278,7 @@ export const loadCommands = (
           template: command.template,
           description: command.description,
           agent: command.agent,
-          model: providerID && id ? { providerID, id } : undefined,
+          ...(providerID && id ? { model: { providerID, id } } : {}),
           subtask: command.subtask,
           // source: command.source === "skill" ? undefined : command.source,
         }
@@ -366,9 +366,9 @@ export async function bootstrapDirectory(input: {
 }) {
   const loading = input.store.status !== "complete"
   const seededProject = projectID(input.directory, input.global.project)
-  const seededPath = input.global.path.directory === input.directory ? input.global.path : undefined
+  const seededPath = Option.liftPredicate(input.global.path, (path) => path.directory === input.directory)
   if (seededProject) input.setStore("project", seededProject)
-  if (seededPath) input.setStore("path", seededPath)
+  if (Option.isSome(seededPath)) input.setStore("path", seededPath.value)
   if (Object.keys(input.store.config).length === 0 && Object.keys(input.global.config).length > 0) {
     input.setStore("config", reconcile(input.global.config, { merge: false }))
   }
@@ -421,7 +421,7 @@ export async function bootstrapDirectory(input: {
           retry(() => input.api.project.current({ location: { directory: input.directory } })).then((project) =>
             input.setStore("project", project.id),
           )),
-      !seededPath &&
+      Option.isNone(seededPath) &&
         (() =>
           input.queryClient
             .ensureQueryData(loadPathQuery(input.scope, input.directory, input.sdk, input.protocol))
