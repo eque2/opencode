@@ -1,6 +1,8 @@
 import {
   Array as Arr,
+  Data,
   DateTime,
+  Effect,
   HashMap,
   HashSet,
   MutableHashMap,
@@ -32,6 +34,8 @@ import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./la
 import { requireServerKey } from "@/utils/session-route"
 import { type DraftTab, useTabs } from "./tabs"
 import { closeSessionTab, openSessionTab, previewSessionTab, type SessionTabs } from "./layout-tabs"
+import { createFiberSlot } from "@/utils/fiber-slot"
+import { nextFrame } from "@/utils/next-frame"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
 
@@ -49,6 +53,15 @@ const isAvatarColorKey = (key: string): key is AvatarColorKey => AVATAR_COLOR_KE
 
 // Avatar colors are picked in sync Solid effects outside any fiber, so they read the default Random service directly.
 const random = Random.Random.defaultValue()
+
+/** A layout context request to the server that rejected. `cause` is the original rejection. */
+class LayoutContextRequestError extends Data.TaggedError("App.LayoutContextRequestError")<{
+  readonly cause: unknown
+}> {}
+
+/** Runs one server request as an Effect. A rejection fails with LayoutContextRequestError. */
+const layoutRequest = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new LayoutContextRequestError({ cause }) })
 
 export function getAvatarColors(key?: string) {
   if (key && isAvatarColorKey(key)) {
@@ -576,45 +589,54 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         }
 
         const projectID = project.id
-        void (async () => {
-          const sdk = serverSdk()
-          if ((await sdk.protocol) !== "v1") return
-          return sdk.client.project
-            .update({ projectID, directory: worktree, icon: { color } })
-            .then((response) => response.data)
-            .then((result) => {
-              if (!result) return
-              serverSync().set("project", (items) =>
-                items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
-              )
-            })
-        })().catch(() => {
-          if (Option.contains(MutableHashMap.get(colorRequested, worktree), color))
-            MutableHashMap.remove(colorRequested, worktree)
-        })
+        const sdk = serverSdk()
+        // Any failure clears the pending request, so a later effect run can ask again.
+        Effect.runFork(
+          Effect.gen(function* () {
+            const protocol = yield* layoutRequest(() => sdk.protocol)
+            if (protocol !== "v1") return
+            const response = yield* layoutRequest(() =>
+              sdk.client.project.update({ projectID, directory: worktree, icon: { color } }),
+            )
+            const result = response.data
+            if (!result) return
+            serverSync().set("project", (items) =>
+              items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
+            )
+          }).pipe(
+            Effect.catchCause(() =>
+              Effect.sync(() => {
+                if (Option.contains(MutableHashMap.get(colorRequested, worktree), color))
+                  MutableHashMap.remove(colorRequested, worktree)
+              }),
+            ),
+          ),
+        )
       }
     })
 
-    let sessionFrame: number | undefined
-    let sessionTimer: number | undefined
+    // The owner's cleanup interrupts the slot, which cancels a pending frame or task.
+    const sessionLoad = createFiberSlot()
 
     onMount(() => {
-      sessionFrame = requestAnimationFrame(() => {
-        sessionFrame = undefined
-        sessionTimer = window.setTimeout(() => {
-          sessionTimer = undefined
-          void Promise.all(
-            server.projects.list().map((project) => {
-              return serverSync().project.loadSessions(project.worktree)
-            }),
-          )
-        }, 0)
-      })
-    })
-
-    onCleanup(() => {
-      if (sessionFrame !== undefined) cancelAnimationFrame(sessionFrame)
-      if (sessionTimer !== undefined) window.clearTimeout(sessionTimer)
+      // Load the sessions of every open project in the task after the first frame, so the layout paints first.
+      sessionLoad.run(
+        nextFrame.pipe(
+          Effect.andThen(Effect.sleep("0 millis")),
+          Effect.andThen(
+            Effect.suspend(() =>
+              Effect.forEach(
+                server.projects.list(),
+                (project) =>
+                  layoutRequest(() => serverSync().project.loadSessions(project.worktree)).pipe(
+                    Effect.catch((error) => Effect.logError(error)),
+                  ),
+                { concurrency: "unbounded", discard: true },
+              ),
+            ),
+          ),
+        ),
+      )
     })
 
     return {
@@ -1043,14 +1065,19 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               if (preview && !next.includes(preview)) setEphemeral("sessionTabPreview", session, undefined)
             })
           },
-          async open(tab: string) {
-            const session = key()
-            apply(
-              session,
-              openSessionTab(
-                { tabs: store.sessionTabs[session] ?? { all: [] }, preview: ephemeral.sessionTabPreview[session] },
-                normalize(tab),
-              ),
+          // The tab API keeps its Promise contract; the update itself runs synchronously in this call.
+          open(tab: string): Promise<void> {
+            return Effect.runPromise(
+              Effect.sync(() => {
+                const session = key()
+                apply(
+                  session,
+                  openSessionTab(
+                    { tabs: store.sessionTabs[session] ?? { all: [] }, preview: ephemeral.sessionTabPreview[session] },
+                    normalize(tab),
+                  ),
+                )
+              }),
             )
           },
           previewTab(tab: string) {
