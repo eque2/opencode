@@ -163,8 +163,8 @@ describe("markdown stream", () => {
     const live = project(Option.none(), "# Plan\n\nFinished paragraph.\n\n- final", true)
     const final = project(Option.some(live), `${live.text} item`, false)
 
-    expect(canReusePendingBlock(live.blocks[0], final.blocks[0]!)).toBe(true)
-    expect(canReusePendingBlock(live.blocks[1], final.blocks[1]!)).toBe(true)
+    expect(canReusePendingBlock(live.blocks[0], final.blocks[0])).toBe(true)
+    expect(canReusePendingBlock(live.blocks[1], final.blocks[1])).toBe(true)
     expect(final.blocks[2]).toEqual({ raw: "- final item", src: "- final item", mode: "full" })
   })
 

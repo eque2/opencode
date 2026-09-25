@@ -73,7 +73,7 @@ export function stream(text: string, live: boolean): Block[] {
     const token = tokens[index]
     if (!token || token.type === "space") continue
     let raw = token.raw
-    while (tokens[index + 1]?.type === "space" && index + 1 < tail) raw += tokens[++index]!.raw
+    while (tokens[index + 1]?.type === "space" && index + 1 < tail) raw += tokens[++index].raw
     if (isCodeToken(token)) {
       result.push({ raw, src: token.text, mode: "code", ...language(token.lang), complete: true })
       continue
