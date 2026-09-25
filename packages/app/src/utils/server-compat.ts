@@ -1,3 +1,4 @@
+import { MutableHashMap, Option } from "effect"
 import type { ServerApi } from "./server"
 import type { ServerProtocol } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
@@ -92,7 +93,7 @@ export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
 }
 
 function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
-  const cache = new Map<PropertyKey, unknown>()
+  const cache = MutableHashMap.empty<PropertyKey, unknown>()
   return new Proxy(shape, {
     get(target, property, receiver) {
       const sample = Reflect.get(target, property, receiver)
@@ -105,7 +106,8 @@ function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
           })
       }
       if (sample === null || typeof sample !== "object") return sample
-      if (cache.has(property)) return cache.get(property)
+      const cached = MutableHashMap.get(cache, property)
+      if (Option.isSome(cached)) return cached.value
       const nested = lazyApi(
         implementation.then((value) => {
           const result = Reflect.get(value, property)
@@ -116,7 +118,7 @@ function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
         }),
         sample,
       )
-      cache.set(property, nested)
+      MutableHashMap.set(cache, property, nested)
       return nested
     },
   })
