@@ -107,8 +107,10 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const scope = (): PromptScope =>
       search.draftId ? { draftID: search.draftId } : { dir: base64Encode(sdk().directory), id: params.id }
     const load = (scope: PromptScope) => {
-      const current = settings.general.newLayoutDesigns() ? selectPromptTab(tabs.store, scope, serverKey()) : undefined
-      if (current) return createTabPromptState(tabs, current, serverSDK().scope, scope)
+      const current = settings.general.newLayoutDesigns()
+        ? Option.fromNullishOr(selectPromptTab(tabs.store, scope, serverKey()))
+        : Option.none()
+      if (Option.isSome(current)) return createTabPromptState(tabs, current.value, serverSDK().scope, scope)
 
       const key = scopeKey(scope)
       const existing = MutableHashMap.get(cache, key)
