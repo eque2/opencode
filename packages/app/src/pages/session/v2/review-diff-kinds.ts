@@ -1,3 +1,4 @@
+import { HashMap, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { Kind } from "@/components/file-tree-v2"
@@ -31,28 +32,28 @@ export function reviewDiffDirectory(root: string, file: string) {
   return `${base.endsWith(separator) ? base : base + separator}${path.slice(0, index).replaceAll("/", separator)}`
 }
 
-export function reviewDiffKinds(diffs: RenderDiff[]) {
-  const merge = (a: Kind | undefined, b: Kind) => {
-    if (!a) return b
-    if (a === b) return a
-    return "mix" as const
-  }
-
-  const out = new Map<string, Kind>()
-  for (const diff of diffs) {
-    const file = normalizePath(diff.file)
-    const kind = diff.status === "added" ? "add" : diff.status === "deleted" ? "del" : "mix"
-
-    out.set(file, kind)
-
-    const parts = file.split("/")
-    parts.slice(0, -1).forEach((_, idx) => {
-      const dir = parts.slice(0, idx + 1).join("/")
-      if (!dir) return
-      out.set(dir, merge(out.get(dir), kind))
+export function reviewDiffKinds(diffs: readonly RenderDiff[]): HashMap.HashMap<string, Kind> {
+  const merge = (current: Option.Option<Kind>, kind: Kind): Kind =>
+    Option.match(current, {
+      onNone: () => kind,
+      onSome: (value) => (value === kind ? value : "mix"),
     })
-  }
-  return out
+
+  return HashMap.mutate(HashMap.empty<string, Kind>(), (out) => {
+    for (const diff of diffs) {
+      const file = normalizePath(diff.file)
+      const kind: Kind = diff.status === "added" ? "add" : diff.status === "deleted" ? "del" : "mix"
+
+      HashMap.set(out, file, kind)
+
+      const parts = file.split("/")
+      parts.slice(0, -1).forEach((_, idx) => {
+        const dir = parts.slice(0, idx + 1).join("/")
+        if (!dir) return
+        HashMap.set(out, dir, merge(HashMap.get(out, dir), kind))
+      })
+    }
+  })
 }
 
 export function filterReviewFiles(files: string[], query: string) {

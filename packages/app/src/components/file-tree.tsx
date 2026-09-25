@@ -17,6 +17,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { HashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 const MAX_DEPTH = 128
@@ -78,11 +79,12 @@ const kindDotColor = (kind: Kind) => {
   return "background-color: var(--icon-diff-modified-base)"
 }
 
-export const visibleKind = (node: FileNode, kinds?: ReadonlyMap<string, Kind>, marks?: Set<string>) => {
-  const kind = kinds?.get(node.path)
-  if (!kind) return
+export const visibleKind = (node: FileNode, kinds?: HashMap.HashMap<string, Kind>, marks?: Set<string>) => {
+  if (!kinds) return
+  const kind = HashMap.get(kinds, node.path)
+  if (Option.isNone(kind)) return
   if (!marks?.has(node.path)) return
-  return kind
+  return kind.value
 }
 
 const buildDragImage = (target: HTMLElement) => {
@@ -116,7 +118,7 @@ const FileTreeNode = (
       active?: string
       nodeClass?: string
       draggable: boolean
-      kinds?: ReadonlyMap<string, Kind>
+      kinds?: HashMap.HashMap<string, Kind>
       marks?: Set<string>
       as?: "div" | "button"
     },
@@ -198,7 +200,7 @@ export default function FileTree(props: {
   level?: number
   allowed?: readonly string[]
   modified?: readonly string[]
-  kinds?: ReadonlyMap<string, Kind>
+  kinds?: HashMap.HashMap<string, Kind>
   draggable?: boolean
   onFileClick?: (file: FileNode) => void
   onFileDoubleClick?: (file: FileNode) => void
@@ -206,7 +208,7 @@ export default function FileTree(props: {
   _filter?: Filter
   _marks?: Set<string>
   _deeps?: Map<string, number>
-  _kinds?: ReadonlyMap<string, Kind>
+  _kinds?: HashMap.HashMap<string, Kind>
   _chain?: readonly string[]
 }) {
   const file = useFile()
@@ -246,7 +248,7 @@ export default function FileTree(props: {
 
     const out = new Set<string>()
     for (const item of props.modified ?? []) out.add(item)
-    for (const item of props.kinds?.keys() ?? []) out.add(item)
+    if (props.kinds) for (const item of HashMap.keys(props.kinds)) out.add(item)
     if (out.size === 0) return
     return out
   })

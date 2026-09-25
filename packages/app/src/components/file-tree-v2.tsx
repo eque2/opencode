@@ -12,6 +12,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { HashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 import { Icon } from "@opencode-ai/ui/v2/icon"
 import { pathToFileUrl, withFileDragImage, type Kind } from "@/components/file-tree"
@@ -59,7 +60,7 @@ const FileTreeNodeV2 = (
       level: number
       active?: string
       draggable: boolean
-      kinds?: ReadonlyMap<string, Kind>
+      kinds?: HashMap.HashMap<string, Kind>
       as?: "div" | "button"
     },
 ) => {
@@ -74,7 +75,7 @@ const FileTreeNodeV2 = (
     "class",
     "classList",
   ])
-  const kind = () => local.kinds?.get(normalizeFileTreeV2Path(local.node.path))
+  const kind = () => (local.kinds ? HashMap.get(local.kinds, normalizeFileTreeV2Path(local.node.path)) : Option.none())
 
   return (
     <Dynamic
@@ -104,10 +105,10 @@ const FileTreeNodeV2 = (
       </span>
       {(() => {
         const value = kind()
-        if (!value || local.node.type !== "file") return null
+        if (Option.isNone(value) || local.node.type !== "file") return null
         return (
-          <span data-slot="file-tree-v2-change" data-change={kindChange(value)}>
-            {kindLabel(value)}
+          <span data-slot="file-tree-v2-change" data-change={kindChange(value.value)}>
+            {kindLabel(value.value)}
           </span>
         )
       })()}
@@ -126,7 +127,7 @@ function GuideLines(props: { level: number }) {
 export default function FileTreeV2(props: {
   active?: string
   allowed?: readonly string[]
-  kinds?: ReadonlyMap<string, Kind>
+  kinds?: HashMap.HashMap<string, Kind>
   draggable?: boolean
   onFileClick?: (file: FileNode) => void
   onFileDoubleClick?: (file: FileNode) => void

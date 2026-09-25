@@ -30,7 +30,6 @@ import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 
 import FileTree from "@/components/file-tree"
-import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
 
 const reviewTabID = "session-side-panel-review-tab"
@@ -58,6 +57,7 @@ import {
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
+import { reviewDiffKinds } from "@/pages/session/v2/review-diff-kinds"
 
 type ReviewDiff = FileDiffInfo | SnapshotFileDiff | VcsFileDiff
 type RenderDiff = FileDiffInfo | (SnapshotFileDiff & { file: string }) | VcsFileDiff
@@ -118,29 +118,7 @@ export function SessionSidePanel(props: {
 
   const diffs = createMemo(() => props.diffs().filter(renderDiff))
   const diffFiles = createMemo(() => diffs().map((d) => d.file))
-  const kinds = createMemo(() => {
-    const merge = (a: "add" | "del" | "mix" | undefined, b: "add" | "del" | "mix") => {
-      if (!a) return b
-      if (a === b) return a
-      return "mix" as const
-    }
-
-    const out = new Map<string, "add" | "del" | "mix">()
-    for (const diff of diffs()) {
-      const file = normalizeFileTreeV2Path(diff.file)
-      const kind = diff.status === "added" ? "add" : diff.status === "deleted" ? "del" : "mix"
-
-      out.set(file, kind)
-
-      const parts = file.split("/")
-      for (const [idx] of parts.slice(0, -1).entries()) {
-        const dir = parts.slice(0, idx + 1).join("/")
-        if (!dir) continue
-        out.set(dir, merge(out.get(dir), kind))
-      }
-    }
-    return out
-  })
+  const kinds = createMemo(() => reviewDiffKinds(diffs()))
 
   const empty = (msg: string) => (
     <div class="h-full flex flex-col">

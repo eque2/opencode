@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, HashMap, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -70,7 +70,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
   const searching = createMemo(() => props.state.filter().trim().length > 0)
   const kinds = createMemo(() => reviewDiffKinds(diffs()))
   // Changes-only trees omit "M" — every row is already a change; A/D stay visible.
-  const treeKinds = createMemo(() => new Map([...kinds()].filter(([, kind]) => kind !== "mix")))
+  const treeKinds = createMemo(() => HashMap.filter(kinds(), (kind) => kind !== "mix"))
   const activeDiff = createMemo(() => {
     // A focused comment takes over the preview until the preview applies it and
     // clears the focus; the owner then persists the file as the active selection.

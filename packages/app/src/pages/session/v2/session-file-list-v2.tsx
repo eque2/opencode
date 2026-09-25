@@ -2,6 +2,7 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import "@opencode-ai/ui/v2/file-tree-v2.css"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js"
+import { HashMap, Option } from "effect"
 import { kindChange, kindLabel, type Kind } from "@/components/file-tree-v2"
 import { normalizePath } from "@/pages/session/v2/review-diff-kinds"
 import { createVirtualizer, defaultRangeExtractor } from "@tanstack/solid-virtual"
@@ -42,7 +43,7 @@ export function SessionFileListV2(props: {
   files: readonly string[]
   active?: string
   highlighted?: string
-  kinds?: ReadonlyMap<string, Kind>
+  kinds?: HashMap.HashMap<string, Kind>
   id?: string
   role?: "listbox"
   optionID?: (path: string) => string
@@ -104,7 +105,7 @@ export function SessionFileListV2(props: {
           const value = normalizePath(path)
           const selected = () => (highlighted() ? highlighted() === value : active() === value)
           const highlightedRow = () => highlighted() === value
-          const kind = () => props.kinds?.get(value)
+          const kind = () => (props.kinds ? HashMap.get(props.kinds, value) : Option.none())
           const directory = () => (value.includes("/") ? getDirectory(value) : undefined)
           const filename = () => getFilename(value)
           return (
@@ -147,7 +148,7 @@ export function SessionFileListV2(props: {
                       </Show>
                       <span class="text-12-medium text-text-base truncate min-w-0 shrink-0">{filename()}</span>
                     </span>
-                    <Show when={kind()}>
+                    <Show when={Option.getOrUndefined(kind())}>
                       {(value) => (
                         <span data-slot="file-tree-v2-change" data-change={kindChange(value())}>
                           {kindLabel(value())}

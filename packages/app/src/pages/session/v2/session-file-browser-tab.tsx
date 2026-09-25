@@ -1,4 +1,5 @@
 import { createMemo, createSignal, createUniqueId, Show } from "solid-js"
+import type { HashMap } from "effect"
 import { createQuery, keepPreviousData } from "@tanstack/solid-query"
 import { Icon } from "@opencode-ai/ui/icon"
 import { SessionFilePanelV2, SessionFilePanelV2Empty } from "@opencode-ai/session-ui/v2/session-file-panel-v2"
@@ -28,7 +29,7 @@ export function SessionFileBrowserTab(props: {
   tab: string
   placeholder: boolean
   active?: string
-  kinds: ReadonlyMap<string, Kind>
+  kinds: HashMap.HashMap<string, Kind>
   state: SessionFileBrowserState
   onSelect: (path: string) => void
   onSelectPermanent: (path: string) => void
