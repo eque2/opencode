@@ -11,7 +11,7 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { HashMap, MutableHashMap, Option, Schema } from "effect"
+import { HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -633,9 +633,9 @@ export default function LegacyLayout(props: ParentProps) {
   })
 
   type PrefetchQueue = {
-    inflight: Set<string>
+    inflight: MutableHashSet.MutableHashSet<string>
     pending: string[]
-    pendingSet: Set<string>
+    pendingSet: MutableHashSet.MutableHashSet<string>
     running: number
   }
 
@@ -668,9 +668,9 @@ export default function LegacyLayout(props: ParentProps) {
   }
 
   createEffect(() => {
-    const active = new Set(visibleSessionDirs())
+    const active = HashSet.fromIterable(visibleSessionDirs())
     for (const directory of MutableHashMap.keys(prefetchedByDir)) {
-      if (active.has(directory)) continue
+      if (HashSet.has(active, directory)) continue
       MutableHashMap.remove(prefetchedByDir, directory)
     }
   })
@@ -684,11 +684,11 @@ export default function LegacyLayout(props: ParentProps) {
   })
 
   createEffect(() => {
-    const visible = new Set(visibleSessionDirs())
+    const visible = HashSet.fromIterable(visibleSessionDirs())
     for (const [directory, q] of prefetchQueues) {
-      if (visible.has(directory)) continue
+      if (HashSet.has(visible, directory)) continue
       q.pending.length = 0
-      q.pendingSet.clear()
+      MutableHashSet.clear(q.pendingSet)
       if (q.running === 0) MutableHashMap.remove(prefetchQueues, directory)
     }
   })
@@ -698,9 +698,9 @@ export default function LegacyLayout(props: ParentProps) {
     if (Option.isSome(existing)) return existing.value
 
     const created: PrefetchQueue = {
-      inflight: new Set(),
+      inflight: MutableHashSet.empty(),
       pending: [],
-      pendingSet: new Set(),
+      pendingSet: MutableHashSet.empty(),
       running: 0,
     }
     MutableHashMap.set(prefetchQueues, directory, created)
@@ -722,15 +722,15 @@ export default function LegacyLayout(props: ParentProps) {
     const sessionID = q.pending.shift()
     if (!sessionID) return
 
-    q.pendingSet.delete(sessionID)
-    q.inflight.add(sessionID)
+    MutableHashSet.remove(q.pendingSet, sessionID)
+    MutableHashSet.add(q.inflight, sessionID)
     q.running += 1
 
     const token = prefetchToken.value
 
     void prefetchMessages(directory, sessionID, token).finally(() => {
       q.running -= 1
-      q.inflight.delete(sessionID)
+      MutableHashSet.remove(q.inflight, sessionID)
       pumpPrefetch(directory)
     })
   }
@@ -743,8 +743,8 @@ export default function LegacyLayout(props: ParentProps) {
     if (cached) return
 
     const q = queueFor(directory)
-    if (q.inflight.has(session.id)) return
-    if (q.pendingSet.has(session.id)) {
+    if (MutableHashSet.has(q.inflight, session.id)) return
+    if (MutableHashSet.has(q.pendingSet, session.id)) {
       if (priority !== "high") return
       const index = q.pending.indexOf(session.id)
       if (index > 0) {
@@ -760,12 +760,12 @@ export default function LegacyLayout(props: ParentProps) {
 
     if (priority === "high") q.pending.unshift(session.id)
     if (priority !== "high") q.pending.push(session.id)
-    q.pendingSet.add(session.id)
+    MutableHashSet.add(q.pendingSet, session.id)
 
     while (q.pending.length > prefetchPendingLimit) {
       const dropped = q.pending.pop()
       if (!dropped) continue
-      q.pendingSet.delete(dropped)
+      MutableHashSet.remove(q.pendingSet, dropped)
     }
 
     pumpPrefetch(directory)
@@ -1721,27 +1721,22 @@ export default function LegacyLayout(props: ParentProps) {
   const side = createMemo(() => Math.max(layout.sidebar.width(), 244))
   const panel = createMemo(() => Math.max(side() - 64, 0))
 
-  const loadedSessionDirs = new Set<string>()
+  let loadedSessionDirs = HashSet.empty<string>()
 
   createEffect(
     on(
       visibleSessionDirs,
       (dirs) => {
         if (dirs.length === 0) {
-          loadedSessionDirs.clear()
+          loadedSessionDirs = HashSet.empty()
           return
         }
 
-        const next = new Set(dirs)
-        for (const directory of next) {
-          if (loadedSessionDirs.has(directory)) continue
-          void serverSync().project.loadSessions(directory)
-        }
-
-        loadedSessionDirs.clear()
-        for (const directory of next) {
-          loadedSessionDirs.add(directory)
-        }
+        loadedSessionDirs = dirs.reduce((next, directory) => {
+          if (HashSet.has(next, directory)) return next
+          if (!HashSet.has(loadedSessionDirs, directory)) void serverSync().project.loadSessions(directory)
+          return HashSet.add(next, directory)
+        }, HashSet.empty<string>())
       },
       { defer: true },
     ),
