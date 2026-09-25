@@ -127,12 +127,12 @@ function ShellSubmessage(props: { text: string; animate?: boolean }) {
 
   return (
     <span data-component="shell-submessage" dir="ltr">
-      <span ref={widthRef} data-slot="shell-submessage-width" style={{ width: props.animate ? "0px" : undefined }}>
+      <span ref={widthRef} data-slot="shell-submessage-width" style={props.animate ? { width: "0px" } : {}}>
         <span data-slot="basic-tool-tool-subtitle">
           <span
             ref={valueRef}
             data-slot="shell-submessage-value"
-            style={props.animate ? { opacity: 0, filter: "blur(2px)" } : undefined}
+            style={props.animate ? { opacity: 0, filter: "blur(2px)" } : {}}
           >
             {props.text}
           </span>
@@ -403,9 +403,9 @@ export type ToolInfo = {
   subtitle?: string
 }
 
-function agentTitle(i18n: UiI18n, type?: string) {
-  if (!type) return i18n.t("ui.tool.agent.default")
-  return i18n.t("ui.tool.agent", { type })
+function agentTitle(i18n: UiI18n, subagentType: unknown) {
+  if (!isNonEmptyString(subagentType)) return i18n.t("ui.tool.agent.default")
+  return i18n.t("ui.tool.agent", { type: subagentType[0].toUpperCase() + subagentType.slice(1) })
 }
 
 const agentTones: Record<string, string> = {
@@ -494,8 +494,8 @@ function newLayout() {
 }
 
 function webSearchProviderLabel(provider: unknown, i18n: ReturnType<typeof useI18n>) {
-  const name = provider === "parallel" ? "Parallel" : provider === "exa" ? "Exa" : undefined
-  if (name) return i18n.t("ui.tool.websearch.provider", { provider: name })
+  if (provider === "parallel") return i18n.t("ui.tool.websearch.provider", { provider: "Parallel" })
+  if (provider === "exa") return i18n.t("ui.tool.websearch.provider", { provider: "Exa" })
   return i18n.t("ui.tool.websearch")
 }
 
@@ -510,13 +510,13 @@ export function getToolInfo(
       return {
         icon: "glasses",
         title: i18n.t("ui.tool.read"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        ...(input.filePath ? { subtitle: getFilename(input.filePath) } : {}),
       }
     case "list":
       return {
         icon: "bullet-list",
         title: i18n.t("ui.tool.list"),
-        subtitle: input.path ? getFilename(input.path) : undefined,
+        ...(input.path ? { subtitle: getFilename(input.path) } : {}),
       }
     case "glob":
       return {
@@ -542,17 +542,12 @@ export function getToolInfo(
         title: webSearchProviderLabel(metadata?.provider, i18n),
         subtitle: input.query,
       }
-    case "task": {
-      const type =
-        typeof input.subagent_type === "string" && input.subagent_type
-          ? input.subagent_type[0]!.toUpperCase() + input.subagent_type.slice(1)
-          : undefined
+    case "task":
       return {
         icon: "task",
-        title: agentTitle(i18n, type),
+        title: agentTitle(i18n, input.subagent_type),
         subtitle: input.description,
       }
-    }
     case "bash":
     case "shell":
       return {
@@ -564,22 +559,24 @@ export function getToolInfo(
       return {
         icon: "code-lines",
         title: i18n.t("ui.messagePart.title.edit"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        ...(input.filePath ? { subtitle: getFilename(input.filePath) } : {}),
       }
     case "write":
       return {
         icon: "code-lines",
         title: i18n.t("ui.messagePart.title.write"),
-        subtitle: input.filePath ? getFilename(input.filePath) : undefined,
+        ...(input.filePath ? { subtitle: getFilename(input.filePath) } : {}),
       }
     case "patch":
     case "apply_patch":
       return {
         icon: "code-lines",
         title: i18n.t("ui.tool.patch"),
-        subtitle: input.files?.length
-          ? `${input.files.length} ${i18n.t(input.files.length > 1 ? "ui.common.file.other" : "ui.common.file.one")}`
-          : undefined,
+        ...(input.files?.length
+          ? {
+              subtitle: `${input.files.length} ${i18n.t(input.files.length > 1 ? "ui.common.file.other" : "ui.common.file.one")}`,
+            }
+          : {}),
       }
     case "todowrite":
       return {
@@ -864,7 +861,7 @@ function contextToolDetail(part: ToolPart): string | undefined {
   const info = getToolInfo(
     part.tool,
     part.state.input ?? {},
-    "metadata" in part.state ? part.state.metadata : undefined,
+    "metadata" in part.state ? part.state.metadata : {},
   )
   if (info.subtitle) return info.subtitle
   if (part.state.status === "error") return part.state.error
@@ -915,7 +912,7 @@ function contextToolTrigger(part: ToolPart, i18n: ReturnType<typeof useI18n>) {
         ]),
       }
     default: {
-      const info = getToolInfo(part.tool, input, "metadata" in part.state ? part.state.metadata : undefined)
+      const info = getToolInfo(part.tool, input, "metadata" in part.state ? part.state.metadata : {})
       return {
         title: info.title,
         subtitle: info.subtitle || contextToolDetail(part),
@@ -1186,7 +1183,7 @@ function UserMessageComments(props: { comments: UserMessageComment[]; bounded: b
   const comments = createMemo(() => (props.bounded && !state.expanded ? props.comments.slice(0, 5) : props.comments))
 
   return (
-    <div data-slot="user-message-comments" data-bounded={props.bounded ? "true" : undefined}>
+    <div data-slot="user-message-comments" bool:data-bounded={props.bounded}>
       <For each={comments()}>
         {(comment) => (
           <CommentCardV2
@@ -1301,8 +1298,8 @@ export function UserMessageDisplay(props: {
                   <div
                     data-slot="user-message-attachment"
                     data-type={type}
-                    data-clickable={type === "image" ? "true" : undefined}
-                    title={type === "file" ? name : undefined}
+                    bool:data-clickable={type === "image"}
+                    {...(type === "file" ? { title: name } : {})}
                     onClick={() => {
                       if (type === "image") openImagePreview(file.url, name)
                     }}
@@ -1352,7 +1349,7 @@ export function UserMessageDisplay(props: {
           <div
             data-slot="user-message-text"
             dir="auto"
-            data-comments={messageComments().length > 0 ? "true" : undefined}
+            bool:data-comments={messageComments().length > 0}
           >
             <HighlightedText text={text()} references={inlineFiles()} agents={agents()} />
             <Show when={messageComments().length > 0}>
@@ -1595,8 +1592,12 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
   }
 
   const render = createMemo(() => ToolRegistry.render(part().tool) ?? GenericTool)
-  const controlledOpen = () => (props.onToolOpenChange ? (props.toolOpen ?? props.defaultOpen) : undefined)
   const handleToolOpenChange = (open: boolean) => props.onToolOpenChange?.(open)
+  // The tool is controlled only when the caller handles open changes.
+  const toolOpenProps = () =>
+    props.onToolOpenChange
+      ? { open: props.toolOpen ?? props.defaultOpen, onOpenChange: handleToolOpenChange }
+      : {}
 
   return (
     <Show when={!hideQuestion()}>
@@ -1618,12 +1619,11 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
                 <ToolErrorCard
                   tool={part().tool}
                   error={error()}
-                  title={
-                    part().tool === "websearch" ? webSearchProviderLabel(partMetadata().provider, i18n) : undefined
-                  }
+                  {...(part().tool === "websearch"
+                    ? { title: webSearchProviderLabel(partMetadata().provider, i18n) }
+                    : {})}
                   defaultOpen={props.defaultOpen}
-                  open={controlledOpen()}
-                  onOpenChange={props.onToolOpenChange ? handleToolOpenChange : undefined}
+                  {...toolOpenProps()}
                   subtitle={Option.getOrUndefined(taskSubtitle())}
                   href={Option.getOrUndefined(taskHref())}
                   onSubtitleClick={(event) => {
@@ -1650,8 +1650,7 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
               status={part().state.status}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
-              open={controlledOpen()}
-              onOpenChange={props.onToolOpenChange ? handleToolOpenChange : undefined}
+              {...toolOpenProps()}
               deferContent={props.deferToolContent}
               virtualizeDiff={props.virtualizeDiff}
               onContentRendered={props.onContentRendered}
@@ -1743,7 +1742,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof props.message.time.completed !== "number",
   )
-  const text = () => readPartText(data.store.part_text_accum_delta, part())
+  const text = () => readPartText(Option.fromNullishOr(data.store.part_text_accum_delta), part())
   const isLastTextPart = createMemo(() => {
     const last = (data.store.part?.[props.message.id] ?? [])
       .filter((item): item is TextPart => item?.type === "text" && !!item.text?.trim())
@@ -1767,7 +1766,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
           <PacedMarkdown text={text()} cacheKey={part().id} streaming={streaming()} />
         </div>
         <Show when={showCopy()}>
-          <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
+          <div data-slot="text-part-copy-wrapper" bool:data-interrupted={interrupted()}>
             <MessageActionButton
               icon={copied() ? "check" : "copy"}
               label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyResponse")}
@@ -1802,7 +1801,7 @@ function ReasoningPartDisplay(props: PartDisplayProps<ReasoningPart>) {
   const streaming = createMemo(
     () => props.message.role === "assistant" && typeof props.message.time.completed !== "number",
   )
-  const text = () => readPartText(data.store.part_text_accum_delta, part())
+  const text = () => readPartText(Option.fromNullishOr(data.store.part_text_accum_delta), part())
 
   return (
     <Show when={text()}>
@@ -2209,9 +2208,9 @@ ToolRegistry.register({
         if (!filediff) return Option.none()
         return Option.some({
           file: filediff.file || props.input.filePath || "",
-          patch: typeof filediff.patch === "string" ? filediff.patch : undefined,
-          before: typeof filediff.before === "string" ? filediff.before : undefined,
-          after: typeof filediff.after === "string" ? filediff.after : undefined,
+          ...(typeof filediff.patch === "string" ? { patch: filediff.patch } : {}),
+          ...(typeof filediff.before === "string" ? { before: filediff.before } : {}),
+          ...(typeof filediff.after === "string" ? { after: filediff.after } : {}),
         })
       },
       Option.none(),
@@ -2604,7 +2603,7 @@ ToolRegistry.register({
                 <Checkbox readOnly checked={todoCompleted(todo)}>
                   <span
                     data-slot="message-part-todo-content"
-                    data-completed={todoCompleted(todo) ? "completed" : undefined}
+                    {...(todoCompleted(todo) ? { "data-completed": "completed" } : {})}
                   >
                     {todoContent(todo)}
                   </span>
