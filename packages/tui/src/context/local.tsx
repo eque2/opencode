@@ -1,6 +1,6 @@
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "./helper"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "./sync"
 import { useEvent } from "./event"
 import path from "path"
@@ -8,7 +8,7 @@ import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
-import { Array, Effect, HashSet, Schema } from "effect"
+import { Array, Effect, Equal, HashSet, Option, Schema } from "effect"
 import { fileSystemLayer, readJson, writeJsonAtomic } from "../util/persistence"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
@@ -80,19 +80,17 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       return !!provider?.models[model.modelID]
     }
 
+    // The first candidate that is present and names a valid model.
     function getFirstValidModel(...modelFns: (() => { providerID: string; modelID: string } | undefined)[]) {
-      for (const modelFn of modelFns) {
-        const model = modelFn()
-        if (!model) continue
-        if (isModelValid(model)) return model
-      }
+      return Array.findFirst(modelFns, (modelFn) => Option.filter(Option.fromNullishOr(modelFn()), isModelValid))
     }
 
     function createAgent() {
       const agents = createMemo(() => sync.data.agent.filter((agent) => agent.mode !== "subagent" && !agent.hidden))
       const visibleAgents = createMemo(() => sync.data.agent.filter((agent) => !agent.hidden))
-      const [agentStore, setAgentStore] = createStore({
-        current: undefined as string | undefined,
+      // The selected agent name; none selects the first agent.
+      const [currentName, setCurrentName] = createSignal(Option.none<string>(), {
+        equals: (previous, next) => Equal.equals(previous, next),
       })
       const colors = createMemo(() => [
         theme.secondary,
@@ -108,7 +106,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return agents()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current) ?? agents().at(0)
+          return Option.flatMap(currentName(), (name) => Array.findFirst(agents(), (x) => x.name === name)).pipe(
+            Option.getOrElse(() => agents().at(0)),
+          )
         },
         set(name: string) {
           if (!agents().some((x) => x.name === name))
@@ -117,7 +117,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               message: `Agent not found: ${name}`,
               duration: 3000,
             })
-          setAgentStore("current", name)
+          setCurrentName(Option.some(name))
         },
         move(direction: 1 | -1) {
           batch(() => {
@@ -127,7 +127,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             if (next < 0) next = agents().length - 1
             if (next >= agents().length) next = 0
             const value = agents()[next]
-            setAgentStore("current", value.name)
+            setCurrentName(Option.some(value.name))
           })
         },
         color(name: string) {
@@ -260,12 +260,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
       const currentModel = createMemo(() => {
         const a = agent.current()
-        return (
+        return Option.getOrUndefined(
           getFirstValidModel(
             () => a && modelStore.model[a.name],
             () => a && a.model,
             fallbackModel,
-          ) ?? undefined
+          ),
         )
       })
 
@@ -422,7 +422,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             }
             const index = variants.indexOf(current)
             if (index === -1 || index === variants.length - 1) {
-              this.set(undefined)
+              // set stores "default" for a missing value, which clears the variant.
+              this.set("default")
               return
             }
             this.set(variants[index + 1])
