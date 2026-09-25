@@ -1,3 +1,4 @@
+import { Array as Arr, MutableHashMap, Option } from "effect"
 import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { HomeSessionGroup } from "./home-sessions-controller"
@@ -12,8 +13,8 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
   const [state, setState] = createStore({
     titleOpacity: {} as Partial<Record<HomeSessionGroup["id"], number>>,
   })
-  const headerRefs = new Map<HomeSessionGroup["id"], HTMLDivElement>()
-  const headerOffsets = new Map<HomeSessionGroup["id"], number>()
+  const headerRefs = MutableHashMap.empty<HomeSessionGroup["id"], HTMLDivElement>()
+  const headerOffsets = MutableHashMap.empty<HomeSessionGroup["id"], number>()
   let viewport: HTMLDivElement | undefined
   let content: HTMLDivElement | undefined
   let positionFrame: number | undefined
@@ -23,12 +24,12 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
   createEffect(() => {
     const items = groups()
     const ids = new Set(items.map((group) => group.id))
-    headerRefs.forEach((_, id) => {
-      if (!ids.has(id)) headerRefs.delete(id)
-    })
-    headerOffsets.forEach((_, id) => {
-      if (!ids.has(id)) headerOffsets.delete(id)
-    })
+    const removeStale = <V>(headers: MutableHashMap.MutableHashMap<HomeSessionGroup["id"], V>) =>
+      Array.from(MutableHashMap.keys(headers))
+        .filter((id) => !ids.has(id))
+        .forEach((id) => MutableHashMap.remove(headers, id))
+    removeStale(headerRefs)
+    removeStale(headerOffsets)
     if (items.length === 0) {
       content = undefined
       bindResizeObserver()
@@ -55,16 +56,14 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
 
   function updatePositionCache() {
     if (!viewport) return
-    const header = groups()
-      .map((group) => headerRefs.get(group.id))
-      .find((element) => element !== undefined)
-    if (header && typeof getComputedStyle === "function") {
-      const top = Number.parseFloat(getComputedStyle(header).top)
+    const header = Arr.findFirst(groups(), (group) => MutableHashMap.get(headerRefs, group.id))
+    if (Option.isSome(header) && typeof getComputedStyle === "function") {
+      const top = Number.parseFloat(getComputedStyle(header.value).top)
       if (Number.isFinite(top)) stickyTop = top
     }
     groups().forEach((group) => {
-      const element = headerRefs.get(group.id)
-      if (element) headerOffsets.set(group.id, element.offsetTop)
+      const element = MutableHashMap.get(headerRefs, group.id)
+      if (Option.isSome(element)) MutableHashMap.set(headerOffsets, group.id, element.value.offsetTop)
     })
     update(viewport.scrollTop)
   }
@@ -72,14 +71,13 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
   function update(scrollTop: number) {
     const items = groups()
     items.forEach((group, index) => {
-      const nextOffset = items
-        .slice(index + 1)
-        .map((item) => headerOffsets.get(item.id))
-        .find((offset) => offset !== undefined)
+      const nextOffset = Arr.findFirst(items.slice(index + 1), (item) => MutableHashMap.get(headerOffsets, item.id))
       const fadeEnd = stickyTop + HOME_SESSION_HEADER_TEXT_HEIGHT
-      const nextTop = nextOffset === undefined ? undefined : nextOffset - scrollTop
-      const opacity =
-        nextTop === undefined ? 1 : Math.max(0, Math.min(1, (nextTop - fadeEnd) / HOME_SESSION_HEADER_FADE_DISTANCE))
+      const opacity = Option.match(nextOffset, {
+        onNone: () => 1,
+        onSome: (offset) =>
+          Math.max(0, Math.min(1, (offset - scrollTop - fadeEnd) / HOME_SESSION_HEADER_FADE_DISTANCE)),
+      })
       setState("titleOpacity", group.id, Math.round(opacity * 1000) / 1000)
     })
   }
@@ -134,7 +132,7 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
         queuePositionUpdate()
       },
       setHeader: (id: HomeSessionGroup["id"], element: HTMLDivElement) => {
-        headerRefs.set(id, element)
+        MutableHashMap.set(headerRefs, id, element)
         queuePositionUpdate()
       },
       titleOpacity: (id: HomeSessionGroup["id"]) => state.titleOpacity[id] ?? 1,

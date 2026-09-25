@@ -2,7 +2,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useQuery } from "@tanstack/solid-query"
-import { DateTime } from "effect"
+import { DateTime, HashMap } from "effect"
 import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTransition } from "solid-js"
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
@@ -49,9 +49,6 @@ export function createHomeSessionsController(home: HomeController) {
     if (!project) return home.project.list().flatMap(directories)
     return directories(project)
   })
-  const projectByID = createMemo(
-    () => new Map(home.project.list().flatMap((project) => (project.id ? [[project.id, project] as const] : []))),
-  )
   const homeSessions = () => home.server.focusedSync().homeSessions
   const sessionEventLoad = useQuery(() => ({
     queryKey: homeSessions().eventsKey,
@@ -92,7 +89,6 @@ export function createHomeSessionsController(home: HomeController) {
       sessions: indexedSessions,
       projectDirectories,
       projects: home.project.list,
-      projectByID,
     }),
   )
   const records = createMemo(() => allRecords().slice(0, HOME_SESSION_LIMIT))
@@ -188,7 +184,7 @@ export function createHomeSessionsController(home: HomeController) {
               (item) =>
                 pathKey(item.worktree) === directoryKey ||
                 item.sandboxes?.some((sandbox) => pathKey(sandbox) === directoryKey),
-            ) ?? projectForSession(session, home.project.list(), projectByID())
+            ) ?? projectForSession(session, home.project.list())
         const conn = home.server.focused()
         if (!conn) return
         const directory = project?.worktree ?? session.directory
@@ -252,11 +248,11 @@ function buildHomeSessionRecords(input: {
   sessions: () => Session[]
   projectDirectories: () => string[]
   projects: () => LocalProject[]
-  projectByID: () => Map<string, LocalProject>
 }) {
   const directories = new Set(input.projectDirectories().map(pathKey))
   const sessions = input.sessions().filter((session) => directories.has(pathKey(session.directory)))
-  return [...new Map(sessions.map((session) => [session.id, session] as const)).values()]
+  // Keep the last record of a repeated session ID.
+  return HashMap.toValues(HashMap.fromIterable(sessions.map((session) => [session.id, session] as const)))
     .sort(compareSessionTime)
     .flatMap((session) => {
       const directory = pathKey(session.directory)
@@ -266,7 +262,7 @@ function buildHomeSessionRecords(input: {
           .find(
             (item) =>
               pathKey(item.worktree) === directory || item.sandboxes?.some((sandbox) => pathKey(sandbox) === directory),
-          ) ?? projectForSession(session, input.projects(), input.projectByID())
+          ) ?? projectForSession(session, input.projects())
       if (!project) return []
       return { session, project, projectName: displayName(project) }
     })
