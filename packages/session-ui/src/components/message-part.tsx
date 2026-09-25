@@ -1558,7 +1558,7 @@ function ToolFileAccordion(props: { path: string; actions?: JSX.Element; childre
 
 PART_MAPPING["tool"] = function ToolPartSlot(props) {
   return (
-    <Show when={props.part.type === "tool" && props.part}>
+    <Show when={props.part.type === "tool" && props.part.tool !== "todowrite" && props.part}>
       {(part) => <ToolPartDisplay {...props} part={part()} />}
     </Show>
   )
@@ -1568,7 +1568,6 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
   const data = useData()
   const i18n = useI18n()
   const part = () => props.part
-  if (part().tool === "todowrite") return null
 
   const hideQuestion = createMemo(
     () => part().tool === "question" && (part().state.status === "pending" || part().state.status === "running"),
@@ -1753,7 +1752,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   })
   const showCopy = createMemo(() => {
     if (props.message.role !== "assistant") return isLastTextPart()
-    if (props.showAssistantCopyPartID === null) return false
+    if (Predicate.isNull(props.showAssistantCopyPartID)) return false
     if (typeof props.showAssistantCopyPartID === "string") return props.showAssistantCopyPartID === part().id
     return isLastTextPart()
   })
