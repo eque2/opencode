@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { MutableHashMap, MutableHashSet, Option } from "effect"
 
 export function treeEntries(parent: string, nodes: ReadonlyArray<{ name: string; type: "file" | "directory" }>) {
   const prefix = parent.replace(/^\/+|\/+$/g, "")
@@ -135,9 +135,9 @@ export function preloadTreeDirectories(
   )
 }
 
-export function advanceTreePreload(advanced: Set<string>, path: string) {
-  if (advanced.has(path)) return false
-  advanced.add(path)
+export function advanceTreePreload(advanced: MutableHashSet.MutableHashSet<string>, path: string) {
+  if (MutableHashSet.has(advanced, path)) return false
+  MutableHashSet.add(advanced, path)
   return true
 }
 
@@ -153,7 +153,7 @@ export function createPriorityTaskQueue<T>(concurrency: number) {
     run: () => void
   }
 
-  const jobs = new Map<string, Job>()
+  const jobs = MutableHashMap.empty<string, Job>()
   const user: Job[] = []
   const background: Job[] = []
   let active = 0
@@ -168,10 +168,10 @@ export function createPriorityTaskQueue<T>(concurrency: number) {
   }
 
   const schedule = (key: string, priority: Job["priority"], task: () => Promise<T>) => {
-    const existing = jobs.get(key)
-    if (existing) {
+    const existing = MutableHashMap.get(jobs, key)
+    if (Option.isSome(existing)) {
       if (priority === "user") promote(key)
-      return existing.promise
+      return existing.value.promise
     }
 
     const deferred = Promise.withResolvers<T>()
@@ -182,7 +182,7 @@ export function createPriorityTaskQueue<T>(concurrency: number) {
       run: () => {
         const complete = () => {
           active--
-          jobs.delete(key)
+          MutableHashMap.remove(jobs, key)
           drain()
         }
         Promise.resolve()
@@ -199,15 +199,16 @@ export function createPriorityTaskQueue<T>(concurrency: number) {
           )
       },
     }
-    jobs.set(key, job)
+    MutableHashMap.set(jobs, key, job)
     ;(priority === "user" ? user : background).push(job)
     drain()
     return job.promise
   }
 
   const promote = (key: string) => {
-    const job = jobs.get(key)
-    if (!job || job.priority === "user") return
+    const found = MutableHashMap.get(jobs, key)
+    if (Option.isNone(found) || found.value.priority === "user") return
+    const job = found.value
     const index = background.indexOf(job)
     if (index === -1) return
     background.splice(index, 1)
@@ -250,6 +251,11 @@ export function selectedTreePath(
     return pickerRelativePath(base, absolute)
   }
   return directory ? Option.some(nativePickerPath(absoluteTreePath(root, path))) : Option.none()
+}
+
+/** Drops repeated paths and keeps the first position of each, as `new Set` did. */
+function uniquePaths(paths: Iterable<string>) {
+  return Array.from(MutableHashSet.fromIterable(paths))
 }
 
 export function nativePickerPath(path: string) {
@@ -334,7 +340,7 @@ export function displayPickerPath(path: string, input: string, home: string) {
 }
 
 export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option.Option<string>; home: () => string }) {
-  const cache = new Map<string, Promise<Array<{ name: string; absolute: string }>>>()
+  const cache = MutableHashMap.empty<string, Promise<Array<{ name: string; absolute: string }>>>()
   let current = 0
 
   const scoped = (value: string): Option.Option<{ directory: string; path: string }> => {
@@ -353,8 +359,8 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option
 
   const directories = async (directory: string) => {
     const key = trimPickerPath(directory)
-    const existing = cache.get(key)
-    if (existing) return existing
+    const existing = MutableHashMap.get(cache, key)
+    if (Option.isSome(existing)) return existing.value
     const request = args.sdk.api.file
       .list({ location: { directory: key } })
       .then((result) => result.data)
@@ -367,7 +373,7 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option
             return { name: getFilename(relative), absolute: joinPickerPath(key, relative) }
           }),
       )
-    cache.set(key, request)
+    MutableHashMap.set(cache, key, request)
     return request
   }
 
@@ -412,17 +418,17 @@ export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option
         paths = paths.map(pickerParent)
         continue
       }
-      paths = Array.from(new Set((await Promise.all(paths.map((path) => match(path, part, 4)))).flat())).slice(0, 12)
+      paths = uniquePaths((await Promise.all(paths.map((path) => match(path, part, 4)))).flat()).slice(0, 12)
       if (!active() || paths.length === 0) return []
     }
-    const matches = Array.from(new Set((await Promise.all(paths.map((path) => match(path, tail, 50)))).flat()))
+    const matches = uniquePaths((await Promise.all(paths.map((path) => match(path, tail, 50)))).flat())
     if (!active()) return []
     const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
-    if (raw.endsWith("/") || !tail) return Array.from(new Set([base, ...matches].filter(Boolean))).slice(0, 50)
+    if (raw.endsWith("/") || !tail) return uniquePaths([base, ...matches].filter(Boolean)).slice(0, 50)
     const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
     if (!target) return matches.slice(0, 50)
     const children = await match(target, "", 30)
     if (!active()) return []
-    return Array.from(new Set([base, ...matches, ...children].filter(Boolean))).slice(0, 50)
+    return uniquePaths([base, ...matches, ...children].filter(Boolean)).slice(0, 50)
   }
 }

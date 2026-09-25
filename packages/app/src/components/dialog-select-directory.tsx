@@ -10,6 +10,7 @@ import { ServerConnection } from "@/context/server"
 import { useGlobal } from "@/context/global"
 import { cleanPickerInput, createDirectorySearch, displayPickerPath, pickerPathOption } from "./directory-picker-domain"
 import type { Path } from "@opencode-ai/sdk/v2/client"
+import { MutableHashMap, MutableHashSet, Option } from "effect"
 
 interface DialogSelectDirectoryProps {
   title?: string
@@ -36,16 +37,16 @@ function toRow(absolute: string, home: string, group: Row["group"]): Row {
   }
 
   const search = Array.from(
-    new Set([full, withSlash(full), tilde, withSlash(tilde), getFilename(full)].filter(Boolean)),
+    MutableHashSet.fromIterable([full, withSlash(full), tilde, withSlash(tilde), getFilename(full)].filter(Boolean)),
   ).join("\n")
   return { absolute: full, search, group }
 }
 
 function uniqueRows(rows: Row[]) {
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   return rows.filter((row) => {
-    if (seen.has(row.absolute)) return false
-    seen.add(row.absolute)
+    if (MutableHashSet.has(seen, row.absolute)) return false
+    MutableHashSet.add(seen, row.absolute)
     return true
   })
 }
@@ -85,7 +86,7 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
 
   const recentProjects = createMemo(() => {
     const projects = serverCtx.projects.list()
-    const byProject = new Map<string, number>()
+    const byProject = MutableHashMap.empty<string, number>()
 
     for (const project of projects) {
       let at = 0
@@ -98,11 +99,15 @@ export function DialogSelectDirectory(props: DialogSelectDirectoryProps) {
           if (updated > at) at = updated
         }
       }
-      byProject.set(project.worktree, at)
+      MutableHashMap.set(byProject, project.worktree, at)
     }
 
     return projects
-      .map((project, index) => ({ project, at: byProject.get(project.worktree) ?? 0, index }))
+      .map((project, index) => ({
+        project,
+        at: Option.getOrElse(MutableHashMap.get(byProject, project.worktree), () => 0),
+        index,
+      }))
       .sort((a, b) => b.at - a.at || a.index - b.index)
       .map(({ project }) => {
         const row = toRow(project.worktree, home(), "recent")

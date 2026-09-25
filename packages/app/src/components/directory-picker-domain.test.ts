@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Option } from "effect"
+import { MutableHashSet, Option } from "effect"
 import {
   absoluteTreePath,
   activeTreeNavigation,
@@ -251,7 +251,7 @@ test("identifies the next directory level to preload", () => {
 })
 
 test("advances preloading once for every expanded directory", () => {
-  const advanced = new Set<string>()
+  const advanced = MutableHashSet.empty<string>()
   expect(advanceTreePreload(advanced, "")).toBeTrue()
   expect(advanceTreePreload(advanced, "")).toBeFalse()
   expect(advanceTreePreload(advanced, "repos/")).toBeTrue()

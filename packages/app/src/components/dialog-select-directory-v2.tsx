@@ -5,7 +5,7 @@ import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js"
-import { Option } from "effect"
+import { MutableHashMap, MutableHashSet, Option } from "effect"
 import { useGlobal } from "@/context/global"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
@@ -60,9 +60,12 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal(false)
   const [rootValid, setRootValid] = createSignal(false)
-  const listings = new Map<string, Promise<Array<{ name: string; type: "file" | "directory" }> | undefined>>()
+  const listings = MutableHashMap.empty<
+    string,
+    Promise<Array<{ name: string; type: "file" | "directory" }> | undefined>
+  >()
   const loads = createPriorityTaskQueue<Array<{ name: string; type: "file" | "directory" }> | undefined>(3)
-  const advanced = new Set<string>()
+  const advanced = MutableHashSet.empty<string>()
   let tree: FileTree | undefined
   let container: HTMLDivElement | undefined
   let pathArea: HTMLDivElement | undefined
@@ -114,7 +117,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     ]
     return {
       query: value,
-      items: Array.from(new Map(results.map((result) => [result.absolute, result])).values()).slice(0, 8),
+      items: Array.from(
+        MutableHashMap.values(MutableHashMap.fromIterable(results.map((result) => [result.absolute, result] as const))),
+      ).slice(0, 8),
     }
   })
   const currentSuggestions = createMemo(() => currentPickerSuggestions(suggestions(), input()))
@@ -123,10 +128,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     const key = path.replace(/\/+$/, "")
     setError(false)
     const absolute = absoluteTreePath(root(), key)
-    const existing = listings.get(key)
-    if (existing && !eager) loads.promote(`${generation}:${key}`)
-    const request =
-      existing ??
+    const existing = MutableHashMap.get(listings, key)
+    if (Option.isSome(existing) && !eager) loads.promote(`${generation}:${key}`)
+    const request = Option.getOrElse(existing, () =>
       loads.schedule(`${generation}:${key}`, eager ? "background" : "user", () => {
         if (!activeTreeNavigation(generation, navigation)) return Promise.resolve(undefined)
         return sdk.api.file
@@ -138,12 +142,13 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
             })),
           )
           .catch(() => undefined)
-      })
-    listings.set(key, request)
+      }),
+    )
+    MutableHashMap.set(listings, key, request)
     const nodes = await request
     if (!activeTreeNavigation(generation, navigation)) return false
     if (!nodes) {
-      listings.delete(key)
+      MutableHashMap.remove(listings, key)
       if (!key) setError(true)
       return false
     }
@@ -166,8 +171,8 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
     setActiveSuggestion(-1)
     setRoot(value)
     setInput(displayPickerPath(value, value, home()))
-    listings.clear()
-    advanced.clear()
+    MutableHashMap.clear(listings)
+    MutableHashSet.clear(advanced)
     tree?.resetPaths([])
     const valid = await load("", token)
     if (!activeTreeNavigation(token, navigation)) return
