@@ -26,56 +26,54 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
+import { Option, Predicate, Schema } from "effect"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
+// JSON text of any shape. A parse failure is None.
+const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+// A string field with at least one character, as the old truthiness checks required.
+function filledString(value: unknown): Option.Option<string> {
+  return Option.filter(Option.liftPredicate(value, Predicate.isString), (text) => text.length > 0)
+}
+
 function unwrap(message: string) {
   const text = message.replace(/^Error:\s*/, "").trim()
 
-  const parse = (value: string) => {
-    try {
-      return JSON.parse(value) as unknown
-    } catch {
-      return undefined
-    }
-  }
+  // Error payloads are sometimes JSON-encoded twice, so a string result is parsed once more.
+  const read = (value: string): Option.Option<unknown> =>
+    Option.flatMap(parseJson(value), (first) => (typeof first === "string" ? parseJson(first.trim()) : Option.some(first)))
 
-  const read = (value: string) => {
-    const first = parse(value)
-    if (typeof first !== "string") return first
-    return parse(first.trim())
-  }
-
-  let json = read(text)
-
-  if (json === undefined) {
+  const parsed = Option.orElse(read(text), () => {
     const start = text.indexOf("{")
     const end = text.lastIndexOf("}")
-    if (start !== -1 && end > start) {
-      json = read(text.slice(start, end + 1))
-    }
+    if (start !== -1 && end > start) return read(text.slice(start, end + 1))
+    return Option.none()
+  })
+
+  const found = Option.filter(parsed, record)
+  if (Option.isNone(found)) return message
+  const json = found.value
+
+  const err = json.error
+  if (record(err)) {
+    const type = filledString(err.type)
+    const msg = filledString(err.message)
+    if (Option.isSome(type) && Option.isSome(msg)) return `${type.value}: ${msg.value}`
+    if (Option.isSome(msg)) return msg.value
+    if (Option.isSome(type)) return type.value
+    const code = filledString(err.code)
+    if (Option.isSome(code)) return code.value
   }
 
-  if (!record(json)) return message
+  const msg = filledString(json.message)
+  if (Option.isSome(msg)) return msg.value
 
-  const err = record(json.error) ? json.error : undefined
-  if (err) {
-    const type = typeof err.type === "string" ? err.type : undefined
-    const msg = typeof err.message === "string" ? err.message : undefined
-    if (type && msg) return `${type}: ${msg}`
-    if (msg) return msg
-    if (type) return type
-    const code = typeof err.code === "string" ? err.code : undefined
-    if (code) return code
-  }
-
-  const msg = typeof json.message === "string" ? json.message : undefined
-  if (msg) return msg
-
-  const reason = typeof json.error === "string" ? json.error : undefined
-  if (reason) return reason
+  const reason = filledString(json.error)
+  if (Option.isSome(reason)) return reason.value
 
   return message
 }
