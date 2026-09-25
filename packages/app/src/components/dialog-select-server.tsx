@@ -365,20 +365,24 @@ export function useServerManagementController(options: { onSelect?: () => void; 
       : raw.filter((x) => global.ensureServerCtx(x).sdk.protocolKind() !== "v2")
     if (!list.length) return list
     const active = current()
-    const order = new Map(list.map((url, index) => [url, index] as const))
     const rank = (value?: ServerHealth) => {
       if (value?.healthy === true) return 0
       if (value?.healthy === false) return 2
       return 1
     }
-    return list.slice().sort((a, b) => {
-      if (a === active) return -1
-      if (b === active) return 1
-      const diff =
-        rank(global.servers.health[ServerConnection.key(a)]) - rank(global.servers.health[ServerConnection.key(b)])
-      if (diff !== 0) return diff
-      return (order.get(a) ?? 0) - (order.get(b) ?? 0)
-    })
+    // Each row carries its list index, so equal ranks keep the list order.
+    return list
+      .map((conn, index) => ({ conn, index }))
+      .sort((a, b) => {
+        if (a.conn === active) return -1
+        if (b.conn === active) return 1
+        const diff =
+          rank(global.servers.health[ServerConnection.key(a.conn)]) -
+          rank(global.servers.health[ServerConnection.key(b.conn)])
+        if (diff !== 0) return diff
+        return a.index - b.index
+      })
+      .map((row) => row.conn)
   })
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
