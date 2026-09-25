@@ -1,4 +1,4 @@
-import { Effect, Fiber } from "effect"
+import { Effect, Fiber, Option, Schema } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import path from "path"
 import { useTuiPaths } from "../../context/runtime"
@@ -8,9 +8,27 @@ import { useSDK } from "../../context/sdk"
 import { useSync } from "../../context/sync"
 import { useToast } from "../../ui/toast"
 import { DialogMoveSession, type MoveSessionSelection } from "../dialog-move-session"
-import { DialogWorkspaceFileChanges } from "../dialog-workspace-file-changes"
+import { DialogWorkspaceFileChanges, type WorkspaceFileChangesChoice } from "../dialog-workspace-file-changes"
 import { useHomeSessionDestination } from "../../routes/home/session-destination"
 import { useProject } from "../../context/project"
+
+class PromptMoveError extends Schema.TaggedError<PromptMoveError>()("TuiPromptMove.Error", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+// Waits on an SDK call. A rejection becomes a PromptMoveError that keeps the thrown value as its cause.
+function request<A>(evaluate: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => new PromptMoveError({ message: errorMessage(cause), cause }),
+  })
+}
+
+// A defect used to surface as an unhandled rejection of the floating move Promise.
+function logDefect(defect: unknown) {
+  return Effect.logError(defect)
+}
 
 function moveReminderText(directory: string) {
   return `<system-reminder>The user has changed the current working directory to "${directory}". This is still the same project but at a possibly new location; take this into account when working with any files from now on.</system-reminder>`
@@ -28,44 +46,55 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
   const [creatingDots, setCreatingDots] = createSignal(3)
   const [progress, setProgress] = createSignal<string>()
 
-  async function create(context?: string) {
-    const projectID = input.projectID()
-    if (!projectID) return
-    setCreating(true)
-    setProgress("Creating copy")
-    try {
-      const generated = await sdk.client.experimental.projectCopy.generateName(
-        { projectID, context },
-        { throwOnError: true },
+  // Copies the project for a new working directory. A failure shows a toast and gives Option.none().
+  function create(context: Option.Option<string>) {
+    return Effect.gen(function* () {
+      const projectID = input.projectID()
+      if (!projectID) return Option.none<string>()
+      setCreating(true)
+      setProgress("Creating copy")
+      const generated = yield* request(() =>
+        sdk.client.experimental.projectCopy.generateName(
+          { projectID, context: Option.getOrUndefined(context) },
+          { throwOnError: true },
+        ),
       )
-      const result = await sdk.client.v2.projectCopy.create(
-        {
-          projectID,
-          location: { directory: sdk.directory },
-          projectCopyCreatePayload: {
-            strategy: "git_worktree",
-            directory: path.join(paths.worktree, projectID.slice(0, 6)),
-            name: generated.data.name,
+      const result = yield* request(() =>
+        sdk.client.v2.projectCopy.create(
+          {
+            projectID,
+            location: { directory: sdk.directory },
+            projectCopyCreatePayload: {
+              strategy: "git_worktree",
+              directory: path.join(paths.worktree, projectID.slice(0, 6)),
+              name: generated.data.name,
+            },
           },
-        },
-        { throwOnError: true },
+          { throwOnError: true },
+        ),
       )
-      const directory = result.data?.directory
-      if (!directory) throw new Error("No project copy directory returned")
+      const directory = yield* Option.match(Option.fromNullishOr(result.data?.directory), {
+        onNone: () => Effect.fail(new PromptMoveError({ message: "No project copy directory returned" })),
+        onSome: Effect.succeed,
+      })
 
       // Call a location-based route to make sure it's bootstrapped
       // before moving on
-      await sdk.client.path.get({ directory }, { throwOnError: true })
+      yield* request(() => sdk.client.path.get({ directory }, { throwOnError: true }))
 
       setProgress("Creating session")
-      return directory
-    } catch (err) {
-      homeDestination?.clear()
-      setProgress(undefined)
-      setCreating(false)
-      toast.show({ title: "Creating workspace failed", message: errorMessage(err), variant: "error" })
-      return
-    }
+      return Option.some(directory)
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          homeDestination?.clear()
+          setProgress(undefined)
+          setCreating(false)
+          toast.show({ title: "Creating workspace failed", message: error.message, variant: "error" })
+          return Option.none<string>()
+        }),
+      ),
+    )
   }
 
   function open() {
@@ -98,7 +127,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
             dialog.clear()
             return
           }
-          void moveExistingSession(sessionID, selection)
+          Effect.runFork(moveExistingSession(sessionID, selection).pipe(Effect.tapDefect(logDefect)))
         }}
       />
     ))
@@ -114,65 +143,94 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
           ...(sync.data.part[message.id] ?? []).flatMap((part) => (part.type === "text" ? [part.text] : [])),
         ].join(" "),
       )
-    return [session?.title, ...messages].filter(Boolean).join("\n") || undefined
+    return Option.some([session?.title, ...messages].filter(Boolean).join("\n")).pipe(
+      Option.filter((text) => text.length > 0),
+    )
   }
 
-  async function moveExistingSession(sessionID: string, selection: MoveSessionSelection) {
-    const session = sync.session.get(sessionID)
-    const status = await sdk.client.vcs.status({ directory: session?.directory }).catch(() => undefined)
-    const choice = status?.data?.length ? await DialogWorkspaceFileChanges.show(dialog, status.data) : "no"
-    if (!choice) return
-    dialog.clear()
-    const directory = selection.type === "new" ? await create(sessionContext(sessionID)) : selection.directory
-    if (!directory) {
-      setProgress(undefined)
-      dialog.clear()
-      return
-    }
-    setProgress("Moving session")
-    try {
-      await sdk.client.experimental.controlPlane.moveSession(
-        {
-          sessionID,
-          destination: { directory },
-          moveChanges: choice === "yes",
-        },
-        { throwOnError: true },
+  function moveExistingSession(sessionID: string, selection: MoveSessionSelection) {
+    return Effect.gen(function* () {
+      const session = sync.session.get(sessionID)
+      // A failed status lookup moves the session without asking about file changes.
+      const status = yield* Effect.option(request(() => sdk.client.vcs.status({ directory: session?.directory })))
+      const files = status.pipe(
+        Option.flatMap((result) => Option.fromNullishOr(result.data)),
+        Option.filter((data) => data.length > 0),
       )
-      await sdk.client.session
-        .promptAsync({
-          sessionID,
-          directory,
-          noReply: true,
-          parts: [
-            {
-              type: "text",
-              text: moveReminderText(directory),
-              synthetic: true,
-            },
-          ],
-        })
-        .catch(() => undefined)
+      const choice = Option.isSome(files)
+        ? yield* DialogWorkspaceFileChanges.choose(dialog, files.value)
+        : Option.some<WorkspaceFileChangesChoice>("no")
+      if (Option.isNone(choice)) return
       dialog.clear()
-    } catch (error) {
-      toast.error(error)
+      const directory =
+        selection.type === "new" ? yield* create(sessionContext(sessionID)) : Option.some(selection.directory)
+      if (Option.isNone(directory)) {
+        setProgress(undefined)
+        dialog.clear()
+        return
+      }
+      yield* moveSession(sessionID, directory.value, choice.value === "yes")
+    })
+  }
+
+  function moveSession(sessionID: string, directory: string, moveChanges: boolean) {
+    return Effect.gen(function* () {
+      setProgress("Moving session")
+      yield* request(() =>
+        sdk.client.experimental.controlPlane.moveSession(
+          {
+            sessionID,
+            destination: { directory },
+            moveChanges,
+          },
+          { throwOnError: true },
+        ),
+      )
+      yield* Effect.ignore(
+        request(() =>
+          sdk.client.session.promptAsync({
+            sessionID,
+            directory,
+            noReply: true,
+            parts: [
+              {
+                type: "text",
+                text: moveReminderText(directory),
+                synthetic: true,
+              },
+            ],
+          }),
+        ),
+      )
       dialog.clear()
-    } finally {
-      setProgress(undefined)
-      setCreating(false)
-    }
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          toast.error(error.cause)
+          dialog.clear()
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          setProgress(undefined)
+          setCreating(false)
+        }),
+      ),
+    )
   }
 
   const pending = createMemo(() => Boolean(homeDestination?.destination()))
   const pendingNew = createMemo(() => homeDestination?.destination()?.type === "new")
 
-  async function getDirectory(context?: string) {
-    const value = homeDestination?.destination()
-    if (!value) return
-    if (value.type === "directory") {
-      return value.directory
-    }
-    return await create(context)
+  function getDirectory(context?: string): Promise<string | undefined> {
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const value = homeDestination?.destination()
+        if (!value) return Option.none<string>()
+        if (value.type === "directory") return Option.some(value.directory)
+        return yield* create(Option.fromUndefinedOr(context))
+      }).pipe(Effect.map(Option.getOrUndefined)),
+    )
   }
 
   function startSubmit() {

@@ -316,38 +316,44 @@ export function Autocomplete(props: {
 
   const [files] = createResource(
     () => ({ query: search(), location: location() }),
-    async (input) => {
-      if (!store.visible || store.visible === "/") return []
-      if (referenceMatch()) return []
-      const { lineRange, baseQuery } = extractLineRange(input.query ?? "")
+    (input) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          if (!store.visible || store.visible === "/") return []
+          if (referenceMatch()) return []
+          const { lineRange, baseQuery } = extractLineRange(input.query ?? "")
 
-      // Get files from SDK
-      const result = await sdk.client.v2.fs.find({
-        query: baseQuery,
-        limit: "20",
-        location: {
-          directory: input.location?.directory,
-          workspace: input.location?.workspaceID ?? project.workspace.current(),
-        },
-      })
+          // Get files from SDK. A rejected request still puts the resource in its error state, as the old await did.
+          const result = yield* Effect.promise(() =>
+            sdk.client.v2.fs.find({
+              query: baseQuery,
+              limit: "20",
+              location: {
+                directory: input.location?.directory,
+                workspace: input.location?.workspaceID ?? project.workspace.current(),
+              },
+            }),
+          )
 
-      // Add file options. Trust the order returned by fff (frecency, fuzzy
-      // score, filename bonus, etc. are already factored in).
-      if (result.error || !result.data) return []
-      const width = props.anchor().width - 4
-      return result.data.data.map((item): AutocompleteOption => {
-        const { filename, part } = createFilePart(item, path.join(result.data.location.directory, item.path), lineRange)
-        return {
-          display: Locale.truncateMiddle(filename, width),
-          value: filename,
-          isDirectory: item.type === "directory",
-          path: item.path,
-          onSelect: () => {
-            insertPart(filename, part)
-          },
-        }
-      })
-    },
+          // Add file options. Trust the order returned by fff (frecency, fuzzy
+          // score, filename bonus, etc. are already factored in).
+          if (result.error || !result.data) return []
+          const found = result.data
+          const width = props.anchor().width - 4
+          return found.data.map((item): AutocompleteOption => {
+            const { filename, part } = createFilePart(item, path.join(found.location.directory, item.path), lineRange)
+            return {
+              display: Locale.truncateMiddle(filename, width),
+              value: filename,
+              isDirectory: item.type === "directory",
+              path: item.path,
+              onSelect: () => {
+                insertPart(filename, part)
+              },
+            }
+          })
+        }),
+      ),
     {
       initialValue: [],
     },

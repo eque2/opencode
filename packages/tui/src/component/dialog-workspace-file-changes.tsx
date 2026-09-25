@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import type { VcsFileStatus } from "@opencode-ai/sdk/v2"
+import { Effect, Option } from "effect"
 import { createMemo, For } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Locale } from "../util/locale"
@@ -130,15 +131,29 @@ export function DialogWorkspaceFileChanges(props: {
   )
 }
 
+// Opens the dialog and waits for a choice. Closing the dialog without a choice gives Option.none().
+// A choice also closes the dialog, and Effect.callback ignores that second resume.
+DialogWorkspaceFileChanges.choose = (
+  dialog: DialogContext,
+  files: VcsFileStatus[],
+  options?: { title?: string; message?: string },
+) =>
+  Effect.callback<Option.Option<WorkspaceFileChangesChoice>>((resume) => {
+    dialog.replace(
+      () => (
+        <DialogWorkspaceFileChanges
+          files={files}
+          onSelect={(choice) => resume(Effect.succeed(Option.some(choice)))}
+          {...options}
+        />
+      ),
+      () => resume(Effect.succeed(Option.none())),
+    )
+  })
+
 DialogWorkspaceFileChanges.show = (
   dialog: DialogContext,
   files: VcsFileStatus[],
   options?: { title?: string; message?: string },
-) => {
-  return new Promise<WorkspaceFileChangesChoice | undefined>((resolve) => {
-    dialog.replace(
-      () => <DialogWorkspaceFileChanges files={files} onSelect={resolve} {...options} />,
-      () => resolve(undefined),
-    )
-  })
-}
+): Promise<WorkspaceFileChangesChoice | undefined> =>
+  Effect.runPromise(DialogWorkspaceFileChanges.choose(dialog, files, options).pipe(Effect.map(Option.getOrUndefined)))

@@ -1,5 +1,6 @@
 import { useTerminalDimensions } from "@opentui/solid"
 import { TextAttributes } from "@opentui/core"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { createMemo, createResource, createSignal, onMount, Show } from "solid-js"
 import path from "path"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
@@ -16,7 +17,7 @@ import { useCommandShortcut } from "../keymap"
 import { useProject } from "../context/project"
 import { Spinner } from "./spinner"
 import { DialogWorkspaceFileChanges } from "./dialog-workspace-file-changes"
-import type { ProjectDirectories } from "@opencode-ai/sdk/v2"
+import type { ProjectDirectories, V2ProjectCopyRemoveError } from "@opencode-ai/sdk/v2"
 import { useRoute } from "../context/route"
 
 export type MoveSessionSelection = { type: "directory"; directory: string; subdirectory: boolean } | { type: "new" }
@@ -29,6 +30,27 @@ type DialogMoveSessionProps = {
   onCurrentChange?: (selection: MoveSessionSelection) => void
   initialDirectories?: ProjectDirectory[]
   initialRemoving?: string
+}
+
+class MoveSessionRequestError extends Schema.TaggedError<MoveSessionRequestError>()(
+  "TuiDialogMoveSession.RequestError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+// Waits on an SDK call. A rejection becomes a MoveSessionRequestError that keeps the thrown value as its cause.
+function request<A>(evaluate: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => new MoveSessionRequestError({ message: errorMessage(cause), cause }),
+  })
+}
+
+// A defect used to surface as an unhandled rejection of the floating remove Promise.
+function logDefect(defect: unknown) {
+  return Effect.logError(defect)
 }
 
 export function DialogMoveSession(props: DialogMoveSessionProps) {
@@ -60,10 +82,18 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
   const [loadedProject] = createResource(
     () => (projectContext.project() === props.projectID ? undefined : props.projectID),
     (projectID) =>
-      sdk.client.project
-        .current({}, { throwOnError: true })
-        .then((result) => (result.data?.id === projectID ? result.data.worktree : undefined))
-        .catch(() => undefined),
+      Effect.runPromise(
+        Effect.option(request(() => sdk.client.project.current({}, { throwOnError: true }))).pipe(
+          Effect.map((result) =>
+            result.pipe(
+              Option.flatMapNullishOr((response) => response.data),
+              Option.filter((data) => data.id === projectID),
+              Option.map((data) => data.worktree),
+              Option.getOrUndefined,
+            ),
+          ),
+        ),
+      ),
   )
   const currentCheckout = createMemo(() => {
     if (projectContext.project() === props.projectID) return projectContext.instance.path().worktree
@@ -72,23 +102,30 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
 
   const [directories, { refetch }] = createResource(
     () => (props.initialRemoving ? undefined : props.projectID),
-    async (projectID, info): Promise<ProjectDirectory[] | undefined> => {
-      try {
-        await sdk.client.v2.projectCopy.refresh(
-          { projectID, location: { directory: sdk.directory } },
-          { throwOnError: true },
-        )
-        const directories = await sdk.client.project.directories({ projectID }, { throwOnError: true })
-        setLoadError(undefined)
-        return directories.data ?? []
-      } catch (error) {
-        setLoadError(error)
-        // An initial load with no data surfaces the inline error view below. A
-        // failed refresh intentionally stays quiet and keeps the already-shown
-        // list interactive; reopening the dialog retries the load.
-        return info.value
-      }
-    },
+    (projectID, info): Promise<ProjectDirectory[] | undefined> =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* request(() =>
+            sdk.client.v2.projectCopy.refresh(
+              { projectID, location: { directory: sdk.directory } },
+              { throwOnError: true },
+            ),
+          )
+          const loaded = yield* request(() => sdk.client.project.directories({ projectID }, { throwOnError: true }))
+          setLoadError(undefined)
+          return loaded.data ?? []
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              setLoadError(error.cause)
+              // An initial load with no data surfaces the inline error view below. A
+              // failed refresh intentionally stays quiet and keeps the already-shown
+              // list interactive; reopening the dialog retries the load.
+              return info.value
+            }),
+          ),
+        ),
+      ),
   )
   const directoryData = createMemo(() => directories() ?? props.initialDirectories)
   // Show the locked error view only when we have nothing to display. A refresh
@@ -191,7 +228,7 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     return props.current
   })
 
-  async function removedCurrent(current: boolean) {
+  function removedCurrent(current: boolean) {
     if (!current) return false
     const fallback = projectContext.data.project.mainDir
     if (fallback) setReplacementCurrent(fallback)
@@ -208,7 +245,7 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     return true
   }
 
-  async function remove(option: DialogSelectOption<MoveSessionSelection | undefined>) {
+  function remove(option: DialogSelectOption<MoveSessionSelection | undefined>) {
     if (!option.value || option.value.type !== "directory" || option.value.subdirectory || removing()) return
     const data = directoryData()
     const selected = option.value
@@ -222,66 +259,84 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     setToDelete(undefined)
     setRemoving(selected.directory)
     setWorking(true)
-    const result = await sdk.client.v2.projectCopy
-      .remove({
+    Effect.runFork(removeDirectory(selected.directory, deletingCurrent).pipe(Effect.tapDefect(logDefect)))
+  }
+
+  // Gives the API or transport error of a copy removal, or Option.none() when the copy is gone.
+  function removeCopy(
+    directory: string,
+    force: boolean,
+  ): Effect.Effect<Option.Option<V2ProjectCopyRemoveError | MoveSessionRequestError>> {
+    return request(() =>
+      sdk.client.v2.projectCopy.remove({
         projectID: props.projectID,
         location: { directory: sdk.directory },
         projectCopyRemovePayload: {
-          directory: selected.directory,
-          force: false,
+          directory,
+          force,
         },
-      })
-      .catch((error) => ({ error }))
-    if (result.error) {
-      setRemoving(undefined)
-      setWorking(false)
-      if ("data" in result.error && result.error.data.forceRequired) {
-        const status = await sdk.client.vcs.status({ directory: selected.directory }).catch(() => undefined)
-        const choice = await DialogWorkspaceFileChanges.show(dialog, status?.data ?? [], {
-          title: "Delete working copy?",
-          message: "This working copy has file changes. Do you want to delete it anyway?",
-        })
-        if (choice !== "yes") {
-          reopen()
-          return
-        }
-        reopen(selected.directory)
-        const forced = await sdk.client.v2.projectCopy
-          .remove({
-            projectID: props.projectID,
-            location: { directory: sdk.directory },
-            projectCopyRemovePayload: {
-              directory: selected.directory,
-              force: true,
-            },
-          })
-          .catch((error) => ({ error }))
-        if (forced.error) {
-          toast.show({
-            variant: "error",
-            title: "Failed to delete project copy",
-            message: errorMessage(forced.error),
-          })
-          reopen()
-          return
-        }
+      }),
+    ).pipe(
+      Effect.map((result) => Option.fromNullishOr(result.error)),
+      Effect.catch((error) => Effect.succeed(Option.some(error))),
+    )
+  }
+
+  function removeDirectory(directory: string, deletingCurrent: boolean) {
+    return Effect.gen(function* () {
+      const failure = yield* removeCopy(directory, false)
+      if (Option.isNone(failure)) {
+        const reload = refetch()
+        // refetch gives a Promise while the list reloads. Wait for it, so the spinner stops with the new list.
+        if (Predicate.isPromiseLike(reload)) yield* Effect.promise(() => reload)
         setRemoving(undefined)
         setWorking(false)
-        if (await removedCurrent(deletingCurrent)) return
+        removedCurrent(deletingCurrent)
+        return
+      }
+      setRemoving(undefined)
+      setWorking(false)
+      const error = failure.value
+      if (!("data" in error && error.data.forceRequired)) {
+        toast.show({
+          variant: "error",
+          title: "Failed to delete project copy",
+          message: errorMessage(error),
+        })
+        return
+      }
+      const status = yield* Effect.option(request(() => sdk.client.vcs.status({ directory })))
+      const choice = yield* DialogWorkspaceFileChanges.choose(
+        dialog,
+        status.pipe(
+          Option.flatMapNullishOr((result) => result.data),
+          Option.getOrElse(() => []),
+        ),
+        {
+          title: "Delete working copy?",
+          message: "This working copy has file changes. Do you want to delete it anyway?",
+        },
+      )
+      if (!Option.contains(choice, "yes")) {
         reopen()
         return
       }
-      toast.show({
-        variant: "error",
-        title: "Failed to delete project copy",
-        message: errorMessage(result.error),
-      })
-      return
-    }
-    await refetch()
-    setRemoving(undefined)
-    setWorking(false)
-    if (await removedCurrent(deletingCurrent)) return
+      reopen(directory)
+      const forced = yield* removeCopy(directory, true)
+      if (Option.isSome(forced)) {
+        toast.show({
+          variant: "error",
+          title: "Failed to delete project copy",
+          message: errorMessage(forced.value),
+        })
+        reopen()
+        return
+      }
+      setRemoving(undefined)
+      setWorking(false)
+      if (removedCurrent(deletingCurrent)) return
+      reopen()
+    })
   }
 
   const fullHeight = createMemo(() =>

@@ -1,4 +1,4 @@
-import { Effect, Fiber, Option } from "effect"
+import { Effect, Fiber, Option, Schema } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { useDialog } from "../../ui/dialog"
 import { useSDK } from "../../context/sdk"
@@ -14,6 +14,16 @@ import {
 } from "../dialog-workspace-create"
 import type { WorkspaceStatus } from "../workspace-label"
 
+class WorkspaceCreateError extends Schema.TaggedError<WorkspaceCreateError>()("TuiPromptWorkspace.CreateError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+// A defect used to surface as an unhandled rejection of the floating create Promise.
+function logDefect(defect: unknown) {
+  return Effect.logError(defect)
+}
+
 export function usePromptWorkspace(sessionID?: string) {
   const dialog = useDialog()
   const sdk = useSDK()
@@ -25,73 +35,86 @@ export function usePromptWorkspace(sessionID?: string) {
   const [creatingDots, setCreatingDots] = createSignal(3)
   const [notice, setNotice] = createSignal<string>()
 
-  async function create(selection: Extract<WorkspaceSelection, { type: "new" }>) {
-    setCreating(true)
-    let result
-    try {
-      result = await sdk.client.experimental.workspace.create({ type: selection.workspaceType, branch: null })
-    } catch (err) {
-      setSelection(undefined)
-      setCreating(false)
-      toast.show({ title: "Creating workspace failed", message: errorMessage(err), variant: "error" })
-      return
-    }
-    if (result.error || !result.data) {
-      setSelection(undefined)
-      setCreating(false)
-      toast.show({
-        title: "Creating workspace failed",
-        message: errorMessage(result.error ?? "no response"),
-        variant: "error",
+  // Creates the workspace and selects it. A failure clears the selection, shows a toast and gives Option.none().
+  function create(selection: Extract<WorkspaceSelection, { type: "new" }>) {
+    return Effect.gen(function* () {
+      setCreating(true)
+      const result = yield* Effect.tryPromise({
+        try: () =>
+          sdk.client.experimental.workspace.create({
+            type: selection.workspaceType,
+            // eslint-disable-next-line effect/no-null-use-option -- (b) the host passes this body to the plugin WorkspaceAdapter configure, whose WorkspaceInfo.branch is string | null; an omitted key would reach adapters as undefined
+            branch: null,
+          }),
+        catch: (cause) => new WorkspaceCreateError({ message: errorMessage(cause), cause }),
       })
-      return
-    }
+      if (result.error || !result.data) {
+        return yield* new WorkspaceCreateError({ message: errorMessage(result.error ?? "no response") })
+      }
 
-    await project.workspace.sync()
-    const workspace = result.data
-    setSelection({
-      type: "existing",
-      workspaceID: workspace.id,
-      workspaceType: workspace.type,
-      workspaceName: workspace.name,
-    })
-    setCreating(false)
-    return workspace
+      yield* Effect.promise(() => project.workspace.sync())
+      const workspace = result.data
+      setSelection({
+        type: "existing",
+        workspaceID: workspace.id,
+        workspaceType: workspace.type,
+        workspaceName: workspace.name,
+      })
+      setCreating(false)
+      return Option.some(workspace)
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          setSelection(undefined)
+          setCreating(false)
+          toast.show({ title: "Creating workspace failed", message: error.message, variant: "error" })
+          return Option.none()
+        }),
+      ),
+    )
   }
 
-  async function warp(selection: WorkspaceSelection) {
-    if (!sessionID) {
-      setSelection(selection)
-      dialog.clear()
-      if (selection.type === "new") void create(selection)
-      return
-    }
-    const sourceWorkspaceID = project.workspace.current()
-    const copyChanges = await confirmWorkspaceFileChanges({ dialog, sdk, sourceWorkspaceID })
-    if (copyChanges === undefined) return
-    setSelection(selection)
-    dialog.clear()
+  function warp(selection: WorkspaceSelection): Promise<void> {
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        if (!sessionID) {
+          setSelection(selection)
+          dialog.clear()
+          // The new workspace is created in the background, as the old `void create(selection)` did.
+          if (selection.type === "new") yield* Effect.forkDetach(create(selection).pipe(Effect.tapDefect(logDefect)))
+          return
+        }
+        const sourceWorkspaceID = project.workspace.current()
+        const copyChanges = yield* Effect.promise(() => confirmWorkspaceFileChanges({ dialog, sdk, sourceWorkspaceID }))
+        if (copyChanges === undefined) return
+        setSelection(selection)
+        dialog.clear()
 
-    const workspace =
-      selection.type === "none"
-        ? { id: null, name: "local project" }
-        : selection.type === "existing"
-          ? { id: selection.workspaceID, name: selection.workspaceName }
-          : await create(selection)
-    if (!workspace) return
+        // The local project has no workspace id; the warp API reads null as "detach to the local project".
+        const workspace =
+          selection.type === "none"
+            ? Option.some({ id: Option.none<string>(), name: "local project" })
+            : selection.type === "existing"
+              ? Option.some({ id: Option.some(selection.workspaceID), name: selection.workspaceName })
+              : Option.map(yield* create(selection), (created) => ({ id: Option.some(created.id), name: created.name }))
+        if (Option.isNone(workspace)) return
 
-    const warped = await warpWorkspaceSession({
-      dialog,
-      sdk,
-      sync,
-      project,
-      toast,
-      sourceWorkspaceID,
-      workspaceID: workspace.id,
-      sessionID,
-      copyChanges,
-    })
-    if (warped) showNotice(workspace.name)
+        const warped = yield* Effect.promise(() =>
+          warpWorkspaceSession({
+            dialog,
+            sdk,
+            sync,
+            project,
+            toast,
+            sourceWorkspaceID,
+            workspaceID: Option.getOrNull(workspace.value.id),
+            sessionID,
+            copyChanges,
+          }),
+        )
+        if (warped) showNotice(workspace.value.name)
+      }),
+    )
   }
 
   // A new notice restarts the 4 second hide delay; unmount stops it.

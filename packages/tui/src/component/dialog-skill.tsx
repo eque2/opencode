@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Effect, Schema } from "effect"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { createResource, createMemo, createSignal } from "solid-js"
 import { useDialog } from "../ui/dialog"
@@ -10,6 +11,10 @@ export type DialogSkillProps = {
   onSelect: (skill: string) => void
 }
 
+class SkillLoadError extends Schema.TaggedError<SkillLoadError>()("TuiDialogSkill.LoadError", {
+  cause: Schema.Defect(),
+}) {}
+
 export function DialogSkill(props: DialogSkillProps) {
   const dialog = useDialog()
   const sdk = useSDK()
@@ -19,15 +24,22 @@ export function DialogSkill(props: DialogSkillProps) {
   const [loadError, setLoadError] = createSignal<unknown>()
 
   const [skills] = createResource(() =>
-    sdk.client.app
-      .skills({}, { throwOnError: true })
-      .then((result) => result.data ?? [])
-      // Catch so the rejected resource never reaches the memo below: reading
-      // skills() in an errored state re-throws and tears down the dialog.
-      .catch((error) => {
-        setLoadError(error)
-        return undefined
-      }),
+    Effect.runPromise(
+      Effect.tryPromise({
+        try: () => sdk.client.app.skills({}, { throwOnError: true }),
+        catch: (cause) => new SkillLoadError({ cause }),
+      }).pipe(
+        Effect.map((result) => result.data ?? []),
+        // Catch so the rejected resource never reaches the memo below: reading
+        // skills() in an errored state re-throws and tears down the dialog.
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            setLoadError(error.cause)
+            return []
+          }),
+        ),
+      ),
+    ),
   )
 
   const showError = createMemo(() => Boolean(loadError()))
