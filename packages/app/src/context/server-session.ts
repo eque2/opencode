@@ -136,7 +136,7 @@ type MessagePage = {
   source?: SessionMessageInfo[]
   sourceMode?: "latest" | "older"
   projectSource?: boolean
-  cursor?: string
+  cursor: Option.Option<string>
   complete: boolean
 }
 
@@ -287,14 +287,22 @@ function reconcileFetched<T extends { id: string }>(
 
 type ServerSessionOptions = { retry?: typeof retry; protocol?: Promise<"v1" | "v2"> }
 
+// Only the session API has `get`; the options object never does.
+const isSessionApi = (value: SessionApi | ServerSessionOptions): value is SessionApi => "get" in value
+
+const isServerSessionOptions = (value: SessionApi | ServerSessionOptions): value is ServerSessionOptions =>
+  !("get" in value)
+
 export function createServerSession(
   client: OpencodeClient,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
   messageApi?: MessageApi,
   currentOptions?: ServerSessionOptions,
 ) {
-  const sessionApi = messageApi ? (sessionApiOrOptions as SessionApi) : undefined
-  const options = messageApi ? currentOptions : (sessionApiOrOptions as ServerSessionOptions | undefined)
+  // With a message API the second argument is the session API; without one it holds the options.
+  const second = Option.fromNullishOr(sessionApiOrOptions)
+  const sessionApi = messageApi ? Option.filter(second, isSessionApi) : Option.none<SessionApi>()
+  const options = messageApi ? Option.fromNullishOr(currentOptions) : Option.filter(second, isServerSessionOptions)
   const [data, setData] = createStore({
     info: {} as Record<string, Session | undefined>,
     session_status: {} as Record<string, SessionStatus>,
@@ -310,8 +318,8 @@ export function createServerSession(
       return (this.session_status[id]?.type ?? "idle") !== "idle"
     },
   })
-  const retryRequest = options?.retry ?? retry
-  const protocol = Option.fromNullishOr(options?.protocol)
+  const retryRequest = Option.match(options, { onNone: () => retry, onSome: (value) => value.retry ?? retry })
+  const protocol = Option.flatMap(options, (value) => Option.fromNullishOr(value.protocol))
   // A client without a protocol promise speaks the current protocol.
   const protocolIs = (expected: "v1" | "v2") =>
     Option.match(protocol, {
@@ -401,7 +409,8 @@ export function createServerSession(
         let current = data.info[sessionID]
         while (current) {
           MutableHashSet.add(preserve, current.id)
-          current = current.parentID ? data.info[current.parentID] : undefined
+          if (!current.parentID) break
+          current = data.info[current.parentID]
         }
       }
       const stale: string[] = []
@@ -420,7 +429,10 @@ export function createServerSession(
   }
 
   const fetchSession = (sessionID: string): Effect.Effect<Session, ServerSessionError> => {
-    if (sessionApi) return attempt(() => sessionApi.get({ sessionID })).pipe(Effect.map(normalizeSessionInfo))
+    if (Option.isSome(sessionApi)) {
+      const api = sessionApi.value
+      return attempt(() => api.get({ sessionID })).pipe(Effect.map(normalizeSessionInfo))
+    }
     return attempt(() => client.session.get({ sessionID })).pipe(
       Effect.flatMap((result) =>
         result.data
@@ -688,7 +700,7 @@ export function createServerSession(
         source,
         sourceMode: before ? ("older" as const) : ("latest" as const),
         projectSource: true,
-        cursor: response.cursor.next ?? undefined,
+        cursor: Option.fromNullishOr(response.cursor.next),
         complete: response.data.length === 0,
       }
     }
@@ -707,17 +719,18 @@ export function createServerSession(
       })),
       source: legacyMessageSource(items),
       sourceMode: before ? ("older" as const) : ("latest" as const),
-      cursor: response.response.headers.get("x-next-cursor") ?? undefined,
+      cursor: Option.fromNullishOr(response.response.headers.get("x-next-cursor")),
       complete: !response.response.headers.get("x-next-cursor"),
     }
   })
 
   const fetchMessage = Effect.fnUntraced(function* (sessionID: string, messageID: string, onAttempt: () => void) {
-    if (sessionApi && !(yield* protocolIs("v1"))) {
+    if (Option.isSome(sessionApi) && !(yield* protocolIs("v1"))) {
+      const api = sessionApi.value
       const response = yield* attempt(() =>
         retryRequest(() => {
           onAttempt()
-          return sessionApi.message({ sessionID, messageID })
+          return api.message({ sessionID, messageID })
         }),
       )
       const normalized = normalizeSessionMessages(sessionID, [response])
@@ -815,24 +828,21 @@ export function createServerSession(
     cleanupOrphans: boolean,
   ) => {
     const touchedSource = Option.map(load, (value) => value.touchedSource)
-    const source = page.source
-      ? (() => {
-          const incoming = MutableHashSet.fromIterable(page.source.map((message) => message.id))
-          const existing = data.session_message[sessionID] ?? []
-          const current = existing.filter((message) => !MutableHashSet.has(incoming, message.id))
-          const live = MutableHashMap.fromIterable(existing.map((message) => [message.id, message] as const))
-          return (page.sourceMode === "older" ? [...page.source, ...current] : [...current, ...page.source]).map(
-            (message) =>
-              hasID(touchedSource, message.id)
-                ? Option.getOrElse(MutableHashMap.get(live, message.id), () => message)
-                : message,
-          )
-        })()
-      : undefined
+    const source = Option.map(Option.fromNullishOr(page.source), (fetched) => {
+      const incoming = MutableHashSet.fromIterable(fetched.map((message) => message.id))
+      const existing = data.session_message[sessionID] ?? []
+      const current = existing.filter((message) => !MutableHashSet.has(incoming, message.id))
+      const live = MutableHashMap.fromIterable(existing.map((message) => [message.id, message] as const))
+      return (page.sourceMode === "older" ? [...fetched, ...current] : [...current, ...fetched]).map((message) =>
+        hasID(touchedSource, message.id)
+          ? Option.getOrElse(MutableHashMap.get(live, message.id), () => message)
+          : message,
+      )
+    })
     const projected =
-      page.projectSource && source
+      page.projectSource && Option.isSome(source)
         ? (() => {
-            const normalized = normalizeSessionMessages(sessionID, source)
+            const normalized = normalizeSessionMessages(sessionID, source.value)
             return {
               ...page,
               session: normalized.messages.sort(compareMessages),
@@ -863,7 +873,7 @@ export function createServerSession(
       compare: compareMessages,
     })
     batch(() => {
-      if (source) setData("session_message", sessionID, reconcile(source))
+      if (Option.isSome(source)) setData("session_message", sessionID, reconcile(source.value))
       const messageIDs = replaceMessages(sessionID, messages)
       replaceParts(sessionID, merged.part, messageIDs, load)
       const orphans = MutableHashMap.get(orphanParts, sessionID)
@@ -875,7 +885,7 @@ export function createServerSession(
         MutableHashMap.remove(orphanParts, sessionID)
       }
       setMeta("limit", sessionID, messages.length)
-      setMeta("cursor", sessionID, merged.cursor)
+      setMeta("cursor", sessionID, Option.getOrUndefined(merged.cursor))
       setMeta("complete", sessionID, merged.complete)
       setMeta("at", sessionID, DateTime.toEpochMillis(DateTime.nowUnsafe()))
     })
@@ -891,9 +901,10 @@ export function createServerSession(
     load: MessageLoadState,
   ) {
     const page = yield* fetchMessages(sessionID, limit, before, () => resetMessageLoad(sessionID, load))
-    const first = page.session.reduce<Message | undefined>(
-      (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
-      undefined,
+    const first = page.session.reduce(
+      (oldest, message) =>
+        Option.isNone(oldest) || compareMessages(message, oldest.value) < 0 ? Option.some(message) : oldest,
+      Option.none<Message>(),
     )
     if (!isGeneration(sessionID, active)) return false
 
@@ -953,7 +964,11 @@ export function createServerSession(
           }
     const preserveUnfetched =
       mode === "prepend" ||
-      (!result.complete && (!first || ((message: Message) => compareMessages(message, first) < 0)))
+      (!result.complete &&
+        Option.match(first, {
+          onNone: () => true,
+          onSome: (oldest) => (message: Message) => compareMessages(message, oldest) < 0,
+        }))
     applyMessagePage(
       sessionID,
       result,
@@ -1081,18 +1096,21 @@ export function createServerSession(
     if (reduction.touched.length === 0) return
 
     const touched = MutableHashSet.fromIterable(reduction.touched)
-    let parentID: string | undefined
+    // The latest user or synthetic turn root; a shell message ends the turn.
+    let parentID: Option.Option<string> = Option.none()
     for (const message of reduction.messages) {
       if (message.type === "user" || (message.type === "synthetic" && message.description?.trim()))
-        parentID = message.id
+        parentID = Option.some(message.id)
       if (message.type === "shell") {
         if (MutableHashSet.has(touched, message.id)) MutableHashSet.add(touched, `${message.id}:assistant`)
-        parentID = undefined
+        parentID = Option.none()
       }
-      if (message.type === "assistant" && MutableHashSet.has(touched, message.id) && parentID)
-        MutableHashSet.add(touched, parentID)
-      if (message.type === "compaction" && MutableHashSet.has(touched, message.id) && parentID)
-        MutableHashSet.add(touched, parentID)
+      if (
+        (message.type === "assistant" || message.type === "compaction") &&
+        MutableHashSet.has(touched, message.id) &&
+        Option.isSome(parentID)
+      )
+        MutableHashSet.add(touched, parentID.value)
     }
 
     const normalized = normalizeSessionMessages(reduction.sessionID, reduction.messages)
@@ -1119,10 +1137,11 @@ export function createServerSession(
   }
 
   const hydrateV2Message = (sessionID: string, messageID: string) => {
-    if (!sessionApi) return
+    if (Option.isNone(sessionApi)) return
+    const api = sessionApi.value
     // Hydration is best effort: a failed request or projection leaves the reduced state as it is.
     Effect.runFork(
-      attempt(() => sessionApi.message({ sessionID, messageID })).pipe(
+      attempt(() => api.message({ sessionID, messageID })).pipe(
         Effect.map((message) => {
           const current = data.session_message[sessionID] ?? []
           const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
