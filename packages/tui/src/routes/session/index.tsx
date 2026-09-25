@@ -977,7 +977,7 @@ export function Session() {
 
           const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
 
-          const options = await DialogExportOptions.show(
+          const chosen = await DialogExportOptions.show(
             dialog,
             defaultFilename,
             showThinking(),
@@ -986,7 +986,8 @@ export function Session() {
             false,
           )
 
-          if (options === null) return
+          if (Option.isNone(chosen)) return
+          const options = chosen.value
 
           const transcript = formatTranscript(
             sessionData,

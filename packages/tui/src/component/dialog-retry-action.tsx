@@ -1,6 +1,7 @@
 import { RGBA, TextAttributes } from "@opentui/core"
 import open from "open"
 import { createSignal } from "solid-js"
+import { Effect } from "effect"
 import { selectedForeground, useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "../ui/dialog"
 import { Link } from "../ui/link"
@@ -150,11 +151,14 @@ export function DialogRetryAction(props: DialogRetryActionProps) {
 DialogRetryAction.show = (
   dialog: DialogContext,
   props: Pick<DialogRetryActionProps, "title" | "message" | "label" | "link">,
-) => {
-  return new Promise<boolean>((resolve) => {
-    dialog.replace(
-      () => <DialogRetryAction {...props} onClose={(dontShow) => resolve(dontShow ?? false)} />,
-      () => resolve(false),
-    )
-  })
+): Promise<boolean> => {
+  // The dialog settles once with "don't show again"; closing it any other way settles with false.
+  return Effect.runPromise(
+    Effect.callback<boolean>((resume) => {
+      dialog.replace(
+        () => <DialogRetryAction {...props} onClose={(dontShow) => resume(Effect.succeed(dontShow ?? false))} />,
+        () => resume(Effect.succeed(false)),
+      )
+    }),
+  )
 }

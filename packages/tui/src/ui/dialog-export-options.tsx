@@ -3,9 +3,17 @@ import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
 import { createStore } from "solid-js/store"
 import { onCleanup, onMount, Show } from "solid-js"
-import { Effect, Fiber } from "effect"
+import { Effect, Fiber, Option } from "effect"
 import { useTuiConfig } from "../config"
 import { useBindings } from "../keymap"
+
+export type ExportOptions = {
+  filename: string
+  thinking: boolean
+  toolDetails: boolean
+  assistantMetadata: boolean
+  openWithoutSaving: boolean
+}
 
 export type DialogExportOptionsProps = {
   defaultFilename: string
@@ -13,13 +21,7 @@ export type DialogExportOptionsProps = {
   defaultToolDetails: boolean
   defaultAssistantMetadata: boolean
   defaultOpenWithoutSaving: boolean
-  onConfirm?: (options: {
-    filename: string
-    thinking: boolean
-    toolDetails: boolean
-    assistantMetadata: boolean
-    openWithoutSaving: boolean
-  }) => void
+  onConfirm?: (options: ExportOptions) => void
   onCancel?: () => void
 }
 
@@ -205,27 +207,24 @@ DialogExportOptions.show = (
   defaultToolDetails: boolean,
   defaultAssistantMetadata: boolean,
   defaultOpenWithoutSaving: boolean,
-) => {
-  return new Promise<{
-    filename: string
-    thinking: boolean
-    toolDetails: boolean
-    assistantMetadata: boolean
-    openWithoutSaving: boolean
-  } | null>((resolve) => {
-    dialog.replace(
-      () => (
-        <DialogExportOptions
-          defaultFilename={defaultFilename}
-          defaultThinking={defaultThinking}
-          defaultToolDetails={defaultToolDetails}
-          defaultAssistantMetadata={defaultAssistantMetadata}
-          defaultOpenWithoutSaving={defaultOpenWithoutSaving}
-          onConfirm={(options) => resolve(options)}
-          onCancel={() => resolve(null)}
-        />
-      ),
-      () => resolve(null),
-    )
-  })
+): Promise<Option.Option<ExportOptions>> => {
+  // The dialog settles once: with the confirmed options, or with none when it is cancelled or closed.
+  return Effect.runPromise(
+    Effect.callback<Option.Option<ExportOptions>>((resume) => {
+      dialog.replace(
+        () => (
+          <DialogExportOptions
+            defaultFilename={defaultFilename}
+            defaultThinking={defaultThinking}
+            defaultToolDetails={defaultToolDetails}
+            defaultAssistantMetadata={defaultAssistantMetadata}
+            defaultOpenWithoutSaving={defaultOpenWithoutSaving}
+            onConfirm={(options) => resume(Effect.succeed(Option.some(options)))}
+            onCancel={() => resume(Effect.succeed(Option.none()))}
+          />
+        ),
+        () => resume(Effect.succeed(Option.none())),
+      )
+    }),
+  )
 }
