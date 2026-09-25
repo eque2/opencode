@@ -61,6 +61,17 @@ import { LegacyHome } from "@/pages/home/legacy-home"
 
 const NewSession = lazy(() => import("@/pages/new-session"))
 
+/** Creating a draft tab rejected. `cause` is the rejection. */
+class DraftCreateError extends Data.TaggedError("App.DraftCreateError")<{ readonly cause: unknown }> {}
+
+/**
+ * Runs an app shell action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 const SessionRoute = () => {
   const settings = useSettings()
   const params = useParams()
@@ -87,7 +98,14 @@ const SessionRoute = () => {
     if (!settings.general.newLayoutDesigns()) return
     if (params.id || search.draftId) return
     if (!tabs.ready() || !sdk().directory) return
-    tabs.newDraft({ server: server.key, directory: sdk().directory }, search.prompt)
+    const draft = { server: server.key, directory: sdk().directory }
+    const prompt = search.prompt
+    runDetached(
+      Effect.tryPromise({
+        try: () => tabs.newDraft(draft, prompt),
+        catch: (cause) => new DraftCreateError({ cause }),
+      }),
+    )
   })
 
   return (
