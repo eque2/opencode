@@ -188,7 +188,7 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
 
         yield* Effect.sleep("500 millis")
         markSeen()
-        dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
+        void dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
       })
       // A failed changelog request or body read leaves the release notes unseen, as the old .catch did.
       load.run(loadHighlights.pipe(Effect.ignore))
