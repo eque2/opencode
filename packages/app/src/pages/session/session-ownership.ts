@@ -28,7 +28,7 @@ export function createSessionOwnership(sessionKey: () => string) {
         },
         run<T>(action: () => T) {
           transition()
-          if (generation !== captured) return
+          if (generation !== captured) return undefined
           return action()
         },
       }
