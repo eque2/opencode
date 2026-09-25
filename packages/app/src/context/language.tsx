@@ -1,6 +1,7 @@
 import * as i18n from "@solid-primitives/i18n"
 import { createEffect, createMemo, createResource } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
+import { Data, Effect, HashSet, MutableHashMap, Option, Result, Schema } from "effect"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { pluralCategory, type UiI18nPluralKey } from "@opencode-ai/ui/context/i18n"
 import { Persist, persisted } from "@/utils/persist"
@@ -20,11 +21,14 @@ import {
 export type Locale = DesktopNativeLocale
 export type Direction = "ltr" | "rtl"
 
-const RTL_LOCALES: ReadonlySet<Locale> = new Set(["ar", "ur", "pa", "fa", "dv"])
+const RTL_LOCALES = HashSet.make<Array<Locale>>("ar", "ur", "pa", "fa", "dv")
 
 function localeDirection(locale: Locale): Direction {
-  return RTL_LOCALES.has(locale) ? "rtl" : "ltr"
+  return HashSet.has(RTL_LOCALES, locale) ? "rtl" : "ltr"
 }
+
+/** A locale bundle whose dynamic import failed. */
+class LocaleLoadError extends Data.TaggedError("App.LocaleLoadError")<{ readonly cause: unknown }> {}
 
 type RawDictionary = typeof en & typeof uiEn
 type Dictionary = i18n.Flatten<RawDictionary>
@@ -44,12 +48,18 @@ const LOCALES: readonly Locale[] = DESKTOP_NATIVE_LOCALES
 const INTL = DESKTOP_NATIVE_LOCALE_TAGS
 
 const base = i18n.flatten({ ...en, ...uiEn })
-const dicts = new Map<Locale, Dictionary>([["en", base]])
+const dicts = MutableHashMap.make<[[Locale, Dictionary]]>(["en", base])
 
+const importSource = (source: Promise<Source>) =>
+  Effect.tryPromise({ try: () => source, catch: (cause) => new LocaleLoadError({ cause }) })
+
+// Both imports start when the loader is called. They settle together, so a failure in one still observes the other.
 const merge = (app: Promise<Source>, ui: Promise<Source>) =>
-  Promise.all([app, ui]).then(([a, b]) => ({ ...base, ...i18n.flatten({ ...a.dict, ...b.dict }) }) as Dictionary)
+  Effect.all([importSource(app), importSource(ui)], { concurrency: "unbounded" }).pipe(
+    Effect.map(([a, b]) => ({ ...base, ...i18n.flatten({ ...a.dict, ...b.dict }) }) as Dictionary),
+  )
 
-const loaders: Record<Exclude<Locale, "en">, () => Promise<Dictionary>> = {
+const loaders: Record<Exclude<Locale, "en">, () => Effect.Effect<Dictionary, LocaleLoadError>> = {
   zh: () => merge(import("@/i18n/zh"), import("@opencode-ai/ui/i18n/zh")),
   zht: () => merge(import("@/i18n/zht"), import("@opencode-ai/ui/i18n/zht")),
   ko: () => merge(import("@/i18n/ko"), import("@opencode-ai/ui/i18n/ko")),
@@ -113,19 +123,17 @@ const loaders: Record<Exclude<Locale, "en">, () => Promise<Dictionary>> = {
   uz: () => merge(import("@/i18n/uz"), import("@opencode-ai/ui/i18n/uz")),
 }
 
-function loadDict(locale: Locale) {
-  const hit = dicts.get(locale)
-  if (hit) return Promise.resolve(hit)
-  if (locale === "en") return Promise.resolve(base)
-  const load = loaders[locale]
-  return load().then((next: Dictionary) => {
-    dicts.set(locale, next)
-    return next
+function loadDict(locale: Locale): Effect.Effect<Dictionary, LocaleLoadError> {
+  return Effect.suspend(() => {
+    const hit = MutableHashMap.get(dicts, locale)
+    if (Option.isSome(hit)) return Effect.succeed(hit.value)
+    if (locale === "en") return Effect.succeed(base)
+    return loaders[locale]().pipe(Effect.tap((next) => Effect.sync(() => MutableHashMap.set(dicts, locale, next))))
   })
 }
 
-export function loadLocaleDict(locale: Locale) {
-  return loadDict(locale).then(() => undefined)
+export function loadLocaleDict(locale: Locale): Promise<void> {
+  return Effect.runPromise(loadDict(locale).pipe(Effect.asVoid))
 }
 
 function detectLocale(): Locale {
@@ -133,31 +141,35 @@ function detectLocale(): Locale {
   return detectDesktopNativeLocale(navigator.languages?.length ? navigator.languages : [navigator.language])
 }
 
+const isLocale = Schema.is(Schema.Literals(DESKTOP_NATIVE_LOCALES))
+
 export function normalizeLocale(value: string): Locale {
-  return LOCALES.includes(value as Locale) ? (value as Locale) : "en"
+  return isLocale(value) ? value : "en"
 }
 
-function readStoredLocale() {
-  if (typeof localStorage !== "object") return
-  try {
-    const raw = localStorage.getItem("opencode.global.dat:language")
-    if (!raw) return
-    const next = JSON.parse(raw) as { locale?: string }
-    if (typeof next?.locale !== "string") return
-    return normalizeLocale(next.locale)
-  } catch {
-    return
-  }
+// The persisted language store; only a string locale counts.
+const decodeStoredLanguage = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Struct({ locale: Schema.String })))
+
+function readStoredLocale(): Option.Option<Locale> {
+  if (typeof localStorage !== "object") return Option.none()
+  // getItem can throw when the browser blocks storage; that counts as no stored locale.
+  return Result.try(() => localStorage.getItem("opencode.global.dat:language")).pipe(
+    Result.getSuccess,
+    Option.flatMap(Option.fromNullishOr),
+    Option.filter((raw) => raw !== ""),
+    Option.flatMap(decodeStoredLanguage),
+    Option.map((stored) => normalizeLocale(stored.locale)),
+  )
 }
 
-const warm = readStoredLocale() ?? detectLocale()
-const initialLocale =
-  warm === "en"
-    ? Promise.resolve(warm)
-    : loadDict(warm).then(
-        () => warm,
-        () => "en" as const,
-      )
+const warm = Option.getOrElse(readStoredLocale(), detectLocale)
+// A locale bundle that fails to load falls back to English.
+const initialLocale: Promise<Locale> = Effect.runPromise(
+  loadDict(warm).pipe(
+    Effect.as(warm),
+    Effect.orElseSucceed((): Locale => "en"),
+  ),
+)
 
 export function loadInitialLocale() {
   return initialLocale
@@ -167,7 +179,7 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
   name: "Language",
   gate: false,
   init: (props: { locale?: Locale; onNativeTranslations?: (bundle: DesktopNativeBundle) => void }) => {
-    const initial = props.locale ?? readStoredLocale() ?? detectLocale()
+    const initial = props.locale ?? Option.getOrElse(readStoredLocale(), detectLocale)
     const [store, setStore, _, ready] = persisted(
       Persist.global("language", ["language.v1"]),
       createStore({
@@ -177,7 +189,8 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
 
     const locale = createMemo<Locale>(() => normalizeLocale(store.locale))
     const intl = createMemo(() => INTL[locale()])
-    const [layout, setLayout] = createStore({ direction: undefined as Direction | undefined })
+    // A direction override is set only when it differs from the locale direction.
+    const [layout, setLayout] = createStore<{ direction?: Direction }>({})
     const direction = createMemo(() => layout.direction ?? localeDirection(locale()))
     const layoutLocale = createMemo(() => {
       if (!layout.direction) return intl()
@@ -185,14 +198,13 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
       return layout.direction === "rtl" ? "ar" : "en"
     })
 
-    const [dict] = createResource(locale, loadDict, {
-      initialValue: dicts.get(initial) ?? base,
+    const [dict] = createResource(locale, (next) => Effect.runPromise(loadDict(next)), {
+      initialValue: Option.getOrElse(MutableHashMap.get(dicts, initial), () => base),
     })
 
-    const t = i18n.translator(() => dict() ?? base, i18n.resolveTemplate) as (
-      key: keyof Dictionary,
-      params?: Record<string, string | number | boolean>,
-    ) => string
+    const translate = i18n.translator(() => dict() ?? base, i18n.resolveTemplate)
+    const t = (key: keyof Dictionary, params?: Record<string, string | number | boolean>): string =>
+      translate(key, params)
 
     const plural = (key: PluralKey, count: number, params?: Record<string, string | number | boolean>) => {
       const category = pluralCategory(intl(), count)
@@ -235,7 +247,15 @@ export const { use: useLanguage, provider: LanguageProvider } = createSimpleCont
         setStore("locale", normalizeLocale(next))
       },
       setDirection(next: Direction) {
-        setLayout("direction", next === localeDirection(locale()) ? undefined : next)
+        if (next !== localeDirection(locale())) {
+          setLayout("direction", next)
+          return
+        }
+        setLayout(
+          produce((draft) => {
+            delete draft.direction
+          }),
+        )
       },
     }
   },
