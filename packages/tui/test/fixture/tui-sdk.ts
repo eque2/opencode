@@ -63,7 +63,7 @@ export type FetchHandler = (url: URL) => Response | Promise<Response> | undefine
 
 export function createFetch(override?: FetchHandler, events?: ReturnType<typeof createEventSource>) {
   const session = [] as URL[]
-  const fetch = (async (input: RequestInfo | URL) => {
+  const handle = async (input: RequestInfo | URL) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     if (url.pathname === "/session") session.push(url)
     const overridden = await override?.(url)
@@ -104,6 +104,8 @@ export function createFetch(override?: FetchHandler, events?: ReturnType<typeof 
     if (url.pathname === "/session") return json([])
     if (url.pathname === "/vcs") return json({ branch: "main" })
     throw new Error(`unexpected request: ${url.pathname}`)
-  }) as typeof globalThis.fetch
+  }
+  // Bun's fetch type also carries `preconnect`; the fake has nothing to warm up.
+  const fetch: typeof globalThis.fetch = Object.assign(handle, { preconnect: () => {} })
   return { fetch, session }
 }
