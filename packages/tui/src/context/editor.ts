@@ -11,8 +11,8 @@ const MCP_PROTOCOL_VERSION = "2025-11-25"
 const JsonRpcMessageSchema = Schema.Struct({
   id: Schema.optional(Schema.Union([Schema.Number, Schema.String, Schema.Null])),
   method: Schema.optional(Schema.String),
-  params: Schema.optional(Schema.Unknown),
-  result: Schema.optional(Schema.Unknown),
+  params: Schema.optional(Schema.Json),
+  result: Schema.optional(Schema.Json),
   error: Schema.optional(
     Schema.Struct({
       code: Schema.optional(Schema.Number),
@@ -20,6 +20,13 @@ const JsonRpcMessageSchema = Schema.Struct({
     }),
   ),
 }).annotate({ identifier: "TuiEditorContext.JsonRpcMessage" })
+
+const JsonRpcOutgoingSchema = Schema.Struct({
+  jsonrpc: Schema.Literal("2.0"),
+  id: Schema.optional(Schema.Number),
+  method: Schema.String,
+  params: Schema.optional(Schema.Json),
+}).annotate({ identifier: "TuiEditorContext.JsonRpcOutgoing" })
 
 const PositionSchema = Schema.Struct({
   line: Schema.Number,
@@ -87,12 +94,14 @@ const EditorServerInfoSchema = Schema.Struct({
   ),
 }).annotate({ identifier: "TuiEditorContext.ServerInfo" })
 
-const decodeJsonRpcMessage = Schema.decodeUnknownOption(JsonRpcMessageSchema)
+const decodeJsonRpcMessage = Schema.decodeUnknownOption(Schema.fromJsonString(JsonRpcMessageSchema))
+const encodeJsonRpcOutgoing = Schema.encodeSync(Schema.fromJsonString(JsonRpcOutgoingSchema))
 const decodeEditorSelection = Schema.decodeUnknownOption(EditorSelectionSchema)
 const decodeEditorMention = Schema.decodeUnknownOption(EditorMentionSchema)
 const decodeEditorServerInfo = Schema.decodeUnknownOption(EditorServerInfoSchema)
 
 type JsonRpcMessage = Schema.Schema.Type<typeof JsonRpcMessageSchema>
+type JsonRpcOutgoing = Schema.Schema.Type<typeof JsonRpcOutgoingSchema>
 export type EditorSelection = Schema.Schema.Type<typeof EditorSelectionSchema>
 export type EditorMention = Schema.Schema.Type<typeof EditorMentionSchema>
 export type EditorLabelState = "pending" | "sent" | "none"
@@ -159,12 +168,12 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       setSelection(undefined)
     }
 
-    const send = (payload: JsonRpcMessage) => {
+    const send = (payload: Omit<JsonRpcOutgoing, "jsonrpc">) => {
       if (!socket || socket.readyState !== 1) return
-      socket.send(JSON.stringify({ jsonrpc: "2.0", ...payload }))
+      socket.send(encodeJsonRpcOutgoing({ jsonrpc: "2.0", ...payload }))
     }
 
-    const request = (method: string, params?: unknown) => {
+    const request = (method: string, params: Schema.Json) => {
       requestID += 1
       pending.set(requestID, method)
       send({ id: requestID, method, params })
@@ -230,8 +239,9 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       })
 
       current.addEventListener("message", (event) => {
-        const message = parseMessage(event.data)
-        if (!message) return
+        const parsed = parseMessage(event.data)
+        if (Option.isNone(parsed)) return
+        const message = parsed.value
 
         const selection = message.method === "selection_changed" ? decodeEditorSelection(message.params) : Option.none()
         if (Option.isSome(selection)) {
@@ -397,12 +407,7 @@ function openEditorSocket(connection: EditorConnection, WebSocketImpl: typeof We
   } as any)
 }
 
-function parseMessage(value: unknown) {
-  if (typeof value !== "string") return
-
-  try {
-    return Option.getOrUndefined(decodeJsonRpcMessage(JSON.parse(value)))
-  } catch {
-    return
-  }
+// A text frame that is not JSON, or JSON that is not a JSON-RPC message, decodes to none.
+function parseMessage(value: unknown): Option.Option<JsonRpcMessage> {
+  return typeof value === "string" ? decodeJsonRpcMessage(value) : Option.none()
 }
