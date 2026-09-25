@@ -105,7 +105,7 @@ export function DialogHomeCommandPaletteV2(props: {
     load: (search, signal) =>
       serverCtx.sdk.api.session.list(
         {
-          // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+          // eslint-disable-next-line effect/no-null-use-option -- (b) @opencode-ai/client session.list reads parentID null as the root-session filter; the null is a wire-protocol literal and no other field selects roots
           parentID: null,
           search,
           limit: 50,

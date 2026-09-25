@@ -171,7 +171,7 @@ describe("loadRootSessions", () => {
         expect(result.limited).toBe(true)
         // The root-session filter reaches the API as parentID null.
         expect(calls).toEqual([
-          // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+          // eslint-disable-next-line effect/no-null-use-option -- (b) @opencode-ai/client session.list reads parentID null as the root-session filter; the null is a wire-protocol literal and no other field selects roots
           { directory: "dir", parentID: null, limit: 10, order: "desc" },
         ])
       }),

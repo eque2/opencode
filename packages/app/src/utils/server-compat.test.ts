@@ -5,7 +5,7 @@ import { createCompatibleApi } from "./server-compat"
 
 /** A 204 response. The Response constructor takes null for an absent body. */
 const noContent = () =>
-  // eslint-disable-next-line effect/no-null-use-option -- the Fetch Response constructor requires a null body for status 204; any other body throws a TypeError
+  // eslint-disable-next-line effect/no-null-use-option -- (a) the Fetch Response constructor requires a null body for status 204; any other body throws a TypeError
   new Response(null, { status: 204 })
 
 function setup(
@@ -203,7 +203,7 @@ describe("createCompatibleApi", () => {
         const { api, sent } = setup("v1")
         yield* Effect.promise(() =>
           api.session.list({
-            // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+            // eslint-disable-next-line effect/no-null-use-option -- (b) @opencode-ai/client session.list reads parentID null as the root-session filter; the null is a wire-protocol literal and no other field selects roots
             parentID: null,
             search: "session",
             limit: 50,

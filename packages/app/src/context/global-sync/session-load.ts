@@ -15,7 +15,7 @@ export function loadRootSessions(input: { api: Pick<SessionApi, "list">; directo
     input.api.list({
       directory: input.directory,
       // Root sessions have no parent. The session API reads a null parentID as that filter.
-      // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+      // eslint-disable-next-line effect/no-null-use-option -- (b) @opencode-ai/client session.list reads parentID null as the root-session filter; the null is a wire-protocol literal and no other field selects roots
       parentID: null,
       limit: input.limit,
       order: "desc",
