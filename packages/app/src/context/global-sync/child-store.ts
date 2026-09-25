@@ -193,7 +193,7 @@ export function createChildStoreManager(input: {
         runWithOwner(input.owner, () =>
           input.persist(
             Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
-            createStore({ value: undefined as VcsInfo | undefined }),
+            createStore<{ value?: VcsInfo }>({}),
           ),
         ),
         "error.childStore.persistedCacheCreateFailed",
@@ -205,7 +205,7 @@ export function createChildStoreManager(input: {
         runWithOwner(input.owner, () =>
           input.persist(
             Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
-            createStore({ value: undefined as ProjectMeta | undefined }),
+            createStore<{ value?: ProjectMeta }>({}),
           ),
         ),
         "error.childStore.persistedProjectMetadataCreateFailed",
@@ -216,7 +216,7 @@ export function createChildStoreManager(input: {
         runWithOwner(input.owner, () =>
           input.persist(
             Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
-            createStore({ value: undefined as string | undefined }),
+            createStore<{ value?: string }>({}),
           ),
         ),
         "error.childStore.persistedProjectIconCreateFailed",

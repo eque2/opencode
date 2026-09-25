@@ -7,6 +7,7 @@ import type {
   QuestionRequest,
   Session,
   TextPart,
+  VcsInfo,
 } from "@opencode-ai/sdk/v2/client"
 import { HashMap, Option } from "effect"
 import { createStore } from "solid-js/store"
@@ -588,8 +589,8 @@ describe("applyDirectoryEvent", () => {
 
   test("updates vcs branch in store and cache", () => {
     const [store, setStore] = createStore(baseState({ vcs: { branch: "main", default_branch: "main" } }))
-    const [cacheStore, setCacheStore] = createStore({
-      value: { branch: "main", default_branch: "main" } as State["vcs"],
+    const [cacheStore, setCacheStore] = createStore<{ value?: VcsInfo }>({
+      value: { branch: "main", default_branch: "main" },
     })
 
     applyDirectoryEvent({

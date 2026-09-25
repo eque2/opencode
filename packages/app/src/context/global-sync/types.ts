@@ -87,20 +87,20 @@ export type State = {
 }
 
 export type VcsCache = {
-  store: Store<{ value: VcsInfo | undefined }>
-  setStore: SetStoreFunction<{ value: VcsInfo | undefined }>
+  store: Store<{ value?: VcsInfo }>
+  setStore: SetStoreFunction<{ value?: VcsInfo }>
   ready: Accessor<boolean>
 }
 
 export type MetaCache = {
-  store: Store<{ value: ProjectMeta | undefined }>
-  setStore: SetStoreFunction<{ value: ProjectMeta | undefined }>
+  store: Store<{ value?: ProjectMeta }>
+  setStore: SetStoreFunction<{ value?: ProjectMeta }>
   ready: Accessor<boolean>
 }
 
 export type IconCache = {
-  store: Store<{ value: string | undefined }>
-  setStore: SetStoreFunction<{ value: string | undefined }>
+  store: Store<{ value?: string }>
+  setStore: SetStoreFunction<{ value?: string }>
   ready: Accessor<boolean>
 }
 
