@@ -18,7 +18,9 @@ export type BuiltinTuiPlugin = Omit<TuiPluginModule, "id"> & {
   enabled?: boolean
 }
 
-export function createBuiltinPlugins(options: { experimentalEventSystem: boolean }): BuiltinTuiPlugin[] {
+// packages/opencode plugin/tui/internal.ts still passes the runtime flags. No built-in plugin reads them
+// since the session-v2 debug plugin was removed, so the parameter is kept only for that caller.
+export function createBuiltinPlugins(_options: { experimentalEventSystem: boolean }): BuiltinTuiPlugin[] {
   return [
     HomeFooter,
     HomeTips,
