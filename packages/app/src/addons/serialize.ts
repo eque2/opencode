@@ -13,7 +13,7 @@
  * ```
  */
 
-import { Array as Arr, Data, Option } from "effect"
+import { Array as Arr, Data, Option, Predicate } from "effect"
 import type { ITerminalAddon, ITerminalCore, IBufferRange } from "ghostty-web"
 
 // ============================================================================
@@ -63,12 +63,8 @@ type TerminalBuffers = {
   readonly alternate: Option.Option<IBuffer>
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === "object" && value !== null
-}
-
 const isBuffer = (value: unknown): value is IBuffer => {
-  if (!isRecord(value)) return false
+  if (!Predicate.isObject(value)) return false
   if (typeof value.length !== "number") return false
   if (typeof value.cursorX !== "number") return false
   if (typeof value.cursorY !== "number") return false
@@ -81,9 +77,9 @@ const isBuffer = (value: unknown): value is IBuffer => {
 
 /** The buffers of the terminal core. None when the core has neither an active nor a normal buffer. */
 const getTerminalBuffers = (value: ITerminalCore): Option.Option<TerminalBuffers> => {
-  if (!isRecord(value)) return Option.none()
+  if (!Predicate.isObject(value)) return Option.none()
   const raw = value.buffer
-  if (!isRecord(raw)) return Option.none()
+  if (!Predicate.isObject(raw)) return Option.none()
   const active = Option.liftPredicate(raw.active, isBuffer)
   const normal = Option.liftPredicate(raw.normal, isBuffer)
   if (Option.isNone(active) && Option.isNone(normal)) return Option.none()
@@ -91,9 +87,9 @@ const getTerminalBuffers = (value: ITerminalCore): Option.Option<TerminalBuffers
 }
 
 const getTerminalMode = (value: ITerminalCore, mode: number) => {
-  if (!isRecord(value)) return false
+  if (!Predicate.isObject(value)) return false
   const terminal = value.wasmTerm
-  if (!isRecord(terminal) || typeof terminal.getMode !== "function") return false
+  if (!Predicate.isObject(terminal) || typeof terminal.getMode !== "function") return false
   return terminal.getMode(mode) === true
 }
 
