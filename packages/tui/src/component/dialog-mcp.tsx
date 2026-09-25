@@ -27,7 +27,7 @@ export function DialogMcp() {
   const sync = useSync()
   const sdk = useSDK()
   const [, setRef] = createSignal<DialogSelectRef<unknown>>()
-  const [loading, setLoading] = createSignal<Option.Option<string>>(Option.none())
+  const [loading, setLoading] = createSignal(Option.none<string>())
 
   const options = createMemo(() => {
     // Track sync data and loading state to trigger re-render when they change
