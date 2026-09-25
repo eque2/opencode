@@ -115,11 +115,12 @@ const getCurrentUrl = () => {
 
 const getDefaultUrl = () => Option.getOrElse(readDefaultServerUrl(), getCurrentUrl)
 
+/** Removes auth_token from the address bar. Only the URL changes; the history entry keeps its state. */
 const clearAuthToken = () => {
   const params = new URLSearchParams(location.search)
   if (!params.has("auth_token")) return
   params.delete("auth_token")
-  history.replaceState(null, "", location.pathname + (params.size ? `?${params}` : "") + location.hash)
+  history.replaceState(history.state, "", location.pathname + (params.size ? `?${params}` : "") + location.hash)
 }
 
 const platform: Platform = {
