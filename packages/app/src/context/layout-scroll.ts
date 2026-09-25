@@ -1,5 +1,6 @@
-import { MutableHashSet } from "effect"
+import { Duration, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 import { createStore, produce } from "solid-js/store"
+import { makeFiberSlot, type FiberSlot } from "@/utils/fiber-slot"
 
 export type SessionScroll = {
   x: number
@@ -18,7 +19,8 @@ export function createScrollPersistence(opts: Options) {
   const wait = opts.debounceMs ?? 200
   const [cache, setCache] = createStore<Record<string, ScrollMap>>({})
   const dirty = MutableHashSet.empty<string>()
-  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  // One debounce timer per session. Interrupting a timer's fiber cancels its pending write.
+  const timers = MutableHashMap.empty<string, FiberSlot>()
 
   function clone(input?: ScrollMap) {
     const out: ScrollMap = {}
@@ -51,12 +53,25 @@ export function createScrollPersistence(opts: Options) {
     return cache[sessionKey]?.[tab] ?? opts.getSnapshot(sessionKey)?.[tab]
   }
 
+  function cancel(sessionKey: string) {
+    const timer = MutableHashMap.get(timers, sessionKey)
+    if (Option.isSome(timer)) timer.value.interrupt()
+    MutableHashMap.remove(timers, sessionKey)
+  }
+
   function schedule(sessionKey: string) {
-    const prev = timers.get(sessionKey)
-    if (prev) clearTimeout(prev)
-    timers.set(
-      sessionKey,
-      setTimeout(() => flush(sessionKey), wait),
+    const timer = Option.getOrElse(MutableHashMap.get(timers, sessionKey), makeFiberSlot)
+    MutableHashMap.set(timers, sessionKey, timer)
+    // run() interrupts the pending write first, so each change restarts the delay.
+    timer.run(
+      Effect.sleep(Duration.millis(wait)).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            MutableHashMap.remove(timers, sessionKey)
+            write(sessionKey)
+          }),
+        ),
+      ),
     )
   }
 
@@ -71,15 +86,16 @@ export function createScrollPersistence(opts: Options) {
     schedule(sessionKey)
   }
 
-  function flush(sessionKey: string) {
-    const timer = timers.get(sessionKey)
-    if (timer) clearTimeout(timer)
-    timers.delete(sessionKey)
-
+  function write(sessionKey: string) {
     if (!MutableHashSet.has(dirty, sessionKey)) return
     MutableHashSet.remove(dirty, sessionKey)
 
     opts.onFlush(sessionKey, clone(cache[sessionKey]))
+  }
+
+  function flush(sessionKey: string) {
+    cancel(sessionKey)
+    write(sessionKey)
   }
 
   function flushAll() {
@@ -95,9 +111,7 @@ export function createScrollPersistence(opts: Options) {
     if (keys.length === 0) return
 
     for (const key of keys) {
-      const timer = timers.get(key)
-      if (timer) clearTimeout(timer)
-      timers.delete(key)
+      cancel(key)
       MutableHashSet.remove(dirty, key)
     }
 
@@ -111,7 +125,7 @@ export function createScrollPersistence(opts: Options) {
   }
 
   function dispose() {
-    drop(Array.from(timers.keys()))
+    drop(Array.from(MutableHashMap.keys(timers)))
   }
 
   return {
