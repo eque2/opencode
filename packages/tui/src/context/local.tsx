@@ -81,6 +81,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const event = useEvent()
     const permission = usePermission()
 
+    // The theme proxy forwards `in` to a theme object, so its own keys are the theme entry names.
+    function isThemeKey(key: string): key is keyof typeof theme {
+      return key in theme
+    }
+
     function isModelValid(model: { providerID: string; modelID: string }) {
       const provider = sync.data.provider.find((item) => item.id === model.providerID)
       return !!provider?.models[model.modelID]
@@ -144,8 +149,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (agent?.color) {
             const color = agent.color
             if (color.startsWith("#")) return RGBA.fromHex(color)
-            // already validated by config, just satisfying TS here
-            return theme[color as keyof typeof theme] as RGBA
+            // Config validates the theme color name; a name that is not a theme color uses the palette.
+            if (isThemeKey(color)) {
+              const value = theme[color]
+              if (value instanceof RGBA) return value
+            }
           }
           return colors()[index % colors().length]
         },
