@@ -1,91 +1,113 @@
 import { describe, expect, test } from "bun:test"
+import { Effect, Option } from "effect"
 import { attachmentMime, pickAttachmentFiles } from "./files"
 import { pasteMode } from "./paste"
 
 describe("attachmentMime", () => {
-  test("keeps PDFs when the browser reports the mime", async () => {
-    const file = new File(["%PDF-1.7"], "guide.pdf", { type: "application/pdf" })
-    expect(await attachmentMime(file)).toBe("application/pdf")
-  })
+  test("keeps PDFs when the browser reports the mime", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const file = new File(["%PDF-1.7"], "guide.pdf", { type: "application/pdf" })
+        expect(Option.getOrUndefined(yield* attachmentMime(file))).toBe("application/pdf")
+      }),
+    ))
 
-  test("normalizes structured text types to text/plain", async () => {
-    const file = new File(['{"ok":true}\n'], "data.json", { type: "application/json" })
-    expect(await attachmentMime(file)).toBe("text/plain")
-  })
+  test("normalizes structured text types to text/plain", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const file = new File(['{"ok":true}\n'], "data.json", { type: "application/json" })
+        expect(Option.getOrUndefined(yield* attachmentMime(file))).toBe("text/plain")
+      }),
+    ))
 
-  test("accepts text files even with a misleading browser mime", async () => {
-    const file = new File(["export const x = 1\n"], "main.ts", { type: "video/mp2t" })
-    expect(await attachmentMime(file)).toBe("text/plain")
-  })
+  test("accepts text files even with a misleading browser mime", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const file = new File(["export const x = 1\n"], "main.ts", { type: "video/mp2t" })
+        expect(Option.getOrUndefined(yield* attachmentMime(file))).toBe("text/plain")
+      }),
+    ))
 
-  test("rejects binary files", async () => {
-    const file = new File([Uint8Array.of(0, 255, 1, 2)], "blob.bin", { type: "application/octet-stream" })
-    expect(await attachmentMime(file)).toBeUndefined()
-  })
+  test("rejects binary files", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const file = new File([Uint8Array.of(0, 255, 1, 2)], "blob.bin", { type: "application/octet-stream" })
+        expect(Option.getOrUndefined(yield* attachmentMime(file))).toBeUndefined()
+      }),
+    ))
 })
 
 describe("pickAttachmentFiles", () => {
-  test("reads the current project directory for every native picker invocation", async () => {
-    const paths: string[] = []
-    const files: File[] = []
-    const file = new File(["hello"], "hello.txt", { type: "text/plain" })
-    let directory = "C:\\Projects\\LoremIpsum"
-    const picker = async (options?: { defaultPath?: string }, onFile?: (file: File) => Promise<unknown>) => {
-      paths.push(options?.defaultPath ?? "")
-      await onFile?.(file)
-    }
+  test("reads the current project directory for every native picker invocation", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const paths: string[] = []
+        const files: File[] = []
+        const file = new File(["hello"], "hello.txt", { type: "text/plain" })
+        let directory = "C:\\Projects\\LoremIpsum"
+        const picker = (options?: { defaultPath?: string }, onFile?: (file: File) => Promise<unknown>) =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              paths.push(options?.defaultPath ?? "")
+              if (onFile) yield* Effect.promise(() => onFile(file))
+            }),
+          )
 
-    pickAttachmentFiles({
-      picker,
-      directory: () => directory,
-      fallback: () => undefined,
-      onFile: async (selected) => files.push(selected),
-      onError: () => undefined,
-    })
-    await Promise.resolve()
-    directory = "C:\\Projects\\DolorSit"
-    pickAttachmentFiles({
-      picker,
-      directory: () => directory,
-      fallback: () => undefined,
-      onFile: async (selected) => files.push(selected),
-      onError: () => undefined,
-    })
-    await Promise.resolve()
-    expect(files).toEqual([file, file])
-    expect(paths).toEqual(["C:\\Projects\\LoremIpsum", "C:\\Projects\\DolorSit"])
-  })
+        pickAttachmentFiles({
+          picker,
+          directory: () => directory,
+          fallback: () => undefined,
+          onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
+          onError: () => undefined,
+        })
+        yield* Effect.yieldNow
+        directory = "C:\\Projects\\DolorSit"
+        pickAttachmentFiles({
+          picker,
+          directory: () => directory,
+          fallback: () => undefined,
+          onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
+          onError: () => undefined,
+        })
+        yield* Effect.yieldNow
+        expect(files).toEqual([file, file])
+        expect(paths).toEqual(["C:\\Projects\\LoremIpsum", "C:\\Projects\\DolorSit"])
+      }),
+    ))
 
-  test("uses the browser file input when no native picker exists", async () => {
+  test("uses the browser file input when no native picker exists", () => {
     let fallback = 0
     pickAttachmentFiles({
       directory: () => "/projects/consectetur-adipiscing",
       fallback: () => {
         fallback += 1
       },
-      onFile: async () => undefined,
+      onFile: () => Effect.runPromise(Effect.void),
       onError: () => undefined,
     })
     expect(fallback).toBe(1)
   })
 
-  test("reports native picker failures without rejecting", async () => {
-    const error = new Error("picker unavailable")
-    const errors: unknown[] = []
-    const handled = Promise.withResolvers<void>()
-    pickAttachmentFiles({
-      picker: async () => Promise.reject(error),
-      directory: () => "C:\\Projects\\LoremIpsum",
-      fallback: () => undefined,
-      onFile: async () => undefined,
-      onError: (cause) => {
-        errors.push(cause)
-        handled.resolve()
-      },
-    })
-    await handled.promise
-    expect(errors).toEqual([error])
-  })
+  test("reports native picker failures without rejecting", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const error = new Error("picker unavailable")
+        const errors: unknown[] = []
+        const handled = Promise.withResolvers<void>()
+        pickAttachmentFiles({
+          picker: () => Promise.reject(error),
+          directory: () => "C:\\Projects\\LoremIpsum",
+          fallback: () => undefined,
+          onFile: () => Effect.runPromise(Effect.void),
+          onError: (cause) => {
+            errors.push(cause)
+            handled.resolve()
+          },
+        })
+        yield* Effect.promise(() => handled.promise)
+        expect(errors).toEqual([error])
+      }),
+    ))
 })
 
 describe("pasteMode", () => {

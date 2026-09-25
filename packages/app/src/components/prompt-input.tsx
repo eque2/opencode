@@ -1,4 +1,4 @@
-import { DateTime, HashMap, HashSet, Option } from "effect"
+import { DateTime, Effect, HashMap, HashSet, Option } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { createEffect, on, Component, Show, onCleanup, createMemo, createSignal, createResource } from "solid-js"
@@ -636,7 +636,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     onInput: atOnInput,
     onKeyDown: atOnKeyDown,
   } = useFilteredList<AtOption>({
-    items: async (query) => {
+    items: (query) => {
       const references = referenceList()
       const agents = agentList()
       const mcpResources = mcpResourceList()
@@ -644,11 +644,16 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const seen = HashSet.fromIterable(open)
       const pinned: AtOption[] = open.map((path) => ({ type: "file", path, display: path, recent: true }))
       if (!query.trim()) return [...references, ...agents, ...mcpResources, ...pinned]
-      const paths = await files.searchFilesAndDirectories(query)
-      const fileOptions: AtOption[] = paths
-        .filter((path) => !HashSet.has(seen, path))
-        .map((path) => ({ type: "file", path, display: path }))
-      return [...references, ...agents, ...mcpResources, ...pinned, ...fileOptions]
+      return Effect.runPromise(
+        Effect.promise(() => files.searchFilesAndDirectories(query)).pipe(
+          Effect.map((paths) => {
+            const fileOptions: AtOption[] = paths
+              .filter((path) => !HashSet.has(seen, path))
+              .map((path) => ({ type: "file", path, display: path }))
+            return [...references, ...agents, ...mcpResources, ...pinned, ...fileOptions]
+          }),
+        ),
+      )
     },
     key: atKey,
     filterKeys: ["display"],

@@ -1,4 +1,4 @@
-import { HashMap, HashSet, Option } from "effect"
+import { Effect, HashMap, HashSet, Option } from "effect"
 import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES } from "@/constants/file-picker"
 
 export { ACCEPTED_FILE_TYPES }
@@ -83,19 +83,21 @@ function textBytes(bytes: Uint8Array) {
   return count / bytes.length <= 0.3
 }
 
-export async function attachmentMime(file: File) {
-  const type = kind(file.type)
-  if (HashSet.has(IMAGE_MIMES, type)) return type
-  if (type === "application/pdf") return type
+export function attachmentMime(file: File): Effect.Effect<Option.Option<string>> {
+  return Effect.gen(function* () {
+    const type = kind(file.type)
+    if (HashSet.has(IMAGE_MIMES, type)) return Option.some(type)
+    if (type === "application/pdf") return Option.some(type)
 
-  const suffix = ext(file.name)
-  const fallback = HashMap.get(IMAGE_EXTS, suffix).pipe(
-    Option.orElse(() => (suffix === "pdf" ? Option.some("application/pdf") : Option.none())),
-  )
-  if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback.value
+    const suffix = ext(file.name)
+    const fallback = HashMap.get(IMAGE_EXTS, suffix).pipe(
+      Option.orElse(() => (suffix === "pdf" ? Option.some("application/pdf") : Option.none())),
+    )
+    if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback
 
-  if (textMime(type)) return "text/plain"
-  const bytes = new Uint8Array(await file.slice(0, SAMPLE).arrayBuffer())
-  if (!textBytes(bytes)) return
-  return "text/plain"
+    if (textMime(type)) return Option.some("text/plain")
+    const bytes = new Uint8Array(yield* Effect.promise(() => file.slice(0, SAMPLE).arrayBuffer()))
+    if (!textBytes(bytes)) return Option.none()
+    return Option.some("text/plain")
+  })
 }

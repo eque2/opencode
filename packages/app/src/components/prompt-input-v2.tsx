@@ -6,7 +6,7 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { DateTime, HashMap, Option } from "effect"
+import { DateTime, Effect, HashMap, Option } from "effect"
 import { createEffect, createMemo, on, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
@@ -343,14 +343,22 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     },
     commands,
     context,
-    searchContextFiles: async (query) =>
-      (await files.searchFilesAndDirectories(query)).map((path) => ({
-        id: `file:${path}`,
-        kind: "file",
-        label: path,
-        path,
-        mention: { type: "file", path, content: `@${path}`, start: 0, end: 0 },
-      })),
+    searchContextFiles: (query) =>
+      Effect.runPromise(
+        Effect.promise(() => files.searchFilesAndDirectories(query)).pipe(
+          Effect.map((paths) =>
+            paths.map(
+              (path): PromptInputV2Suggestion => ({
+                id: `file:${path}`,
+                kind: "file",
+                label: path,
+                path,
+                mention: { type: "file", path, content: `@${path}`, start: 0, end: 0 },
+              }),
+            ),
+          ),
+        ),
+      ),
     onContextRemove(item) {
       if (item?.commentID) comments.remove(item.path, item.commentID)
     },
