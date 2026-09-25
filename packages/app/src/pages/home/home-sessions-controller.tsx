@@ -2,7 +2,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useQuery } from "@tanstack/solid-query"
-import { DateTime, HashMap } from "effect"
+import { DateTime, HashMap, HashSet, MutableHashSet } from "effect"
 import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTransition } from "solid-js"
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
@@ -93,7 +93,7 @@ export function createHomeSessionsController(home: HomeController) {
   )
   const records = createMemo(() => allRecords().slice(0, HOME_SESSION_LIMIT))
   const groups = createMemo(() => groupSessions(records(), language))
-  const prefetched = new Set<string>()
+  const prefetched = MutableHashSet.empty<string>()
 
   createEffect(() => {
     const ctx = home.server.focusedContext()
@@ -103,8 +103,8 @@ export function createHomeSessionsController(home: HomeController) {
       .slice(0, 2)
       .forEach((record) => {
         const key = `${ServerConnection.key(conn)}\0${record.session.id}`
-        if (prefetched.has(key)) return
-        prefetched.add(key)
+        if (MutableHashSet.has(prefetched, key)) return
+        MutableHashSet.add(prefetched, key)
         createRoot((dispose) => {
           try {
             void ctx.sync.session
@@ -249,8 +249,8 @@ function buildHomeSessionRecords(input: {
   projectDirectories: () => string[]
   projects: () => LocalProject[]
 }) {
-  const directories = new Set(input.projectDirectories().map(pathKey))
-  const sessions = input.sessions().filter((session) => directories.has(pathKey(session.directory)))
+  const directories = HashSet.fromIterable(input.projectDirectories().map(pathKey))
+  const sessions = input.sessions().filter((session) => HashSet.has(directories, pathKey(session.directory)))
   // Keep the last record of a repeated session ID.
   return HashMap.toValues(HashMap.fromIterable(sessions.map((session) => [session.id, session] as const)))
     .sort(compareSessionTime)

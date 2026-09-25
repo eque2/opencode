@@ -1,4 +1,4 @@
-import { Array as Arr, MutableHashMap, Option } from "effect"
+import { Array as Arr, HashSet, MutableHashMap, Option } from "effect"
 import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { HomeSessionGroup } from "./home-sessions-controller"
@@ -23,10 +23,10 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
 
   createEffect(() => {
     const items = groups()
-    const ids = new Set(items.map((group) => group.id))
+    const ids = HashSet.fromIterable(items.map((group) => group.id))
     const removeStale = <V>(headers: MutableHashMap.MutableHashMap<HomeSessionGroup["id"], V>) =>
       Array.from(MutableHashMap.keys(headers))
-        .filter((id) => !ids.has(id))
+        .filter((id) => !HashSet.has(ids, id))
         .forEach((id) => MutableHashMap.remove(headers, id))
     removeStale(headerRefs)
     removeStale(headerOffsets)
