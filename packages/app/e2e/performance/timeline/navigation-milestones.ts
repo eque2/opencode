@@ -20,9 +20,7 @@ export function summarizeNavigationMilestones(samples: NavigationMilestoneSample
   }
   return {
     samples: samples.length,
-    milestones: Object.fromEntries(
-      names.map((name) => [name, summarize((sample) => sample.milestones[name])]),
-    ),
+    milestones: Object.fromEntries(names.map((name) => [name, summarize((sample) => sample.milestones[name])])),
     all: summarize((sample) => names.every((name) => sample.milestones[name])),
   }
 }
