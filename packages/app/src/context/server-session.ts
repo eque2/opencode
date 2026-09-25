@@ -12,7 +12,20 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { Data, Deferred, Effect, Exit, Fiber, HashSet, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
+import {
+  Clock,
+  Data,
+  DateTime,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  HashSet,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+} from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -864,7 +877,7 @@ export function createServerSession(
       setMeta("limit", sessionID, messages.length)
       setMeta("cursor", sessionID, merged.cursor)
       setMeta("complete", sessionID, merged.complete)
-      setMeta("at", sessionID, Date.now())
+      setMeta("at", sessionID, DateTime.toEpochMillis(DateTime.nowUnsafe()))
     })
   }
 
@@ -1024,8 +1037,9 @@ export function createServerSession(
   const prefetchSession = Effect.fnUntraced(function* (sessionID: string, limit: number) {
     const pending = MutableHashMap.get(inflight, sessionID)
     if (Option.isSome(pending)) yield* Deferred.await(pending.value)
+    const now = yield* Clock.currentTimeMillis
     if (
-      Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
+      now - (meta.at[sessionID] ?? 0) <= 15_000 &&
       (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
     )
       return
@@ -1488,12 +1502,12 @@ export function createServerSession(
     prefetch,
     shouldPrefetch(sessionID: string, limit: number) {
       if (data.message[sessionID] === undefined) return true
-      if (Date.now() - (meta.at[sessionID] ?? 0) > 15_000) return true
+      if (DateTime.toEpochMillis(DateTime.nowUnsafe()) - (meta.at[sessionID] ?? 0) > 15_000) return true
       if (meta.complete[sessionID]) return false
       return (meta.limit[sessionID] ?? 0) <= limit
     },
     fresh(sessionID: string, ttl: number) {
-      return Date.now() - (meta.at[sessionID] ?? 0) <= ttl
+      return DateTime.toEpochMillis(DateTime.nowUnsafe()) - (meta.at[sessionID] ?? 0) <= ttl
     },
     optimistic: {
       add(input: { sessionID: string; message: Message; parts: Part[] }) {
