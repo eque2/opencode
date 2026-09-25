@@ -1,8 +1,9 @@
+import { Predicate } from "effect"
+
 type RecordValue = Record<string, unknown>
 
-const isRecord = (value: unknown): value is RecordValue => {
-  return typeof value === "object" && value !== null
-}
+// Arrays pass too, as with the old `typeof value === "object"` check.
+const isRecord = (value: unknown): value is RecordValue => Predicate.isObjectOrArray(value)
 
 export const isDisposable = (value: unknown): value is { dispose: () => void } => {
   return isRecord(value) && typeof value.dispose === "function"
