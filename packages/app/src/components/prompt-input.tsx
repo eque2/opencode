@@ -1693,7 +1693,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                               class="min-w-0 max-w-[320px] text-13-regular text-text-base group"
                               style={control()}
                               onClick={() => {
-                                dialog.show(() => <DialogSelectModelUnpaid model={props.controls.model.selection} />)
+                                void dialog.show(() => (
+                                  <DialogSelectModelUnpaid model={props.controls.model.selection} />
+                                ))
                               }}
                             >
                               <Show when={props.controls.model.selection.current()?.provider?.id}>
