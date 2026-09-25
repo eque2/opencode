@@ -1,7 +1,7 @@
 import { createStore, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { Option } from "effect"
+import { DateTime, Option } from "effect"
 import { persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
 
@@ -60,8 +60,11 @@ export const sansDefault = "System Sans"
 export const terminalDefault = "JetBrainsMono Nerd Font Mono"
 const legacyNewLayoutDesignsDefault = import.meta.env.VITE_OPENCODE_CHANNEL !== "prod"
 export const newLayoutDesignsDefault = true
-// Existing users can switch layouts until local midnight on this date. Set new Date(YYYY, M-1, D) to show.
-export const oldInterfaceSunset = new Date(2026, 8, 14)
+// Existing users can switch layouts until local midnight on this date. Set the local date parts (month 1-12) to show.
+export const oldInterfaceSunset = DateTime.makeZonedUnsafe(
+  { year: 2026, month: 9, day: 14 },
+  { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+)
 const newLayoutDesignsUpgradeCutoff = "1.17.19"
 
 function compareVersions(a: string, b: string): Option.Option<number> {
@@ -263,7 +266,9 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       defaultSettings.general.showCustomAgents,
     )
     const sunset = oldInterfaceSunset
-    const [oldInterfaceRetired, setOldInterfaceRetired] = createSignal(sunset ? Date.now() >= sunset.getTime() : false)
+    const [oldInterfaceRetired, setOldInterfaceRetired] = createSignal(
+      sunset ? DateTime.isGreaterThanOrEqualTo(DateTime.nowUnsafe(), sunset) : false,
+    )
     const layoutTransitionClassified = createMemo(() => typeof store.general?.layoutTransitionEligible === "boolean")
     const layoutTransitionEligible = withFallback(() => store.general?.layoutTransitionEligible, false)
     const newInterfaceNoticeDismissed = withFallback(() => store.general?.newInterfaceNoticeDismissed, false)
@@ -308,11 +313,15 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     if (sunset && !oldInterfaceRetired()) {
       const timeout = { current: undefined as ReturnType<typeof setTimeout> | undefined }
       const checkSunset = () => {
-        if (Date.now() >= sunset.getTime()) {
+        const now = DateTime.nowUnsafe()
+        if (DateTime.isGreaterThanOrEqualTo(now, sunset)) {
           setOldInterfaceRetired(true)
           return
         }
-        timeout.current = setTimeout(checkSunset, nextSunsetCheckDelay(sunset.getTime(), Date.now()))
+        timeout.current = setTimeout(
+          checkSunset,
+          nextSunsetCheckDelay(DateTime.toEpochMillis(sunset), DateTime.toEpochMillis(now)),
+        )
       }
       checkSunset()
       onCleanup(() => {
