@@ -655,8 +655,11 @@ export default function Page() {
     if (key !== prev) {
       setStore("deferRender", true)
       const owner = sessionOwnership.capture()
+      // After the frame, a zero delay resumes on the next macrotask, as setTimeout(fn, 0) did.
       requestAnimationFrame(() => {
-        setTimeout(() => owner.run(() => setStore("deferRender", false)), 0)
+        Effect.runFork(
+          Effect.sync(() => owner.run(() => setStore("deferRender", false))).pipe(Effect.delay("0 millis")),
+        )
       })
     }
     return key
