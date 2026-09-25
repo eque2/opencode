@@ -31,10 +31,11 @@ export const getHoveredLinkText = (value: unknown) => {
   return link.text
 }
 
-export const getSpeechRecognitionCtor = <T>(value: unknown): (new () => T) | undefined => {
+/** The speech recognition constructor of a window-like value, webkit first. The check proves only that it is a function. */
+export const getSpeechRecognitionCtor = (value: unknown): Function | undefined => {
   if (!isRecord(value)) return
   const ctor =
     typeof value.webkitSpeechRecognition === "function" ? value.webkitSpeechRecognition : value.SpeechRecognition
-  if (typeof ctor !== "function") return
-  return ctor as new () => T
+  if (!Predicate.isFunction(ctor)) return
+  return ctor
 }
