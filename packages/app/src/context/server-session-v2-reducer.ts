@@ -15,7 +15,7 @@ export function createV2SessionReducer() {
   const pending = new Map<string, SessionPendingMessage>()
 
   const reduce = (source: readonly SessionMessageInfo[], event: OpenCodeEvent): V2SessionReduction | undefined => {
-    if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
+    if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return undefined
     const sessionID = event.data.sessionID
     const result = (messages: SessionMessageInfo[], touched: string[] = []): V2SessionReduction => ({
       sessionID,
@@ -402,7 +402,7 @@ export function createV2SessionReducer() {
         )
       }
       default:
-        return
+        return undefined
     }
   }
 
