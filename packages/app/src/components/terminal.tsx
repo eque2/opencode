@@ -6,7 +6,7 @@ import type { HexColor, ResolvedV2Theme } from "@opencode-ai/ui/theme/types"
 import { isHexColor } from "@opencode-ai/ui/theme/validate"
 import { showToast } from "@/utils/toast"
 import type { FitAddon, Ghostty, Terminal as Term } from "ghostty-web"
-import { Predicate, Result, Schema } from "effect"
+import { Chunk, Predicate, Result, Schema } from "effect"
 import { type ComponentProps, createEffect, createMemo, onCleanup, onMount, splitProps } from "solid-js"
 import { SerializeAddon } from "@/addons/serialize"
 import { matchKeybind, parseKeybind } from "@/context/command"
@@ -91,7 +91,7 @@ const resolveV2Token = (tokens: ResolvedV2Theme, key: string) => {
 const useTerminalUiBindings = (input: {
   container: HTMLDivElement
   term: Term
-  cleanups: VoidFunction[]
+  addCleanup: (fn: VoidFunction) => void
   handlePointerDown: () => void
   handleLinkClick: (event: MouseEvent) => void
 }) => {
@@ -124,18 +124,18 @@ const useTerminalUiBindings = (input: {
   }
 
   input.container.addEventListener("copy", handleCopy, true)
-  input.cleanups.push(() => input.container.removeEventListener("copy", handleCopy, true))
+  input.addCleanup(() => input.container.removeEventListener("copy", handleCopy, true))
 
   input.container.addEventListener("paste", handlePaste, true)
-  input.cleanups.push(() => input.container.removeEventListener("paste", handlePaste, true))
+  input.addCleanup(() => input.container.removeEventListener("paste", handlePaste, true))
 
   input.container.addEventListener("pointerdown", input.handlePointerDown)
-  input.cleanups.push(() => input.container.removeEventListener("pointerdown", input.handlePointerDown))
+  input.addCleanup(() => input.container.removeEventListener("pointerdown", input.handlePointerDown))
 
   input.container.addEventListener("click", input.handleLinkClick, {
     capture: true,
   })
-  input.cleanups.push(() =>
+  input.addCleanup(() =>
     input.container.removeEventListener("click", input.handleLinkClick, {
       capture: true,
     }),
@@ -143,8 +143,8 @@ const useTerminalUiBindings = (input: {
 
   input.term.textarea?.addEventListener("focus", handleTextareaFocus)
   input.term.textarea?.addEventListener("blur", handleTextareaBlur)
-  input.cleanups.push(() => input.term.textarea?.removeEventListener("focus", handleTextareaFocus))
-  input.cleanups.push(() => input.term.textarea?.removeEventListener("blur", handleTextareaBlur))
+  input.addCleanup(() => input.term.textarea?.removeEventListener("focus", handleTextareaFocus))
+  input.addCleanup(() => input.term.textarea?.removeEventListener("blur", handleTextareaBlur))
 }
 
 const persistTerminal = (input: {
@@ -223,7 +223,7 @@ export const Terminal = (props: TerminalProps) => {
   let pendingSize: { cols: number; rows: number } | undefined
   let lastSize: { cols: number; rows: number } | undefined
   let disposed = false
-  const cleanups: VoidFunction[] = []
+  let cleanups = Chunk.empty<VoidFunction>()
   const start =
     typeof local.pty.cursor === "number" && Number.isSafeInteger(local.pty.cursor) ? local.pty.cursor : undefined
   let cursor = start ?? 0
@@ -233,9 +233,14 @@ export const Terminal = (props: TerminalProps) => {
   let reconn: ReturnType<typeof setTimeout> | undefined
   let tries = 0
 
+  const addCleanup = (fn: VoidFunction) => {
+    cleanups = Chunk.append(cleanups, fn)
+  }
+
   const cleanup = () => {
-    if (!cleanups.length) return
-    const fns = cleanups.splice(0).reverse()
+    if (Chunk.isEmpty(cleanups)) return
+    const fns = Chunk.reverse(cleanups)
+    cleanups = Chunk.empty()
     for (const fn of fns) {
       try {
         fn()
@@ -415,7 +420,7 @@ export const Terminal = (props: TerminalProps) => {
         scrollback: 10_000,
         ghostty: g,
       })
-      cleanups.push(() => t.dispose())
+      addCleanup(() => t.dispose())
       if (disposed) {
         cleanup()
         return
@@ -446,7 +451,7 @@ export const Terminal = (props: TerminalProps) => {
 
       const fit = new mod.FitAddon()
       const serializer = new SerializeAddon()
-      cleanups.push(() => disposeIfDisposable(fit))
+      addCleanup(() => disposeIfDisposable(fit))
       t.loadAddon(serializer)
       t.loadAddon(fit)
       fitAddon = fit
@@ -457,7 +462,7 @@ export const Terminal = (props: TerminalProps) => {
       useTerminalUiBindings({
         container,
         term: t,
-        cleanups,
+        addCleanup,
         handlePointerDown,
         handleLinkClick,
       })
@@ -476,7 +481,7 @@ export const Terminal = (props: TerminalProps) => {
         }
         restoreFocus()
         const timer = setTimeout(restoreFocus, 0)
-        cleanups.push(() => clearTimeout(timer))
+        addCleanup(() => clearTimeout(timer))
       }
 
       if (typeof document !== "undefined" && document.fonts) {
@@ -486,23 +491,23 @@ export const Terminal = (props: TerminalProps) => {
       const onResize = t.onResize((size) => {
         scheduleSize(size.cols, size.rows)
       })
-      cleanups.push(() => disposeIfDisposable(onResize))
+      addCleanup(() => disposeIfDisposable(onResize))
       const onData = t.onData((data) => {
         if (ws?.readyState === WebSocket.OPEN) ws.send(data)
       })
-      cleanups.push(() => disposeIfDisposable(onData))
+      addCleanup(() => disposeIfDisposable(onData))
       const onKey = t.onKey((key) => {
         if (key.key == "Enter") {
           props.onSubmit?.()
         }
       })
-      cleanups.push(() => disposeIfDisposable(onKey))
+      addCleanup(() => disposeIfDisposable(onKey))
 
       const startResize = () => {
         fit.observeResize()
         handleResize = scheduleFit
         window.addEventListener("resize", handleResize)
-        cleanups.push(() => window.removeEventListener("resize", handleResize))
+        addCleanup(() => window.removeEventListener("resize", handleResize))
       }
 
       const write = (data: string) =>
