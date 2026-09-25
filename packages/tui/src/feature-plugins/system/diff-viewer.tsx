@@ -8,6 +8,7 @@ import {
   type DiffRenderable,
   type ScrollBoxRenderable,
 } from "@opentui/core"
+import { Equal, Option } from "effect"
 import { LANGUAGE_EXTENSIONS } from "../../util/filetype"
 import { useBindings, useCommandShortcut } from "../../keymap"
 import { useTheme } from "../../context/theme"
@@ -48,6 +49,10 @@ type DiffViewerFocus = "patches" | "files"
 type DiffView = "split" | "unified"
 type SelectedHunk = { readonly fileIndex: number; readonly hunkIndex: number; readonly scrollTop: number }
 
+// Option values are new objects on every set. Compare them by value, so an unchanged value does not notify,
+// as it did not when the signals held plain numbers and strings.
+const byValue = { equals: Equal.equals }
+
 type DiffFile = {
   readonly file: string
   readonly patch?: string
@@ -78,8 +83,8 @@ function filetype(input?: string) {
   return language
 }
 
-function storedView(value: unknown): DiffView | undefined {
-  if (value === "split" || value === "unified") return value
+function storedView(value: unknown): Option.Option<DiffView> {
+  return value === "split" || value === "unified" ? Option.some(value) : Option.none()
 }
 
 // A stored boolean setting, or the fallback when the key is absent or holds another kind of value.
@@ -145,8 +150,8 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     if (props.api.tuiConfig.diff_style === "stacked") return "unified"
     return splitAvailable() ? "split" : "unified"
   })
-  const [viewOverride, setViewOverride] = createSignal<DiffView | undefined>(storedView(props.api.kv.get(KV_VIEW)))
-  const view = createMemo(() => (splitAvailable() ? (viewOverride() ?? defaultView()) : "unified"))
+  const [viewOverride, setViewOverride] = createSignal(storedView(props.api.kv.get(KV_VIEW)), byValue)
+  const view = createMemo(() => (splitAvailable() ? Option.getOrElse(viewOverride(), defaultView) : "unified"))
   const fileTree = createMemo(() => buildFileTree(files()))
   const [expandedFileNodes, setExpandedFileNodes] = createSignal<ReadonlySet<number>>(new Set())
   const [highlightedFileNode, setHighlightedFileNode] = createSignal<number | undefined>()
@@ -666,7 +671,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
         if (!splitAvailable()) return
         setSelectedHunk(undefined)
         const next = view() === "split" ? "unified" : "split"
-        setViewOverride(next)
+        setViewOverride(Option.some(next))
         props.api.kv.set(KV_VIEW, next)
       },
     },
