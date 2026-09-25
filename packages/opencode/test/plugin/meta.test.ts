@@ -38,8 +38,8 @@ describe("plugin.meta", () => {
       },
     })
 
-    process.env.OPENCODE_PLUGIN_META_FILE = path.join(tmp.path, "state", "plugin-meta.json")
-    const file = process.env.OPENCODE_PLUGIN_META_FILE!
+    const file = path.join(tmp.path, "state", "plugin-meta.json")
+    process.env.OPENCODE_PLUGIN_META_FILE = file
     const spec = pathToFileURL(tmp.extra.file).href
 
     const one = await Effect.runPromise(PluginMeta.touch(spec, spec, "demo.file"))
@@ -79,8 +79,8 @@ describe("plugin.meta", () => {
       },
     })
 
-    process.env.OPENCODE_PLUGIN_META_FILE = path.join(tmp.path, "state", "plugin-meta.json")
-    const file = process.env.OPENCODE_PLUGIN_META_FILE!
+    const file = path.join(tmp.path, "state", "plugin-meta.json")
+    process.env.OPENCODE_PLUGIN_META_FILE = file
 
     const one = await Effect.runPromise(PluginMeta.touch("acme-plugin@latest", tmp.extra.mod, "acme-plugin"))
     expect(one.state).toBe("first")
@@ -110,8 +110,8 @@ describe("plugin.meta", () => {
       },
     })
 
-    process.env.OPENCODE_PLUGIN_META_FILE = path.join(tmp.path, "state", "plugin-meta.json")
-    const file = process.env.OPENCODE_PLUGIN_META_FILE!
+    const file = path.join(tmp.path, "state", "plugin-meta.json")
+    process.env.OPENCODE_PLUGIN_META_FILE = file
     const spec = pathToFileURL(tmp.extra.file).href
     const n = 12
 
