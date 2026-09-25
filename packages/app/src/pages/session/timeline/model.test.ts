@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2"
+import { Data, Effect } from "effect"
 import { isTimelineReady, loadOlderTimeline, selectUserMessages, selectVisibleUserMessages } from "./model"
+
+/** The rejection of a history page load in the failure test. */
+class HistoryLoadError extends Data.TaggedError("HistoryLoadError")<{ readonly message: string }> {}
 
 const user = (id: string) => ({ id, role: "user" }) as UserMessage
 const assistant = (id: string) => ({ id, role: "assistant" }) as AssistantMessage
@@ -21,77 +25,96 @@ describe("timeline model", () => {
     expect(isTimelineReady([], false)).toBe(true)
   })
 
-  test("loads exactly one opaque cursor page", async () => {
-    let calls = 0
-    let anchors: Array<string | boolean> = []
+  test("loads exactly one opaque cursor page", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = 0
+        let anchors: Array<string | boolean> = []
 
-    await loadOlderTimeline({
-      sessionID: () => "ses_test",
-      more: () => true,
-      loading: () => false,
-      loadMore: async () => {
-        calls += 1
-      },
-      before: () => {
-        anchors = [...anchors, "before"]
-      },
-      after: (done) => {
-        anchors = [...anchors, "after", done]
-      },
-    })
+        yield* loadOlderTimeline({
+          sessionID: () => "ses_test",
+          more: () => true,
+          loading: () => false,
+          loadMore: () =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                calls += 1
+              }),
+            ),
+          before: () => {
+            anchors = [...anchors, "before"]
+          },
+          after: (done) => {
+            anchors = [...anchors, "after", done]
+          },
+        })
 
-    expect(calls).toBe(1)
-    expect(anchors).toEqual(["before", "after", true])
-  })
-
-  test("stops when a page adds no raw messages", async () => {
-    let calls = 0
-    await loadOlderTimeline({
-      sessionID: () => "ses_test",
-      more: () => true,
-      loading: () => false,
-      loadMore: async () => {
-        calls += 1
-      },
-    })
-
-    expect(calls).toBe(1)
-  })
-
-  test("does not restore an anchor after the session changes", async () => {
-    let sessionID = "ses_old"
-    let restore = 0
-
-    await loadOlderTimeline({
-      sessionID: () => sessionID,
-      more: () => true,
-      loading: () => false,
-      loadMore: async () => {
-        sessionID = "ses_new"
-      },
-      after: () => {
-        restore += 1
-      },
-    })
-
-    expect(restore).toBe(0)
-  })
-
-  test("releases the anchor when loading history fails", async () => {
-    let restore = 0
-
-    await expect(
-      loadOlderTimeline({
-        sessionID: () => "ses_test",
-        more: () => true,
-        loading: () => false,
-        loadMore: async () => {
-          throw new Error("history failed")
-        },
-        after: () => {
-          restore += 1
-        },
+        expect(calls).toBe(1)
+        expect(anchors).toEqual(["before", "after", true])
       }),
+    ))
+
+  test("stops when a page adds no raw messages", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = 0
+        yield* loadOlderTimeline({
+          sessionID: () => "ses_test",
+          more: () => true,
+          loading: () => false,
+          loadMore: () =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                calls += 1
+              }),
+            ),
+        })
+
+        expect(calls).toBe(1)
+      }),
+    ))
+
+  test("does not restore an anchor after the session changes", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let sessionID = "ses_old"
+        let restore = 0
+
+        yield* loadOlderTimeline({
+          sessionID: () => sessionID,
+          more: () => true,
+          loading: () => false,
+          loadMore: () =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                sessionID = "ses_new"
+              }),
+            ),
+          after: () => {
+            restore += 1
+          },
+        })
+
+        expect(restore).toBe(0)
+      }),
+    ))
+
+  test("releases the anchor when loading history fails", () => {
+    let restore = 0
+
+    // The rejects matcher of bun:test waits for the promise before it returns.
+    expect(
+      Effect.runPromise(
+        loadOlderTimeline({
+          sessionID: () => "ses_test",
+          more: () => true,
+          loading: () => false,
+          loadMore: () => Effect.runPromise(Effect.fail(new HistoryLoadError({ message: "history failed" }))),
+          after: () => {
+            restore += 1
+          },
+        }),
+      ),
     ).rejects.toThrow("history failed")
 
     expect(restore).toBe(1)

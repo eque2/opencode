@@ -1,5 +1,5 @@
-import { describe, expect, mock, test } from "bun:test"
-import { HashMap, Option } from "effect"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { Effect, HashMap, Option } from "effect"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { normalizeSessionMessages } from "@/utils/session-message"
 
@@ -13,7 +13,19 @@ mock.module("@opencode-ai/session-ui/message-part", () => ({
     })),
 }))
 
-const { Timeline, TimelineRow } = await import("./rows")
+let Timeline: typeof import("./rows").Timeline
+let TimelineRow: typeof import("./rows").TimelineRow
+
+// The rows module loads after the message-part mock, so it binds to the mock.
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const rows = yield* Effect.promise(() => import("./rows"))
+      Timeline = rows.Timeline
+      TimelineRow = rows.TimelineRow
+    }),
+  ),
+)
 
 describe("current session timeline rows", () => {
   test("derives turns and tagged rows from chronological current messages", () => {

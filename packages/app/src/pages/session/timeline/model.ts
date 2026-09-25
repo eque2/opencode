@@ -1,5 +1,5 @@
 import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import { createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
@@ -68,16 +68,18 @@ export function createTimelineModel(input: {
     const id = input.sessionID()
     return id ? sync().session.history.loading(id) : false
   })
-  const loadOlder = async (options?: { before?: () => void; after?: (done: boolean) => void }) => {
-    return loadOlderTimeline({
-      sessionID: input.sessionID,
-      more,
-      loading,
-      loadMore: (sessionID) => sync().session.history.loadMore(sessionID),
-      before: options?.before,
-      after: options?.after,
-    })
-  }
+  // session.tsx awaits this Promise; it rejects with the original loadMore rejection.
+  const loadOlder = (options?: { before?: () => void; after?: (done: boolean) => void }) =>
+    Effect.runPromise(
+      loadOlderTimeline({
+        sessionID: input.sessionID,
+        more,
+        loading,
+        loadMore: (sessionID) => sync().session.history.loadMore(sessionID),
+        before: options?.before,
+        after: options?.after,
+      }),
+    )
 
   onCleanup(clearRefresh)
 
@@ -113,7 +115,12 @@ export function selectVisibleUserMessages(messages: UserMessage[], revertMessage
   return boundary < 0 ? messages : messages.slice(0, boundary)
 }
 
-export async function loadOlderTimeline(input: {
+/**
+ * Loads one older history page of the current session. A failed load still
+ * releases the anchor, then fails with the loadMore rejection as a defect, so
+ * Effect.runPromise rejects with that same error.
+ */
+export const loadOlderTimeline = Effect.fnUntraced(function* (input: {
   sessionID: Accessor<string | undefined>
   more: Accessor<boolean>
   loading: Accessor<boolean>
@@ -125,10 +132,13 @@ export async function loadOlderTimeline(input: {
   if (!id || !input.more() || input.loading()) return
 
   input.before?.()
-  await input.loadMore(id).catch((error) => {
-    if (input.sessionID() === id) input.after?.(true)
-    throw error
-  })
+  yield* Effect.promise(() => input.loadMore(id)).pipe(
+    Effect.tapCause(() =>
+      Effect.sync(() => {
+        if (input.sessionID() === id) input.after?.(true)
+      }),
+    ),
+  )
   if (input.sessionID() !== id) return
   input.after?.(true)
-}
+})

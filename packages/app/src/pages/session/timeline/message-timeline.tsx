@@ -13,7 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { Array as Arr, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Array as Arr, Data, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -89,6 +89,22 @@ type FramedTimelineRow = Exclude<TimelineRow.TimelineRow, { _tag: "TurnGap" }>
 type TimelineRowByTag<T extends TimelineRow.TimelineRow["_tag"]> = Extract<TimelineRow.TimelineRow, { _tag: T }>
 
 const timelineFallbackItemSize = 60
+
+/** A timeline action that rejected or threw. `cause` is the original error. */
+class TimelineActionError extends Data.TaggedError("App.TimelineActionError")<{ readonly cause: unknown }> {}
+
+/** Runs one timeline request as an Effect. A rejection fails with TimelineActionError. */
+const timelineAction = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new TimelineActionError({ cause }) })
+
+/**
+ * Runs a timeline action from an event handler. A failure or defect that the
+ * action does not handle goes to the Effect logger, as an unhandled rejection
+ * went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 // A small LRU of per-session timeline state. MutableHashMap iterates in insertion order, so the first key is the oldest.
 const timelineCache = MutableHashMap.empty<
   string,
@@ -724,22 +740,25 @@ export function MessageTimeline(props: {
   const copyShareUrl = () => {
     const url = shareUrl()
     if (!url) return
-    void navigator.clipboard
-      .writeText(url)
-      .then(() =>
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("session.share.copy.copied"),
-          description: url,
+    // runFork starts the write synchronously, inside the click that grants clipboard access.
+    runDetached(
+      timelineAction(() => navigator.clipboard.writeText(url)).pipe(
+        Effect.match({
+          onSuccess: () =>
+            showToast({
+              variant: "success",
+              icon: "circle-check",
+              title: language.t("session.share.copy.copied"),
+              description: url,
+            }),
+          onFailure: (error) =>
+            showToast({
+              title: language.t("common.requestFailed"),
+              description: errorMessage(error.cause),
+            }),
         }),
-      )
-      .catch((err: unknown) =>
-        showToast({
-          title: language.t("common.requestFailed"),
-          description: errorMessage(err),
-        }),
-      )
+      ),
+    )
   }
   const selectShareUrlText: JSX.EventHandler<HTMLDivElement, MouseEvent> = (event) => {
     const selection = window.getSelection()
@@ -807,30 +826,46 @@ export function MessageTimeline(props: {
     titleMutation.mutate({ id, title: next })
   }
 
-  const exportSession = async (sessionID: string) => {
-    try {
-      const data = await fetchSessionExport({
-        sessionID,
-        client: sdk().client,
-      })
-      const filename = sessionExportFilename(data.info)
-      downloadSessionExport(filename, data)
-      showToast({
-        variant: "success",
-        icon: "circle-check",
-        title: language.t("toast.session.export.success.title"),
-        description: language.t("toast.session.export.success.description", { filename }),
-      })
-    } catch (err) {
-      showToast({
-        variant: "error",
-        title: language.t("toast.session.export.failed.title"),
-        description: err instanceof Error ? err.message : language.t("toast.session.export.failed.description"),
-      })
-    }
-  }
+  const exportSession = (sessionID: string) =>
+    runDetached(
+      timelineAction(() =>
+        fetchSessionExport({
+          sessionID,
+          client: sdk().client,
+        }),
+      ).pipe(
+        Effect.flatMap((data) =>
+          Effect.try({
+            try: () => {
+              const filename = sessionExportFilename(data.info)
+              downloadSessionExport(filename, data)
+              return filename
+            },
+            catch: (cause) => new TimelineActionError({ cause }),
+          }),
+        ),
+        Effect.match({
+          onSuccess: (filename) =>
+            showToast({
+              variant: "success",
+              icon: "circle-check",
+              title: language.t("toast.session.export.success.title"),
+              description: language.t("toast.session.export.success.description", { filename }),
+            }),
+          onFailure: (error) =>
+            showToast({
+              variant: "error",
+              title: language.t("toast.session.export.failed.title"),
+              description:
+                error.cause instanceof Error
+                  ? error.cause.message
+                  : language.t("toast.session.export.failed.description"),
+            }),
+        }),
+      ),
+    )
 
-  const deleteSession = async (sessionID: string) => {
+  const deleteSession = Effect.fnUntraced(function* (sessionID: string) {
     const session = sync().session.get(sessionID)
     if (!session) return false
 
@@ -838,16 +873,18 @@ export function MessageTimeline(props: {
     const index = sessions.findIndex((s) => s.id === sessionID)
     const nextSession = index === -1 ? Option.none() : Option.fromNullishOr(sessions[index + 1] ?? sessions[index - 1])
 
-    const result = await sdk()
-      .api.session.remove({ sessionID })
-      .then(() => true)
-      .catch((err) => {
-        showToast({
-          title: language.t("session.delete.failed.title"),
-          description: errorMessage(err),
-        })
-        return false
-      })
+    const result = yield* timelineAction(() => sdk().api.session.remove({ sessionID })).pipe(
+      Effect.as(true),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          showToast({
+            title: language.t("session.delete.failed.title"),
+            description: errorMessage(error.cause),
+          })
+          return false
+        }),
+      ),
+    )
 
     if (!result) return false
 
@@ -896,7 +933,7 @@ export function MessageTimeline(props: {
     }
     notifySessionTabsRemoved({ directory: sdk().directory, sessionIDs: [...removed] })
     return true
-  }
+  })
 
   const navigateParent = () => {
     const id = parentID()
@@ -910,10 +947,13 @@ export function MessageTimeline(props: {
     const name = createMemo(
       () => sessionTitle(sync().session.get(props.sessionID)?.title) ?? language.t("command.session.new"),
     )
-    const handleDelete = async () => {
-      await deleteSession(props.sessionID)
-      dialog.close()
-    }
+    const handleDelete = () =>
+      runDetached(
+        Effect.gen(function* () {
+          yield* deleteSession(props.sessionID)
+          dialog.close()
+        }),
+      )
 
     if (settings.general.newLayoutDesigns())
       return (
