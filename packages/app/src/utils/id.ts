@@ -1,4 +1,4 @@
-import { Data, Option } from "effect"
+import { Data, DateTime, Option } from "effect"
 
 const prefixes = {
   session: "ses",
@@ -40,7 +40,7 @@ function generateID(prefix: Prefix, descending: boolean, given?: string): string
 }
 
 function create(prefix: Prefix, descending: boolean, timestamp?: number): string {
-  const currentTimestamp = timestamp ?? Date.now()
+  const currentTimestamp = timestamp ?? DateTime.toEpochMillis(DateTime.nowUnsafe())
 
   if (currentTimestamp !== lastTimestamp) {
     lastTimestamp = currentTimestamp
