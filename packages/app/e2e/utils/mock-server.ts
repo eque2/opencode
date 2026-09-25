@@ -192,12 +192,7 @@ export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
         .filter((session) => parentID !== "null" || session.parentID === undefined)
         .filter((session) => {
           const search = url.searchParams.get("search")?.toLowerCase()
-          return (
-            !search ||
-            String(session.title ?? "")
-              .toLowerCase()
-              .includes(search)
-          )
+          return !search || (typeof session.title === "string" ? session.title : "").toLowerCase().includes(search)
         })
       const ordered = url.searchParams.get("order") === "asc" ? sessions.toReversed() : sessions
       const data = ordered.slice(offset, offset + limit)
