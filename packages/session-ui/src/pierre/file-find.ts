@@ -104,6 +104,24 @@ function scrollParent(el: HTMLElement): HTMLElement | undefined {
   }
 }
 
+function* textNodes(root: HTMLElement): Generator<Text> {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    if (node instanceof Text) yield node
+    node = walker.nextNode()
+  }
+}
+
+// Yields each offset of needle in hay. The search resumes `step` characters after a match, so matches never overlap.
+function* matchOffsets(hay: string, needle: string, step: number): Generator<number> {
+  let at = hay.indexOf(needle)
+  while (at !== -1) {
+    yield at
+    at = hay.indexOf(needle, at + step)
+  }
+}
+
 type CreateFileFindOptions = {
   wrapper: () => HTMLElement | undefined
   overlay: () => HTMLDivElement | undefined
@@ -236,35 +254,24 @@ export function createFileFind(opts: CreateFileFindOptions) {
     })
   }
 
-  const scan = (root: ShadowRoot, value: string) => {
+  const scan = (root: ShadowRoot, value: string): Range[] => {
     const needle = value.toLowerCase()
-    const ranges: Range[] = []
     const cols = Array.from(root.querySelectorAll("[data-content] [data-line], [data-column-content]")).filter(
       (node): node is HTMLElement => node instanceof HTMLElement,
     )
 
-    for (const col of cols) {
+    return cols.flatMap((col) => {
       const text = col.textContent
-      if (!text) continue
+      if (!text) return []
 
       const hay = text.toLowerCase()
-      let at = hay.indexOf(needle)
-      if (at === -1) continue
+      const starts = Array.from(matchOffsets(hay, needle, value.length))
+      if (starts.length === 0) return []
 
-      const nodes: Text[] = []
-      const ends: number[] = []
-      const walker = document.createTreeWalker(col, NodeFilter.SHOW_TEXT)
-      let node = walker.nextNode()
-      let pos = 0
-      while (node) {
-        if (node instanceof Text) {
-          pos += node.data.length
-          nodes.push(node)
-          ends.push(pos)
-        }
-        node = walker.nextNode()
-      }
-      if (nodes.length === 0) continue
+      const nodes = Array.from(textNodes(col))
+      if (nodes.length === 0) return []
+      // ends[i] is the text offset just after nodes[i].
+      const ends = Arr.scan(nodes, 0, (pos, node) => pos + node.data.length).slice(1)
 
       const locate = (offset: number) => {
         let lo = 0
@@ -278,18 +285,15 @@ export function createFileFind(opts: CreateFileFindOptions) {
         return { node: nodes[lo], offset: offset - prev }
       }
 
-      while (at !== -1) {
+      return starts.map((at) => {
         const start = locate(at)
         const end = locate(at + value.length)
         const range = document.createRange()
         range.setStart(start.node, start.offset)
         range.setEnd(end.node, end.offset)
-        ranges.push(range)
-        at = hay.indexOf(needle, at + value.length)
-      }
-    }
-
-    return ranges
+        return range
+      })
+    })
   }
 
   const scrollToRange = (range: Range) => {
