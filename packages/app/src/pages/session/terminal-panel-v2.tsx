@@ -13,6 +13,7 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
+import { Option } from "effect"
 
 import { SortableTerminalTabV2 } from "@/components/session/session-sortable-terminal-tab-v2"
 import { Terminal } from "@/components/terminal"
@@ -241,11 +242,15 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
                   !!event.target.closest('[data-slot="tabs-trigger-close-button"], input, [contenteditable="true"]'),
               }),
             ]}
-            modifiers={[RestrictToHorizontalAxis, RestrictToElement.configure({ element: () => tabList ?? null })]}
+            modifiers={[
+              RestrictToHorizontalAxis,
+              RestrictToElement.configure({ element: () => Option.getOrNull(Option.fromNullishOr(tabList)) }),
+            ]}
             plugins={(defaults) => [
               ...defaults.filter((plugin) => plugin !== Accessibility),
               AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
-              Feedback.configure({ dropAnimation: null }),
+              // dnd-kit turns the drop animation off only for null.
+              Feedback.configure({ dropAnimation: Option.getOrNull(Option.none()) }),
             ]}
             onDragEnd={(event) => {
               const source = event.operation.source
@@ -264,7 +269,7 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
               >
                 <Tabs.List
                   ref={tabList}
-                  class={newLayout() ? undefined : "h-10 border-b border-border-weaker-base"}
+                  {...(newLayout() ? {} : { class: "h-10 border-b border-border-weaker-base" })}
                   onPointerDown={(event: PointerEvent & { currentTarget: HTMLDivElement }) => {
                     const active = document.activeElement
                     if (event.target === active) return
