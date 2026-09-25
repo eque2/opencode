@@ -72,7 +72,7 @@ export interface Tags<Config extends TagConfig> {
 export function tags<const Config extends { readonly [Name in keyof Config]: readonly (keyof Config & string)[] }>(
   config: Config,
 ): Tags<Config> {
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- TypeScript cannot build the key-dependent mapped type { [Name]: Tag<Name> } from runtime keys; each value is makeTag of its own key
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the platform Object.fromEntries signature returns { [k: string]: T } and cannot type the key-dependent { [Name]: Tag<Name> }; each value is makeTag of its own key
   const values = Object.fromEntries(Object.keys(config).map((name) => [name, makeTag(name)])) as Tags<Config>["values"]
   return {
     values,
@@ -292,7 +292,7 @@ export function compile<A, E, const Items extends Replacements = readonly []>(
   return Layer.suspend(() => {
     const result = compileGraph(root, replacements)
     if (Result.isFailure(result)) return Layer.effectContext(Effect.die(result.failure))
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- effect Layer.provide and Layer.provideMerge erase the graph's service and error types; the root Node<A, E>, checked by make and CheckReplacements, carries them
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the effect Layer.isLayer, Layer.provide, and Layer.provideMerge signatures type this runtime fold of layers as Layer<never, unknown, unknown>; the root Node<A, E>, checked by make and CheckReplacements, carries the real types
     return result.success as Layer.Layer<A, E>
   })
 }
