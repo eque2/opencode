@@ -8,7 +8,7 @@ import {
   type DiffRenderable,
   type ScrollBoxRenderable,
 } from "@opentui/core"
-import { Equal, Option } from "effect"
+import { Equal, MutableHashMap, Option } from "effect"
 import { LANGUAGE_EXTENSIONS } from "../../util/filetype"
 import { useBindings, useCommandShortcut } from "../../keymap"
 import { useTheme } from "../../context/theme"
@@ -172,8 +172,8 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const markReviewedShortcut = useCommandShortcut("diff.mark_reviewed")
   const helpShortcut = useCommandShortcut("diff.help")
   let scroll: ScrollBoxRenderable | undefined
-  const patchNodeByFileIndex = new Map<number, BoxRenderable>()
-  const diffNodeByFileIndex = new Map<number, DiffRenderable>()
+  const patchNodeByFileIndex = MutableHashMap.empty<number, BoxRenderable>()
+  const diffNodeByFileIndex = MutableHashMap.empty<number, DiffRenderable>()
   const [selectedHunk, setSelectedHunk] = createSignal<SelectedHunk | undefined>()
   const [pendingPatchScrollFileIndex, setPendingPatchScrollFileIndex] = createSignal<number | undefined>()
   const [patchFillerHeight, setPatchFillerHeight] = createSignal(0)
@@ -242,11 +242,15 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     setSelectedFileIndex(fileIndex)
   }
 
+  const scrollToPatchNode = (fileIndex: number) => {
+    const patchNode = MutableHashMap.get(patchNodeByFileIndex, fileIndex)
+    if (Option.isSome(patchNode)) scrollPatchNodeToTop(patchNode.value)
+  }
+
   const scrollToFileIndex = (fileIndex: number | undefined) => {
     if (fileIndex === undefined) return
     selectPatchFile(fileIndex)
-    const patchNode = patchNodeByFileIndex.get(fileIndex)
-    if (patchNode) scrollPatchNodeToTop(patchNode)
+    scrollToPatchNode(fileIndex)
   }
 
   const jumpToFileIndex = (fileIndex: number | undefined) => {
@@ -256,18 +260,18 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   }
 
   const currentPatchFileIndex = () => {
-    if (!scroll) return undefined
-    const viewportContentY = scroll.scrollTop + 1
+    const patchScroll = scroll
+    if (!patchScroll) return undefined
+    const viewportContentY = patchScroll.scrollTop + 1
     const entries = patchFileIndexes()
-      .map((fileIndex) => ({
-        fileIndex,
-        node: patchNodeByFileIndex.get(fileIndex),
-      }))
-      .filter((entry): entry is { fileIndex: number; node: BoxRenderable } => Boolean(entry.node))
-      .map((entry) => ({
-        ...entry,
-        contentY: scroll!.scrollTop + entry.node.y - scroll!.viewport.y,
-      }))
+      .flatMap((fileIndex) =>
+        Option.toArray(
+          Option.map(MutableHashMap.get(patchNodeByFileIndex, fileIndex), (node) => ({
+            fileIndex,
+            contentY: patchScroll.scrollTop + node.y - patchScroll.viewport.y,
+          })),
+        ),
+      )
       .sort((left, right) => left.contentY - right.contentY)
     return entries.findLast((entry) => entry.contentY <= viewportContentY)?.fileIndex ?? entries[0]?.fileIndex
   }
@@ -289,10 +293,10 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     if (!patchScroll) return
     const hunks = visiblePatchFiles()
       .flatMap((entry) => {
-        const node = diffNodeByFileIndex.get(entry.fileIndex)
-        if (!node || node.isDestroyed) return []
-        const contentY = patchScroll.scrollTop + node.y - patchScroll.viewport.y
-        return node.diff
+        const node = MutableHashMap.get(diffNodeByFileIndex, entry.fileIndex)
+        if (Option.isNone(node) || node.value.isDestroyed) return []
+        const contentY = patchScroll.scrollTop + node.value.y - patchScroll.viewport.y
+        return node.value.diff
           .split("\n")
           .flatMap((line, row) => (line.startsWith("@@") ? [row] : []))
           .map((row, hunkIndex) => ({
@@ -346,11 +350,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const scrollToPatchFileIndexAfterRender = (fileIndex: number) => {
     setPendingPatchScrollFileIndex(fileIndex)
     requestAnimationFrame(() => {
-      const patchNode = patchNodeByFileIndex.get(fileIndex)
-      if (patchNode) scrollPatchNodeToTop(patchNode)
+      scrollToPatchNode(fileIndex)
       requestAnimationFrame(() => {
-        const patchNode = patchNodeByFileIndex.get(fileIndex)
-        if (patchNode) scrollPatchNodeToTop(patchNode)
+        scrollToPatchNode(fileIndex)
         setPendingPatchScrollFileIndex(undefined)
       })
     })
@@ -366,9 +368,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const measurePatchFiller = () => {
     requestAnimationFrame(() => {
       if (!scroll) return
-      const entries = visiblePatchFiles()
-        .map((entry) => patchNodeByFileIndex.get(entry.fileIndex))
-        .filter((node): node is BoxRenderable => Boolean(node))
+      const entries = visiblePatchFiles().flatMap((entry) =>
+        Option.toArray(MutableHashMap.get(patchNodeByFileIndex, entry.fileIndex)),
+      )
       if (entries.length === 0) {
         setPatchFillerHeight(0)
         return
@@ -381,7 +383,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   }
 
   const registerPatchNode = (fileIndex: number, element: BoxRenderable) => {
-    patchNodeByFileIndex.set(fileIndex, element)
+    MutableHashMap.set(patchNodeByFileIndex, fileIndex, element)
     measurePatchFiller()
     if (pendingPatchScrollFileIndex() !== fileIndex) return
     requestAnimationFrame(() => {
@@ -845,7 +847,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                               {(patch) => (
                                 <box border={patchLeftBorder()} borderColor={theme().border}>
                                   <diff
-                                    ref={(element: DiffRenderable) => diffNodeByFileIndex.set(entry.fileIndex, element)}
+                                    ref={(element: DiffRenderable) =>
+                                      MutableHashMap.set(diffNodeByFileIndex, entry.fileIndex, element)
+                                    }
                                     diff={patch()}
                                     view={view()}
                                     filetype={reviewed() ? PLAIN_TEXT_FILETYPE : filetype(entry.file.file)}

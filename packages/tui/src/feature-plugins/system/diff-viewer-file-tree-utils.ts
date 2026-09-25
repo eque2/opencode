@@ -3,6 +3,8 @@
 // Each leaf remembers what has been,
 // And waits where careful light aligns.
 
+import { MutableHashMap, Option } from "effect"
+
 export type FileTreeItem = {
   readonly file: string
   readonly status?: "added" | "deleted" | "modified"
@@ -34,7 +36,7 @@ export type FileTreeRow = {
 export function buildFileTree(files: readonly FileTreeItem[]): FileTree {
   const roots: number[] = []
   const nodes: FileTreeNode[] = []
-  const directoryByPath = new Map<string, number>()
+  const directoryByPath = MutableHashMap.empty<string, number>()
 
   files.forEach((file, fileIndex) => {
     const segments = file.file.split("/").filter(Boolean)
@@ -43,8 +45,8 @@ export function buildFileTree(files: readonly FileTreeItem[]): FileTree {
     const parent = segments.slice(0, -1).reduce(
       (state, segment) => {
         const directoryPath = state.path ? `${state.path}/${segment}` : segment
-        const existing = directoryByPath.get(directoryPath)
-        if (existing !== undefined) return { id: existing, path: directoryPath, depth: state.depth + 1 }
+        const existing = MutableHashMap.get(directoryByPath, directoryPath)
+        if (Option.isSome(existing)) return { id: existing.value, path: directoryPath, depth: state.depth + 1 }
 
         const id = addFileTreeNode(nodes, roots, {
           name: segment,
@@ -52,7 +54,7 @@ export function buildFileTree(files: readonly FileTreeItem[]): FileTree {
           depth: state.depth,
           kind: "directory",
         })
-        directoryByPath.set(directoryPath, id)
+        MutableHashMap.set(directoryByPath, directoryPath, id)
         return { id, path: directoryPath, depth: state.depth + 1 }
       },
       { id: undefined as number | undefined, path: "", depth: 0 },
