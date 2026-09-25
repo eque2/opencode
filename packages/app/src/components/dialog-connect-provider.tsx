@@ -38,6 +38,7 @@ import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
+import { HashMap, Option } from "effect"
 
 const CUSTOM_ID = "_custom"
 type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
@@ -180,7 +181,7 @@ function ProviderPicker(props: {
       key={(x) => x?.id}
       items={() => {
         language.locale()
-        return [{ id: CUSTOM_ID, name: customLabel() }, ...providers.all().values()]
+        return [{ id: CUSTOM_ID, name: customLabel() }, ...HashMap.values(providers.all())]
       }}
       filterKeys={["id", "name"]}
       groupBy={(x) => (popularProviders.includes(x.id) ? popularGroup() : otherGroup())}
@@ -242,7 +243,7 @@ function ProviderPickerV2(props: {
   const all = createMemo(() => {
     language.locale()
     const query = store.filter.trim().toLowerCase()
-    const values = [custom(), ...providers.all().values()]
+    const values = [custom(), ...HashMap.values(providers.all())]
     if (!query) return values
     return values.filter((provider) => `${provider.id} ${provider.name}`.toLowerCase().includes(query))
   })
@@ -407,9 +408,13 @@ function ProviderConnection(props: {
     timer.current = undefined
   })
 
-  const provider = createMemo(
-    () => providers.all().get(props.provider) ?? serverSync().data.provider.all.get(props.provider)!,
+  const provider = createMemo(() =>
+    HashMap.get(providers.all(), props.provider).pipe(
+      Option.orElse(() => HashMap.get(serverSync().data.provider.all, props.provider)),
+    ),
   )
+  // A provider missing from both catalogs shows its ID, where the old non-null read crashed.
+  const providerName = () => Option.match(provider(), { onNone: () => props.provider, onSome: (value) => value.name })
   const fallback = createMemo<ConnectMethod[]>(() => [
     {
       type: "key" as const,
@@ -723,8 +728,8 @@ function ProviderConnection(props: {
     showToast({
       variant: "success",
       icon: "circle-check",
-      title: language.t("provider.connect.toast.connected.title", { provider: provider().name }),
-      description: language.t("provider.connect.toast.connected.description", { provider: provider().name }),
+      title: language.t("provider.connect.toast.connected.title", { provider: providerName() }),
+      description: language.t("provider.connect.toast.connected.description", { provider: providerName() }),
     })
   }
 
@@ -743,7 +748,7 @@ function ProviderConnection(props: {
       return (
         <div class="flex flex-col gap-2">
           <div class="px-3 text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-muted">
-            {language.t("provider.connect.selectMethod", { provider: provider().name })}
+            {language.t("provider.connect.selectMethod", { provider: providerName() })}
           </div>
           <div class="flex flex-col">
             <For each={methods()}>
@@ -773,7 +778,7 @@ function ProviderConnection(props: {
     return (
       <>
         <div class="text-14-regular text-text-base">
-          {language.t("provider.connect.selectMethod", { provider: provider().name })}
+          {language.t("provider.connect.selectMethod", { provider: providerName() })}
         </div>
         <div>
           <List
@@ -840,8 +845,8 @@ function ProviderConnection(props: {
       return (
         <div class="flex flex-col gap-5 px-3 text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-muted">
           <Show
-            when={provider().id === "opencode"}
-            fallback={language.t("provider.connect.apiKey.description", { provider: provider().name })}
+            when={props.provider === "opencode"}
+            fallback={language.t("provider.connect.apiKey.description", { provider: providerName() })}
           >
             <div class="flex flex-col gap-5">
               <div>{language.t("provider.connect.opencodeZen.line1")}</div>
@@ -860,7 +865,7 @@ function ProviderConnection(props: {
           </Show>
           <form onSubmit={handleSubmit} class="flex flex-col items-start gap-5 self-stretch">
             <label class="flex w-full flex-col gap-1 font-[530] leading-4 text-v2-text-text-base">
-              {language.t("provider.connect.apiKey.label", { provider: provider().name })}
+              {language.t("provider.connect.apiKey.label", { provider: providerName() })}
               <TextInputV2
                 ref={apiKey}
                 class="!w-full"
@@ -892,7 +897,7 @@ function ProviderConnection(props: {
     return (
       <div class="flex flex-col gap-6">
         <Switch>
-          <Match when={provider().id === "opencode"}>
+          <Match when={props.provider === "opencode"}>
             <div class="flex flex-col gap-4">
               <div class="text-14-regular text-text-base">{language.t("provider.connect.opencodeZen.line1")}</div>
               <div class="text-14-regular text-text-base">{language.t("provider.connect.opencodeZen.line2")}</div>
@@ -907,7 +912,7 @@ function ProviderConnection(props: {
           </Match>
           <Match when={true}>
             <div class="text-14-regular text-text-base">
-              {language.t("provider.connect.apiKey.description", { provider: provider().name })}
+              {language.t("provider.connect.apiKey.description", { provider: providerName() })}
             </div>
           </Match>
         </Switch>
@@ -916,7 +921,7 @@ function ProviderConnection(props: {
             autofocus={!newLayout()}
             ref={apiKey}
             type="text"
-            label={language.t("provider.connect.apiKey.label", { provider: provider().name })}
+            label={language.t("provider.connect.apiKey.label", { provider: providerName() })}
             placeholder={language.t("provider.connect.apiKey.placeholder")}
             name="apiKey"
             value={formStore.value}
@@ -982,7 +987,7 @@ function ProviderConnection(props: {
             <ExternalLink href={store.authorization!.url} class="text-v2-text-text-base">
               {language.t("provider.connect.oauth.code.visit.link")}
             </ExternalLink>
-            {language.t("provider.connect.oauth.code.visit.suffix", { provider: provider().name })}
+            {language.t("provider.connect.oauth.code.visit.suffix", { provider: providerName() })}
           </div>
           <form onSubmit={handleSubmit} class="flex flex-col items-start gap-5 self-stretch">
             <label class="flex w-full flex-col gap-1 font-[530] leading-4 text-v2-text-text-base">
@@ -1021,7 +1026,7 @@ function ProviderConnection(props: {
           <ExternalLink href={store.authorization!.url}>
             {language.t("provider.connect.oauth.code.visit.link")}
           </ExternalLink>
-          {language.t("provider.connect.oauth.code.visit.suffix", { provider: provider().name })}
+          {language.t("provider.connect.oauth.code.visit.suffix", { provider: providerName() })}
         </div>
         <form onSubmit={handleSubmit} class="flex flex-col items-start gap-4">
           <TextField
@@ -1094,7 +1099,7 @@ function ProviderConnection(props: {
           <ExternalLink href={store.authorization!.url}>
             {language.t("provider.connect.oauth.auto.visit.link")}
           </ExternalLink>
-          {language.t("provider.connect.oauth.auto.visit.suffix", { provider: provider().name })}
+          {language.t("provider.connect.oauth.auto.visit.suffix", { provider: providerName() })}
         </div>
         <TextField
           label={language.t("provider.connect.oauth.auto.confirmationCode")}
@@ -1129,7 +1134,7 @@ function ProviderConnection(props: {
             <Match when={props.provider === "anthropic" && method()?.label?.toLowerCase().includes("max")}>
               {language.t("provider.connect.title.anthropicProMax")}
             </Match>
-            <Match when={true}>{language.t("provider.connect.title", { provider: provider().name })}</Match>
+            <Match when={true}>{language.t("provider.connect.title", { provider: providerName() })}</Match>
           </Switch>
         </div>
       </div>
