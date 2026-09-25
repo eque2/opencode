@@ -13,7 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
-import { HashMap, Option, Random, Result } from "effect"
+import { Clock, Effect, Fiber, HashMap, MutableHashSet, Option, Random, Result, Schedule } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -102,6 +102,10 @@ const money = new Intl.NumberFormat("en-US", {
 })
 
 const DRAFT_RETENTION_MIN_CHARS = 20
+
+// setTimeout(fn, 0) runs fn on a later timer turn (at least 1 ms later). Effect.sleep(0) only yields
+// to the Effect scheduler, so the deferred UI workarounds sleep 1 ms to keep the old timer turn.
+const nextTimerTurn = Effect.sleep("1 millis")
 
 // The default Effect random source: synchronous placeholder picks need no fiber.
 const random = Random.Random.defaultValue()
@@ -238,17 +242,36 @@ export function Prompt(props: PromptProps) {
   let promptPartTypeId = 0
   const event = useEvent()
 
+  // Deferred UI steps run as fibers; cleanup interrupts the ones that still wait.
+  const timers = MutableHashSet.empty<Fiber.Fiber<void>>()
+  function runTimer(effect: Effect.Effect<void>) {
+    const fiber = Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
+    MutableHashSet.add(timers, fiber)
+    fiber.addObserver(() => MutableHashSet.remove(timers, fiber))
+  }
+  onCleanup(() => {
+    const waiting = Array.from(timers)
+    MutableHashSet.clear(timers)
+    Effect.runFork(Fiber.interruptAll(waiting))
+  })
+
   event.on("tui.prompt.append", (evt, { workspace }) => {
     if (workspace !== project.workspace.current()) return
     if (!input || input.isDestroyed) return
     input.insertText(evt.properties.text)
-    setTimeout(() => {
-      // setTimeout is a workaround and needs to be addressed properly
-      if (!input || input.isDestroyed) return
-      input.getLayoutNode().markDirty()
-      input.gotoBufferEnd()
-      renderer.requestRender()
-    }, 0)
+    runTimer(
+      nextTimerTurn.pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            // The deferred turn is a workaround and needs to be addressed properly
+            if (!input || input.isDestroyed) return
+            input.getLayoutNode().markDirty()
+            input.gotoBufferEnd()
+            renderer.requestRender()
+          }),
+        ),
+      ),
+    )
   })
 
   createEffect(() => {
@@ -411,9 +434,8 @@ export function Prompt(props: PromptProps) {
 
           setStore("interrupt", store.interrupt + 1)
 
-          setTimeout(() => {
-            setStore("interrupt", 0)
-          }, 5000)
+          // Each press resets the count 5 seconds later, as each old timeout did.
+          runTimer(Effect.sleep("5 seconds").pipe(Effect.andThen(Effect.sync(() => setStore("interrupt", 0)))))
 
           if (store.interrupt >= 2) {
             void sdk.client.session.abort({
@@ -1213,11 +1235,17 @@ export function Prompt(props: PromptProps) {
 
     input.insertText(normalizedText)
 
-    setTimeout(() => {
-      if (!input || input.isDestroyed) return
-      input.getLayoutNode().markDirty()
-      renderer.requestRender()
-    }, 0)
+    runTimer(
+      nextTimerTurn.pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!input || input.isDestroyed) return
+            input.getLayoutNode().markDirty()
+            renderer.requestRender()
+          }),
+        ),
+      ),
+    )
   }
 
   async function pasteAttachment(file: { filename?: string; filepath?: string; content: string; mime: string }) {
@@ -1427,12 +1455,18 @@ export function Prompt(props: PromptProps) {
                   promptPartTypeId = input.extmarks.registerType("prompt-part")
                 }
                 props.ref?.(ref)
-                setTimeout(() => {
-                  // setTimeout is a workaround and needs to be addressed properly
-                  if (!input || input.isDestroyed) return
-                  input.cursorColor = theme.text
-                  if (tuiConfig.cursor) input.cursorStyle = tuiConfig.cursor
-                }, 0)
+                runTimer(
+                  nextTimerTurn.pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        // The deferred turn is a workaround and needs to be addressed properly
+                        if (!input || input.isDestroyed) return
+                        input.cursorColor = theme.text
+                        if (tuiConfig.cursor) input.cursorStyle = tuiConfig.cursor
+                      }),
+                    ),
+                  ),
+                )
               }}
               onMouseDown={(r: MouseEvent) => r.target?.focus()}
               focusedBackgroundColor={theme.backgroundElement}
@@ -1546,13 +1580,18 @@ export function Prompt(props: PromptProps) {
                       })
                       const [seconds, setSeconds] = createSignal(0)
                       onMount(() => {
-                        const timer = setInterval(() => {
-                          const next = retry()?.next
-                          if (next) setSeconds(Math.round((next - Date.now()) / 1000))
-                        }, 1000)
+                        // Tick every second, first after one second, as setInterval did.
+                        const countdown = Effect.runFork(
+                          Effect.gen(function* () {
+                            const next = retry()?.next
+                            if (!next) return
+                            const now = yield* Clock.currentTimeMillis
+                            setSeconds(Math.round((next - now) / 1000))
+                          }).pipe(Effect.repeat(Schedule.spaced("1 second")), Effect.delay("1 second")),
+                        )
 
                         onCleanup(() => {
-                          clearInterval(timer)
+                          Effect.runFork(Fiber.interrupt(countdown))
                         })
                       })
                       const handleMessageClick = () => {
