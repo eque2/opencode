@@ -8,7 +8,7 @@ import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
 import { Icon } from "@opencode-ai/ui/icon"
 import { errorDescriptionKey } from "./error-description"
-import { Option, Predicate, Schema } from "effect"
+import { Data, Effect, Fiber, Option, Predicate, Schema } from "effect"
 
 export type InitError = {
   name: string
@@ -188,43 +188,85 @@ interface ErrorPageProps {
   error: unknown
 }
 
+/** A platform action of the error page that rejected. `cause` is the original rejection. */
+class ErrorPageActionError extends Data.TaggedError("App.ErrorPageActionError")<{ readonly cause: unknown }> {}
+
+/** Runs one platform call as an Effect. A rejection fails with ErrorPageActionError. */
+const platformAction = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new ErrorPageActionError({ cause }) })
+
+/** Runs an optional platform call. When the platform has no such method, it succeeds at once. */
+const optionalPlatformAction = <A,>(call: () => Promise<A> | undefined) =>
+  Effect.suspend(() =>
+    Option.match(Option.fromNullishOr(call()), {
+      onNone: () => Effect.void,
+      onSome: (pending) => Effect.asVoid(platformAction(() => pending)),
+    }),
+  )
+
+/**
+ * Runs an error page action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 export const ErrorPage: Component<ErrorPageProps> = (props) => {
   const platform = usePlatform()
   const language = useLanguage()
   const formattedError = () => formatError(props.error, language.t)
-  let recordedFatalError: Promise<void> | undefined
   const [store, setStore] = createStore({
-    actionError: undefined as string | undefined,
+    // The message of the last failed action; none after a success.
+    actionError: Option.none<string>(),
   })
+  const recordFatalError = optionalPlatformAction(() =>
+    platform.recordFatalRendererError?.({
+      error: formattedError(),
+      url: location.href,
+      version: platform.version,
+      platform: platform.platform,
+      os: platform.os,
+    }),
+  )
+  let fatalErrorRecording = Option.none<Fiber.Fiber<void, ErrorPageActionError>>()
 
-  function ensureFatalErrorRecorded() {
-    recordedFatalError ??=
-      platform.recordFatalRendererError?.({
-        error: formattedError(),
-        url: location.href,
-        version: platform.version,
-        platform: platform.platform,
-        os: platform.os,
-      }) ?? Promise.resolve()
-    return recordedFatalError
+  /** Starts recording the fatal error on the first call. Every call returns that one recording. */
+  function startFatalErrorRecording() {
+    const recording = Option.getOrElse(fatalErrorRecording, () => Effect.runFork(recordFatalError))
+    fatalErrorRecording = Option.some(recording)
+    return recording
   }
 
+  /** Shows the error of a failed action, or clears the shown error after a success. */
+  const showActionResult = <A,>(action: Effect.Effect<A, ErrorPageActionError>) =>
+    Effect.match(action, {
+      onFailure: (error) => setStore("actionError", Option.some(formatError(error.cause, language.t))),
+      onSuccess: () => setStore("actionError", Option.none()),
+    })
+
+  // Nothing waits for this recording here, so a failure is dropped, as before.
   onMount(() => {
-    void ensureFatalErrorRecorded().catch(() => undefined)
+    startFatalErrorRecording()
   })
 
-  async function checkForUpdates() {
-    const state = await platform.updater?.check()
-    setStore("actionError", state?.status === "error" ? state.message : undefined)
+  function checkForUpdates() {
+    const updater = platform.updater
+    runDetached(
+      Effect.gen(function* () {
+        const state = updater ? Option.some(yield* platformAction(() => updater.check())) : Option.none()
+        setStore(
+          "actionError",
+          Option.flatMap(state, (next) => (next.status === "error" ? Option.some(next.message) : Option.none())),
+        )
+      }),
+    )
   }
 
-  async function installUpdate() {
-    await platform.updater
-      ?.install()
-      .then(() => setStore("actionError", undefined))
-      .catch((err) => {
-        setStore("actionError", formatError(err, language.t))
-      })
+  function installUpdate() {
+    const updater = platform.updater
+    if (!updater) return
+    runDetached(showActionResult(platformAction(() => updater.install())))
   }
 
   const updateVersion = () => {
@@ -233,15 +275,16 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
     return state.version
   }
 
-  async function exportDebugLogs() {
-    const exportLogs = platform.exportDebugLogs
-    if (!exportLogs) return
-    await ensureFatalErrorRecorded()
-      .then(() => exportLogs())
-      .then(() => setStore("actionError", undefined))
-      .catch((err) => {
-        setStore("actionError", formatError(err, language.t))
-      })
+  function exportDebugLogs() {
+    if (!platform.exportDebugLogs) return
+    // The logs must include the fatal error record, so the export waits for it.
+    runDetached(
+      showActionResult(
+        Fiber.join(startFatalErrorRecording()).pipe(
+          Effect.andThen(optionalPlatformAction(() => platform.exportDebugLogs?.())),
+        ),
+      ),
+    )
   }
 
   return (
@@ -314,7 +357,7 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
             </Show>
           </Show>
         </div>
-        <Show when={store.actionError}>
+        <Show when={Option.getOrUndefined(store.actionError)}>
           {(message) => <p class="text-xs text-text-danger-base text-center max-w-2xl">{message()}</p>}
         </Show>
         <div class="flex flex-col items-center gap-2">
