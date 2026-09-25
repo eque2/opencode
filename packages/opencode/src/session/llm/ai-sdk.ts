@@ -1,8 +1,10 @@
-import { FinishReason, LLMEvent, ProviderMetadata, ToolResultValue } from "@opencode-ai/llm"
+import { FinishReason, LLMEvent, ToolResultValue, type ProviderMetadata } from "@opencode-ai/llm"
 import { Effect, Schema } from "effect"
 import { type streamText } from "ai"
 import { errorMessage } from "@/util/error"
+import { isRecord } from "@/util/record"
 import { ProviderError } from "@/provider/error"
+import { LLMJson } from "./json"
 
 type Result = Awaited<ReturnType<typeof streamText>>
 type AISDKEvent = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
@@ -23,9 +25,10 @@ function finishReason(value: string | undefined): FinishReason {
   return Schema.is(FinishReason)(value) ? value : "unknown"
 }
 
+// AI SDK metadata values may hold undefined-valued keys, which the LLM JSON schemas reject; keep their wire form.
 function providerMetadata(value: unknown): ProviderMetadata | undefined {
-  if (value == null) return undefined
-  return Schema.is(ProviderMetadata)(value) ? value : undefined
+  if (!isRecord(value)) return undefined
+  return LLMJson.objectEntries(value)
 }
 
 // Temporary AI SDK bridge: Copilot billing survives only in raw provider chunks here.

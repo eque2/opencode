@@ -4,7 +4,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { asSchema, type ModelMessage, type Tool } from "ai"
-import { Cause, Effect, FiberSet, Queue } from "effect"
+import { Cause, Effect, FiberSet, Option, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { FetchHttpClient } from "effect/unstable/http"
 import {
@@ -17,6 +17,7 @@ import {
   type LLMEvent,
 } from "@opencode-ai/llm"
 import type { LLMClientShape } from "@opencode-ai/llm/route"
+import { LLMJson } from "./json"
 import { LLMNative } from "./native-request"
 
 export type RuntimeStatus =
@@ -97,7 +98,7 @@ export function stream(input: StreamInput): StreamResult {
     topP: input.topP,
     topK: input.topK,
     maxOutputTokens: input.maxOutputTokens,
-    providerOptions: ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
+    providerOptions: LLMJson.objectEntries(ProviderTransform.providerOptions(input.model, input.providerOptions ?? {})),
     headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
   })
   const stream = Stream.scoped(
@@ -159,11 +160,12 @@ function providerHeaders(value: unknown): Record<string, string> | undefined {
   )
 }
 
-function nativeSchema(value: unknown): JsonSchema {
-  if (!value || typeof value !== "object") return { type: "object", properties: {} }
-  if ("jsonSchema" in value && value.jsonSchema && typeof value.jsonSchema === "object")
-    return value.jsonSchema as JsonSchema
-  return asSchema(value as Parameters<typeof asSchema>[0]).jsonSchema as JsonSchema
+const emptyObjectSchema = (): JsonSchema => ({ type: "object", properties: {} })
+
+function nativeSchema(value: Tool["inputSchema"]): JsonSchema {
+  if (!value || typeof value !== "object") return emptyObjectSchema()
+  const jsonSchema = "jsonSchema" in value && isRecord(value.jsonSchema) ? value.jsonSchema : asSchema(value).jsonSchema
+  return Option.getOrElse(LLMJson.toJsonObject(jsonSchema), emptyObjectSchema)
 }
 
 export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput, "messages" | "abort">) {

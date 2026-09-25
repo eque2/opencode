@@ -10,8 +10,10 @@ import {
   OpenRouter,
 } from "@opencode-ai/llm/providers"
 import type { ModelMessage } from "ai"
+import { Option } from "effect"
 import type { Provider } from "@/provider/provider"
 import { isRecord } from "@/util/record"
+import { LLMJson } from "./json"
 
 type ToolInput = {
   readonly description?: string
@@ -36,9 +38,7 @@ export type RequestInput = {
 
 const providerMetadata = (value: unknown): ProviderMetadata | undefined => {
   if (!isRecord(value)) return undefined
-  const result = Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1])),
-  )
+  const result = LLMJson.objectEntries(value)
   return Object.keys(result).length === 0 ? undefined : result
 }
 
@@ -110,17 +110,23 @@ const messages = (input: readonly ModelMessage[]) => {
       Message.make({
         role: message.role,
         content: content(message.content),
-        native: isRecord(message.providerOptions) ? { providerOptions: message.providerOptions } : undefined,
+        native: isRecord(message.providerOptions)
+          ? { providerOptions: LLMJson.objectEntries(message.providerOptions) }
+          : undefined,
       }),
     ]
   })
   return { system, messages }
 }
 
+const emptyObjectSchema = (): JsonSchema => ({ type: "object", properties: {} })
+
 const schema = (value: unknown): JsonSchema => {
-  if (!isRecord(value)) return { type: "object", properties: {} }
-  if (isRecord(value.jsonSchema)) return value.jsonSchema
-  return value
+  if (!isRecord(value)) return emptyObjectSchema()
+  return Option.getOrElse(
+    LLMJson.toJsonObject(isRecord(value.jsonSchema) ? value.jsonSchema : value),
+    emptyObjectSchema,
+  )
 }
 
 const tools = (input: Record<string, ToolInput> | undefined): ToolDefinition[] =>

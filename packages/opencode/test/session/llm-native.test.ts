@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { LLMEvent, ToolFailure } from "@opencode-ai/llm"
+import { LLMEvent, ToolCallID, ToolFailure } from "@opencode-ai/llm"
 import { LLMClient, RequestExecutor, WebSocketExecutor, type LLMClientShape } from "@opencode-ai/llm/route"
 import { jsonSchema, tool, type ModelMessage, type Tool } from "ai"
 import { Effect, Fiber, Layer, Stream } from "effect"
@@ -518,7 +518,9 @@ describe("session.llm-native.request", () => {
         { messages: [] as ModelMessage[], abort: new AbortController().signal },
       )
 
-      const failure = yield* Effect.flip(wrapped.explode.execute({}, { id: "call-1", name: "explode" }))
+      const failure = yield* Effect.flip(
+        wrapped.explode.execute({}, { id: ToolCallID.make("call-1"), name: "explode" }),
+      )
       expect(failure).toBeInstanceOf(ToolFailure)
       expect(failure.message).toBe("boom")
     }),
@@ -534,7 +536,9 @@ describe("session.llm-native.request", () => {
         { messages: [] as ModelMessage[], abort: new AbortController().signal },
       )
 
-      const failure = yield* Effect.flip(wrapped.incomplete.execute({}, { id: "call-1", name: "incomplete" }))
+      const failure = yield* Effect.flip(
+        wrapped.incomplete.execute({}, { id: ToolCallID.make("call-1"), name: "incomplete" }),
+      )
       expect(failure).toBeInstanceOf(ToolFailure)
       expect(failure.message).toContain("incomplete")
     }),
