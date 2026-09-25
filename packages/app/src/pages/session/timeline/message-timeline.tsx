@@ -13,7 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { absurd, Array as Arr, Data, Effect, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
+import { absurd, Array as Arr, Data, Effect, HashMap, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -463,7 +463,7 @@ export function MessageTimeline(props: {
     paddingEnd: 64,
     rangeExtractor: (range) => {
       const id = activeMessageID()
-      const active = id ? (messageLastRowIndex().get(id) ?? -1) : -1
+      const active = id ? Option.getOrElse(HashMap.get(messageLastRowIndex(), id), () => -1) : -1
       const indexes = defaultRangeExtractor({ ...range, overscan: renderOverscan() })
       return filterVirtualIndexes(
         Arr.dedupeAdjacent([...resizePinnedIndexes, ...indexes, ...(active < 0 ? [] : [active])].sort((a, b) => a - b)),
@@ -520,9 +520,9 @@ export function MessageTimeline(props: {
   const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => String(item.key)))
   createEffect(() => {
     props.setRevealMessage?.((id) => {
-      const index = messageRowIndex().get(id)
-      if (index === undefined) return
-      virtualizer.scrollToIndex(index, { align: "center" })
+      const index = HashMap.get(messageRowIndex(), id)
+      if (Option.isNone(index)) return
+      virtualizer.scrollToIndex(index.value, { align: "center" })
     })
     props.setScrollToEnd?.(() => virtualizer.scrollToEnd())
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
@@ -1001,16 +1001,21 @@ export function MessageTimeline(props: {
   const workingTurn = (userMessageID: string) => sessionStatus().type !== "idle" && activeMessageID() === userMessageID
 
   const turnDurationMs = (userMessageID: string) => {
-    const message = messageByID().get(userMessageID)
-    if (!message || message.role !== "user") return undefined
-    const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce((max, item) => {
+    const message = HashMap.get(messageByID(), userMessageID)
+    if (Option.isNone(message) || message.value.role !== "user") return undefined
+    const created = message.value.time.created
+    const assistants = Option.getOrElse(
+      HashMap.get(assistantMessagesByParent(), userMessageID),
+      () => emptyAssistantMessages,
+    )
+    const end = assistants.reduce((max, item) => {
       const completed = item.time.completed
       if (typeof completed !== "number") return max
       return Option.some(Option.isSome(max) ? Math.max(max.value, completed) : completed)
     }, Option.none<number>())
     if (Option.isNone(end)) return undefined
-    if (end.value < message.time.created) return undefined
-    return end.value - message.time.created
+    if (end.value < created) return undefined
+    return end.value - created
   }
 
   /**
@@ -1019,7 +1024,10 @@ export function MessageTimeline(props: {
    */
   const assistantCopyTarget = (userMessageID: string): Option.Option<Option.Option<string>> => {
     if (workingTurn(userMessageID)) return Option.none()
-    const messages = assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages
+    const messages = Option.getOrElse(
+      HashMap.get(assistantMessagesByParent(), userMessageID),
+      () => emptyAssistantMessages,
+    )
 
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i]
@@ -1059,7 +1067,8 @@ export function MessageTimeline(props: {
           open={open()}
           onOpenChange={(value) => setToolOpen(contextOpenKey(), value)}
           busy={
-            workingTurn(row().userMessageID) && lastAssistantGroupKey().get(row().userMessageID) === row().group.key
+            workingTurn(row().userMessageID) &&
+            Option.contains(HashMap.get(lastAssistantGroupKey(), row().userMessageID), row().group.key)
           }
           onSizeChange={onSizeChange}
         />
@@ -1069,7 +1078,7 @@ export function MessageTimeline(props: {
     const message = createMemo(() => {
       const group = row().group
       if (group.type !== "part") return undefined
-      return messageByID().get(group.ref.messageID)
+      return Option.getOrUndefined(HashMap.get(messageByID(), group.ref.messageID))
     })
     const part = createMemo(() => {
       const group = row().group
@@ -1190,8 +1199,8 @@ export function MessageTimeline(props: {
       }
       case "UserMessage": {
         const message = createMemo(() => {
-          const m = messageByID().get(row().userMessageID)
-          if (m?.role === "user") return m
+          const m = HashMap.get(messageByID(), row().userMessageID)
+          if (Option.isSome(m) && m.value.role === "user") return m.value
           return undefined
         })
         const messageComments = createMemo(() => {
@@ -1319,13 +1328,13 @@ export function MessageTimeline(props: {
 
   function VirtualTimelineRow(props: { rowKey: string }) {
     let element: HTMLDivElement
-    // The row keys come from the same virtual items, so the item exists when the row mounts.
+    // The row keys come from the same virtual items and the same rows, so the item and the row exist when the row mounts.
     const initialItem = Option.getOrThrow(MutableHashMap.get(virtualItemByKey(), props.rowKey))
-    const initialRow = timelineRowByKey().get(props.rowKey)!
+    const initialRow = Option.getOrThrow(HashMap.get(timelineRowByKey(), props.rowKey))
     const item = createMemo(() =>
       Option.getOrElse(MutableHashMap.get(virtualItemByKey(), props.rowKey), () => initialItem),
     )
-    const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
+    const row = createMemo(() => Option.getOrElse(HashMap.get(timelineRowByKey(), props.rowKey), () => initialRow))
     const tool = () => {
       const value = row()
       if (value._tag !== "AssistantPart" || value.group.type !== "part") return undefined

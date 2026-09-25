@@ -1,5 +1,6 @@
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 import { useLocation, useNavigate } from "@solidjs/router"
+import { HashMap, Option } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { messageIdFromHash } from "./message-id-from-hash"
 
@@ -23,7 +24,7 @@ export const useSessionHashScroll = (input: {
   consumePendingMessage: (key: string) => string | undefined
 }) => {
   const visibleUserMessages = createMemo(() => input.visibleUserMessages())
-  const messageById = createMemo(() => new Map(visibleUserMessages().map((m) => [m.id, m])))
+  const messageById = createMemo(() => HashMap.fromIterable(visibleUserMessages().map((m) => [m.id, m] as const)))
   let pendingKey = ""
   let clearing = false
 
@@ -110,9 +111,9 @@ export const useSessionHashScroll = (input: {
     const messageId = messageIdFromHash(hash)
     if (messageId) {
       input.autoScroll.pause()
-      const msg = messageById().get(messageId)
-      if (msg) {
-        scrollToMessage(msg, behavior)
+      const msg = HashMap.get(messageById(), messageId)
+      if (Option.isSome(msg)) {
+        scrollToMessage(msg.value, behavior)
         return
       }
       return
@@ -160,15 +161,15 @@ export const useSessionHashScroll = (input: {
     if (!targetId) return
 
     const pending = input.pendingMessage() === targetId
-    const msg = messageById().get(targetId)
-    if (!msg) return
+    const msg = HashMap.get(messageById(), targetId)
+    if (Option.isNone(msg)) return
 
     if (pending) input.setPendingMessage(undefined)
     if (input.currentMessageId() === targetId && !pending) return
 
     input.autoScroll.pause()
     cancel()
-    queue(() => scrollToMessage(msg, "auto"))
+    queue(() => scrollToMessage(msg.value, "auto"))
   })
 
   createEffect(() => {
@@ -180,7 +181,7 @@ export const useSessionHashScroll = (input: {
     let targetId = input.pendingMessage()
     if (!targetId && !clearing) targetId = messageIdFromHash(location.hash)
     if (!targetId) return
-    if (messageById().has(targetId)) return
+    if (HashMap.has(messageById(), targetId)) return
     if (!input.historyMore() || input.historyLoading()) return
 
     void input.loadMore(sessionID)
