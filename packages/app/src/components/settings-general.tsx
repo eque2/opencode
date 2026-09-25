@@ -329,7 +329,7 @@ export const SettingsGeneral: Component = () => {
           title={language.t("settings.general.row.newInterfaceNotice.title")}
           description={language.t("settings.general.row.newInterfaceNotice.description")}
         >
-          <Button size="small" variant="ghost" onClick={settings.general.dismissNewInterfaceNotice}>
+          <Button size="small" variant="ghost" onClick={() => settings.general.dismissNewInterfaceNotice()}>
             {language.t("settings.general.row.newInterfaceNotice.dismiss")}
           </Button>
         </SettingsRow>
