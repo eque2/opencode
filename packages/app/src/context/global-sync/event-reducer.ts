@@ -1,5 +1,5 @@
 import { Binary } from "@opencode-ai/core/util/binary"
-import { DateTime, HashSet, Predicate } from "effect"
+import { DateTime, HashSet, Option, Predicate } from "effect"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type {
   Event,
@@ -86,6 +86,9 @@ function isFileDiffInfo(diff: ListedDiff): diff is FileDiffInfo {
   return typeof diff.file === "string" && typeof diff.patch === "string" && diff.status !== undefined
 }
 
+/** Receives a session's todos, or Option.none() when the session's caches are dropped. */
+type SetSessionTodo = (sessionID: string, todos: Option.Option<Todo[]>) => void
+
 /** Reads a part field that a delta event names at run time; Part has no index signature. */
 function fieldValue(part: unknown, field: string): unknown {
   if (!Predicate.isObject(part)) return undefined
@@ -124,10 +127,10 @@ export function applyGlobalEvent(input: {
 function cleanupSessionCaches(
   setStore: SetStoreFunction<State>,
   sessionID: string,
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
+  setSessionTodo?: SetSessionTodo,
 ) {
   if (!sessionID) return
-  setSessionTodo?.(sessionID, undefined)
+  setSessionTodo?.(sessionID, Option.none())
   setStore(
     produce((draft) => {
       dropSessionCaches(draft, [sessionID])
@@ -139,7 +142,7 @@ export function cleanupDroppedSessionCaches(
   store: Store<State>,
   setStore: SetStoreFunction<State>,
   next: Session[],
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void,
+  setSessionTodo?: SetSessionTodo,
 ) {
   const keep = HashSet.fromIterable(next.map((item) => item.id))
   const stale = [
@@ -155,7 +158,7 @@ export function cleanupDroppedSessionCaches(
   ].filter((sessionID, index, list) => !HashSet.has(keep, sessionID) && list.indexOf(sessionID) === index)
   if (stale.length === 0) return
   for (const sessionID of stale) {
-    setSessionTodo?.(sessionID, undefined)
+    setSessionTodo?.(sessionID, Option.none())
   }
   setStore(
     produce((draft) => {
@@ -173,7 +176,7 @@ export function applyDirectoryEvent(input: {
   loadLsp: () => void
   loadReferences?: () => void
   vcsCache?: VcsCache
-  setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void
+  setSessionTodo?: SetSessionTodo
   retainedLimit?: number
   sessionContent?: boolean
   permission?: State["permission"]
@@ -234,7 +237,9 @@ export function applyDirectoryEvent(input: {
       const sessionID = properties.info?.id ?? properties.sessionID
       if (!sessionID) break
       const result = Binary.search(input.store.session, sessionID, (s) => s.id)
-      const info = properties.info ?? (result.found ? input.store.session[result.index] : undefined)
+      const info = Option.orElse(Option.fromNullishOr(properties.info), () =>
+        result.found ? Option.fromNullishOr(input.store.session[result.index]) : Option.none(),
+      )
       if (result.found) {
         input.setStore(
           "session",
@@ -244,7 +249,7 @@ export function applyDirectoryEvent(input: {
         )
       }
       cleanupSessionCaches(input.setStore, sessionID, input.setSessionTodo)
-      if (info?.parentID) break
+      if (Option.exists(info, (session) => Boolean(session.parentID))) break
       input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       break
     }
@@ -314,7 +319,7 @@ export function applyDirectoryEvent(input: {
     case "todo.updated": {
       const props = event.properties
       input.setStore("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
-      input.setSessionTodo?.(props.sessionID, props.todos)
+      input.setSessionTodo?.(props.sessionID, Option.some(props.todos))
       break
     }
     case "session.status": {

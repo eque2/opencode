@@ -8,7 +8,7 @@ import type {
   Session,
   TextPart,
 } from "@opencode-ai/sdk/v2/client"
-import { HashMap } from "effect"
+import { HashMap, Option } from "effect"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
@@ -94,8 +94,8 @@ const baseState = (input: Partial<State> = {}): State => ({
   command: [],
   reference: [],
   project: "",
-  projectMeta: undefined,
-  icon: undefined,
+  projectMeta: input.projectMeta,
+  icon: input.icon,
   provider_ready: true,
   provider: { all: HashMap.empty(), connected: [], default: {} },
   config: {},
@@ -113,7 +113,7 @@ const baseState = (input: Partial<State> = {}): State => ({
   mcp_resource: {},
   lsp_ready: true,
   lsp: [],
-  vcs: undefined,
+  vcs: input.vcs,
   limit: 10,
   message: {},
   session_message: {},
@@ -373,7 +373,7 @@ describe("applyDirectoryEvent", () => {
       directory: "/tmp",
       loadLsp() {},
       setSessionTodo(sessionID, value) {
-        if (value !== undefined) return
+        if (Option.isSome(value)) return
         todos.push(sessionID)
       },
     })
