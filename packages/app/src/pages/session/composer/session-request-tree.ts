@@ -1,4 +1,4 @@
-import { MutableHashMap, MutableHashSet, Option } from "effect"
+import { Chunk, MutableHashMap, MutableHashSet, Option } from "effect"
 import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
 
 function sessionTreeRequest<T>(
@@ -9,29 +9,33 @@ function sessionTreeRequest<T>(
 ) {
   if (!sessionID) return
 
-  const map = session.reduce((acc, item) => {
-    if (!item.parentID) return acc
-    const list = MutableHashMap.get(acc, item.parentID)
-    if (Option.isSome(list)) list.value.push(item.id)
-    if (Option.isNone(list)) MutableHashMap.set(acc, item.parentID, [item.id])
-    return acc
-  }, MutableHashMap.empty<string, string[]>())
-
-  const seen = MutableHashSet.make(sessionID)
-  const ids = [sessionID]
-  for (const id of ids) {
-    const list = MutableHashMap.get(map, id)
-    if (Option.isNone(list)) continue
-    for (const child of list.value) {
-      if (MutableHashSet.has(seen, child)) continue
-      MutableHashSet.add(seen, child)
-      ids.push(child)
-    }
+  const map = MutableHashMap.empty<string, Chunk.Chunk<string>>()
+  const childrenOf = (id: string) => MutableHashMap.get(map, id).pipe(Option.getOrElse(() => Chunk.empty<string>()))
+  for (const item of session) {
+    if (!item.parentID) continue
+    MutableHashMap.set(map, item.parentID, Chunk.append(childrenOf(item.parentID), item.id))
   }
 
-  const id = ids.find((id) => request[id]?.some(include))
-  if (!id) return
-  return request[id]?.find(include)
+  // Breadth-first order, one level at a time: the nearest session with a request wins.
+  const seen = MutableHashSet.make(sessionID)
+  let ids: Chunk.Chunk<string> = Chunk.of(sessionID)
+  let level = ids
+  while (Chunk.isNonEmpty(level)) {
+    let next = Chunk.empty<string>()
+    for (const id of level) {
+      for (const child of childrenOf(id)) {
+        if (MutableHashSet.has(seen, child)) continue
+        MutableHashSet.add(seen, child)
+        next = Chunk.append(next, child)
+      }
+    }
+    ids = Chunk.appendAll(ids, next)
+    level = next
+  }
+
+  const id = Chunk.findFirst(ids, (id) => request[id]?.some(include) ?? false)
+  if (Option.isNone(id)) return
+  return request[id.value]?.find(include)
 }
 
 export function sessionPermissionRequest(

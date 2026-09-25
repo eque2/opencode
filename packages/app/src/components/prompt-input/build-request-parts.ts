@@ -90,7 +90,7 @@ const toOptimisticPart = (part: PromptRequestPart, sessionID: string, messageID:
 }
 
 export function buildRequestParts(input: BuildRequestPartsInput) {
-  const requestParts: PromptRequestPart[] = input.text.trim()
+  const textParts: PromptRequestPart[] = input.text.trim()
     ? [
         {
           id: Identifier.ascending("part"),
@@ -205,7 +205,7 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
     } satisfies PromptRequestPart
   })
 
-  requestParts.push(...files, ...context, ...agents, ...images)
+  const requestParts: PromptRequestPart[] = [...textParts, ...files, ...context, ...agents, ...images]
 
   return {
     requestParts,
