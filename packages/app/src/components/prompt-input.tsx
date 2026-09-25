@@ -1,4 +1,4 @@
-import { Chunk, DateTime, Effect, HashMap, HashSet, Option, Predicate } from "effect"
+import { Chunk, DateTime, Effect, HashMap, HashSet, Option, Predicate, Random } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import {
@@ -247,9 +247,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
   )
 
-  const [store, setStore] = createPromptInputTransientState(
-    () => prompt.capture(),
-    Math.floor(Math.random() * EXAMPLES.length),
+  const [store, setStore] = createPromptInputTransientState(() => prompt.capture(), 0)
+  // Start on a random example. Random runs synchronously inside runFork, so the store holds the pick before the
+  // first render.
+  Effect.runFork(
+    Random.nextIntBetween(0, EXAMPLES.length, { halfOpen: true }).pipe(
+      Effect.map((index) => setStore("placeholder", index)),
+    ),
   )
   const buttonsSpring = useSpring(() => (store.mode === "normal" ? 1 : 0), { visualDuration: 0.2, bounce: 0 })
   const motion = (value: number) => ({
