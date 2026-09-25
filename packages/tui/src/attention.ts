@@ -11,7 +11,7 @@ import type {
   TuiAttentionSoundPackInfo,
 } from "@opencode-ai/plugin/tui"
 import { AttentionSoundName, type TuiConfig } from "./config"
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import stripAnsi from "strip-ansi"
 import * as TuiAudio from "./audio"
 import defaultSoundPath from "@opencode-ai/ui/audio/bip-bop-01.mp3" with { type: "file" }
@@ -80,18 +80,21 @@ function clampVolume(volume: number) {
   return Math.min(1, Math.max(0, volume))
 }
 
-function soundVolume(input: TuiAttentionNotifyInput, config: Pick<TuiConfig.Resolved, "attention">) {
-  if (!config.attention.sound) return
-  if (input.sound === false) return
-  if (input.sound === undefined) return clampVolume(config.attention.volume)
-  if (input.sound === true) return clampVolume(config.attention.volume)
-  return clampVolume(input.sound.volume ?? config.attention.volume)
+function soundVolume(
+  input: TuiAttentionNotifyInput,
+  config: Pick<TuiConfig.Resolved, "attention">,
+): Option.Option<number> {
+  if (!config.attention.sound) return Option.none()
+  if (input.sound === false) return Option.none()
+  if (input.sound === undefined) return Option.some(clampVolume(config.attention.volume))
+  if (input.sound === true) return Option.some(clampVolume(config.attention.volume))
+  return Option.some(clampVolume(input.sound.volume ?? config.attention.volume))
 }
 
-function normalizePack(pack: TuiAttentionSoundPack): RegisteredSoundPack | undefined {
+function normalizePack(pack: TuiAttentionSoundPack): Option.Option<RegisteredSoundPack> {
   const id = pack.id.trim()
-  if (!id) return
-  return {
+  if (!id) return Option.none()
+  return Option.some({
     id,
     name: pack.name?.trim() || undefined,
     builtin: false,
@@ -101,14 +104,15 @@ function normalizePack(pack: TuiAttentionSoundPack): RegisteredSoundPack | undef
           Schema.is(AttentionSoundName)(item[0]) && typeof item[1] === "string" && item[1].trim().length > 0,
       ),
     ),
-  }
+  })
 }
 
-function focusSkip(when: TuiAttentionWhen, focus: FocusState) {
-  if (when === "always") return
-  if (focus === "unknown") return "focus_unknown"
-  if (when === "blurred" && focus === "focused") return "focused"
-  if (when === "focused" && focus === "blurred") return "blurred"
+function focusSkip(when: TuiAttentionWhen, focus: FocusState): Option.Option<TuiAttentionNotifySkipReason> {
+  if (when === "always") return Option.none()
+  if (focus === "unknown") return Option.some("focus_unknown")
+  if (when === "blurred" && focus === "focused") return Option.some("focused")
+  if (when === "focused" && focus === "blurred") return Option.some("blurred")
+  return Option.none()
 }
 
 export function createTuiAttention(input: {
@@ -178,7 +182,7 @@ export function createTuiAttention(input: {
         const requestedNotification = typeof request.notification === "object" ? request.notification : undefined
         const notificationSkip = focusSkip(requestedNotification?.when ?? "blurred", focus)
         const notificationRequested = input.config.attention.notifications && request.notification !== false
-        const shouldNotify = notificationRequested && !notificationSkip
+        const shouldNotify = notificationRequested && Option.isNone(notificationSkip)
         const notification = shouldNotify
           ? (() => {
               try {
@@ -194,14 +198,15 @@ export function createTuiAttention(input: {
           : false
         const volume = soundVolume(request, input.config)
         const requestedSound = typeof request.sound === "object" ? request.sound : undefined
-        const soundSkip = volume === undefined ? undefined : focusSkip(requestedSound?.when ?? "always", focus)
+        const soundSkip = Option.isSome(volume) ? focusSkip(requestedSound?.when ?? "always", focus) : Option.none()
         const soundName =
           requestedSound?.name && Schema.is(AttentionSoundName)(requestedSound.name) ? requestedSound.name : "default"
-        const sound = volume === undefined || soundSkip ? false : await playSound(soundName, volume)
+        const sound =
+          Option.isSome(volume) && Option.isNone(soundSkip) ? await playSound(soundName, volume.value) : false
 
         if (!notification && !sound) {
-          if (notificationRequested && notificationSkip) return skipped(notificationSkip)
-          if (soundSkip) return skipped(soundSkip)
+          if (notificationRequested && Option.isSome(notificationSkip)) return skipped(notificationSkip.value)
+          if (Option.isSome(soundSkip)) return skipped(soundSkip.value)
         }
 
         return {
@@ -220,8 +225,9 @@ export function createTuiAttention(input: {
     },
     soundboard: {
       registerPack(pack) {
-        const next = normalizePack(pack)
-        if (!next) return () => {}
+        const normalized = normalizePack(pack)
+        if (Option.isNone(normalized)) return () => {}
+        const next = normalized.value
         packs.set(next.id, next)
         let disposed = false
         return () => {
