@@ -173,8 +173,9 @@ export const SessionReview = (props: SessionReviewProps) => {
   const nodes = MutableHashMap.empty<string, HTMLDivElement>()
   const [store, setStore] = createStore({
     open: [] as string[],
-    visible: {} as Record<string, boolean>,
-    force: {} as Record<string, boolean>,
+    // Keyed by file; a file with no entry is not visible and not forced.
+    visible: {} as Partial<Record<string, boolean>>,
+    force: {} as Partial<Record<string, boolean>>,
     selection: null as SessionReviewSelection | null,
     commenting: null as SessionReviewSelection | null,
     opened: null as SessionReviewFocus | null,
