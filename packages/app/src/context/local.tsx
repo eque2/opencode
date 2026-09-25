@@ -90,8 +90,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       last?: {
         type: "agent" | "model" | "variant"
         agent?: string
-        model?: ModelKey | null
-        variant?: string | null
+        model: Option.Option<ModelKey>
+        variant: Option.Option<string>
       }
     }>({
       current: list()[0]?.name,
@@ -225,8 +225,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           setStore("last", {
             type: "agent",
             agent: item.name,
-            model: item.model,
-            variant: item.variant ?? null,
+            model: Option.fromNullishOr(item.model),
+            variant: Option.fromNullishOr(item.variant),
           })
           const prev = scope()
           const next = {
@@ -332,8 +332,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             setStore("last", {
               type: "model",
               agent: agent.current()?.name,
-              model: item ?? null,
-              variant: selected(),
+              model: Option.fromNullishOr(item),
+              variant: Option.fromNullishOr(selected()),
             })
             write({ model: item })
             if (!item) return
@@ -377,10 +377,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               setStore("last", {
                 type: "variant",
                 agent: agent.current()?.name,
-                model: model ? { providerID: model.provider.id, modelID: model.id } : null,
-                variant: value ?? null,
+                model: model ? Option.some({ providerID: model.provider.id, modelID: model.id }) : Option.none(),
+                variant: Option.fromNullishOr(value),
               })
-              write({ variant: value ?? null })
+              // The saved variant keeps null for an explicit "default" choice, which differs from "not chosen".
+              write({ variant: Option.getOrNull(Option.fromNullishOr(value)) })
               if (model) {
                 models.variant.set({ providerID: model.provider.id, modelID: model.id }, value)
               }
@@ -438,7 +439,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           setSaved("session", session.value, {
             agent: msg.agent,
             model: msg.model,
-            variant: msg.model?.variant ?? null,
+            variant: Option.getOrNull(Option.fromNullishOr(msg.model?.variant)),
           })
         },
       },
