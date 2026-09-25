@@ -2,7 +2,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { useParams } from "@solidjs/router"
 import { batch, createEffect, createMemo, startTransition } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { useModels } from "@/context/models"
 import { useSettings } from "@/context/settings"
 import { useProviders } from "@/hooks/use-providers"
@@ -53,7 +53,7 @@ const clone = (value: State | undefined) => {
   if (!value) return undefined
   return {
     ...value,
-    model: value.model ? { ...value.model } : undefined,
+    ...(value.model ? { model: { ...value.model } } : {}),
   } satisfies State
 }
 
@@ -68,7 +68,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const models = useModels()
     const settings = useSettings()
 
-    const id = createMemo(() => params.id || undefined)
+    const id = createMemo(() => Option.fromNullishOr(params.id).pipe(Option.filter((value) => value !== "")))
     const list = createMemo(() => sync().data.agent.filter((item) => item.mode !== "subagent" && !item.hidden))
     const agentsVisible = createMemo(() => settings.visibility.customAgents() || hasCustomAgent(list()))
     const connected = createMemo(() => HashSet.fromIterable(providers.connected().map((item) => item.id)))
@@ -95,9 +95,27 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }>({
       current: list()[0]?.name,
-      draft: undefined,
-      last: undefined,
     })
+
+    // Solid deletes a store key that is set to undefined; these helpers delete it directly.
+    const clearCurrent = () =>
+      setStore(
+        produce((state) => {
+          delete state.current
+        }),
+      )
+    const clearDraft = () =>
+      setStore(
+        produce((state) => {
+          delete state.draft
+        }),
+      )
+    const clearPromoting = () =>
+      setStore(
+        produce((state) => {
+          delete state.promoting
+        }),
+      )
 
     const validModel = (model: ModelKey) => {
       const provider = HashMap.get(providers.all(), model.providerID)
@@ -122,38 +140,38 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     createEffect(() => {
       const items = list()
       if (items.length === 0) {
-        if (store.current !== undefined) setStore("current", undefined)
+        if (store.current !== undefined) clearCurrent()
         return
       }
       if (items.some((item) => item.name === store.current)) return
       setStore("current", items[0]?.name)
     })
 
-    const scope = createMemo<State | undefined>(() => {
-      const session = id()
-      if (!session) return store.draft ?? store.promoting
-      return (
-        saved.session[session] ??
-        Option.getOrUndefined(MutableHashMap.get(handoff, handoffKey(serverSDK().scope, sdk().directory, session)))
-      )
-    })
+    const scope = createMemo<State | undefined>(() =>
+      Option.match(id(), {
+        onNone: () => store.draft ?? store.promoting,
+        onSome: (session) =>
+          saved.session[session] ??
+          Option.getOrUndefined(MutableHashMap.get(handoff, handoffKey(serverSDK().scope, sdk().directory, session))),
+      }),
+    )
 
     createEffect(() => {
       const session = id()
-      if (!session) return
+      if (Option.isNone(session)) return
 
-      const key = handoffKey(serverSDK().scope, sdk().directory, session)
+      const key = handoffKey(serverSDK().scope, sdk().directory, session.value)
       const next = MutableHashMap.get(handoff, key)
       if (Option.isNone(next)) return
-      if (saved.session[session] !== undefined) {
+      if (saved.session[session.value] !== undefined) {
         MutableHashMap.remove(handoff, key)
-        setStore("promoting", undefined)
+        clearPromoting()
         return
       }
 
-      setSaved("session", session, clone(next.value))
+      setSaved("session", session.value, clone(next.value))
       MutableHashMap.remove(handoff, key)
-      setStore("promoting", undefined)
+      clearPromoting()
     })
 
     const configuredModel = () => {
@@ -198,7 +216,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       set(name: string | undefined) {
         const item = pickAgent(name)
         if (!item) {
-          setStore("current", undefined)
+          clearCurrent()
           return
         }
 
@@ -217,8 +235,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             variant: item.variant ?? prev?.variant,
           } satisfies State
           const session = id()
-          if (session) {
-            setSaved("session", session, next)
+          if (Option.isSome(session)) {
+            setSaved("session", session.value, next)
             return
           }
           setStore("draft", next)
@@ -227,7 +245,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       move(direction: 1 | -1) {
         const items = list()
         if (items.length === 0) {
-          setStore("current", undefined)
+          clearCurrent()
           return
         }
 
@@ -266,7 +284,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       const model = current()
       return {
         agent: agent.current()?.name,
-        model: model ? { providerID: model.provider.id, modelID: model.id } : undefined,
+        ...(model ? { model: { providerID: model.provider.id, modelID: model.id } } : {}),
         variant: selected(),
       } satisfies State
     }
@@ -278,8 +296,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       } satisfies State
 
       const session = id()
-      if (session) {
-        setSaved("session", session, state)
+      if (Option.isSome(session)) {
+        setSaved("session", session.value, state)
         return
       }
       setStore("draft", state)
@@ -364,7 +382,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
               })
               write({ variant: value ?? null })
               if (model) {
-                models.variant.set({ providerID: model.provider.id, modelID: model.id }, value ?? undefined)
+                models.variant.set({ providerID: model.provider.id, modelID: model.id }, value)
               }
             }),
           )
@@ -390,7 +408,12 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       session: {
         ready: savedReady,
         reset() {
-          setStore({ draft: undefined, promoting: undefined })
+          setStore(
+            produce((state) => {
+              delete state.draft
+              delete state.promoting
+            }),
+          )
         },
         promote(dir: string, session: string, state?: State) {
           const next = clone(state ?? snapshot())
@@ -403,16 +426,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           }
 
           setStore("promoting", next)
-          setStore("draft", undefined)
+          clearDraft()
         },
         restore(msg: { sessionID: string; agent: string; model: ModelKey }) {
           const session = id()
-          if (!session) return
-          if (msg.sessionID !== session) return
-          if (saved.session[session] !== undefined) return
-          if (MutableHashMap.has(handoff, handoffKey(serverSDK().scope, sdk().directory, session))) return
+          if (Option.isNone(session)) return
+          if (msg.sessionID !== session.value) return
+          if (saved.session[session.value] !== undefined) return
+          if (MutableHashMap.has(handoff, handoffKey(serverSDK().scope, sdk().directory, session.value))) return
 
-          setSaved("session", session, {
+          setSaved("session", session.value, {
             agent: msg.agent,
             model: msg.model,
             variant: msg.model?.variant ?? null,
