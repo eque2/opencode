@@ -32,7 +32,7 @@ import { ApplyPatchTool } from "./apply_patch"
 import { Glob } from "@opencode-ai/core/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context } from "effect"
+import { Effect, Layer, Context, Option } from "effect"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../format"
@@ -281,11 +281,13 @@ const layer = Layer.effect(
       agent: Agent.Info
       permission?: PermissionV1.Ruleset
     }) {
-      if (!codeMode) return
+      if (!codeMode) return Option.none<string>()
       const ruleset = Permission.merge(input.agent.permission, input.permission ?? [])
       const tools = Permission.visibleTools(yield* mcp.tools(), ruleset)
-      if (Object.keys(tools).length === 0) return
-      return codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize))
+      if (Object.keys(tools).length === 0) return Option.none<string>()
+      return Option.some(
+        codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)),
+      )
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
@@ -304,8 +306,10 @@ const layer = Layer.effect(
 
       const codeModeDescription = filtered.some((tool) => tool.id === "execute")
         ? yield* describeCodeMode(input)
-        : undefined
-      const visible = filtered.filter((tool) => tool.id !== "execute" || codeModeDescription)
+        : Option.none<string>()
+      const visible = filtered.filter(
+        (tool) => tool.id !== "execute" || Option.exists(codeModeDescription, (text) => text.length > 0),
+      )
 
       return yield* Effect.forEach(
         visible,
@@ -323,10 +327,11 @@ const layer = Layer.effect(
           return {
             id: tool.id,
             description: [
-              output.description,
-              tool.id === TaskTool.id ? yield* describeTask(input.agent) : undefined,
-              tool.id === "execute" ? codeModeDescription : undefined,
+              Option.some(output.description),
+              tool.id === TaskTool.id ? Option.some(yield* describeTask(input.agent)) : Option.none<string>(),
+              tool.id === "execute" ? codeModeDescription : Option.none<string>(),
             ]
+              .flatMap(Option.toArray)
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,

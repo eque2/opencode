@@ -1,4 +1,4 @@
-import { Effect, Stream } from "effect"
+import { Effect, Option, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -144,31 +144,30 @@ function envValue(key: string) {
   return name ? process.env[name] : undefined
 }
 
+// The value of an automatic PowerShell variable, or "" for a variable the scan does not know.
 function auto(key: string, cwd: string, shell: string) {
   const name = key.toUpperCase()
   if (name === "HOME") return os.homedir()
   if (name === "PWD") return cwd
   if (name === "PSHOME") return path.dirname(shell)
+  return ""
 }
 
 function expand(text: string, cwd: string, shell: string) {
   const out = unquote(text)
     .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(key) || "")
     .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell) || "")
+    .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell))
   return home(out)
 }
 
-function provider(text: string) {
+// The filesystem path of a PowerShell provider path, or None for another provider.
+function provider(text: string): Option.Option<string> {
   const match = text.match(/^([A-Za-z]+)::(.*)$/)
-  if (match) {
-    if (match[1].toLowerCase() !== "filesystem") return
-    return match[2]
-  }
+  if (match) return match[1].toLowerCase() === "filesystem" ? Option.some(match[2]) : Option.none()
   const prefix = text.match(/^([A-Za-z]+):(.*)$/)
-  if (!prefix) return text
-  if (prefix[1].length === 1) return text
-  return
+  if (!prefix || prefix[1].length === 1) return Option.some(text)
+  return Option.none()
 }
 
 function dynamic(text: string, ps: boolean) {
@@ -178,11 +177,12 @@ function dynamic(text: string, ps: boolean) {
   return text.includes("$")
 }
 
-function prefix(text: string) {
+// The literal part of a glob path, or None when the path starts with a glob character.
+function prefix(text: string): Option.Option<string> {
   const match = /[?*[]/.exec(text)
-  if (!match) return text
-  if (match.index === 0) return
-  return text.slice(0, match.index)
+  if (!match) return Option.some(text)
+  if (match.index === 0) return Option.none()
+  return Option.some(text.slice(0, match.index))
 }
 
 function pathArgs(list: Part[], ps: boolean, cmd = false) {
@@ -356,15 +356,15 @@ export const ShellTool = Tool.define(
         .lines(ChildProcess.make(shell, ["-lc", 'cygpath -w -- "$1"', "_", text]))
         .pipe(Effect.catch(() => Effect.succeed([] as string[])))
       const file = lines[0]?.trim()
-      if (!file) return
-      return yield* fs.normalizePath(file)
+      if (!file) return Option.none<string>()
+      return Option.some(yield* fs.normalizePath(file))
     })
 
     const resolvePath = Effect.fn("ShellTool.resolvePath")(function* (text: string, root: string, shell: string) {
       if (process.platform === "win32") {
         if (Shell.posix(shell) && text.startsWith("/") && FSUtil.windowsPath(text) === text) {
           const file = yield* cygpath(shell, text)
-          if (file) return file
+          if (Option.isSome(file)) return file.value
         }
         return yield* fs.normalizePath(path.resolve(root, FSUtil.windowsPath(text)))
       }
@@ -373,11 +373,10 @@ export const ShellTool = Tool.define(
 
     const argPath = Effect.fn("ShellTool.argPath")(function* (arg: string, cwd: string, ps: boolean, shell: string) {
       const text = ps ? expand(arg, cwd, shell) : home(unquote(arg))
-      const file = text && prefix(text)
-      if (!file || dynamic(file, ps)) return
-      const next = ps ? provider(file) : file
-      if (!next) return
-      return yield* resolvePath(next, cwd, shell)
+      const file = prefix(text).pipe(Option.filter((file) => file.length > 0 && !dynamic(file, ps)))
+      const next = ps ? Option.flatMap(file, provider) : file
+      if (Option.isNone(next) || !next.value) return Option.none<string>()
+      return Option.some(yield* resolvePath(next.value, cwd, shell))
     })
 
     const collect = Effect.fn("ShellTool.collect")(function* (
@@ -401,10 +400,11 @@ export const ShellTool = Tool.define(
 
         if (cmd && (FILES.has(cmd) || (shellKind === "cmd" && CMD_FILES.has(cmd)))) {
           for (const arg of pathArgs(command, ps, shellKind === "cmd")) {
-            const resolved = yield* argPath(arg, cwd, ps, shell)
+            const found = yield* argPath(arg, cwd, ps, shell)
+            const resolved = Option.getOrUndefined(found)
             yield* Effect.logInfo("resolved path", { arg, resolved })
-            if (!resolved || containsPath(resolved, instance)) continue
-            const dir = (yield* fs.isDir(resolved)) ? resolved : path.dirname(resolved)
+            if (Option.isNone(found) || containsPath(found.value, instance)) continue
+            const dir = (yield* fs.isDir(found.value)) ? found.value : path.dirname(found.value)
             scan.dirs.add(dir)
           }
         }

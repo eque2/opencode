@@ -1,6 +1,6 @@
 import * as Tool from "./tool"
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Effect, Option, Predicate, Schema } from "effect"
 import { CodeMode, Tool as SandboxTool, toolError } from "@opencode-ai/codemode"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
@@ -113,6 +113,14 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
     return `[${files} ${noun}${files === 1 ? "" : "s"} attached to the result]`
   }
   return null
+}
+
+// The input shown in the tool call list: a non-empty object as is, any other value boxed, and
+// nothing for a missing input or an empty object.
+function displayInput(input: unknown): Option.Option<Record<string, unknown>> {
+  if (Predicate.isNullish(input)) return Option.none()
+  if (Predicate.isObject(input)) return Object.keys(input).length > 0 ? Option.some(input) : Option.none()
+  return Option.some({ input })
 }
 
 type Run = (input: unknown) => Effect.Effect<unknown, unknown>
@@ -240,15 +248,8 @@ export const CodeModeTool = Tool.define(
           tools: toolTree(catalog, callTool),
           onToolCallStart: ({ index, name, input }) =>
             Effect.suspend(() => {
-              const shown = (() => {
-                if (input === null || input === undefined) return
-                if (typeof input === "object" && !Array.isArray(input)) {
-                  const value = input as Record<string, unknown>
-                  return Object.keys(value).length > 0 ? value : undefined
-                }
-                return { input }
-              })()
-              calls[index] = { tool: name, status: "running", ...(shown ? { input: shown } : {}) }
+              const shown = displayInput(input)
+              calls[index] = { tool: name, status: "running", ...(Option.isSome(shown) ? { input: shown.value } : {}) }
               return publish()
             }),
           onToolCallEnd: ({ index, outcome }) =>
