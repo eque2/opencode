@@ -1,8 +1,7 @@
 import { HashMap, MutableHashSet, Option } from "effect"
 import { TimelineRow } from "./timeline-row"
 
-type ContextRow = Extract<TimelineRow.TimelineRow, { _tag: "AssistantPart" }>
-type PriorContext = { index: number; row: ContextRow }
+type PriorContext = { index: number; row: TimelineRow.AssistantPart }
 
 export function reuseTimelineRows(previous: TimelineRow.TimelineRow[] | undefined, rows: TimelineRow.TimelineRow[]) {
   if (!previous?.length) return rows
