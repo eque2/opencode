@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionNotFoundError } from "@opencode-ai/sdk/v2/client"
-import { Schema } from "effect"
+import { Data, Schema } from "effect"
 import type { ConfigInvalidError, ProviderModelNotFoundError } from "./server-errors"
 import { formatServerError, isSessionNotFoundError, parseReadableConfigInvalidError } from "./server-errors"
 
@@ -57,6 +57,18 @@ const sessionNotFoundBody = (sessionID: string) =>
 const providerNotFoundBody = (providerID: string) =>
   Schema.encodeSync(ServerProviderNotFound)(new ServerProviderNotFound({ providerID, message: "Provider not found" }))
 
+/** A plain request failure that carries only a message. */
+class RequestFailure extends Data.TaggedError("Test.RequestFailure")<{ readonly message: string }> {}
+
+/**
+ * The Error that the SDK error interceptor (packages/sdk/js/src/error-interceptor.ts)
+ * throws for a non-2xx response: the parsed body and the status live on `cause`.
+ */
+class WrappedClientError extends Data.TaggedError("Test.WrappedClientError")<{
+  readonly message: string
+  readonly cause: { readonly body: unknown; readonly status: number }
+}> {}
+
 describe("parseReadableConfigInvalidError", () => {
   test("formats issues with file path", () => {
     const error = {
@@ -107,7 +119,7 @@ describe("formatServerError", () => {
   })
 
   test("returns error messages", () => {
-    expect(formatServerError(new Error("Request failed with status 503"), language.t)).toBe(
+    expect(formatServerError(new RequestFailure({ message: "Request failed with status 503" }), language.t)).toBe(
       "Request failed with status 503",
     )
   })
@@ -163,7 +175,7 @@ describe("formatServerError", () => {
       },
     } satisfies ConfigInvalidError
 
-    const wrapped = new Error("ConfigInvalidError", { cause: { body, status: 400 } })
+    const wrapped = new WrappedClientError({ message: "ConfigInvalidError", cause: { body, status: 400 } })
 
     expect(formatServerError(wrapped, language.t)).toBe("Arquivo de config em config invalido: Missing host")
   })
@@ -173,16 +185,27 @@ describe("isSessionNotFoundError", () => {
   test("matches an SDK-wrapped error for the requested session", () => {
     const body = sessionNotFoundBody("ses_missing")
 
-    expect(isSessionNotFoundError(new Error(body.message, { cause: { body, status: 404 } }), body.sessionID)).toBe(true)
+    expect(
+      isSessionNotFoundError(
+        new WrappedClientError({ message: body.message, cause: { body, status: 404 } }),
+        body.sessionID,
+      ),
+    ).toBe(true)
   })
 
   test("rejects errors for other sessions and other 404 responses", () => {
     const body = sessionNotFoundBody("ses_parent")
 
-    expect(isSessionNotFoundError(new Error(body.message, { cause: { body, status: 404 } }), "ses_tab")).toBe(false)
     expect(
       isSessionNotFoundError(
-        new Error("Provider not found", {
+        new WrappedClientError({ message: body.message, cause: { body, status: 404 } }),
+        "ses_tab",
+      ),
+    ).toBe(false)
+    expect(
+      isSessionNotFoundError(
+        new WrappedClientError({
+          message: "Provider not found",
           cause: { body: providerNotFoundBody("missing"), status: 404 },
         }),
         "ses_tab",

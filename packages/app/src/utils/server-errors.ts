@@ -1,3 +1,5 @@
+import { Data } from "effect"
+
 export type ConfigInvalidError = {
   name: "ConfigInvalidError"
   data: {
@@ -48,8 +50,13 @@ function unwrapNamedError(error: unknown): unknown {
 // not-found fallback matching (session.tsx).
 const sessionNotFoundMessage = (sessionID: string) => `Session not found: ${sessionID}`
 
+/** A session that the client looked up and did not find. It is an Error with the not-found message. */
+export class LocalSessionNotFoundError extends Data.TaggedError("App.LocalSessionNotFoundError")<{
+  readonly message: string
+}> {}
+
 export function sessionNotFoundError(sessionID: string) {
-  return new Error(sessionNotFoundMessage(sessionID))
+  return new LocalSessionNotFoundError({ message: sessionNotFoundMessage(sessionID) })
 }
 
 export function isLocalSessionNotFoundError(error: unknown, sessionID: string) {
