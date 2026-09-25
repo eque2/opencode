@@ -1,3 +1,5 @@
+import { DateTime, Option } from "effect"
+
 type TimeKey =
   | "common.time.justNow"
   | "common.time.minutesAgo.short"
@@ -7,9 +9,12 @@ type TimeKey =
 type Translate = (key: TimeKey, params?: Record<string, string | number>) => string
 
 export function getRelativeTime(dateString: string, t: Translate): string {
-  const date = new Date(dateString)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
+  const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
+  // An unparsable date string gives NaN, as the old `new Date(dateString)` did.
+  const diffMs = Option.match(DateTime.make(dateString), {
+    onNone: () => Number.NaN,
+    onSome: (date) => now - DateTime.toEpochMillis(date),
+  })
   const diffSeconds = Math.floor(diffMs / 1000)
   const diffMinutes = Math.floor(diffSeconds / 60)
   const diffHours = Math.floor(diffMinutes / 60)

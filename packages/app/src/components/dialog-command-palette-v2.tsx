@@ -1,4 +1,5 @@
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
+import { DateTime } from "effect"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { Dialog, DialogBody } from "@opencode-ai/ui/v2/dialog-v2"
@@ -332,7 +333,7 @@ function PaletteRow(props: {
           </div>
           <Show when={props.item.updated}>
             <span class="command-palette-v2-meta">
-              {getRelativeTime(new Date(props.item.updated!).toISOString(), props.language.t)}
+              {getRelativeTime(DateTime.formatIso(DateTime.makeUnsafe(props.item.updated!)), props.language.t)}
             </span>
           </Show>
         </Match>
