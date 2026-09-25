@@ -17,7 +17,7 @@ import {
   type ParentProps,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { Array as Arr, HashMap, HashSet, MutableHashSet, Option, Order } from "effect"
+import { Array as Arr, Effect, HashMap, HashSet, MutableHashSet, Option, Order } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 const MAX_DEPTH = 128
@@ -113,7 +113,14 @@ export const withFileDragImage = (event: DragEvent) => {
   const image = built.value
   document.body.appendChild(image)
   event.dataTransfer?.setDragImage(image, 0, 12)
-  setTimeout(() => document.body.removeChild(image), 0)
+  // The browser captures the drag image after dragstart returns, so the
+  // element leaves the page on the next task, as setTimeout(fn, 0) did.
+  Effect.runFork(
+    Effect.sleep("0 millis").pipe(
+      Effect.andThen(Effect.sync(() => document.body.removeChild(image))),
+      Effect.tapCause((cause) => Effect.logError(cause)),
+    ),
+  )
 }
 
 const FileTreeNode = (

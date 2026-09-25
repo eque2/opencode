@@ -1,4 +1,4 @@
-import { MutableHashMap, Option } from "effect"
+import { DateTime, MutableHashMap, Option } from "effect"
 
 type ScopedCacheOptions<T> = {
   maxEntries?: number
@@ -15,7 +15,7 @@ type Entry<T> = {
 export function createScopedCache<T>(createValue: (key: string) => T, options: ScopedCacheOptions<T> = {}) {
   // MutableHashMap keeps insertion order for string keys, which the LRU prune relies on.
   const store = MutableHashMap.empty<string, Entry<T>>()
-  const now = options.now ?? Date.now
+  const now = options.now ?? (() => DateTime.toEpochMillis(DateTime.nowUnsafe()))
 
   const dispose = (key: string, entry: Entry<T>) => {
     options.dispose?.(entry.value, key)

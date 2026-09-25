@@ -5,7 +5,7 @@ import { Keybind } from "@opencode-ai/ui/keybind"
 import { List } from "@opencode-ai/ui/list"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
 import { createMemo, createSignal, lazy, Match, Show, Switch } from "solid-js"
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import { formatKeybind } from "@/context/command"
 import { useServerSDK } from "@/context/server-sdk"
 import { useLanguage } from "@/context/language"
@@ -182,9 +182,11 @@ function DialogSelectFileLegacy(props: { filesOnly: () => boolean; onOpenFile?: 
                   </div>
                 </div>
                 <Show when={item.updated}>
-                  <span class="text-12-regular text-text-weak whitespace-nowrap ml-2">
-                    {getRelativeTime(new Date(item.updated!).toISOString(), palette.language.t)}
-                  </span>
+                  {(updated) => (
+                    <span class="text-12-regular text-text-weak whitespace-nowrap ml-2">
+                      {getRelativeTime(DateTime.formatIso(DateTime.makeUnsafe(updated())), palette.language.t)}
+                    </span>
+                  )}
                 </Show>
               </div>
             </Match>
