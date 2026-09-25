@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { createRoot, getOwner, onCleanup } from "solid-js"
 import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
@@ -32,7 +33,7 @@ describe("tab migration", () => {
 describe("tab memory", () => {
   test("keeps state until its tab is removed", () => {
     createRoot((dispose) => {
-      const memory = createTabMemory(getOwner())
+      const memory = createTabMemory<{ value: string }>(getOwner())
       let disposed = 0
       const first = memory.ensure("tab", "prompt", () => {
         onCleanup(() => disposed++)
@@ -40,8 +41,8 @@ describe("tab memory", () => {
       })
 
       expect(memory.ensure("tab", "prompt", () => ({ value: "other" }))).toBe(first)
-      expect(memory.get<typeof first>("tab", "prompt")).toBe(first)
-      expect(memory.get("missing", "prompt")).toBeUndefined()
+      expect(Option.getOrThrow(memory.get("tab", "prompt"))).toBe(first)
+      expect(memory.get("missing", "prompt")).toEqual(Option.none())
       expect(memory.ensure("other", "prompt", () => ({ value: "other" }))).not.toBe(first)
 
       memory.remove("tab")

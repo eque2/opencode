@@ -11,7 +11,7 @@ import { SessionTabsRemovedDetail } from "@/components/titlebar-session-events"
 import { sessionHref } from "@/utils/session-route"
 import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
-import { createDraftPromptSession, type PromptModel } from "./prompt-state"
+import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
 
 export type SessionTab = {
@@ -71,7 +71,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
     const params = useParams()
     const navigate = useNavigate()
     const location = useLocation()
-    const memory = createTabMemory(getOwner())
+    const memory = createTabMemory<PromptSession>(getOwner())
 
     const closing = new Set<string>()
     let recentWrite = 0
@@ -372,11 +372,11 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         }
         navigate("/")
       },
-      state<T>(tab: Tab, name: string, init: () => T) {
+      state(tab: Tab, name: string, init: () => PromptSession) {
         return memory.ensure(tabKey(tab), name, init)
       },
-      stateValue<T>(tab: Tab, name: string) {
-        return memory.get<T>(tabKey(tab), name)
+      stateValue(tab: Tab, name: string) {
+        return memory.get(tabKey(tab), name)
       },
     }
 

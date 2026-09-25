@@ -34,12 +34,11 @@ import { createMediaQuery } from "@solid-primitives/media"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
 import { useGlobal } from "@/context/global"
 import { ServerConnection, useServer } from "@/context/server"
-import { tabKey, useTabs } from "@/context/tabs"
-import type { PromptSession } from "@/context/prompt"
+import { tabKey, useTabs, type Tab } from "@/context/tabs"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 import { normalizeSessionInfo } from "@/utils/session"
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 
 const legacyTitlebarHeight = 40
 const v2TitlebarHeight = 36
@@ -268,6 +267,10 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
               }
             })
 
+            // A new draft starts with the model of the tab it opens from; newDraft takes it as an optional argument.
+            const draftModel = (tab: Tab) =>
+              Option.getOrUndefined(Option.map(tabs.stateValue(tab, "prompt"), (prompt) => prompt.model.current()))
+
             const openDraft = (...args: Parameters<typeof tabs.newDraft>) =>
               runDetached(
                 Effect.tryPromise({
@@ -291,15 +294,13 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   server: route.server ?? server.key,
                   sessionId: activeSession.id,
                 }
-                const model = tabs.stateValue<PromptSession>(sessionTab, "prompt")?.model.current()
-                openDraft({ server: sessionTab.server, directory: activeSession.directory }, "", model)
+                openDraft({ server: sessionTab.server, directory: activeSession.directory }, "", draftModel(sessionTab))
                 return
               }
 
               const activeTab = currentTab()
               if (activeTab?.type === "draft") {
-                const model = tabs.stateValue<PromptSession>(activeTab, "prompt")?.model.current()
-                openDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
+                openDraft({ server: activeTab.server, directory: activeTab.directory }, "", draftModel(activeTab))
                 return
               }
 
