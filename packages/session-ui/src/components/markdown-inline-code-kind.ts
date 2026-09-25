@@ -1,6 +1,8 @@
+import { HashSet } from "effect"
+
 // One-off copy from GitHub Linguist languages.yml (e9fe3c9f230cd9220afcd057f75702de4d7700c9), plus common lockfile suffixes.
 // Normalized to lower-case; numeric manpage-style extensions are excluded so versions like `1.2` stay plain code.
-const pathExtensions = new Set([
+const pathExtensions = HashSet.fromIterable([
   "a51",
   "abap",
   "abnf",
@@ -1441,7 +1443,7 @@ const pathExtensions = new Set([
   "zsh-theme",
 ])
 
-const pathFileNames = new Set([
+const pathFileNames = HashSet.fromIterable([
   ".abbrev_defs",
   ".ackrc",
   ".all-contributorsrc",
@@ -1745,7 +1747,7 @@ const pathFileNames = new Set([
   "zshrc",
 ])
 
-const pathFileNamePrefixes = new Set([
+const pathFileNamePrefixes = HashSet.fromIterable([
   "9fs",
   "_curlrc",
   "_dir_colors",
@@ -1903,13 +1905,13 @@ function hasPathExtension(text: string) {
   if (value.endsWith(".d.ts")) return true
   const index = value.lastIndexOf(".")
   if (index === -1) return false
-  return pathExtensions.has(value.slice(index + 1))
+  return HashSet.has(pathExtensions, value.slice(index + 1))
 }
 
 function hasPathFileName(text: string) {
   const value = text.toLowerCase()
-  if (pathFileNames.has(value)) return true
+  if (HashSet.has(pathFileNames, value)) return true
   const index = value.indexOf(".")
   if (index === -1) return false
-  return pathFileNamePrefixes.has(value.slice(0, index))
+  return HashSet.has(pathFileNamePrefixes, value.slice(0, index))
 }

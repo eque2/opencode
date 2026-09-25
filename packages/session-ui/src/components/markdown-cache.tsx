@@ -1,5 +1,6 @@
 import { checksum } from "@opencode-ai/core/util/encode"
 import DOMPurify from "dompurify"
+import { Array } from "effect"
 import { parseMarkdown } from "./markdown-worker"
 
 export type MarkdownCacheEntry = {
@@ -25,10 +26,8 @@ if (typeof window !== "undefined" && DOMPurify.isSupported) {
     if (node.target !== "_blank") return
 
     const rel = node.getAttribute("rel") ?? ""
-    const set = new Set(rel.split(/\s+/).filter(Boolean))
-    set.add("noopener")
-    set.add("noreferrer")
-    node.setAttribute("rel", Array.from(set).join(" "))
+    // Array.dedupe keeps the first occurrence, as the Set insertion order did.
+    node.setAttribute("rel", Array.dedupe([...rel.split(/\s+/).filter(Boolean), "noopener", "noreferrer"]).join(" "))
   })
 }
 

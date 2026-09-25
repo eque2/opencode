@@ -1,4 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
+import { HashSet, MutableHashSet } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -176,12 +177,12 @@ function disposeCopyButtons(root: Element) {
   hosts.forEach(disposeCopyButton)
 }
 
-const shellLanguages = new Set(["bash", "sh", "shell", "zsh", "fish", "console", "terminal"])
+const shellLanguages = HashSet.fromIterable(["bash", "sh", "shell", "zsh", "fish", "console", "terminal"])
 
 function codeKind(language: string | undefined) {
   const value = language?.toLowerCase()
   if (!value) return
-  if (shellLanguages.has(value)) return "shell"
+  if (HashSet.has(shellLanguages, value)) return "shell"
 }
 
 function codeLanguage(block: HTMLPreElement) {
@@ -374,7 +375,7 @@ export function Markdown(
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
   const owner = createUniqueId()
-  const activeCodeKeys = new Set<string>()
+  const activeCodeKeys = MutableHashSet.empty<string>()
   const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
   let streamed = false
   const [projection] = createResource(
@@ -509,12 +510,14 @@ export function Markdown(
       copy: i18n.t("ui.message.copy"),
       copied: i18n.t("ui.message.copied"),
     }
-    const nextCodeKeys = new Set(content.filter((block) => block.mode === "code").map((block) => block.key))
-    activeCodeKeys.forEach((key) => {
-      if (!nextCodeKeys.has(key)) disposeCode(key)
-    })
-    activeCodeKeys.clear()
-    nextCodeKeys.forEach((key) => activeCodeKeys.add(key))
+    const nextCodeKeys = MutableHashSet.fromIterable(
+      content.filter((block) => block.mode === "code").map((block) => block.key),
+    )
+    for (const key of activeCodeKeys) {
+      if (!MutableHashSet.has(nextCodeKeys, key)) disposeCode(key)
+    }
+    MutableHashSet.clear(activeCodeKeys)
+    for (const key of nextCodeKeys) MutableHashSet.add(activeCodeKeys, key)
     content.forEach((block, index) => updateBlock(container, index, block, labels))
     while (container.children.length > content.length) {
       const child = container.lastElementChild
@@ -535,7 +538,7 @@ export function Markdown(
   onCleanup(() => {
     if (copyCleanup) copyCleanup()
     disposeMarkdownProjection(owner)
-    activeCodeKeys.forEach(disposeCode)
+    for (const key of activeCodeKeys) disposeCode(key)
     completedCode.clear()
   })
 

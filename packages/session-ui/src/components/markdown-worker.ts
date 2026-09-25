@@ -1,3 +1,4 @@
+import { Iterable, MutableHashSet, Option } from "effect"
 import MarkdownWorkerUrl from "./markdown.worker.ts?worker&url"
 import {
   applyMarkdownWorkerResponse,
@@ -34,7 +35,7 @@ const pending = new Map<number, HighlightPending>()
 const projects = new Map<number, ProjectPending>()
 const parses = new Map<number, ParsePending>()
 const states = new Map<string, MarkdownWorkerState>()
-const keys = new Set<string>()
+const keys = MutableHashSet.empty<string>()
 const latest = new Map<string, number>()
 const transport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
   post: (request) => worker!.postMessage(request),
@@ -87,9 +88,11 @@ export function highlightStreamingCode(key: string, text: string, language: stri
   const instance = getWorker()
   const id = ++nextID
   latest.set(key, id)
-  keys.delete(key)
-  keys.add(key)
-  if (keys.size > 200) disposeStreamingCode(keys.values().next().value!)
+  MutableHashSet.remove(keys, key)
+  MutableHashSet.add(keys, key)
+  // Evict the oldest key. MutableHashSet keeps insertion order for string keys.
+  const oldest = MutableHashSet.size(keys) > 200 ? Iterable.head(keys) : Option.none()
+  if (Option.isSome(oldest)) disposeStreamingCode(oldest.value)
   return new Promise<MarkdownWorkerState>((resolve, reject) => {
     pending.set(id, { key, complete, resolve, reject })
     transport.send({ type: "highlight", id, key, text, language, complete })
@@ -97,7 +100,7 @@ export function highlightStreamingCode(key: string, text: string, language: stri
 }
 
 export function disposeStreamingCode(key: string) {
-  keys.delete(key)
+  MutableHashSet.remove(keys, key)
   latest.delete(key)
   states.delete(key)
   transport.dispose(key)
@@ -173,7 +176,7 @@ function getWorker() {
       return
     }
     pending.delete(event.data.id)
-    if (!keys.has(key)) {
+    if (!MutableHashSet.has(keys, key)) {
       result.reject(new MarkdownWorkerDisposedError())
       transport.complete(key, event.data.id)
       return
@@ -191,7 +194,7 @@ function getWorker() {
     const state = applyMarkdownWorkerResponse(states.get(key), event.data)
     if (shouldReleaseMarkdownWorkerState(result.complete, latest.get(key), event.data.id)) {
       states.delete(key)
-      keys.delete(key)
+      MutableHashSet.remove(keys, key)
       latest.delete(key)
     } else states.set(key, state)
     result.resolve(state)
@@ -209,7 +212,7 @@ function getWorker() {
     projects.clear()
     parses.clear()
     states.clear()
-    keys.clear()
+    MutableHashSet.clear(keys)
     latest.clear()
     worker?.terminate()
     worker = undefined
