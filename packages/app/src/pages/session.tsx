@@ -123,27 +123,31 @@ function isCurrentSessionNotFoundError(error: unknown, sessionID: string | undef
   return isSessionNotFoundError(error, sessionID) || isLocalSessionNotFoundError(error, sessionID)
 }
 
-async function runPromptRollbackMutation<T, R>(input: {
+function runPromptRollbackMutation<T, R, E>(input: {
   capturePrompt: () => { current: () => T[]; set: (value: T[]) => void; reset: () => void }
   optimistic: (prompt: { set: (value: T[]) => void; reset: () => void }) => void
-  request: () => Promise<R>
+  request: () => Effect.Effect<R, E>
   complete: (result: R) => void
   rollback: () => void
-  fail: (error: unknown) => void
+  fail: (error: E) => void
 }) {
-  const prompt = input.capturePrompt()
-  const previous = prompt.current().slice()
-  batch(() => input.optimistic(prompt))
-  await input
-    .request()
-    .then(input.complete)
-    .catch((error) => {
-      batch(() => {
-        input.rollback()
-        prompt.set(previous)
-      })
-      input.fail(error)
-    })
+  return Effect.gen(function* () {
+    const prompt = input.capturePrompt()
+    const previous = prompt.current().slice()
+    batch(() => input.optimistic(prompt))
+    yield* input.request().pipe(
+      Effect.map((result) => input.complete(result)),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          batch(() => {
+            input.rollback()
+            prompt.set(previous)
+          })
+          input.fail(error)
+        }),
+      ),
+    )
+  })
 }
 
 export function SessionPage() {
@@ -1612,26 +1616,28 @@ export default function Page() {
   let restoreHistoryAnchor = (_done: boolean) => {}
   const historyRequests = new Set<string>()
   let historyContinuationFrame: number | undefined
-  const loadOlder = async () => {
+  const loadOlder = () => {
     const owner = sessionOwnership.capture()
     if (historyLoading() || historyRequests.has(owner.key)) return
     historyRequests.add(owner.key)
     const before = timeline.messages().length
-    try {
-      await timeline.history.loadOlder({
-        before: () => owner.run(captureHistoryAnchor),
-        after: (done) => owner.run(() => restoreHistoryAnchor(done)),
-      })
-    } finally {
-      historyRequests.delete(owner.key)
-    }
-    if (!owner.current() || timeline.messages().length <= before) return
-    if (!autoScroll.userScrolled() || !scroller || scroller.scrollTop >= 200 || !historyMore()) return
-    if (historyContinuationFrame !== undefined) cancelAnimationFrame(historyContinuationFrame)
-    historyContinuationFrame = requestAnimationFrame(() => {
-      historyContinuationFrame = undefined
-      owner.run(onHistoryScroll)
-    })
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          timeline.history.loadOlder({
+            before: () => owner.run(captureHistoryAnchor),
+            after: (done) => owner.run(() => restoreHistoryAnchor(done)),
+          }),
+        ).pipe(Effect.ensuring(Effect.sync(() => historyRequests.delete(owner.key))))
+        if (!owner.current() || timeline.messages().length <= before) return
+        if (!autoScroll.userScrolled() || !scroller || scroller.scrollTop >= 200 || !historyMore()) return
+        if (historyContinuationFrame !== undefined) cancelAnimationFrame(historyContinuationFrame)
+        historyContinuationFrame = requestAnimationFrame(() => {
+          historyContinuationFrame = undefined
+          owner.run(onHistoryScroll)
+        })
+      }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+    )
   }
   const onHistoryScroll = () => {
     if (
@@ -1642,7 +1648,7 @@ export default function Page() {
       scroller.scrollTop >= 200
     )
       return
-    void loadOlder()
+    loadOlder()
   }
 
   onCleanup(() => {
@@ -1663,7 +1669,7 @@ export default function Page() {
       if (el.scrollHeight > el.clientHeight + 1) return
       if (!historyMore()) return
 
-      void loadOlder()
+      loadOlder()
     })
   }
 
@@ -1734,30 +1740,41 @@ export default function Page() {
   })
 
   const followupMutation = useMutation(() => ({
-    mutationFn: async (input: { sessionID: string; id: string; manual?: boolean }) => {
-      const owner = sessionOwnership.capture()
-      const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
-      if (!item) return
+    mutationFn: (input: { sessionID: string; id: string; manual?: boolean }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const owner = sessionOwnership.capture()
+          const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
+          if (!item) return
 
-      if (input.manual) setFollowup("paused", input.sessionID, undefined)
-      setFollowup("failed", input.sessionID, undefined)
+          if (input.manual) setFollowup("paused", input.sessionID, undefined)
+          setFollowup("failed", input.sessionID, undefined)
 
-      const ok = await sendFollowupDraft({
-        api: sdk().api.session,
-        sync: sync(),
-        serverSync: serverSync(),
-        draft: item,
-        optimisticBusy: item.sessionDirectory === sdk().directory,
-      }).catch((err) => {
-        setFollowup("failed", input.sessionID, input.id)
-        fail(err)
-        return false
-      })
-      if (!ok) return
+          const ok = yield* Effect.tryPromise({
+            try: () =>
+              sendFollowupDraft({
+                api: sdk().api.session,
+                sync: sync(),
+                serverSync: serverSync(),
+                draft: item,
+                optimisticBusy: item.sessionDirectory === sdk().directory,
+              }),
+            catch: (error) => error,
+          }).pipe(
+            Effect.catch((err) =>
+              Effect.sync(() => {
+                setFollowup("failed", input.sessionID, input.id)
+                fail(err)
+                return false
+              }),
+            ),
+          )
+          if (!ok) return
 
-      setFollowup("items", input.sessionID, (items) => (items ?? []).filter((entry) => entry.id !== input.id))
-      if (input.manual) owner.run(resumeScroll)
-    },
+          setFollowup("items", input.sessionID, (items) => (items ?? []).filter((entry) => entry.id !== input.id))
+          if (input.manual) owner.run(resumeScroll)
+        }),
+      ),
   }))
 
   const followupBusy = (sessionID: string) =>
@@ -1804,13 +1821,14 @@ export default function Page() {
 
   const followupDock = createMemo(() => queuedFollowups().map((item) => ({ id: item.id, text: followupText(item) })))
 
+  // mutate is mutateAsync with the rejection dropped; the callers discarded the promise.
   const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean }) => {
-    if (sync().session.get(sessionID)?.parentID) return Promise.resolve()
+    if (sync().session.get(sessionID)?.parentID) return
     const item = (followup.items[sessionID] ?? []).find((entry) => entry.id === id)
-    if (!item) return Promise.resolve()
-    if (followupBusy(sessionID)) return Promise.resolve()
+    if (!item) return
+    if (followupBusy(sessionID)) return
 
-    return followupMutation.mutateAsync({ sessionID, id, manual: opts?.manual })
+    followupMutation.mutate({ sessionID, id, manual: opts?.manual })
   }
 
   const editFollowup = (id: string) => {
@@ -1838,62 +1856,78 @@ export default function Page() {
 
   const halt = (sessionID: string) =>
     busy(sessionID)
-      ? sdk()
-          .api.session.interrupt({ sessionID })
-          .catch(() => {})
-      : Promise.resolve()
+      ? Effect.tryPromise(() => sdk().api.session.interrupt({ sessionID })).pipe(Effect.ignore)
+      : Effect.void
 
   const revertMutation = useMutation(() => ({
-    mutationFn: async (input: { sessionID: string; messageID: string }) => {
+    mutationFn: (input: { sessionID: string; messageID: string }) => {
       const session = sdk().api.session
       const target = sync()
       const last = target.session.get(input.sessionID)?.revert
       const value = draft(input.messageID)
-      await runPromptRollbackMutation({
-        capturePrompt: prompt.capture,
-        optimistic: (prompt) => {
-          roll(input.sessionID, { messageID: input.messageID }, target)
-          prompt.set(value)
-        },
-        request: () => halt(input.sessionID).then(() => session.revert.stage(input)),
-        complete: () => undefined,
-        rollback: () => roll(input.sessionID, last, target),
-        fail,
-      })
+      return Effect.runPromise(
+        runPromptRollbackMutation({
+          capturePrompt: prompt.capture,
+          optimistic: (prompt) => {
+            roll(input.sessionID, { messageID: input.messageID }, target)
+            prompt.set(value)
+          },
+          request: () =>
+            halt(input.sessionID).pipe(
+              Effect.andThen(Effect.tryPromise({ try: () => session.revert.stage(input), catch: (error) => error })),
+            ),
+          complete: () => {},
+          rollback: () => roll(input.sessionID, last, target),
+          fail,
+        }),
+      )
     },
   }))
 
   const restoreMutation = useMutation(() => ({
-    mutationFn: async (id: string) => {
-      const sessionID = params.id
-      if (!sessionID) return
+    mutationFn: (id: string) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const sessionID = params.id
+          if (!sessionID) return
 
-      const session = sdk().api.session
-      const target = sync()
-      const index = userMessages().findIndex((item) => item.id === id)
-      if (index < 0) return
-      const next = userMessages()[index + 1]
-      const last = target.session.get(sessionID)?.revert
+          const session = sdk().api.session
+          const target = sync()
+          const index = userMessages().findIndex((item) => item.id === id)
+          if (index < 0) return
+          const next = userMessages()[index + 1]
+          const last = target.session.get(sessionID)?.revert
 
-      await runPromptRollbackMutation({
-        capturePrompt: prompt.capture,
-        optimistic: (promptSession) => {
-          roll(sessionID, next ? { messageID: next.id } : undefined, target)
-          if (next) {
-            promptSession.set(draft(next.id))
-            return
-          }
-          promptSession.reset()
-        },
-        request: () =>
-          !next
-            ? halt(sessionID).then(() => session.revert.clear({ sessionID }))
-            : halt(sessionID).then(() => session.revert.stage({ sessionID, messageID: next.id }).then(() => undefined)),
-        complete: () => undefined,
-        rollback: () => roll(sessionID, last, target),
-        fail,
-      })
-    },
+          yield* runPromptRollbackMutation({
+            capturePrompt: prompt.capture,
+            optimistic: (promptSession) => {
+              roll(sessionID, next ? { messageID: next.id } : undefined, target)
+              if (next) {
+                promptSession.set(draft(next.id))
+                return
+              }
+              promptSession.reset()
+            },
+            request: () =>
+              halt(sessionID).pipe(
+                Effect.andThen(
+                  !next
+                    ? Effect.tryPromise({
+                        try: () => session.revert.clear({ sessionID }),
+                        catch: (error) => error,
+                      }).pipe(Effect.asVoid)
+                    : Effect.tryPromise({
+                        try: () => session.revert.stage({ sessionID, messageID: next.id }),
+                        catch: (error) => error,
+                      }).pipe(Effect.asVoid),
+                ),
+              ),
+            complete: () => {},
+            rollback: () => roll(sessionID, last, target),
+            fail,
+          })
+        }),
+      ),
   }))
 
   const reverting = createMemo(() => revertMutation.isPending || restoreMutation.isPending)
@@ -1957,7 +1991,7 @@ export default function Page() {
     if (composer.blocked()) return
     if (busy(sessionID)) return
 
-    void sendFollowup(sessionID, item.id)
+    sendFollowup(sessionID, item.id)
   })
 
   createResizeObserver(
@@ -2165,7 +2199,7 @@ export default function Page() {
                 ? {
                     items: followupDock(),
                     sending: sendingFollowup(),
-                    onSend: (id) => void sendFollowup(params.id!, id, { manual: true }),
+                    onSend: (id) => sendFollowup(params.id!, id, { manual: true }),
                     onEdit: editFollowup,
                   }
                 : undefined,

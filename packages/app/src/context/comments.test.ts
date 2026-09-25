@@ -1,26 +1,30 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { createRoot } from "solid-js"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import type { LineComment } from "./comments"
 
 let createCommentSessionForTest: typeof import("./comments").createCommentSessionForTest
 
-beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
-    useNavigate: () => () => undefined,
-    useParams: () => ({}),
-    useLocation: () => ({}),
-    useSearchParams: () => [{}, () => undefined],
-  }))
-  mock.module("@opencode-ai/ui/context", () => ({
-    createSimpleContext: () => ({
-      use: () => undefined,
-      provider: () => undefined,
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@solidjs/router", () => ({
+        useNavigate: () => () => undefined,
+        useParams: () => ({}),
+        useLocation: () => ({}),
+        useSearchParams: () => [{}, () => undefined],
+      }))
+      mock.module("@opencode-ai/ui/context", () => ({
+        createSimpleContext: () => ({
+          use: () => undefined,
+          provider: () => undefined,
+        }),
+      }))
+      const mod = yield* Effect.promise(() => import("./comments"))
+      createCommentSessionForTest = mod.createCommentSessionForTest
     }),
-  }))
-  const mod = await import("./comments")
-  createCommentSessionForTest = mod.createCommentSessionForTest
-})
+  ),
+)
 
 function line(file: string, id: string, time: number): LineComment {
   return {
