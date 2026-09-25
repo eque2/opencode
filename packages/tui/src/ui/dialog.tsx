@@ -7,6 +7,7 @@ import { useToast } from "./toast"
 import { useTuiFlags } from "../context/runtime"
 import { useBindings, useOpencodeModeStack } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { Effect, Fiber, Option } from "effect"
 
 export function Dialog(
   props: ParentProps<{
@@ -85,21 +86,30 @@ function init() {
   })
 
   let focus: Renderable | null
+  // Refocus after the dialog element has left the tree. A new call restarts the delay.
+  let refocusFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
+  function cancelRefocus() {
+    if (Option.isSome(refocusFiber)) Effect.runFork(Fiber.interrupt(refocusFiber.value))
+    refocusFiber = Option.none()
+  }
+  onCleanup(cancelRefocus)
   function refocus() {
-    setTimeout(() => {
-      if (!focus) return
-      if (focus.isDestroyed) return
-      function find(item: Renderable) {
-        for (const child of item.getChildren()) {
-          if (child === focus) return true
-          if (find(child)) return true
-        }
-        return false
+    cancelRefocus()
+    refocusFiber = Option.some(Effect.runFork(Effect.sleep("1 millis").pipe(Effect.andThen(Effect.sync(restoreFocus)))))
+  }
+  function restoreFocus() {
+    if (!focus) return
+    if (focus.isDestroyed) return
+    function find(item: Renderable) {
+      for (const child of item.getChildren()) {
+        if (child === focus) return true
+        if (find(child)) return true
       }
-      const found = find(renderer.root)
-      if (!found) return
-      focus.focus()
-    }, 1)
+      return false
+    }
+    const found = find(renderer.root)
+    if (!found) return
+    focus.focus()
   }
 
   useBindings(() => ({
