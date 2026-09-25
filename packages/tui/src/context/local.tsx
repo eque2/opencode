@@ -8,7 +8,7 @@ import { useTuiPaths } from "./runtime"
 import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
-import { Effect, Schema } from "effect"
+import { Array, Effect, HashSet, Schema } from "effect"
 import { fileSystemLayer, readJson, writeJsonAtomic } from "../util/persistence"
 import { useTheme } from "./theme"
 import { useToast } from "../ui/toast"
@@ -56,14 +56,8 @@ export function recentModels(
   model: { providerID: string; modelID: string },
   recent: { providerID: string; modelID: string }[],
 ) {
-  const seen = new Set<string>()
-  return [model, ...recent]
-    .filter((item) => {
-      const key = `${item.providerID}/${item.modelID}`
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  // Keep the first occurrence of each model, so the given model moves to the front.
+  return Array.dedupeWith([model, ...recent], (a, b) => a.providerID === b.providerID && a.modelID === b.modelID)
     .slice(0, 10)
     .map((item) => ({ providerID: item.providerID, modelID: item.modelID }))
 }
@@ -487,8 +481,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       )
 
       const slots = createMemo(() => {
-        const existing = new Set(sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id))
-        return sessionStore.pinned.filter((id) => existing.has(id)).slice(0, 9)
+        const existing = HashSet.fromIterable(
+          sync.data.session.filter((x) => x.parentID === undefined).map((x) => x.id),
+        )
+        return sessionStore.pinned.filter((id) => HashSet.has(existing, id)).slice(0, 9)
       })
 
       function prune(sessionID: string) {
