@@ -1,5 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Effect, Fiber, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -101,6 +101,9 @@ type CopyButtonState = {
 
 const copyButtonState = new WeakMap<HTMLElement, CopyButtonState>()
 
+// The fiber that clears a button's "copied" state. A WeakMap keys it by element identity.
+const copyResets = new WeakMap<HTMLElement, Fiber.Fiber<void>>()
+
 const urlPattern = /^https?:\/\/[^\s<>()`"']+$/
 
 function codeUrl(text: string) {
@@ -162,7 +165,27 @@ function setCopyState(host: HTMLElement, labels: CopyLabels, copied: boolean) {
   host.removeAttribute("data-copied")
 }
 
+function scheduleCopyReset(host: HTMLElement, labels: CopyLabels) {
+  stopCopyReset(host)
+  copyResets.set(
+    host,
+    Effect.runFork(
+      Effect.sleep("2 seconds").pipe(
+        Effect.andThen(Effect.sync(() => setCopyState(host, labels, false))),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    ),
+  )
+}
+
+function stopCopyReset(host: HTMLElement) {
+  const fiber = copyResets.get(host)
+  if (fiber) Effect.runFork(Fiber.interrupt(fiber))
+  copyResets.delete(host)
+}
+
 function disposeCopyButton(host: HTMLElement) {
+  stopCopyReset(host)
   copyButtonState.get(host)?.dispose()
   copyButtonState.delete(host)
 }
@@ -288,15 +311,13 @@ function decorate(root: HTMLDivElement, labels: CopyLabels) {
 }
 
 function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
-  const timeouts = new Map<HTMLElement, ReturnType<typeof setTimeout>>()
-
   const updateLabel = (button: HTMLElement) => {
     const labels = getLabels()
     const copied = button.getAttribute("data-copied") === "true"
     setCopyState(button, labels, copied)
   }
 
-  const handleClick = async (event: MouseEvent) => {
+  const handleClick = (event: MouseEvent) => {
     const target = event.target
     if (!(target instanceof Element)) return
 
@@ -307,13 +328,14 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
     if (!content) return
     const clipboard = navigator?.clipboard
     if (!clipboard) return
-    await clipboard.writeText(content)
-    const labels = getLabels()
-    setCopyState(button, labels, true)
-    const existing = timeouts.get(button)
-    if (existing) clearTimeout(existing)
-    const timeout = setTimeout(() => setCopyState(button, labels, false), 2000)
-    timeouts.set(button, timeout)
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* Effect.promise(() => clipboard.writeText(content))
+        const labels = getLabels()
+        setCopyState(button, labels, true)
+        scheduleCopyReset(button, labels)
+      }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+    )
   }
 
   const buttons = Array.from(root.querySelectorAll('[data-slot="markdown-copy-button"]'))
@@ -325,9 +347,7 @@ function setupCodeCopy(root: HTMLDivElement, getLabels: () => CopyLabels) {
 
   return () => {
     root.removeEventListener("click", handleClick)
-    for (const timeout of timeouts.values()) {
-      clearTimeout(timeout)
-    }
+    // Disposing each button also stops its reset fiber.
     disposeCopyButtons(root)
   }
 }
