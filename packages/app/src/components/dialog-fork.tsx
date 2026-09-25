@@ -11,12 +11,26 @@ import { extractPromptFromParts } from "@/utils/prompt"
 import type { TextPart as SDKTextPart } from "@opencode-ai/sdk/v2/client"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { useLanguage } from "@/context/language"
-import { DateTime } from "effect"
+import { Data, DateTime, Effect } from "effect"
 
 interface ForkableMessage {
   id: string
   text: string
   time: string
+}
+
+/** A fork request, or the navigation after it, that failed. `message` is shown in the error toast. */
+class ForkSessionError extends Data.TaggedError("App.ForkSessionError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+const toForkSessionError = (cause: unknown) =>
+  new ForkSessionError({ message: cause instanceof Error ? cause.message : String(cause), cause })
+
+/** Runs the fork in the background. A defect goes to the Effect logger. */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 }
 
 /** Formats epoch millis as a short time in the user's locale and time zone, as toLocaleTimeString did. */
@@ -70,17 +84,27 @@ export const DialogFork: Component = () => {
     })
     const dir = base64Encode(sdk().directory)
 
-    sdk()
-      .api.session.fork({ sessionID, messageID: item.id })
-      .then((forked) => {
-        dialog.close()
-        prompt.set(restored, undefined, { dir, id: forked.id })
-        navigate(`/${dir}/session/${forked.id}`)
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
+    runDetached(
+      Effect.tryPromise({
+        try: () => sdk().api.session.fork({ sessionID, messageID: item.id }),
+        catch: toForkSessionError,
+      }).pipe(
+        // The old .catch also covered a throw from these steps, so they fail with the same error.
+        Effect.flatMap((forked) =>
+          Effect.try({
+            try: () => {
+              dialog.close()
+              prompt.set(restored, undefined, { dir, id: forked.id })
+              navigate(`/${dir}/session/${forked.id}`)
+            },
+            catch: toForkSessionError,
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => showToast({ title: language.t("common.requestFailed"), description: error.message })),
+        ),
+      ),
+    )
   }
 
   return (
