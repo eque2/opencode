@@ -1,5 +1,5 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { absurd, Brand, MutableHashMap, MutableHashSet, Option } from "effect"
+import { absurd, Brand, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
 import { type Accessor, batch, createMemo } from "solid-js"
 import { createStore, produce, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
@@ -8,6 +8,7 @@ import { ServerScope } from "@/utils/server-scope"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
+type StoredRecord = { readonly [key: PropertyKey]: unknown }
 type ServerProjectState = {
   projects: Record<string, StoredProject[]>
   lastProject: Record<string, string>
@@ -39,27 +40,26 @@ function isLocalHost(url: string) {
   return undefined
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
 export function migrateCanonicalLocalServerState(value: unknown, canonicalLocalServer?: ServerConnection.Key) {
   if (!canonicalLocalServer || canonicalLocalServer === "local") return value
-  if (!isRecord(value)) return value
-  const projects = isRecord(value.projects) ? value.projects : undefined
-  const lastProject = isRecord(value.lastProject) ? value.lastProject : undefined
-  const previousProjects = projects?.[canonicalLocalServer]
-  const previousLastProject = lastProject?.[canonicalLocalServer]
+  if (!Predicate.isObject(value)) return value
+  // A missing or malformed bucket record reads as an empty record, which has no canonical bucket.
+  const projects: StoredRecord = Predicate.isObject(value.projects) ? value.projects : {}
+  const lastProject: StoredRecord = Predicate.isObject(value.lastProject) ? value.lastProject : {}
+  const previousProjects = projects[canonicalLocalServer]
+  const previousLastProject = lastProject[canonicalLocalServer]
   if (!Array.isArray(previousProjects) && typeof previousLastProject !== "string") return value
 
   const next = { ...value }
-  if (projects && Array.isArray(previousProjects)) {
+  if (Array.isArray(previousProjects)) {
     const local = Array.isArray(projects.local) ? projects.local : []
     const worktrees = MutableHashSet.fromIterable(
-      local.flatMap((project) => (isRecord(project) && typeof project.worktree === "string" ? [project.worktree] : [])),
+      local.flatMap((project) =>
+        Predicate.isObject(project) && typeof project.worktree === "string" ? [project.worktree] : [],
+      ),
     )
     const migrated = previousProjects.filter((project) => {
-      if (!isRecord(project) || typeof project.worktree !== "string") return true
+      if (!Predicate.isObject(project) || typeof project.worktree !== "string") return true
       if (MutableHashSet.has(worktrees, project.worktree)) return false
       MutableHashSet.add(worktrees, project.worktree)
       return true
@@ -68,7 +68,7 @@ export function migrateCanonicalLocalServerState(value: unknown, canonicalLocalS
     delete nextProjects[canonicalLocalServer]
     next.projects = nextProjects
   }
-  if (lastProject && typeof previousLastProject === "string") {
+  if (typeof previousLastProject === "string") {
     const nextLastProject = { ...lastProject }
     if (typeof nextLastProject.local !== "string") nextLastProject.local = previousLastProject
     delete nextLastProject[canonicalLocalServer]
@@ -314,11 +314,21 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
       if (!url_) return undefined
-      const conn: ServerConnection.Http = { ...input, authToken: undefined, http: { ...input.http, url: url_ } }
+      const conn: ServerConnection.Http = { ...input, http: { ...input.http, url: url_ } }
+      delete conn.authToken
       return batch(() => {
         const existing = store.list.findIndex((x) => url(x) === url_)
         if (existing !== -1) {
           setStore("list", existing, conn)
+          // The store merges conn into the stored entry, which keeps keys that conn omits.
+          // The saved connection never keeps a startup auth token, so remove the key.
+          setStore(
+            "list",
+            existing,
+            produce((entry) => {
+              if (typeof entry !== "string" && "authToken" in entry) delete entry.authToken
+            }),
+          )
         } else {
           setStore("list", store.list.length, conn)
         }
