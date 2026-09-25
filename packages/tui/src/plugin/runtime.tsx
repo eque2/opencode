@@ -5,6 +5,7 @@ import type {
   TuiPluginStatus,
 } from "@opencode-ai/plugin/tui"
 import type { TuiConfig } from "../config"
+import { Effect } from "effect"
 import { createContext, createSignal, useContext, type JSX, type ParentProps } from "solid-js"
 import { createPluginRoutes } from "./api"
 import { createSlots, type HostSlots } from "./slots"
@@ -42,17 +43,17 @@ export type PluginRuntimeCommands = {
 }
 
 const emptyCommands: PluginRuntimeCommands = {
-  async activate() {
-    return false
+  activate() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async deactivate() {
-    return false
+  deactivate() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async add() {
-    return false
+  add() {
+    return Effect.runPromise(Effect.succeed(false))
   },
-  async install() {
-    return { ok: false, message: "Plugin runtime is not available." }
+  install() {
+    return Effect.runPromise(Effect.succeed({ ok: false, message: "Plugin runtime is not available." }))
   },
 }
 

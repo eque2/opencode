@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo } from "solid-js"
+import { Effect } from "effect"
 
 const id = "internal:sidebar-context"
 
@@ -46,16 +47,19 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    order: 100,
-    slots: {
-      sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
-      },
-    },
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.slots.register({
+        order: 100,
+        slots: {
+          sidebar_content(_ctx, props) {
+            return <View api={api} session_id={props.session_id} />
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,

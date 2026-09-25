@@ -4,6 +4,7 @@ import { createMemo, Match, Show, Switch } from "solid-js"
 import { abbreviateHome } from "../../runtime"
 import { useTuiPaths } from "../../context/runtime"
 import { useHomeSessionDestination } from "../../routes/home/session-destination"
+import { Effect } from "effect"
 
 const id = "internal:home-footer"
 
@@ -81,16 +82,19 @@ function View(props: { api: TuiPluginApi }) {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    order: 100,
-    slots: {
-      home_footer() {
-        return <View api={api} />
-      },
-    },
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.slots.register({
+        order: 100,
+        slots: {
+          home_footer() {
+            return <View api={api} />
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,

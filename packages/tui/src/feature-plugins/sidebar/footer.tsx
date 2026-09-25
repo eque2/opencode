@@ -3,6 +3,7 @@ import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, Show } from "solid-js"
 import { abbreviateHome } from "../../runtime"
 import { useTuiPaths } from "../../context/runtime"
+import { Effect } from "effect"
 
 const id = "internal:sidebar-footer"
 
@@ -79,16 +80,19 @@ function View(props: { api: TuiPluginApi; sessionID: string }) {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.slots.register({
-    order: 100,
-    slots: {
-      sidebar_footer(_ctx, props) {
-        return <View api={api} sessionID={props.session_id} />
-      },
-    },
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.slots.register({
+        order: 100,
+        slots: {
+          sidebar_footer(_ctx, props) {
+            return <View api={api} sessionID={props.session_id} />
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,

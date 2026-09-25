@@ -6,6 +6,7 @@ import { useBindings, useKeymapSelector } from "../../keymap"
 import type { ActiveKey } from "@opentui/keymap"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
+import { Effect } from "effect"
 
 const command = {
   toggle: "which-key.toggle",
@@ -529,75 +530,78 @@ function WhichKeyPanel(props: {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  const [pinned, setPinned] = createSignal(false)
-  const [mode, setMode] = createSignal(layout(api.kv.get(KV_LAYOUT, "dock")))
-  const [pendingPreview, setPendingPreview] = createSignal(api.kv.get(KV_PENDING_PREVIEW, false))
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      const [pinned, setPinned] = createSignal(false)
+      const [mode, setMode] = createSignal(layout(api.kv.get(KV_LAYOUT, "dock")))
+      const [pendingPreview, setPendingPreview] = createSignal(api.kv.get(KV_PENDING_PREVIEW, false))
 
-  api.keymap.registerLayer({
-    priority: LAYER_PRIORITY,
-    commands: [
-      {
-        name: command.toggle,
-        title: "Show key bindings",
-        desc: "Toggle which-key overlay",
-        category: "System",
-        run() {
-          setPinned((value) => !value)
-        },
-      },
-      {
-        name: command.toggleLayout,
-        title: "Toggle key bindings layout",
-        desc: "Switch which-key between dock and overlay mode",
-        category: "System",
-        run() {
-          setMode((value) => {
-            const next = value === "dock" ? "overlay" : "dock"
-            api.kv.set(KV_LAYOUT, next)
-            return next
-          })
-        },
-      },
-      {
-        name: command.togglePending,
-        title: "Toggle pending key preview",
-        desc: "Automatically show which-key for pending key sequences in overlay mode",
-        category: "System",
-        run() {
-          setPendingPreview((value) => {
-            api.kv.set(KV_PENDING_PREVIEW, !value)
-            return !value
-          })
-        },
-      },
-    ],
-    bindings: api.tuiConfig.keybinds.gather("which-key.toggle", toggleCommands),
-  })
+      api.keymap.registerLayer({
+        priority: LAYER_PRIORITY,
+        commands: [
+          {
+            name: command.toggle,
+            title: "Show key bindings",
+            desc: "Toggle which-key overlay",
+            category: "System",
+            run() {
+              setPinned((value) => !value)
+            },
+          },
+          {
+            name: command.toggleLayout,
+            title: "Toggle key bindings layout",
+            desc: "Switch which-key between dock and overlay mode",
+            category: "System",
+            run() {
+              setMode((value) => {
+                const next = value === "dock" ? "overlay" : "dock"
+                api.kv.set(KV_LAYOUT, next)
+                return next
+              })
+            },
+          },
+          {
+            name: command.togglePending,
+            title: "Toggle pending key preview",
+            desc: "Automatically show which-key for pending key sequences in overlay mode",
+            category: "System",
+            run() {
+              setPendingPreview((value) => {
+                api.kv.set(KV_PENDING_PREVIEW, !value)
+                return !value
+              })
+            },
+          },
+        ],
+        bindings: api.tuiConfig.keybinds.gather("which-key.toggle", toggleCommands),
+      })
 
-  api.slots.register({
-    order: 200,
-    slots: {
-      home_bottom() {
-        return <HomeHint api={api} />
-      },
-      app() {
-        return (
-          <Show when={mode() === "overlay"}>
-            <WhichKeyPanel api={api} layout="overlay" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
-          </Show>
-        )
-      },
-      app_bottom() {
-        return (
-          <Show when={mode() === "dock"}>
-            <WhichKeyPanel api={api} layout="dock" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
-          </Show>
-        )
-      },
-    },
-  })
-}
+      api.slots.register({
+        order: 200,
+        slots: {
+          home_bottom() {
+            return <HomeHint api={api} />
+          },
+          app() {
+            return (
+              <Show when={mode() === "overlay"}>
+                <WhichKeyPanel api={api} layout="overlay" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
+              </Show>
+            )
+          },
+          app_bottom() {
+            return (
+              <Show when={mode() === "dock"}>
+                <WhichKeyPanel api={api} layout="dock" mode={mode} pendingPreview={pendingPreview} pinned={pinned} />
+              </Show>
+            )
+          },
+        },
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id: "which-key",

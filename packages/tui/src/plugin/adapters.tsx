@@ -1,4 +1,5 @@
 import type { TuiDialogSelectOption, TuiPluginApi, TuiSlotProps } from "@opencode-ai/plugin/tui"
+import { Data, Effect } from "effect"
 import type { TuiConfig } from "../config"
 import type { useEvent } from "../context/event"
 import type { useRoute } from "../context/route"
@@ -19,6 +20,11 @@ import { createCommandShim } from "./command-shim"
 import type { PluginRoutes } from "./api"
 export type { RouteMap } from "./api"
 export { createPluginRoutes, createTuiApi } from "./api"
+
+/** A host API member that only a plugin-scoped API implements was called on the host API. */
+class PluginContextError extends Data.TaggedError("TuiPluginAdapters.PluginContextError")<{
+  readonly message: string
+}> {}
 
 type Input = {
   version: string
@@ -312,20 +318,22 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
       list() {
         return []
       },
-      async activate() {
-        return false
+      activate() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async deactivate() {
-        return false
+      deactivate() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async add() {
-        return false
+      add() {
+        return Effect.runPromise(Effect.succeed(false))
       },
-      async install() {
-        return {
-          ok: false,
-          message: "plugins.install is only available in plugin context",
-        }
+      install() {
+        return Effect.runPromise(
+          Effect.succeed({
+            ok: false,
+            message: "plugins.install is only available in plugin context",
+          }),
+        )
       },
     },
     theme: {
@@ -341,8 +349,10 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
       set(name) {
         return input.theme.set(name)
       },
-      async install(_jsonPath) {
-        throw new Error("theme.install is only available in plugin context")
+      install() {
+        return Effect.runPromise(
+          Effect.fail(new PluginContextError({ message: "theme.install is only available in plugin context" })),
+        )
       },
       mode() {
         return input.theme.mode()

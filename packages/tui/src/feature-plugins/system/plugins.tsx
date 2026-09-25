@@ -5,6 +5,7 @@ import { fileURLToPath } from "url"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { useBindings } from "../../keymap"
+import { Effect } from "effect"
 
 const id = "internal:plugin-manager"
 
@@ -235,31 +236,34 @@ function show(api: TuiPluginApi) {
   api.ui.dialog.replace(() => <View api={api} />)
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.keymap.registerLayer({
-    commands: [
-      {
-        name: "plugins.list",
-        title: "Plugins",
-        category: "System",
-        namespace: "palette",
-        run() {
-          show(api)
-        },
-      },
-      {
-        name: "plugins.install",
-        title: "Install plugin",
-        category: "System",
-        namespace: "palette",
-        run() {
-          showInstall(api)
-        },
-      },
-    ],
-    bindings: api.tuiConfig.keybinds.gather("plugins.palette", ["plugins.list", "plugins.install"]),
-  })
-}
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.keymap.registerLayer({
+        commands: [
+          {
+            name: "plugins.list",
+            title: "Plugins",
+            category: "System",
+            namespace: "palette",
+            run() {
+              show(api)
+            },
+          },
+          {
+            name: "plugins.install",
+            title: "Install plugin",
+            category: "System",
+            namespace: "palette",
+            run() {
+              showInstall(api)
+            },
+          },
+        ],
+        bindings: api.tuiConfig.keybinds.gather("plugins.palette", ["plugins.list", "plugins.install"]),
+      })
+    }),
+  )
 
 const plugin: BuiltinTuiPlugin = {
   id,
