@@ -1,4 +1,5 @@
 import type { OpenCodeEvent, SessionMessageInfo, SessionPendingMessage } from "@opencode-ai/client/promise"
+import { Struct } from "effect"
 
 type Assistant = Extract<SessionMessageInfo, { type: "assistant" }>
 type Compaction = Extract<SessionMessageInfo, { type: "compaction" }>
@@ -121,7 +122,7 @@ export function createV2SessionReducer() {
           current && current.id !== event.data.assistantMessageID
             ? update(source, current.id, (item) =>
                 item.type === "assistant"
-                  ? { ...item, retry: undefined, time: { ...item.time, completed: event.created } }
+                  ? { ...Struct.omit(item, ["retry"]), time: { ...item.time, completed: event.created } }
                   : item,
               )
             : [...source]
@@ -131,14 +132,11 @@ export function createV2SessionReducer() {
             update(completed, existing.id, (item) =>
               item.type === "assistant"
                 ? {
-                    ...item,
+                    ...Struct.omit(item, ["retry", "error", "finish"]),
                     agent: event.data.agent,
                     model: event.data.model,
-                    retry: undefined,
-                    error: undefined,
-                    finish: undefined,
                     snapshot: event.data.snapshot ? { ...item.snapshot, start: event.data.snapshot } : item.snapshot,
-                    time: { ...item.time, completed: undefined },
+                    time: Struct.omit(item.time, ["completed"]),
                   }
                 : item,
             ),
@@ -154,7 +152,7 @@ export function createV2SessionReducer() {
               agent: event.data.agent,
               model: event.data.model,
               content: [],
-              snapshot: event.data.snapshot ? { start: event.data.snapshot } : undefined,
+              ...(event.data.snapshot ? { snapshot: { start: event.data.snapshot } } : {}),
               time: { created: event.created },
             },
           ],
@@ -175,10 +173,9 @@ export function createV2SessionReducer() {
         }))
       case "session.step.failed":
         return updateAssistant(source, event.data.assistantMessageID, sessionID, (item) => ({
-          ...item,
+          ...Struct.omit(item, ["retry"]),
           finish: "error",
           error: event.data.error,
-          retry: undefined,
           cost: event.data.cost ?? item.cost,
           tokens: event.data.tokens ?? item.tokens,
           snapshot:
@@ -330,7 +327,7 @@ export function createV2SessionReducer() {
       case "session.execution.interrupted": {
         const current = source.findLast((item): item is Assistant => item.type === "assistant" && !item.time.completed)
         if (!current?.retry) return result([...source])
-        return updateAssistant(source, current.id, sessionID, (item) => ({ ...item, retry: undefined }))
+        return updateAssistant(source, current.id, sessionID, (item) => Struct.omit(item, ["retry"]))
       }
       case "session.compaction.started":
         return append({

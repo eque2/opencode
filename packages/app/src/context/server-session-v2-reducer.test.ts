@@ -135,9 +135,9 @@ describe("v2 session reducer", () => {
 
     expect(messages[0]).toMatchObject({
       type: "assistant",
-      retry: undefined,
       content: [{ type: "tool", id: "call_1", state: { status: "completed", content: [{ text: "done" }] } }],
     })
+    expect(messages[0]).not.toHaveProperty("retry")
   })
 
   test("requests hydration when promotion admission was missed", () => {
