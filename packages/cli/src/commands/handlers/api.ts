@@ -6,6 +6,29 @@ import { Daemon } from "../../services/daemon"
 
 const methods = HashSet.make("delete", "get", "head", "options", "patch", "post", "put")
 
+export class InvalidHeaderError extends Schema.TaggedError<InvalidHeaderError>()("CliApi.InvalidHeaderError", {
+  message: Schema.String,
+}) {}
+
+export class OperationNotFoundError extends Schema.TaggedError<OperationNotFoundError>()(
+  "CliApi.OperationNotFoundError",
+  { message: Schema.String },
+) {}
+
+export class MissingPathParameterError extends Schema.TaggedError<MissingPathParameterError>()(
+  "CliApi.MissingPathParameterError",
+  { message: Schema.String },
+) {}
+
+export class RequestShapeError extends Schema.TaggedError<RequestShapeError>()("CliApi.RequestShapeError", {
+  message: Schema.String,
+}) {}
+
+export class OpenApiLoadError extends Schema.TaggedError<OpenApiLoadError>()("CliApi.OpenApiLoadError", {
+  status: Schema.Number,
+  message: Schema.String,
+}) {}
+
 // The CLI reads only the operation IDs. The structs ignore every other key of a
 // path item or an operation, such as parameters, summary and responses.
 const Operation = Schema.Struct({
@@ -39,7 +62,8 @@ export default Runtime.handler(
     const headers = new Headers(transport.headers)
     for (const header of input.header) {
       const index = header.indexOf(":")
-      if (index < 1) return yield* Effect.fail(new Error(`Invalid header, expected name:value: ${header}`))
+      if (index < 1)
+        return yield* Effect.fail(new InvalidHeaderError({ message: `Invalid header, expected name:value: ${header}` }))
       headers.set(header.slice(0, index).trim(), header.slice(index + 1).trim())
     }
     const body = Option.getOrUndefined(input.data)
@@ -64,7 +88,7 @@ export function resolveOperation(spec: OpenApi, operationID: string, params: Rec
       return { method: method.toUpperCase(), path: interpolate(path, params) }
     }
   }
-  throw new Error(`Operation not found: ${operationID}`)
+  throw new OperationNotFoundError({ message: `Operation not found: ${operationID}` })
 }
 
 export function rawRequest(input: readonly string[]) {
@@ -79,11 +103,20 @@ const resolveRequest = Effect.fnUntraced(function* (
 ) {
   const raw = rawRequest(input)
   if (raw) return raw
-  if (input.length !== 1) return yield* Effect.fail(new Error("Expected an operation name or an HTTP method and path"))
+  if (input.length !== 1)
+    return yield* Effect.fail(
+      new RequestShapeError({ message: "Expected an operation name or an HTTP method and path" }),
+    )
   const response = yield* Effect.tryPromise(() =>
     fetch(new URL("/openapi.json", transport.url), { headers: transport.headers }),
   )
-  if (!response.ok) return yield* Effect.fail(new Error(`Failed to load OpenAPI document: HTTP ${response.status}`))
+  if (!response.ok)
+    return yield* Effect.fail(
+      new OpenApiLoadError({
+        status: response.status,
+        message: `Failed to load OpenAPI document: HTTP ${response.status}`,
+      }),
+    )
   const spec = yield* Effect.tryPromise(() => response.text()).pipe(Effect.flatMap(decodeOpenApi))
   return yield* Effect.try(() => resolveOperation(spec, input[0], params))
 })
@@ -92,7 +125,7 @@ function interpolate(path: string, params: Record<string, string>) {
   const used = HashSet.fromIterable(Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]))
   const pathname = path.replaceAll(/\{([^}]+)\}/g, (_, name: string) => {
     const value = params[name]
-    if (value === undefined) throw new Error(`Missing path parameter: ${name}`)
+    if (value === undefined) throw new MissingPathParameterError({ message: `Missing path parameter: ${name}` })
     return encodeURIComponent(value)
   })
   const query = new URLSearchParams(Object.entries(params).filter(([name]) => !HashSet.has(used, name))).toString()
