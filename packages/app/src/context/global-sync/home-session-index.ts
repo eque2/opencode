@@ -1,6 +1,6 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
-import { Chunk, Effect, MutableHashSet } from "effect"
+import { Chunk, Effect, MutableHashSet, Option } from "effect"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
@@ -59,11 +59,12 @@ export function loadHomeSessionIndex(
   )
 }
 
-export function appendHomeSessionEvent(current: HomeSessionEvents | undefined, event: HomeSessionEvent) {
-  const sequence = (current?.sequence ?? 0) + 1
+export function appendHomeSessionEvent(current: Option.Option<HomeSessionEvents>, event: HomeSessionEvent) {
+  const previous = Option.getOrElse(current, (): HomeSessionEvents => ({ sequence: 0, entries: [] }))
+  const sequence = previous.sequence + 1
   return {
     sequence,
-    entries: [...(current?.entries ?? []), { sequence, event }],
+    entries: [...previous.entries, { sequence, event }],
   }
 }
 
@@ -105,7 +106,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
       // Keep events received after the fetch began so its response cannot overwrite them.
       queryClient.setQueryData<HomeSessionEvents>(eventsKey, (current) => trimHomeSessionEvents(current, sequence))
     },
-    sessions(index: HomeSessionIndex | undefined, events: HomeSessionEvents | undefined) {
+    sessions(index: HomeSessionIndex | undefined, events?: HomeSessionEvents) {
       const sessions = homeSessionIndexSessions(index, events)
       return MutableHashSet.size(removed) === 0
         ? sessions
@@ -113,7 +114,10 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
     },
     apply(event: HomeSessionEvent) {
       if (!queryClient.getQueryState(indexKey)) return
-      const next = appendHomeSessionEvent(queryClient.getQueryData<HomeSessionEvents>(eventsKey), event)
+      const next = appendHomeSessionEvent(
+        Option.fromNullishOr(queryClient.getQueryData<HomeSessionEvents>(eventsKey)),
+        event,
+      )
       if (queryClient.isFetching({ queryKey: indexKey, exact: true }) > 0) {
         queryClient.setQueryData(eventsKey, next)
         return

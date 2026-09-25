@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { QueryClient } from "@tanstack/solid-query"
 import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import {
   applyHomeSessionEvent,
   appendHomeSessionEvent,
@@ -163,11 +163,11 @@ describe("Home V2 session index", () => {
     const initial = parseHomeSessionIndex([session({ id: "old" })])
     const stale = { ...initial[0], title: "stale" }
     const current = { ...initial[0], title: "current" }
-    const first = appendHomeSessionEvent(undefined, {
+    const first = appendHomeSessionEvent(Option.none(), {
       type: "session.updated",
       properties: { sessionID: stale.id, info: stale },
     })
-    const events = appendHomeSessionEvent(first, {
+    const events = appendHomeSessionEvent(Option.some(first), {
       type: "session.updated",
       properties: { sessionID: current.id, info: current },
     })
@@ -202,6 +202,6 @@ describe("Home V2 session index", () => {
     cache.remove("a")
 
     expect(queryClient.getQueryData(cache.indexKey)).toBeUndefined()
-    expect(cache.sessions({ sessions, eventSequence: 0 }, undefined).map((item) => item.id)).toEqual(["b"])
+    expect(cache.sessions({ sessions, eventSequence: 0 }).map((item) => item.id)).toEqual(["b"])
   })
 })
