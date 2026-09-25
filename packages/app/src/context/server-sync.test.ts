@@ -11,7 +11,7 @@ import type {
   SessionListInput,
 } from "@opencode-ai/client/promise"
 import { QueryClient } from "@tanstack/solid-query"
-import { Data, Effect, HashSet, MutableHashMap, Option } from "effect"
+import { Data, Effect, HashSet, MutableHashMap } from "effect"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./global-sync/eviction"
 import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/session-load"
 import { loadActiveSessionsQuery, loadMcpQuery, loadMcpResourcesQuery, seedActiveSessionStatuses } from "./server-sync"
@@ -171,7 +171,8 @@ describe("loadRootSessions", () => {
         expect(result.limited).toBe(true)
         // The root-session filter reaches the API as parentID null.
         expect(calls).toEqual([
-          { directory: "dir", parentID: Option.getOrNull(Option.none()), limit: 10, order: "desc" },
+          // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+          { directory: "dir", parentID: null, limit: 10, order: "desc" },
         ])
       }),
     ))
