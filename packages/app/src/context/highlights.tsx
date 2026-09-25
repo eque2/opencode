@@ -1,10 +1,11 @@
 import { Effect, MutableHashSet, Predicate } from "effect"
-import { createEffect, onCleanup } from "solid-js"
+import { createEffect } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { persisted } from "@/utils/persist"
 import { DialogReleaseNotes, type Highlight } from "@/components/dialog-release-notes"
 
@@ -152,13 +153,6 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
       to: undefined as string | undefined,
     })
     const state = { started: false }
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const clearTimer = () => {
-      if (timer === undefined) return
-      clearTimeout(timer)
-      timer = undefined
-    }
 
     const markSeen = () => {
       if (!platform.version) return
@@ -172,16 +166,13 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
       }
 
       const fetcher = platform.fetch ?? fetch
-      const controller = new AbortController()
-      onCleanup(() => {
-        controller.abort()
-        clearTimer()
-      })
+      // The slot belongs to the current Solid effect run; its cleanup interrupts the request or the delay.
+      const load = createFiberSlot()
 
       const loadHighlights = Effect.gen(function* () {
-        const response = yield* Effect.tryPromise(() =>
+        const response = yield* Effect.tryPromise((signal) =>
           fetcher(CHANGELOG_URL, {
-            signal: controller.signal,
+            signal,
             headers: { Accept: "application/json" },
           }),
         )
@@ -189,21 +180,18 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
         const json: unknown = yield* Effect.tryPromise(() => response.json())
         if (!json) return
         const highlights = loadReleaseHighlights(json, platform.version, previous)
-        if (controller.signal.aborted) return
 
         if (highlights.length === 0) {
           markSeen()
           return
         }
 
-        timer = setTimeout(() => {
-          timer = undefined
-          markSeen()
-          dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
-        }, 500)
+        yield* Effect.sleep("500 millis")
+        markSeen()
+        dialog.show(() => <DialogReleaseNotes highlights={highlights} />)
       })
       // A failed changelog request or body read leaves the release notes unseen, as the old .catch did.
-      Effect.runFork(loadHighlights.pipe(Effect.ignore))
+      load.run(loadHighlights.pipe(Effect.ignore))
     }
 
     createEffect(() => {
