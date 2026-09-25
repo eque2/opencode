@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk } from "effect"
+import { Chunk, Effect } from "effect"
 import { createApiForServer, createSdkForServer } from "./server"
 import { createCompatibleApi } from "./server-compat"
 
@@ -45,7 +45,7 @@ function setup(
   )
   const server = { url: "http://localhost:4096" }
   const api = createCompatibleApi({
-    protocol: typeof protocol === "string" ? Promise.resolve(protocol) : protocol,
+    protocol: typeof protocol === "string" ? Effect.runPromise(Effect.succeed(protocol)) : protocol,
     current: createApiForServer({ server, fetch: fetcher }),
     legacy: (directory) => createSdkForServer({ server, fetch: fetcher, directory, throwOnError: true }),
     directory: "/repo",
@@ -134,7 +134,7 @@ describe("createCompatibleApi", () => {
 
   test("resolves protocol detection once across implementation methods", async () => {
     let detections = 0
-    const resolved = Promise.resolve<"v1" | "v2">("v2")
+    const resolved = Effect.runPromise(Effect.succeed<"v1" | "v2">("v2"))
     const protocol = new Proxy(resolved, {
       get(target, property) {
         if (property !== "then") return Reflect.get(target, property, target)
