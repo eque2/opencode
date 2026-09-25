@@ -4,6 +4,7 @@ import { useRoute } from "../context/route"
 import { useSync } from "../context/sync"
 import { createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import path from "path"
+import { HashSet, MutableHashSet } from "effect"
 import { Locale } from "../util/locale"
 import { useProject } from "../context/project"
 import { useTheme } from "../context/theme"
@@ -53,7 +54,7 @@ export function DialogSessionList() {
   const local = useLocal()
   const toast = useToast()
   const [toDelete, setToDelete] = createSignal<string>()
-  const [deleted, setDeleted] = createSignal(new Set<string>())
+  const [deleted, setDeleted] = createSignal(HashSet.empty<string>())
   const [search, setSearch] = createDebouncedSignal("", 150)
   const deleteHint = useCommandShortcut("session.delete")
   const quickSwitch1 = useCommandShortcut("session.quick_switch.1")
@@ -79,22 +80,22 @@ export function DialogSessionList() {
   const sessions = createMemo(() => {
     const result = searchResults() ?? browseResults() ?? sync.data.session
     const synced = new Map(sync.data.session.map((session) => [session.id, session]))
-    const ids = new Set(result.map((session) => session.id))
+    const ids = MutableHashSet.fromIterable(result.map((session) => session.id))
     const extra = [currentSessionID(), ...local.session.pinned()].flatMap((id) => {
-      if (!id || ids.has(id)) return []
+      if (!id || MutableHashSet.has(ids, id)) return []
       const session = synced.get(id)
-      if (session) ids.add(id)
+      if (session) MutableHashSet.add(ids, id)
       return session ? [session] : []
     })
     const query = search().trim().toLowerCase()
     return [...result.map((session) => synced.get(session.id) ?? session), ...extra]
-      .filter((session) => !deleted().has(session.id))
+      .filter((session) => !HashSet.has(deleted(), session.id))
       .filter((session) => !query || session.title.toLowerCase().includes(query))
   })
 
   onCleanup(
     event.on("session.deleted", (event) => {
-      setDeleted((current) => new Set(current).add(event.properties.info.id))
+      setDeleted((current) => HashSet.add(current, event.properties.info.id))
     }),
   )
 
@@ -219,7 +220,7 @@ export function DialogSessionList() {
     const displayOrder = current && sessionMap.has(current) && !order.includes(current) ? [...order, current] : order
 
     const pinned = local.session.pinned().filter((id) => sessionMap.has(id))
-    const pinnedSet = new Set(pinned)
+    const pinnedSet = HashSet.fromIterable(pinned)
     const slotByID = new Map<string, number>(local.session.slots().map((id, i) => [id, i + 1]))
 
     function buildOption(id: string, category: string) {
@@ -253,7 +254,7 @@ export function DialogSessionList() {
     }
 
     const remaining = displayOrder
-      .filter((id) => !pinnedSet.has(id))
+      .filter((id) => !HashSet.has(pinnedSet, id))
       .map((id) => {
         const x = sessionMap.get(id)
         if (!x) return undefined
