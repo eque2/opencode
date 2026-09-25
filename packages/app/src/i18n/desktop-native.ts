@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 
 export const DESKTOP_NATIVE_LOCALES = [
   "en",
@@ -338,13 +338,19 @@ export function createDesktopNativeBundle(
   }
 }
 
+const encodeJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+/** True when the value encodes to JSON text of at most DESKTOP_NATIVE_MAX_PAYLOAD_BYTES bytes. */
+function fitsDesktopNativePayload(value: unknown) {
+  return Option.exists(
+    encodeJsonText(value),
+    (json) => new TextEncoder().encode(json).byteLength <= DESKTOP_NATIVE_MAX_PAYLOAD_BYTES,
+  )
+}
+
 export function parseDesktopNativeBundle(value: unknown): DesktopNativeBundle | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
-  try {
-    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > DESKTOP_NATIVE_MAX_PAYLOAD_BYTES) return undefined
-  } catch {
-    return undefined
-  }
+  if (!fitsDesktopNativePayload(value)) return undefined
   const bundle = value as { locale?: unknown; messages?: unknown }
   if (!DESKTOP_NATIVE_LOCALES.some((locale) => locale === bundle.locale)) return undefined
   if (!bundle.messages || typeof bundle.messages !== "object" || Array.isArray(bundle.messages)) return undefined
