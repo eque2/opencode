@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { MutableHashSet, Option } from "effect"
+import { Chunk, Data, Deferred, Effect, Exit, MutableHashSet, Option } from "effect"
 import {
   absoluteTreePath,
   activeTreeNavigation,
@@ -23,6 +23,12 @@ import {
   pickerAbsoluteInput,
   type DirectorySearchClient,
 } from "./directory-picker-domain"
+
+// A failure the test injects into a stand-in call.
+class TestFailure extends Data.TaggedError("Test.Failure")<{ readonly message: string }> {}
+
+// The client returns Promises, so a stand-in settles plain values through Effect.runPromise.
+const settled = <A>(value: A) => Effect.runPromise(Effect.succeed(value))
 
 test("maps server directory entries into Pierre paths", () => {
   expect(
@@ -134,118 +140,136 @@ test("scopes file autocomplete to the current browser root", () => {
   expect(pickerFileSearchQuery("/home/luke", "~/repos/op", "/home/luke")).toBe("repos/op")
 })
 
-test("resolves directory autocomplete from the current browser root", async () => {
-  const directories: string[] = []
-  const sdk: DirectorySearchClient = {
-    api: {
-      file: {
-        find: (input) => {
-          directories.push(input.location.directory)
-          return Promise.resolve({ data: [] })
+test("resolves directory autocomplete from the current browser root", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let directories = Chunk.empty<string>()
+      const sdk: DirectorySearchClient = {
+        api: {
+          file: {
+            find: (input) => {
+              directories = Chunk.append(directories, input.location.directory)
+              return settled({ data: [] })
+            },
+            list: () => settled({ data: [] }),
+          },
         },
-        list: () => Promise.resolve({ data: [] }),
-      },
-    },
-  }
-  let base = "/repo"
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some(base) })
+      }
+      let base = "/repo"
+      const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some(base) })
 
-  await search("components")
-  base = "/repo/src"
-  await search("components")
+      yield* search("components")
+      base = "/repo/src"
+      yield* search("components")
 
-  expect(directories).toEqual(["/repo", "/repo/src"])
-})
+      expect(Chunk.toReadonlyArray(directories)).toEqual(["/repo", "/repo/src"])
+    }),
+  ))
 
-test("keeps indexed directory results for servers that support empty search", async () => {
-  const sdk: DirectorySearchClient = {
-    api: {
-      file: {
-        find: () => Promise.resolve({ data: [{ path: "projects/", type: "directory" }] }),
-        list: () => Promise.reject(new Error("listing should not run when search returns results")),
-      },
-    },
-  }
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
-
-  expect(await search("")).toEqual(["/home/luke/projects"])
-})
-
-test("lists the default directory when empty search is unsupported", async () => {
-  const calls: string[] = []
-  const directories = Array.from({ length: 60 }, (_, index) => ({
-    path: `project-${index}/`,
-    type: "directory" as const,
-  }))
-  const sdk: DirectorySearchClient = {
-    api: {
-      file: {
-        find: () => Promise.resolve({ data: [] }),
-        list: (input) => {
-          calls.push(input.location.directory)
-          return Promise.resolve({
-            data: [...directories, { path: "README.md", type: "file" }],
-          })
+test("keeps indexed directory results for servers that support empty search", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const sdk: DirectorySearchClient = {
+        api: {
+          file: {
+            find: () => settled({ data: [{ path: "projects/", type: "directory" }] }),
+            list: () =>
+              Effect.runPromise(
+                Effect.fail(new TestFailure({ message: "listing should not run when search returns results" })),
+              ),
+          },
         },
-      },
-    },
-  }
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
+      }
+      const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
 
-  const results = await search("")
-  expect(results).toHaveLength(60)
-  expect(results.at(-1)).toBe("/home/luke/project-59")
-  expect(calls).toEqual(["/home/luke"])
-})
+      expect(yield* search("")).toEqual(["/home/luke/projects"])
+    }),
+  ))
 
-test("matches the default directory listing when typed search is unsupported", async () => {
-  const sdk: DirectorySearchClient = {
-    api: {
-      file: {
-        find: () => Promise.resolve({ data: [] }),
-        list: () =>
-          Promise.resolve({
-            data: [
-              { path: "Documents/", type: "directory" },
-              { path: "Downloads/", type: "directory" },
-            ],
-          }),
-      },
-    },
-  }
-  const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
-
-  expect(await search("documents")).toEqual(["/home/luke/Documents"])
-})
-
-test("searches from an absolute root without a default base", async () => {
-  const directories: string[] = []
-  const searches: string[] = []
-  const sdk: DirectorySearchClient = {
-    api: {
-      file: {
-        find: (input) => {
-          searches.push(input.location.directory)
-          return Promise.resolve({ data: [] })
+test("lists the default directory when empty search is unsupported", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let calls = Chunk.empty<string>()
+      const directories = Array.from({ length: 60 }, (_, index) => ({
+        path: `project-${index}/`,
+        type: "directory" as const,
+      }))
+      const sdk: DirectorySearchClient = {
+        api: {
+          file: {
+            find: () => settled({ data: [] }),
+            list: (input) => {
+              calls = Chunk.append(calls, input.location.directory)
+              return settled({
+                data: [...directories, { path: "README.md", type: "file" as const }],
+              })
+            },
+          },
         },
-        list: (input) => {
-          directories.push(input.location.directory)
-          return Promise.resolve({
-            data: [
-              { path: "Users/", type: "directory" },
-              { path: "tmp/", type: "directory" },
-            ],
-          })
-        },
-      },
-    },
-  }
-  const search = createDirectorySearch({ sdk, home: () => "", base: () => Option.none() })
+      }
+      const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
 
-  expect(await search("/")).toEqual(["/Users", "/tmp"])
-  expect(directories).toEqual(["/"])
-  expect(searches).toEqual([])
-})
+      const results = yield* search("")
+      expect(results).toHaveLength(60)
+      expect(results.at(-1)).toBe("/home/luke/project-59")
+      expect(Chunk.toReadonlyArray(calls)).toEqual(["/home/luke"])
+    }),
+  ))
+
+test("matches the default directory listing when typed search is unsupported", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const sdk: DirectorySearchClient = {
+        api: {
+          file: {
+            find: () => settled({ data: [] }),
+            list: () =>
+              settled({
+                data: [
+                  { path: "Documents/", type: "directory" as const },
+                  { path: "Downloads/", type: "directory" as const },
+                ],
+              }),
+          },
+        },
+      }
+      const search = createDirectorySearch({ sdk, home: () => "/home/luke", base: () => Option.some("/home/luke") })
+
+      expect(yield* search("documents")).toEqual(["/home/luke/Documents"])
+    }),
+  ))
+
+test("searches from an absolute root without a default base", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let directories = Chunk.empty<string>()
+      let searches = Chunk.empty<string>()
+      const sdk: DirectorySearchClient = {
+        api: {
+          file: {
+            find: (input) => {
+              searches = Chunk.append(searches, input.location.directory)
+              return settled({ data: [] })
+            },
+            list: (input) => {
+              directories = Chunk.append(directories, input.location.directory)
+              return settled({
+                data: [
+                  { path: "Users/", type: "directory" as const },
+                  { path: "tmp/", type: "directory" as const },
+                ],
+              })
+            },
+          },
+        },
+      }
+      const search = createDirectorySearch({ sdk, home: () => "", base: () => Option.none() })
+
+      expect(yield* search("/")).toEqual(["/Users", "/tmp"])
+      expect(Chunk.toReadonlyArray(directories)).toEqual(["/"])
+      expect(Chunk.toReadonlyArray(searches)).toEqual([])
+    }),
+  ))
 
 test("identifies the next directory level to preload", () => {
   expect(
@@ -264,40 +288,44 @@ test("advances preloading once for every expanded directory", () => {
   expect(advanceTreePreload(advanced, "repos/")).toBeTrue()
 })
 
-test("limits background tasks and prioritizes newly requested work", async () => {
-  const queue = createPriorityTaskQueue<void>(2)
-  const first = Promise.withResolvers<void>()
-  const second = Promise.withResolvers<void>()
-  const started: string[] = []
-  let active = 0
-  let maximum = 0
-  const task = (name: string, blocker?: Promise<void>) => async () => {
-    started.push(name)
-    active++
-    maximum = Math.max(maximum, active)
-    await blocker
-    active--
-  }
+test("limits background tasks and prioritizes newly requested work", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const queue = createPriorityTaskQueue<void>(2)
+      const first = yield* Deferred.make<void>()
+      const second = yield* Deferred.make<void>()
+      let started = Chunk.empty<string>()
+      let active = 0
+      let maximum = 0
+      const task = (name: string, blocker: Effect.Effect<void> = Effect.void) =>
+        Effect.gen(function* () {
+          started = Chunk.append(started, name)
+          active++
+          maximum = Math.max(maximum, active)
+          yield* blocker
+          active--
+        })
 
-  const running = [
-    queue.schedule("first", "background", task("first", first.promise)),
-    queue.schedule("second", "background", task("second", second.promise)),
-    queue.schedule("preload", "background", task("preload")),
-    queue.schedule("opened", "user", task("opened")),
-  ]
-  await Promise.resolve()
-  expect(started).toEqual(["first", "second"])
+      const running = yield* Effect.all([
+        queue.schedule("first", "background", task("first", Deferred.await(first))),
+        queue.schedule("second", "background", task("second", Deferred.await(second))),
+        queue.schedule("preload", "background", task("preload")),
+        queue.schedule("opened", "user", task("opened")),
+      ])
+      yield* Effect.yieldNow
+      expect(Chunk.toReadonlyArray(started)).toEqual(["first", "second"])
 
-  first.resolve()
-  await running[0]
-  await Promise.resolve()
-  expect(started).toEqual(["first", "second", "opened"])
+      yield* Deferred.done(first, Exit.void)
+      yield* running[0]
+      yield* Effect.yieldNow
+      expect(Chunk.toReadonlyArray(started)).toEqual(["first", "second", "opened"])
 
-  second.resolve()
-  await Promise.all(running)
-  expect(started).toEqual(["first", "second", "opened", "preload"])
-  expect(maximum).toBe(2)
-})
+      yield* Deferred.done(second, Exit.void)
+      yield* Effect.all(running)
+      expect(Chunk.toReadonlyArray(started)).toEqual(["first", "second", "opened", "preload"])
+      expect(maximum).toBe(2)
+    }),
+  ))
 
 test("clamps bridged tree wheel scrolling", () => {
   expect(nextTreeScrollTop(100, 40, 500, 200)).toBe(140)

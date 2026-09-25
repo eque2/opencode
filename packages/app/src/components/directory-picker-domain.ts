@@ -1,5 +1,5 @@
 import { getFilename } from "@opencode-ai/core/util/path"
-import { MutableHashMap, MutableHashSet, Option } from "effect"
+import { Deferred, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 import fuzzysort from "fuzzysort"
 
 export function treeEntries(parent: string, nodes: ReadonlyArray<{ name: string; type: "file" | "directory" }>) {
@@ -147,12 +147,19 @@ export function activeTreeNavigation(request: number, current: number) {
   return request === current
 }
 
-export function createPriorityTaskQueue<T>(concurrency: number) {
+/**
+ * Runs keyed tasks, at most `concurrency` at a time. A "user" task starts before every
+ * "background" task, and the newest user task starts first.
+ *
+ * `schedule` queues the task and succeeds with an Effect that waits for its result. A second
+ * `schedule` for a key that is still queued or running shares the first task, and a "user"
+ * call promotes it.
+ */
+export function createPriorityTaskQueue<A, E = never>(concurrency: number) {
   type Job = {
-    key: string
     priority: "user" | "background"
-    promise: Promise<T>
-    run: () => void
+    readonly result: Deferred.Deferred<A, E>
+    readonly run: Effect.Effect<void>
   }
 
   const jobs = MutableHashMap.empty<string, Job>()
@@ -160,52 +167,45 @@ export function createPriorityTaskQueue<T>(concurrency: number) {
   const background: Job[] = []
   let active = 0
 
-  const drain = () => {
-    while (active < concurrency) {
-      const job = user.pop() ?? background.shift()
-      if (!job) return
-      active++
-      job.run()
-    }
-  }
+  // A forked job starts on the next scheduler turn, as the Promise queue started each task in a
+  // microtask, so a task never runs inside the call that queued it.
+  const drain: Effect.Effect<void> = Effect.suspend(() => {
+    if (active >= concurrency) return Effect.void
+    const job = user.pop() ?? background.shift()
+    if (!job) return Effect.void
+    active++
+    return Effect.forkDetach(job.run).pipe(Effect.andThen(drain))
+  })
 
-  const schedule = (key: string, priority: Job["priority"], task: () => Promise<T>) => {
-    const existing = MutableHashMap.get(jobs, key)
-    if (Option.isSome(existing)) {
-      if (priority === "user") promote(key)
-      return existing.value.promise
-    }
+  const schedule = (
+    key: string,
+    priority: Job["priority"],
+    task: Effect.Effect<A, E>,
+  ): Effect.Effect<Effect.Effect<A, E>> =>
+    Effect.suspend(() => {
+      const existing = MutableHashMap.get(jobs, key)
+      if (Option.isSome(existing)) {
+        if (priority === "user") promote(key)
+        return Effect.succeed(Deferred.await(existing.value.result))
+      }
 
-    const deferred = Promise.withResolvers<T>()
-    const job: Job = {
-      key,
-      priority,
-      promise: deferred.promise,
-      run: () => {
-        const complete = () => {
-          active--
-          MutableHashMap.remove(jobs, key)
-          drain()
-        }
-        Promise.resolve()
-          .then(task)
-          .then(
-            (value) => {
-              complete()
-              deferred.resolve(value)
-            },
-            (error) => {
-              complete()
-              deferred.reject(error)
-            },
-          )
-      },
-    }
-    MutableHashMap.set(jobs, key, job)
-    ;(priority === "user" ? user : background).push(job)
-    drain()
-    return job.promise
-  }
+      const result = Deferred.makeUnsafe<A, E>()
+      const complete = Effect.sync(() => {
+        active--
+        MutableHashMap.remove(jobs, key)
+      }).pipe(Effect.andThen(drain))
+      const job: Job = {
+        priority,
+        result,
+        run: Effect.exit(task).pipe(
+          Effect.flatMap((exit) => complete.pipe(Effect.andThen(Deferred.done(result, exit)))),
+          Effect.asVoid,
+        ),
+      }
+      MutableHashMap.set(jobs, key, job)
+      ;(priority === "user" ? user : background).push(job)
+      return drain.pipe(Effect.as(Deferred.await(result)))
+    })
 
   const promote = (key: string) => {
     const found = MutableHashMap.get(jobs, key)
@@ -360,7 +360,8 @@ export function createDirectorySearch(args: {
   base: () => Option.Option<string>
   home: () => string
 }) {
-  const cache = MutableHashMap.empty<string, Promise<Array<{ name: string; absolute: string }>>>()
+  type DirectoryEntry = { readonly name: string; readonly absolute: string }
+  const cache = MutableHashMap.empty<string, Deferred.Deferred<ReadonlyArray<DirectoryEntry>>>()
   let current = 0
 
   const scoped = (value: string): Option.Option<{ directory: string; path: string }> => {
@@ -377,78 +378,97 @@ export function createDirectorySearch(args: {
     return Option.some({ directory: trimPickerPath(base), path: raw })
   }
 
-  const directories = async (directory: string) => {
-    const key = trimPickerPath(directory)
-    const existing = MutableHashMap.get(cache, key)
-    if (Option.isSome(existing)) return existing.value
-    const request = args.sdk.api.file
-      .list({ location: { directory: key } })
-      .then((result) => result.data)
-      .catch(() => [])
-      .then((nodes) =>
+  const listDirectory = (key: string) =>
+    Effect.tryPromise(() => args.sdk.api.file.list({ location: { directory: key } })).pipe(
+      Effect.map((result) => result.data),
+      Effect.orElseSucceed(() => []),
+      Effect.map((nodes) =>
         nodes
           .filter((node) => node.type === "directory")
           .map((node) => {
             const relative = trimPickerPath(normalizePickerDrive(node.path))
             return { name: getFilename(relative), absolute: joinPickerPath(key, relative) }
           }),
+      ),
+    )
+
+  // Lists each directory once. The listing runs in its own fiber, as the cached Promise did, so a
+  // later search reuses it even after the search that started it has ended.
+  const directories = (directory: string): Effect.Effect<ReadonlyArray<DirectoryEntry>> =>
+    Effect.suspend(() => {
+      const key = trimPickerPath(directory)
+      const existing = MutableHashMap.get(cache, key)
+      if (Option.isSome(existing)) return Deferred.await(existing.value)
+      const request = Deferred.makeUnsafe<ReadonlyArray<DirectoryEntry>>()
+      MutableHashMap.set(cache, key, request)
+      return Effect.forkDetach(listDirectory(key).pipe(Deferred.into(request)), { startImmediately: true }).pipe(
+        Effect.andThen(Deferred.await(request)),
       )
-    MutableHashMap.set(cache, key, request)
-    return request
-  }
+    })
 
-  const match = async (directory: string, query: string, limit: number) => {
-    const items = await directories(directory)
-    if (!query) return items.slice(0, limit).map((item) => item.absolute)
-    return fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj.absolute)
-  }
+  const match = (directory: string, query: string, limit: number) =>
+    directories(directory).pipe(
+      Effect.map((items) =>
+        query
+          ? fuzzysort.go(query, items, { key: "name", limit }).map((item) => item.obj.absolute)
+          : items.slice(0, limit).map((item) => item.absolute),
+      ),
+    )
 
-  return async (filter: string) => {
-    const token = ++current
-    const active = () => token === current
-    const value = cleanPickerInput(filter)
-    const scope = scoped(value)
-    if (Option.isNone(scope)) return [] as string[]
-    const input = scope.value
-    const raw = normalizePickerDrive(value)
-    const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
-    const query = normalizePickerDrive(input.path)
-    if (!pathInput) {
-      const results = await args.sdk.api.file
-        .find({ location: { directory: input.directory }, query, type: "directory", limit: 50 })
-        .then((result) => result.data.map((entry) => entry.path))
-        .catch(() => [])
-      if (!active()) return []
-      if (results.length) {
-        return results.map((path) => joinPickerPath(input.directory, path)).slice(0, 50)
+  const matchAll = (paths: ReadonlyArray<string>, query: string, limit: number) =>
+    Effect.forEach(paths, (path) => match(path, query, limit), { concurrency: "unbounded" }).pipe(
+      Effect.map((results) => uniquePaths(results.flat())),
+    )
+
+  return (filter: string): Effect.Effect<ReadonlyArray<string>> =>
+    Effect.gen(function* () {
+      const token = ++current
+      const active = () => token === current
+      const value = cleanPickerInput(filter)
+      const scope = scoped(value)
+      if (Option.isNone(scope)) return []
+      const input = scope.value
+      const raw = normalizePickerDrive(value)
+      const pathInput = raw.startsWith("~") || !!pickerRoot(raw) || raw.includes("/")
+      const query = normalizePickerDrive(input.path)
+      if (!pathInput) {
+        const results = yield* Effect.tryPromise(() =>
+          args.sdk.api.file.find({ location: { directory: input.directory }, query, type: "directory", limit: 50 }),
+        ).pipe(
+          Effect.map((result) => result.data.map((entry) => entry.path)),
+          Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        )
+        if (!active()) return []
+        if (results.length) {
+          return results.map((path) => joinPickerPath(input.directory, path)).slice(0, 50)
+        }
+        const fallback = query
+          ? yield* match(input.directory, query, 50)
+          : (yield* directories(input.directory)).map((item) => item.absolute)
+        if (!active()) return []
+        return fallback
       }
-      const fallback = query
-        ? await match(input.directory, query, 50)
-        : (await directories(input.directory)).map((item) => item.absolute)
-      if (!active()) return []
-      return fallback
-    }
-    const segments = query.replace(/^\/+/, "").split("/")
-    const head = segments.slice(0, -1).filter((part) => part && part !== ".")
-    const tail = segments.at(-1) ?? ""
-    let paths = [input.directory]
-    for (const part of head) {
-      if (!active()) return []
-      if (part === "..") {
-        paths = paths.map(pickerParent)
-        continue
+      const segments = query.replace(/^\/+/, "").split("/")
+      const head = segments.slice(0, -1).filter((part) => part && part !== ".")
+      const tail = segments.at(-1) ?? ""
+      let paths: ReadonlyArray<string> = [input.directory]
+      for (const part of head) {
+        if (!active()) return []
+        if (part === "..") {
+          paths = paths.map(pickerParent)
+          continue
+        }
+        paths = (yield* matchAll(paths, part, 4)).slice(0, 12)
+        if (!active() || paths.length === 0) return []
       }
-      paths = uniquePaths((await Promise.all(paths.map((path) => match(path, part, 4)))).flat()).slice(0, 12)
-      if (!active() || paths.length === 0) return []
-    }
-    const matches = uniquePaths((await Promise.all(paths.map((path) => match(path, tail, 50)))).flat())
-    if (!active()) return []
-    const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
-    if (raw.endsWith("/") || !tail) return uniquePaths([base, ...matches].filter(Boolean)).slice(0, 50)
-    const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
-    if (!target) return matches.slice(0, 50)
-    const children = await match(target, "", 30)
-    if (!active()) return []
-    return uniquePaths([base, ...matches, ...children].filter(Boolean)).slice(0, 50)
-  }
+      const matches = yield* matchAll(paths, tail, 50)
+      if (!active()) return []
+      const base = raw.startsWith("~") ? trimPickerPath(input.directory) : ""
+      if (raw.endsWith("/") || !tail) return uniquePaths([base, ...matches].filter(Boolean)).slice(0, 50)
+      const target = matches.find((path) => getFilename(path).toLowerCase() === tail.toLowerCase())
+      if (!target) return matches.slice(0, 50)
+      const children = yield* match(target, "", 30)
+      if (!active()) return []
+      return uniquePaths([base, ...matches, ...children].filter(Boolean)).slice(0, 50)
+    })
 }
