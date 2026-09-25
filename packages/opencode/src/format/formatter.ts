@@ -12,7 +12,7 @@ export interface Info {
   name: string
   environment?: Record<string, string>
   extensions: string[]
-  enabled(context: Context): Promise<string[] | false>
+  enabled: (context: Context) => Promise<string[] | false>
 }
 
 export const gofmt: Info = {
