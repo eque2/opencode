@@ -2,7 +2,8 @@ import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Swi
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import type { FileSearchHandle } from "@opencode-ai/session-ui/file"
+import { Option } from "effect"
+import type { FileSearchControl, FileSearchHandle } from "@opencode-ai/session-ui/file"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { cloneSelectedLineRange, previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
 import { createLineCommentController } from "@opencode-ai/session-ui/line-comment-annotations"
@@ -236,10 +237,10 @@ function SessionFileViewV1(props: { tab: string }) {
     normalizeTab: (tab) => (tab.startsWith("file://") ? file.tab(tab) : tab),
   }).activeFileTab
 
-  let find: FileSearchHandle | null = null
+  let find: Option.Option<FileSearchHandle> = Option.none()
 
-  const search = {
-    register: (handle: FileSearchHandle | null) => {
+  const search: FileSearchControl = {
+    register: (handle) => {
       find = handle
     },
   }
@@ -400,7 +401,7 @@ function SessionFileViewV1(props: { tab: string }) {
 
       event.preventDefault()
       event.stopPropagation()
-      find?.focus()
+      if (Option.isSome(find)) find.value.focus()
     }
 
     makeEventListener(window, "keydown", onKeyDown, { capture: true })
@@ -521,10 +522,10 @@ function SessionFileViewV2(props: { tab: string }) {
     normalizeTab: (tab) => (tab.startsWith("file://") ? file.tab(tab) : tab),
   }).activeFileTab
 
-  let find: FileSearchHandle | null = null
+  let find: Option.Option<FileSearchHandle> = Option.none()
 
-  const search = {
-    register: (handle: FileSearchHandle | null) => {
+  const search: FileSearchControl = {
+    register: (handle) => {
       find = handle
     },
   }
@@ -683,7 +684,7 @@ function SessionFileViewV2(props: { tab: string }) {
 
       event.preventDefault()
       event.stopPropagation()
-      find?.focus()
+      if (Option.isSome(find)) find.value.focus()
     }
 
     makeEventListener(window, "keydown", onKeyDown, { capture: true })
