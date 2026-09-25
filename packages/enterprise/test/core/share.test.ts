@@ -3,6 +3,7 @@ import { Effect, Option, Schema } from "effect"
 import { Share } from "../../src/core/share"
 import { Storage } from "../../src/core/storage"
 import { Identifier } from "@opencode-ai/core/util/identifier"
+import type { Session, UserMessage } from "@opencode-ai/sdk/v2"
 
 describe.concurrent("core.share", () => {
   test("should create a share", async () => {
@@ -289,9 +290,26 @@ describe.concurrent("core.share", () => {
     const sessionID = Identifier.descending()
     const share = await Effect.runPromise(Share.create({ sessionID }))
 
+    const session: Session = {
+      id: sessionID,
+      slug: "test-session",
+      projectID: "test-project",
+      directory: "/tmp/test",
+      title: "Test session",
+      version: "0.0.0",
+      time: { created: 0, updated: 0 },
+    }
+    const message: UserMessage = {
+      id: "msg1",
+      sessionID,
+      role: "user",
+      time: { created: 0 },
+      agent: "build",
+      model: { providerID: "test", modelID: "test" },
+    }
     const data: Share.Data[] = [
-      { type: "session", data: { id: sessionID, status: "running" } as any },
-      { type: "message", data: { id: "msg1", sessionID } as any },
+      { type: "session", data: session },
+      { type: "message", data: message },
       {
         type: "part",
         data: { id: "part1", sessionID, messageID: "msg1", type: "text", text: "Hello" },
