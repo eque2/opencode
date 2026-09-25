@@ -1,4 +1,5 @@
 import { createMemo, createResource, onMount, type Accessor } from "solid-js"
+import { Data, Effect } from "effect"
 import type { ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { usePermission } from "@/context/permission"
@@ -21,6 +22,9 @@ import { createSoundPreviewController, type ShellOption } from "./general-contro
 
 export { createShellOptions, createSoundPreviewController } from "./general-controller-behavior"
 export type { ShellOption, ShellSelectOption } from "./general-controller-behavior"
+
+/** A shell list request that rejected. `cause` is the original rejection. */
+class ShellListError extends Data.TaggedError("App.ShellListError")<{ readonly cause: unknown }> {}
 
 export function createPermissionScopeController(sessionID: Accessor<string | undefined>) {
   const permission = usePermission()
@@ -53,11 +57,21 @@ export function createShellSettingsController() {
   const serverSdk = useServerSDK()
   const serverSync = useServerSync()
   const [shells] = createResource(
-    async () => {
-      const sdk = serverSdk()
-      if ((await sdk.protocol) === "v1") return (await sdk.client.pty.shells()).data ?? []
-      return [] as ShellOption[]
-    },
+    () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const sdk = serverSdk()
+          if ((yield* Effect.promise(() => sdk.protocol)) !== "v1") return [] as ShellOption[]
+          const result = yield* Effect.tryPromise({
+            try: () => sdk.client.pty.shells(),
+            catch: (cause) => new ShellListError({ cause }),
+          })
+          return result.data ?? []
+        }).pipe(
+          // The resource keeps the original rejection, so an ErrorBoundary shows the SDK error as before.
+          Effect.mapError((error) => error.cause),
+        ),
+      ),
     { initialValue: [] as ShellOption[] },
   )
   const current = createMemo(() => serverSync().data.config.shell ?? "")
@@ -130,7 +144,11 @@ export function createSoundSettingsController() {
     ),
     highlight: (option: SoundSelectOption | undefined) => {
       if (!option) return
-      preview.play(option.id === "none" ? undefined : option.id)
+      if (option.id === "none") {
+        preview.stop()
+        return
+      }
+      preview.play(option.id)
     },
     select: (option: SoundSelectOption | null) => {
       if (!option) return
