@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Message } from "@opencode-ai/sdk/v2/client"
+import { Option } from "effect"
 import { getSessionContext } from "./session-context-metrics"
 
 const assistant = (
@@ -62,7 +63,7 @@ describe("getSessionContext", () => {
     expect(ctx?.message.id).toBe("a2")
     expect(ctx?.total).toBe(500)
     expect(ctx?.input).toBe(300)
-    expect(ctx?.usage).toBe(50)
+    expect(ctx?.usage).toEqual(Option.some(50))
     expect(ctx?.providerLabel).toBe("OpenAI")
     expect(ctx?.modelLabel).toBe("GPT-4.1")
   })
@@ -76,7 +77,7 @@ describe("getSessionContext", () => {
     expect(ctx?.providerLabel).toBe("p-1")
     expect(ctx?.modelLabel).toBe("m-1")
     expect(ctx?.limit).toBeUndefined()
-    expect(ctx?.usage).toBeNull()
+    expect(ctx?.usage).toEqual(Option.none())
   })
 
   test("recomputes when message array is mutated in place", () => {

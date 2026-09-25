@@ -1,16 +1,17 @@
+import { Option } from "effect"
 import { DateTime } from "luxon"
 
 export function createSessionContextFormatter(locale: string) {
   return {
-    number(value: number | null | undefined) {
+    number(value: number | undefined) {
       if (value === undefined) return "—"
-      if (value === null) return "—"
       return value.toLocaleString(locale)
     },
-    percent(value: number | null | undefined) {
-      if (value === undefined) return "—"
-      if (value === null) return "—"
-      return value.toLocaleString(locale) + "%"
+    percent(value: Option.Option<number>) {
+      return Option.match(value, {
+        onNone: () => "—",
+        onSome: (percent) => percent.toLocaleString(locale) + "%",
+      })
     },
     time(value: number | undefined) {
       if (!value) return "—"

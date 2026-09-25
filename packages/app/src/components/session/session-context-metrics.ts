@@ -23,7 +23,7 @@ type Context = {
   limit: number | undefined
   input: number
   total: number
-  usage: number | null
+  usage: Option.Option<number>
 }
 
 const tokenTotal = (msg: AssistantMessage) => {
@@ -52,7 +52,7 @@ const build = (messages: Message[] = [], providers: Provider[] = []): Context | 
     limit,
     input: message.tokens.input,
     total,
-    usage: limit ? Math.round((total / limit) * 100) : null,
+    usage: limit ? Option.some(Math.round((total / limit) * 100)) : Option.none(),
   }
 }
 

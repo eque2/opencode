@@ -77,6 +77,13 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   )
 
   const context = createMemo(() => getSessionContext(messages(), HashMap.toValues(providers.all())))
+  // A session without a known context limit shows 0% usage.
+  const usage = createMemo(() =>
+    Option.getOrElse(
+      Option.flatMap(Option.fromNullishOr(context()), (value) => value.usage),
+      () => 0,
+    ),
+  )
   const cost = createMemo(() => {
     return usd().format(
       info().pipe(
@@ -114,7 +121,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
       <ProgressCircle
         size={16}
         strokeWidth={2}
-        percentage={context()?.usage ?? 0}
+        percentage={usage()}
         {...(variant() === "indicator"
           ? {
               style: {
@@ -129,14 +136,14 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   )
   const circleV2 = () => (
     <div class="flex items-center justify-center">
-      <ProgressCircleV2 percentage={context()?.usage ?? 0} />
+      <ProgressCircleV2 percentage={usage()} />
     </div>
   )
 
   const tooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
       <ContextTooltipRow name={language.t("context.usage.cost")} value={cost()} />
-      <ContextTooltipRow name={language.t("context.usage.usage")} value={`${context()?.usage ?? 0}%`} />
+      <ContextTooltipRow name={language.t("context.usage.usage")} value={`${usage()}%`} />
       <ContextTooltipRow
         name={language.t("context.usage.tokens")}
         value={context()?.total.toLocaleString(language.intl()) ?? "0"}
