@@ -13,7 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
-import { Result } from "effect"
+import { Random, Result } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -103,9 +103,12 @@ const money = new Intl.NumberFormat("en-US", {
 
 const DRAFT_RETENTION_MIN_CHARS = 20
 
+// The default Effect random source: synchronous placeholder picks need no fiber.
+const random = Random.Random.defaultValue()
+
 function randomIndex(count: number) {
   if (count <= 0) return 0
-  return Math.floor(Math.random() * count)
+  return Math.floor(random.nextDoubleUnsafe() * count)
 }
 
 function fadeColor(color: RGBA, alpha: number) {
