@@ -31,6 +31,8 @@ import {
   TuiTerminalEnvironmentProvider,
   useTuiFlags,
   useTuiStartup,
+  type TuiStartup,
+  type TuiTerminalEnvironment,
 } from "./context/runtime"
 import { DialogProvider, useDialog } from "./ui/dialog"
 import { DialogProvider as DialogProviderList } from "./component/dialog-provider"
@@ -209,6 +211,31 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
     OPENCODE_EXPERIMENTAL_WORKSPACES: FlagConfig.OPENCODE_EXPERIMENTAL_WORKSPACES,
     OPENCODE_SHOW_TTFD: FlagConfig.OPENCODE_SHOW_TTFD,
   }).pipe(Effect.orDie)
+  // The ambient provider treats an empty variable as not set, as the old truthy checks did.
+  // OPENCODE_ROUTE must hold JSON; RouteProvider validates the route shape.
+  const environment = yield* Config.all({
+    TMUX: Config.option(Config.String("TMUX")),
+    STY: Config.option(Config.String("STY")),
+    WAYLAND_DISPLAY: Config.option(Config.String("WAYLAND_DISPLAY")),
+    DISPLAY: Config.option(Config.String("DISPLAY")),
+    OPENCODE_ROUTE: Config.option(Config.schema(Schema.fromJsonString(Schema.Json), "OPENCODE_ROUTE")),
+    OPENCODE_FAST_BOOT: Config.option(Config.String("OPENCODE_FAST_BOOT")),
+  })
+  const multiplexer = Option.orElse(Option.as(environment.TMUX, "tmux" as const), () =>
+    Option.as(environment.STY, "screen" as const),
+  )
+  const displayServer = Option.orElse(Option.as(environment.WAYLAND_DISPLAY, "wayland" as const), () =>
+    Option.as(environment.DISPLAY, "x11" as const),
+  )
+  const terminalEnvironment: TuiTerminalEnvironment = {
+    platform: process.platform,
+    ...Option.match(multiplexer, { onNone: () => ({}), onSome: (value) => ({ multiplexer: value }) }),
+    ...Option.match(displayServer, { onNone: () => ({}), onSome: (value) => ({ displayServer: value }) }),
+  }
+  const startup: TuiStartup = {
+    ...Option.match(environment.OPENCODE_ROUTE, { onNone: () => ({}), onSome: (route) => ({ initialRoute: route }) }),
+    skipInitialLoading: Option.isSome(environment.OPENCODE_FAST_BOOT),
+  }
   const exit: { epilogue: Option.Option<string>; reason: Option.Option<unknown> } = {
     epilogue: Option.none(),
     reason: Option.none(),
@@ -293,23 +320,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                       worktree: global.data + "/worktree",
                     }}
                   >
-                    <TuiTerminalEnvironmentProvider
-                      value={{
-                        platform: process.platform,
-                        multiplexer: process.env.TMUX ? "tmux" : process.env.STY ? "screen" : undefined,
-                        displayServer: process.env.WAYLAND_DISPLAY
-                          ? "wayland"
-                          : process.env.DISPLAY
-                            ? "x11"
-                            : undefined,
-                      }}
-                    >
-                      <TuiStartupProvider
-                        value={{
-                          initialRoute: process.env.OPENCODE_ROUTE ? JSON.parse(process.env.OPENCODE_ROUTE) : undefined,
-                          skipInitialLoading: Boolean(process.env.OPENCODE_FAST_BOOT),
-                        }}
-                      >
+                    <TuiTerminalEnvironmentProvider value={terminalEnvironment}>
+                      <TuiStartupProvider value={startup}>
                         <TuiFlagsProvider value={flags}>
                           <ClipboardProvider>
                             <OpencodeKeymapProvider keymap={keymap}>
