@@ -1,8 +1,9 @@
 import { Audio, type AudioErrorContext, type AudioPlayOptions, type AudioSound, type AudioVoice } from "@opentui/core"
+import { MutableHashMap, Option } from "effect"
 import { readFile } from "node:fs/promises"
 
 let audio: Audio | null | undefined
-const sounds = new Map<string, Promise<AudioSound | null>>()
+const sounds = MutableHashMap.empty<string, Promise<AudioSound | null>>()
 
 function getAudio() {
   if (audio !== undefined) return audio
@@ -23,15 +24,15 @@ function getAudio() {
 export function loadSoundFile(file: string) {
   const current = getAudio()
   if (!current) return Promise.resolve(null)
-  const cached = sounds.get(file)
-  if (cached) return cached
+  const cached = MutableHashMap.get(sounds, file)
+  if (Option.isSome(cached)) return cached.value
   const task = readFile(file)
     .then((bytes) => current.loadSound(bytes))
     .catch((error) => {
       console.debug("failed to load tui sound", { file, error })
       return null
     })
-  sounds.set(file, task)
+  MutableHashMap.set(sounds, file, task)
   return task
 }
 
@@ -49,5 +50,5 @@ export function stopVoice(voice: AudioVoice) {
 export function dispose() {
   audio?.dispose()
   audio = undefined
-  sounds.clear()
+  MutableHashMap.clear(sounds)
 }
