@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
 import { Array as Arr, Data, Effect, HashMap, Option } from "effect"
 import type { Config } from "@opencode-ai/sdk/v2/client"
+import type { ModelInfo } from "@opencode-ai/client/promise"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
   bootstrapDirectory,
@@ -12,6 +13,7 @@ import {
   loadPathQuery,
   loadProjectsQuery,
   loadProvidersQuery,
+  loadProvidersQueryFor,
   loadReferencesQuery,
 } from "./bootstrap"
 import type { State } from "./types"
@@ -60,11 +62,17 @@ const resolved = <A>(value: A) => Effect.runPromise(Effect.succeed(value))
 /** The location block that every current endpoint returns. */
 const location = (directory: string) => ({ directory, project: { id: "project", directory } })
 
+/** The model default reply for a catalog whose default model is `defaultModel`; the wire format sends none as null. */
+const modelDefault = (directory: string, defaultModel: Option.Option<ModelInfo>) => ({
+  location: location(directory),
+  data: Option.getOrNull(defaultModel),
+})
+
 const currentRoutes = {
   "GET /api/agent": reply({ location: {}, data: [] }),
   "GET /api/provider": reply({ location: {}, data: [] }),
   "GET /api/model": reply({ location: {}, data: [] }),
-  "GET /api/model/default": reply({ location: {}, data: null }),
+  "GET /api/model/default": reply(modelDefault("/project", Option.none())),
   "GET /api/permission/request": reply({ location: {}, data: [] }),
   "GET /api/project": reply([]),
   "GET /api/project/current": reply({ id: "project", directory: "/project" }),
@@ -268,7 +276,11 @@ describe("query keys", () => {
 
     expect([...loadPathQuery(ServerScope.local, "/repo", client).queryKey]).toEqual(["local", "/repo", "path"])
     expect([...loadPathQuery(remote, "/repo", client).queryKey]).toEqual(["https://debian.example", "/repo", "path"])
-    expect([...loadProvidersQuery(remote, null, api).queryKey]).toEqual(["https://debian.example", null, "providers"])
+    const globalProviders = [...loadProvidersQueryFor(remote, Option.none(), api).queryKey]
+    expect(globalProviders).toHaveLength(3)
+    expect(globalProviders[0]).toBe("https://debian.example")
+    expect(globalProviders[1]).toBeNull()
+    expect(globalProviders[2]).toBe("providers")
   })
 
   test("loads the current provider and model catalog", () =>
@@ -292,7 +304,7 @@ describe("query keys", () => {
             },
             default: (input: unknown) => {
               calls = Arr.append(calls, ["default", input])
-              return resolved({ location: location("/repo"), data: null })
+              return resolved(modelDefault("/repo", Option.none()))
             },
           },
         }
