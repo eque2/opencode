@@ -72,8 +72,11 @@ export const layer = Layer.effect(
     const decodeRegistration = Schema.decodeUnknownEffect(Schema.fromJsonString(Registration))
 
     const password = Effect.fn("cli.daemon.password")(function* (value?: string) {
-      const existing = yield* fs.readFileString(passwordFile).pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (value === undefined && existing) return existing
+      // An empty password file counts as absent, so the password is generated again.
+      const existing = yield* fs
+        .readFileString(passwordFile)
+        .pipe(Effect.option, Effect.map(Option.filter((text) => text !== "")))
+      if (value === undefined && Option.isSome(existing)) return existing.value
 
       // Keep one private credential across server restarts so discovered clients
       // can reconnect without exposing a password flag or environment variable.
@@ -150,12 +153,14 @@ export const layer = Layer.effect(
       if (found?.version === InstallationVersion && compiled) return found.url
       if (found) yield* stopProcess(found).pipe(Effect.ignore)
 
-      const entrypoint = compiled ? undefined : process.argv[1]
-      if (!compiled && entrypoint === undefined)
+      const entrypoint = compiled ? Option.none<string>() : Option.fromNullishOr(process.argv[1])
+      if (!compiled && Option.isNone(entrypoint))
         return yield* Effect.fail(new EntrypointError({ message: "Failed to resolve CLI entrypoint" }))
+      // An empty entrypoint argument is left out of the spawn arguments.
+      const script = Option.toArray(Option.filter(entrypoint, (arg) => arg !== ""))
       yield* Effect.try({
         try: () => {
-          spawn(process.execPath, [...(entrypoint ? [entrypoint] : []), "serve", "--register"], {
+          spawn(process.execPath, [...script, "serve", "--register"], {
             detached: true,
             stdio: "ignore",
           }).unref()
