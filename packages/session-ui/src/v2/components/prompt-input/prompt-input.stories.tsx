@@ -168,11 +168,13 @@ function ControlledPromptInput() {
         onSelect(id) {
           const model = models.find((item) => item.id === id)
           if (!model) return
-          store.setModel({
-            providerID: model.providerID,
-            modelID: model.id,
-            variant: store.state.model?.variant,
-          })
+          store.setModel(
+            Option.some({
+              providerID: model.providerID,
+              modelID: model.id,
+              variant: store.state.model?.variant,
+            }),
+          )
         },
       },
       variant: {

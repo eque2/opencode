@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { PromptInputV2HistoryEntry, PromptInputV2PersistedState, PromptInputV2Suggestion } from "./types"
 
 export type PromptInputV2InteractionState = {
@@ -11,7 +12,7 @@ export type PromptInputV2InteractionState = {
   focus: "editor" | "command-search" | "external"
   activeContextID?: string
   historyIndex: number
-  savedHistory?: PromptInputV2HistoryEntry
+  savedHistory: Option.Option<PromptInputV2HistoryEntry>
 }
 
 export type PromptInputV2InteractionEvent =
@@ -53,6 +54,7 @@ export function createPromptInputV2InteractionState(): PromptInputV2InteractionS
     drag: "idle",
     focus: "external",
     historyIndex: -1,
+    savedHistory: Option.none(),
   }
 }
 
@@ -76,7 +78,8 @@ export function transitionPromptInputV2(
   if (event.type === "drag.leave") return changed({ ...state, drag: "idle" })
   if (event.type === "focus.editor") return changed({ ...state, focus: "editor" })
   if (event.type === "context.active") {
-    return changed({ ...state, activeContextID: state.activeContextID === event.id ? undefined : event.id })
+    const { activeContextID, ...rest } = state
+    return changed(activeContextID === event.id ? rest : { ...rest, activeContextID: event.id })
   }
   return changed({ ...state, focus: "external" })
 }
@@ -148,7 +151,7 @@ function openContext(
 function queryChanged(state: PromptInputV2InteractionState, query: string): PromptInputV2Transition {
   if (state.popover.type === "closed") return unchanged(state)
   const popover = state.popover.type === "context" ? "context" : "command"
-  return changed({ ...state, popover: { ...state.popover, query, activeID: undefined } }, [
+  return changed({ ...state, popover: { type: state.popover.type, query } }, [
     { type: "popover.filter", popover, query },
   ])
 }

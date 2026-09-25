@@ -92,25 +92,25 @@ export function PromptInputV2(props: PromptInputV2Props) {
         <PromptInputV2Popover
           emptyLabel={i18n.t("ui.promptInput.noMatchingItems")}
           items={props.controller.suggestions()}
-          activeID={state.popover.type === "closed" ? undefined : state.popover.activeID}
-          search={
-            state.popover.type === "command-menu"
-              ? {
+          {...(state.popover.type === "closed" ? {} : { activeID: state.popover.activeID })}
+          {...(state.popover.type === "command-menu"
+            ? {
+                search: {
                   value: state.popover.query,
                   label: i18n.t("ui.promptInput.commands"),
                   placeholder: "/",
                   onValueChange: props.controller.setQuery,
                   onKeyDown: props.controller.onKeyDown,
-                }
-              : undefined
-          }
+                },
+              }
+            : {})}
           onActiveChange={(item) => props.controller.dispatch({ type: "popover.active", id: item.id })}
           onSelect={(item) => props.controller.dispatch({ type: "popover.select", item })}
         />
       </Show>
       <form
         data-component="prompt-input-v2"
-        data-dock-border-underlay={props.borderUnderlay ? "v2" : undefined}
+        {...(props.borderUnderlay ? { "data-dock-border-underlay": "v2" } : {})}
         class="group/prompt-input relative min-h-[96px] w-full overflow-clip rounded-xl bg-v2-background-bg-base"
         classList={{
           "shadow-[var(--v2-elevation-raised)]": !props.borderUnderlay,
@@ -200,7 +200,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
           <div
             class="flex min-w-0 flex-1 items-center gap-1"
             aria-hidden={state.mode === "shell"}
-            inert={state.mode === "shell" ? true : undefined}
+            inert={state.mode === "shell"}
             style={buttons()}
           >
             <PromptInputV2AddMenu
@@ -694,7 +694,7 @@ export function PromptInputV2SubmitButton(props: {
         data-action="prompt-submit"
         type="button"
         disabled={!props.stopping && props.disabled}
-        tabIndex={props.mode === "normal" ? undefined : -1}
+        {...(props.mode === "normal" ? {} : { tabIndex: -1 })}
         icon={props.stopping ? "stop" : props.mode === "shell" ? "arrow-undo-down" : "arrow-up"}
         variant="primary"
         class="size-7 rounded-md p-[6px] text-v2-icon-icon-muted shadow-[var(--v2-elevation-button-contrast)] disabled:opacity-50"

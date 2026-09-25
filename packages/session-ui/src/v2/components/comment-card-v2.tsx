@@ -35,7 +35,7 @@ export function CommentCardV2(props: {
       openDelay={1000}
       value={props.title ?? props.comment}
       disabled={!props.tooltip || !truncated()}
-      class={props.wide ? "w-full" : undefined}
+      {...(props.wide ? { class: "w-full" } : {})}
       contentStyle={{ "max-width": "320px", "white-space": "pre-wrap" }}
     >
       <AttachmentCardV2

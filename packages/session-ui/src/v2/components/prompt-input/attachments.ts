@@ -110,19 +110,18 @@ export function createPromptInputV2Attachments(
       }
       const store = input.store
       const blob = store ? yield* Effect.promise(() => store(file)) : yield* blobReference(file)
-      const sourcePath = input.getPathForFile?.(file) || undefined
+      const sourcePath = Option.fromNullishOr(input.getPathForFile?.(file)).pipe(Option.filter((path) => path !== ""))
       // Native clipboard images arrive with a fresh timestamped filename on every paste, so identical
       // clipboard content is matched on bytes alone.
-      const duplicate = target.value.prompt
-        .current()
-        .some(
-          (part) =>
-            part.type === "image" &&
-            part.blob.id === blob.id &&
-            (sourcePath
-              ? part.sourcePath === sourcePath
-              : !part.sourcePath && (clipboard || part.filename === file.name)),
-        )
+      const duplicate = target.value.prompt.current().some(
+        (part) =>
+          part.type === "image" &&
+          part.blob.id === blob.id &&
+          Option.match(sourcePath, {
+            onSome: (path) => part.sourcePath === path,
+            onNone: () => !part.sourcePath && (clipboard || part.filename === file.name),
+          }),
+      )
       if (duplicate) {
         input.duplicate()
         return true
@@ -132,7 +131,7 @@ export function createPromptInputV2Attachments(
         type: "image",
         id,
         filename: file.name,
-        sourcePath,
+        sourcePath: Option.getOrUndefined(sourcePath),
         mime: mime.value,
         blob,
       }

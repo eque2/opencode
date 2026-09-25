@@ -99,7 +99,7 @@ describe("prompt input v2 store", () => {
 
     prompt.removeContext(context.key)
     prompt.setPrompt([{ type: "text", content: "old", start: 0, end: 3 }], 3)
-    prompt.setModel(undefined)
+    prompt.setModel(Option.none())
 
     expect(prompt.state.context.items).toEqual([])
     expect(prompt.state.prompt).toEqual([{ type: "text", content: "old", start: 0, end: 3 }])

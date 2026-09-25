@@ -61,8 +61,8 @@ export function createPromptInputV2Store(input: PromptInputV2StoreInput) {
         setStore()("cursor", 0)
       })
     },
-    setModel: (model: PromptInputV2Model | undefined) => {
-      setStore()("model", model)
+    setModel: (model: Option.Option<PromptInputV2Model>) => {
+      setStore()("model", Option.getOrUndefined(model))
     },
     setVariant: (variant: Option.Option<string>) => {
       if (store().model) setStore()("model", "variant", Option.getOrNull(variant))
