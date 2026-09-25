@@ -13,6 +13,7 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
+import { Array as Arr, HashMap } from "effect"
 
 export type SessionTab = {
   type: "session"
@@ -192,14 +193,11 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         return next
       },
       reorder(keys: string[]) {
-        setStore(
-          produce((tabs) => {
-            const byKey = new Map(tabs.map((tab) => [tabKey(tab), tab]))
-            const next = keys.map((key) => byKey.get(key)).filter((tab): tab is Tab => !!tab)
-            if (next.length !== tabs.length) return
-            tabs.splice(0, tabs.length, ...next)
-          }),
-        )
+        setStore((tabs) => {
+          const byKey = HashMap.fromIterable(tabs.map((tab) => [tabKey(tab), tab] as const))
+          const next = Arr.getSomes(keys.map((key) => HashMap.get(byKey, key)))
+          return next.length === tabs.length ? next : tabs
+        })
       },
       draft(draftID: string) {
         const tab = store.find((item) => item.type === "draft" && item.draftID === draftID)

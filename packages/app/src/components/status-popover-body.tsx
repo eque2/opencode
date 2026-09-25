@@ -35,20 +35,23 @@ const listServersByHealth = (
   status: Record<ServerConnection.Key, ServerHealth | undefined>,
 ) => {
   if (!list.length) return list
-  const order = new Map(list.map((url, index) => [url, index] as const))
   const rank = (value?: ServerHealth) => {
     if (value?.healthy === true) return 0
     if (value?.healthy === false) return 2
     return 1
   }
 
-  return list.slice().sort((a, b) => {
-    if (ServerConnection.key(a) === active) return -1
-    if (ServerConnection.key(b) === active) return 1
-    const diff = rank(status[ServerConnection.key(a)]) - rank(status[ServerConnection.key(b)])
-    if (diff !== 0) return diff
-    return (order.get(a) ?? 0) - (order.get(b) ?? 0)
-  })
+  // Each server carries its list position, so servers of equal rank keep the list order.
+  return list
+    .map((conn, index) => ({ conn, index }))
+    .sort((a, b) => {
+      if (ServerConnection.key(a.conn) === active) return -1
+      if (ServerConnection.key(b.conn) === active) return 1
+      const diff = rank(status[ServerConnection.key(a.conn)]) - rank(status[ServerConnection.key(b.conn)])
+      if (diff !== 0) return diff
+      return a.index - b.index
+    })
+    .map((item) => item.conn)
 }
 
 const useDefaultServerKey = (get: () => string | Promise<string | null | undefined> | null | undefined) => {
