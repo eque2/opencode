@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
-import { Array as Arr, MutableHashMap, Option } from "effect"
+import { Array as Arr, Effect, MutableHashMap, Option } from "effect"
 import { ServerScope } from "./server-scope"
 
 type PersistTestingType = typeof import("./persist").PersistTesting
@@ -69,16 +69,20 @@ let persistTesting: PersistTestingType
 let Persist: PersistType
 let removePersisted: RemovePersistedType
 
-beforeAll(async () => {
-  mock.module("@/context/platform", () => ({
-    usePlatform: () => ({ platform: "web" }),
-  }))
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@/context/platform", () => ({
+        usePlatform: () => ({ platform: "web" }),
+      }))
 
-  const mod = await import("./persist")
-  persistTesting = mod.PersistTesting
-  Persist = mod.Persist
-  removePersisted = mod.removePersisted
-})
+      const mod = yield* Effect.promise(() => import("./persist"))
+      persistTesting = mod.PersistTesting
+      Persist = mod.Persist
+      removePersisted = mod.removePersisted
+    }),
+  ),
+)
 
 beforeEach(() => {
   storage.clear()
