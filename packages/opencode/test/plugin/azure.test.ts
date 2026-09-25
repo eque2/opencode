@@ -234,7 +234,12 @@ describe("plugin.azure", () => {
     const authorization = await oauthMethod(hooks).authorize({ resourceName: "test-resource" })
     if (authorization.method !== "auto") throw new Error("Unexpected Azure authorization method")
 
-    await expect(authorization.callback()).rejects.toThrow("Azure CLI returned an invalid token expiration")
+    const failure: unknown = await authorization.callback().then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(failure).toMatchObject({ message: "Azure CLI returned an invalid token expiration" })
   })
 
   test("does not change API-key loading", async () => {
