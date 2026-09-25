@@ -10,7 +10,7 @@ import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
 import { type BaseRouterProps, Navigate, Route, Router, useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import { Effect } from "effect"
+import { Data, Effect } from "effect"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import {
   type Component,
@@ -392,6 +392,9 @@ export function AppBaseProviders(
   )
 }
 
+/** The startup promise that AppInterface received rejected. `cause` is the rejection. */
+class StartupGateError extends Data.TaggedError("App.StartupGateError")<{ readonly cause: unknown }> {}
+
 function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; startup?: Promise<void> }>) {
   const server = useServer()
   const checkServerHealth = useCheckServerHealth()
@@ -421,13 +424,19 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; start
   const checking = createMemo(
     () => checkMode() === "blocking" && ["unresolved", "pending"].includes(startupHealthCheck.state),
   )
-  const [startup] = createResource(async () => {
-    if (!props.startup) return true
-    await props.startup.catch((error) => {
-      console.error("[startup] startup gate failed", error)
-    })
-    return true
-  })
+  // The startup gate opens when the startup promise settles. A rejection is logged and still opens it.
+  const [startup] = createResource(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const gate = props.startup
+        if (!gate) return true
+        yield* Effect.tryPromise({ try: () => gate, catch: (cause) => new StartupGateError({ cause }) }).pipe(
+          Effect.catch((error) => Effect.logError("[startup] startup gate failed", error.cause)),
+        )
+        return true
+      }),
+    ),
+  )
   const startupChecking = createMemo(
     () => startupHealthCheck.latest === true && ["unresolved", "pending"].includes(startup.state),
   )
