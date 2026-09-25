@@ -27,7 +27,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function getText(value: unknown): string | undefined {
   if (typeof value === "string") {
     const text = value.trim()
-    return text.length > 0 ? text : undefined
+    if (text.length === 0) return undefined
+    return text
   }
 
   if (typeof value === "number") return String(value)
@@ -146,12 +147,9 @@ export const { use: useHighlights, provider: HighlightsProvider } = createSimple
     const platform = usePlatform()
     const dialog = useDialog()
     const settings = useSettings()
-    const [store, setStore, _, ready] = persisted("highlights.v1", createStore<Store>({ version: undefined }))
+    const [store, setStore, _, ready] = persisted("highlights.v1", createStore<Store>({}))
 
-    const [range, setRange] = createStore({
-      from: undefined as string | undefined,
-      to: undefined as string | undefined,
-    })
+    const [range, setRange] = createStore<{ from?: string; to?: string }>({})
     const state = { started: false }
 
     const markSeen = () => {
