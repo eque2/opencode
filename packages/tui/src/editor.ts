@@ -1,14 +1,39 @@
 import type { CliRenderer } from "@opentui/core"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { readFile, rm, writeFile } from "node:fs/promises"
+import { readdirSync, readFileSync, statSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import type { Stream } from "node:stream"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+import { Clock, Config, Effect, FileSystem, Option, Schema } from "effect"
 import type { EditorIntegration } from "./context/editor"
 import { resolveActiveZedSelection } from "./editor-zed"
 
 type EditorStdio = "inherit" | "pipe" | "ignore" | number | Stream
+
+const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
+
+// An empty variable counts as not set, as the former `||` chain did.
+const setVariable = (name: string) =>
+  Config.option(Config.String(name)).pipe(Config.map(Option.filter((value: string) => value.length > 0)))
+
+// VISUAL wins over EDITOR.
+const EditorCommandEnv = Config.all([setVariable("VISUAL"), setVariable("EDITOR")]).pipe(
+  Config.map(([visual, editor]) => Option.orElse(visual, () => editor)),
+)
+
+class EditorLaunchError extends Schema.TaggedError<EditorLaunchError>()("TuiEditor.LaunchError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
+class EditorExitError extends Schema.TaggedError<EditorExitError>()("TuiEditor.ExitError", {
+  message: Schema.String,
+}) {}
+
+type OpenEditorInput = { value: string; renderer: CliRenderer; cwd?: string; stdin?: EditorStdio }
 
 export function normalizePromptContent(content: string) {
   if (content.endsWith("\r\n")) {
@@ -24,34 +49,70 @@ export function normalizePromptContent(content: string) {
   return content
 }
 
-export async function openEditor(input: { value: string; renderer: CliRenderer; cwd?: string; stdin?: EditorStdio }) {
-  const editor = process.env.VISUAL || process.env.EDITOR
-  if (!editor) return
-  const file = path.join(os.tmpdir(), `${Date.now()}.md`)
-  await writeFile(file, input.value)
-  input.renderer.suspend()
-  input.renderer.currentRenderBuffer.clear()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const parts = editor.split(" ")
-      const child = spawn(parts[0]!, [...parts.slice(1), file], {
-        cwd: input.cwd && existsSync(input.cwd) ? input.cwd : process.cwd(),
-        stdio: [input.stdin ?? "inherit", "inherit", "inherit"],
-        shell: process.platform === "win32",
-      })
-      child.on("error", reject)
-      child.on("exit", (code, signal) => {
-        if (code === 0) return resolve()
-        reject(new Error(`Editor exited with ${signal ? `signal ${signal}` : `code ${code}`}`))
-      })
+/**
+ * Opens `input.value` in $VISUAL or $EDITOR and resolves the edited text. It resolves undefined when neither
+ * variable is set or the edited file is empty. It rejects when the editor cannot start or exits with an error.
+ */
+export function openEditor(input: OpenEditorInput): Promise<string | undefined> {
+  return Effect.runPromise(editInEditor(input).pipe(Effect.map(Option.getOrUndefined)))
+}
+
+const editInEditor = Effect.fn("TuiEditor.openEditor")(function* (input: OpenEditorInput) {
+  const command = yield* readEnvSnapshot(EditorCommandEnv)
+  if (Option.isNone(command)) return Option.none<string>()
+
+  const fs = yield* FileSystem.FileSystem
+  const file = path.join(os.tmpdir(), `${yield* Clock.currentTimeMillis}.md`)
+  yield* fs.writeFileString(file, input.value)
+  const cwdExists = input.cwd ? yield* fs.exists(input.cwd).pipe(Effect.orElseSucceed(() => false)) : false
+  const cwd = input.cwd && cwdExists ? input.cwd : process.cwd()
+
+  return yield* Effect.acquireUseRelease(
+    Effect.sync(() => {
+      input.renderer.suspend()
+      input.renderer.currentRenderBuffer.clear()
+    }),
+    () =>
+      runEditor(command.value, file, cwd, input.stdin).pipe(
+        Effect.andThen(fs.readFileString(file)),
+        Effect.map(Option.liftPredicate((content: string) => content.length > 0)),
+      ),
+    () =>
+      fs.remove(file, { force: true }).pipe(
+        Effect.ignore,
+        Effect.andThen(
+          Effect.sync(() => {
+            input.renderer.currentRenderBuffer.clear()
+            input.renderer.resume()
+            input.renderer.requestRender()
+          }),
+        ),
+      ),
+  )
+}, Effect.provide(filesystem))
+
+// Runs the editor command on the file and waits for the editor to exit. The first word of the command is the
+// program, and the other words are its arguments.
+function runEditor(command: string, file: string, cwd: string, stdin: EditorStdio | undefined) {
+  return Effect.callback<void, EditorLaunchError | EditorExitError>((resume) => {
+    const parts = command.split(" ")
+    const child = spawn(parts[0], [...parts.slice(1), file], {
+      cwd,
+      stdio: [stdin ?? "inherit", "inherit", "inherit"],
+      shell: process.platform === "win32",
     })
-    return (await readFile(file, "utf8")) || undefined
-  } finally {
-    await rm(file, { force: true }).catch(() => {})
-    input.renderer.currentRenderBuffer.clear()
-    input.renderer.resume()
-    input.renderer.requestRender()
-  }
+    child.on("error", (cause) => {
+      resume(Effect.fail(new EditorLaunchError({ message: cause.message, cause })))
+    })
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resume(Effect.void)
+        return
+      }
+      const reason = signal ? `signal ${signal}` : `code ${code}`
+      resume(Effect.fail(new EditorExitError({ message: `Editor exited with ${reason}` })))
+    })
+  })
 }
 
 export function discoverEditorConnection(directory: string) {
