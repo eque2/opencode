@@ -5,12 +5,12 @@ import { ProjectDirectoryTable, ProjectTable } from "@opencode-ai/core/project/s
 import { ProjectDirectories } from "@opencode-ai/core/project/directories"
 import { SessionTable } from "@opencode-ai/core/session/sql"
 import { WorkspaceTable } from "@opencode-ai/core/control-plane/workspace.sql"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
 import { Command } from "@/command"
 import { InstanceState } from "@/effect/instance-state"
-import { Effect, Layer, Scope, Context, Stream, Types, Schema } from "effect"
+import { Effect, Layer, Scope, Context, Stream, Types, Schema, Option } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -139,7 +139,12 @@ const layer = Layer.effect(
         }),
       )
 
-    const fakeVcs = Schema.decodeUnknownSync(Schema.optional(Project.Vcs))(Flag.OPENCODE_FAKE_VCS)
+    const fakeVcs = Option.getOrUndefined(
+      yield* FlagConfig.OPENCODE_FAKE_VCS.pipe(
+        Effect.flatMap((value) => Effect.transposeOption(Option.map(value, Schema.decodeUnknownEffect(Project.Vcs)))),
+        Effect.orDie,
+      ),
+    )
 
     const scope = yield* Scope.Scope
 
