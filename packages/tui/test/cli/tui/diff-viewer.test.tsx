@@ -31,7 +31,7 @@ test("closing the diff viewer returns to the route it opened from", async () => 
     expect(viewer.vcsDiffInput()).toEqual({ directory: "/repo/session", mode: "git", context: "12" })
 
     expect(viewer.commands.has("diff.close")).toBe(true)
-    viewer.run("diff.close")
+    await viewer.run("diff.close")
     expect(viewer.current()).toEqual(startRoute)
   } finally {
     viewer.app.renderer.destroy()
@@ -77,26 +77,26 @@ test("brackets navigate diff hunks", async () => {
     expect(TuiKeybind.defaultValue("diff_next_hunk")).toBe("]")
     expect(TuiKeybind.defaultValue("diff_previous_hunk")).toBe("[")
 
-    viewer.run("diff.next_hunk")
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     const first = scroll.scrollTop
     expect(first).toBeGreaterThan(initial)
 
-    viewer.run("diff.next_hunk")
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     const second = scroll.scrollTop
     expect(second).toBeGreaterThan(first)
 
-    viewer.run("diff.previous_hunk")
+    await viewer.run("diff.previous_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(first)
 
-    viewer.run("diff.next_hunk")
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(second)
 
     scroll.scrollTo(initial)
-    viewer.run("diff.next_hunk")
+    await viewer.run("diff.next_hunk")
     await viewer.app.renderOnce()
     expect(scroll.scrollTop).toBe(first)
   } finally {
@@ -167,7 +167,8 @@ async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: 
     } satisfies TuiPluginApi
 
     void diffViewerPlugin.tui(api, undefined, pluginMeta)
-    if (!initialRoute) commands.get("diff.open")?.run?.(commandContext)
+    // The component body is synchronous, and diff.open navigates synchronously before the route renders below.
+    if (!initialRoute) void commands.get("diff.open")?.run?.(commandContext)
 
     return (
       <TestTuiContexts>
@@ -192,10 +193,10 @@ async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: 
     current: () => current,
     vcsDiffInput: () => vcsDiffInput,
     sessionDiffInput: () => sessionDiffInput,
-    run: (name: string) => {
+    run: async (name: string) => {
       const command = commands.get(name)
       if (!command?.run || !context) throw new Error(`command ${name} is not registered`)
-      return command.run(context)
+      await command.run(context)
     },
   }
 }
