@@ -5,7 +5,7 @@ import { createStore } from "solid-js/store"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import type { IconProps } from "@opencode-ai/ui/icon"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
-import { Chunk, Option } from "effect"
+import { Chunk, Option, Predicate } from "effect"
 
 export type TriggerTitle = {
   title: string
@@ -17,9 +17,12 @@ export type TriggerTitle = {
   action?: JSX.Element
 }
 
-const isTriggerTitle = (val: any): val is TriggerTitle => {
+const isTriggerTitle = (val: unknown): val is TriggerTitle => {
   return (
-    typeof val === "object" && val !== null && "title" in val && (typeof Node === "undefined" || !(val instanceof Node))
+    typeof val === "object" &&
+    Predicate.isNotNull(val) &&
+    "title" in val &&
+    (typeof Node === "undefined" || !(val instanceof Node))
   )
 }
 
@@ -106,22 +109,25 @@ export function BasicTool(props: BasicToolProps) {
   const ready = () => state.ready
   const pending = () => props.status === "pending" || props.status === "running"
   const hasChildren = () => (props.defer ? "children" in props : props.children)
-  const dynamicTrigger = typeof props.trigger === "function" ? props.trigger(open) : undefined
+  const dynamicTrigger =
+    typeof props.trigger === "function" ? Option.fromUndefinedOr(props.trigger(open)) : Option.none<JSX.Element>()
 
-  let cancelReady: (() => void) | undefined
+  let cancelReady: Option.Option<() => void> = Option.none()
 
   const cancel = () => {
-    cancelReady?.()
-    cancelReady = undefined
+    if (Option.isSome(cancelReady)) cancelReady.value()
+    cancelReady = Option.none()
   }
 
   const scheduleReady = (initial = false) => {
     cancel()
-    cancelReady = (initial ? scheduleDeferredMount : scheduleFrameMount)(() => {
-      cancelReady = undefined
-      if (!open()) return
-      setState("ready", true)
-    })
+    cancelReady = Option.some(
+      (initial ? scheduleDeferredMount : scheduleFrameMount)(() => {
+        cancelReady = Option.none()
+        if (!open()) return
+        setState("ready", true)
+      }),
+    )
   }
 
   onCleanup(cancel)
@@ -199,13 +205,13 @@ export function BasicTool(props: BasicToolProps) {
   const trigger = () => (
     <div
       data-component="tool-trigger"
-      data-clickable={props.clickable ? "true" : undefined}
-      data-hide-details={props.hideDetails ? "true" : undefined}
+      {...(props.clickable ? { "data-clickable": "true" } : {})}
+      {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
     >
       <div data-slot="basic-tool-tool-trigger-content">
         <div data-slot="basic-tool-tool-info">
           <Switch>
-            <Match when={dynamicTrigger !== undefined}>{dynamicTrigger}</Match>
+            <Match when={Option.isSome(dynamicTrigger)}>{Option.getOrUndefined(dynamicTrigger)}</Match>
             <Match when={isTriggerTitle(props.trigger) && props.trigger}>
               {(title) => (
                 <div data-slot="basic-tool-tool-info-structured">
@@ -274,7 +280,7 @@ export function BasicTool(props: BasicToolProps) {
         when={props.triggerAsLink || props.triggerHref}
         fallback={
           <Collapsible.Trigger
-            data-hide-details={props.hideDetails ? "true" : undefined}
+            {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
             onClick={props.onTriggerClick}
           >
             {trigger()}
@@ -284,9 +290,8 @@ export function BasicTool(props: BasicToolProps) {
         <Collapsible.Trigger
           as="a"
           href={props.triggerHref}
-          role={!props.triggerHref && props.clickable ? "button" : undefined}
-          tabIndex={!props.triggerHref && props.clickable ? 0 : undefined}
-          data-hide-details={props.hideDetails ? "true" : undefined}
+          {...(!props.triggerHref && props.clickable ? { role: "button", tabIndex: 0 } : {})}
+          {...(props.hideDetails ? { "data-hide-details": "true" } : {})}
           onClick={props.onTriggerClick}
           onKeyDown={props.onTriggerKeyDown}
         >
