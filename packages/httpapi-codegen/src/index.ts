@@ -523,6 +523,18 @@ function renderImportedProjection(
   )
 }
 
+// The Promise emitter writes a zero-Effect runtime over fetch, because the package root that exports it must not
+// import effect. Each Effect lint finding in that runtime keeps its construct and carries a per-line directive whose
+// reason starts with its exception category.
+const promiseRuntimeReason =
+  "(c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle"
+const asyncAwaitRule = "effect/no-async-await-use-effect"
+
+const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
+  `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
+
+const runtimeDirective = (...rules: ReadonlyArray<string>) => eslintDirective(rules, promiseRuntimeReason)
+
 function renderPromiseTypes(
   groups: ReadonlyArray<Group>,
   options: PromiseOptions | undefined,
@@ -715,43 +727,59 @@ export function make(options: ClientOptions) {
     }
   }
 
+  ${runtimeDirective(asyncAwaitRule)}
   const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
     try {
       const prepared = prepare(descriptor, requestOptions)
+      ${runtimeDirective(asyncAwaitRule)}
       return await fetch(prepared.url, prepared.init)
     } catch (cause) {
       throw new ClientError("Transport", { cause })
     }
   }
 
+  ${runtimeDirective(asyncAwaitRule)}
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
+    ${runtimeDirective(asyncAwaitRule)}
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
     try {
+      ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
     } catch {}
     throw new ClientError("UnexpectedStatus", { cause: { status: response.status } })
   }
 
+  ${runtimeDirective(asyncAwaitRule)}
   const request = async <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<A> => {
+    ${runtimeDirective(asyncAwaitRule)}
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
-    return await json(response) as A
+    ${runtimeDirective(asyncAwaitRule)}
+    const body = await json(response)
+    return body as A
   }
 
+  ${runtimeDirective(asyncAwaitRule)}
   const requestEmpty = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions): Promise<void> => {
+    ${runtimeDirective(asyncAwaitRule)}
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
     try {
+      ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
     } catch {}
   }
 
   const sse = <A>(descriptor: RequestDescriptor, requestOptions?: RequestOptions): AsyncIterable<A> => ({
+    ${runtimeDirective(asyncAwaitRule)}
     async *[Symbol.asyncIterator]() {
+      ${runtimeDirective(asyncAwaitRule)}
       const response = await execute(descriptor, requestOptions)
+      ${runtimeDirective(asyncAwaitRule)}
       if (response.status !== descriptor.successStatus) await responseError(response, descriptor)
       if (!isContentType(response, "text/event-stream")) {
         try {
+          ${runtimeDirective(asyncAwaitRule)}
           await response.body?.cancel()
         } catch {}
         throw new ClientError("UnsupportedContentType")
@@ -764,6 +792,7 @@ export function make(options: ClientOptions) {
         while (true) {
           let next: ReadableStreamReadResult<Uint8Array>
           try {
+            ${runtimeDirective(asyncAwaitRule)}
             next = await reader.read()
           } catch (cause) {
             throw new ClientError("Transport", { cause })
@@ -793,6 +822,7 @@ export function make(options: ClientOptions) {
         }
       } finally {
         try {
+          ${runtimeDirective(asyncAwaitRule)}
           await reader.cancel()
         } catch {}
         reader.releaseLock()
@@ -820,15 +850,18 @@ function isPrimitive(value: unknown): value is string | number | boolean | bigin
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
 }
 
+${runtimeDirective(asyncAwaitRule)}
 async function json(response: Response): Promise<unknown> {
   if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {
     try {
+      ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
     } catch {}
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
   try {
+    ${runtimeDirective(asyncAwaitRule)}
     text = await response.text()
   } catch (cause) {
     throw new ClientError("Transport", { cause })
