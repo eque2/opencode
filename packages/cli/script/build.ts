@@ -20,12 +20,12 @@ const skipInstall = process.argv.includes("--skip-install")
 const sourcemapsFlag = process.argv.includes("--sourcemaps")
 const plugin = createSolidTransformPlugin()
 
-const allTargets: {
-  os: string
-  arch: "arm64" | "x64"
-  abi?: "musl"
-  avx2?: false
-}[] = [
+// Each target maps to one Bun compile target. Only linux has a libc variant,
+// and only x64 has a baseline (no AVX2) variant.
+type Target = ({ os: "linux"; abi?: "musl" } | { os: "darwin" | "win32"; abi?: never }) &
+  ({ arch: "arm64"; avx2?: never } | { arch: "x64"; avx2?: false })
+
+const allTargets: Target[] = [
   { os: "linux", arch: "arm64" },
   { os: "linux", arch: "x64" },
   { os: "linux", arch: "x64", avx2: false },
@@ -50,17 +50,17 @@ const targets = singleFlag
 
 if (!skipInstall) await $`bun install --os="*" --cpu="*" @opentui/core@${pkg.dependencies["@opentui/core"]}`
 
+function compileTarget(item: Target): Bun.Build.CompileTarget {
+  if (item.os === "win32") return item.avx2 === false ? `bun-windows-${item.arch}-baseline` : `bun-windows-${item.arch}`
+  const simd = item.avx2 === false ? "-baseline" : ""
+  if (item.os === "darwin") return `bun-darwin-${item.arch}${simd}`
+  const libc = item.abi === "musl" ? "-musl" : ""
+  return `bun-linux-${item.arch}${simd}${libc}`
+}
+
 for (const item of targets) {
-  const target = [
-    binary,
-    item.os === "win32" ? "windows" : item.os,
-    item.arch,
-    item.avx2 === false ? "baseline" : undefined,
-    item.abi,
-  ]
-    .filter(Boolean)
-    .join("-")
-  const name = target.replace(binary, "cli")
+  const target = compileTarget(item)
+  const name = target.replace("bun", "cli")
   console.log(`building ${name}`)
   const result = await Bun.build({
     entrypoints: ["./src/index.ts"],
@@ -76,7 +76,7 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: target.replace(binary, "bun") as Bun.Build.CompileTarget,
+      target,
       outfile: `./dist/${name}/bin/${binary}`,
       execArgv: [`--user-agent=${binary}/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
