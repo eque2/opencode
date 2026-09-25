@@ -693,14 +693,14 @@ export function MessageTimeline(props: {
   const shareMutation = useMutation(() => ({
     mutationFn: (id: string) => serverSDK().client.session.share({ sessionID: id }),
     onError: (err) => {
-      console.error("Failed to share session", err)
+      Effect.runFork(Effect.logError("Failed to share session", err))
     },
   }))
 
   const unshareMutation = useMutation(() => ({
     mutationFn: (id: string) => serverSDK().client.session.unshare({ sessionID: id }),
     onError: (err) => {
-      console.error("Failed to unshare session", err)
+      Effect.runFork(Effect.logError("Failed to unshare session", err))
     },
   }))
 
