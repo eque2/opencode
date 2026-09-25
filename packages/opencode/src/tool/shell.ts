@@ -260,12 +260,17 @@ const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boole
   return tree
 })
 
-const ask = Effect.fn("ShellTool.ask")(function* (ctx: Tool.Context, scan: Scan, input: { command: string }) {
+const ask = Effect.fn("ShellTool.ask")(function* (
+  fs: FSUtil.Interface,
+  ctx: Tool.Context,
+  scan: Scan,
+  input: { command: string },
+) {
   if (scan.dirs.size > 0) {
     const directories = Array.from(scan.dirs)
-    const globs = directories.map((dir) => {
-      if (process.platform === "win32") return FSUtil.normalizePathPattern(path.join(dir, "*"))
-      return path.join(dir, "*")
+    const globs = yield* Effect.forEach(directories, (dir) => {
+      if (process.platform === "win32") return fs.normalizePathPattern(path.join(dir, "*"))
+      return Effect.succeed(path.join(dir, "*"))
     })
     yield* ctx.ask({
       permission: "external_directory",
@@ -352,7 +357,7 @@ export const ShellTool = Tool.define(
         .pipe(Effect.catch(() => Effect.succeed([] as string[])))
       const file = lines[0]?.trim()
       if (!file) return
-      return FSUtil.normalizePath(file)
+      return yield* fs.normalizePath(file)
     })
 
     const resolvePath = Effect.fn("ShellTool.resolvePath")(function* (text: string, root: string, shell: string) {
@@ -361,7 +366,7 @@ export const ShellTool = Tool.define(
           const file = yield* cygpath(shell, text)
           if (file) return file
         }
-        return FSUtil.normalizePath(path.resolve(root, FSUtil.windowsPath(text)))
+        return yield* fs.normalizePath(path.resolve(root, FSUtil.windowsPath(text)))
       }
       return path.resolve(root, text)
     })
@@ -597,7 +602,7 @@ export const ShellTool = Tool.define(
     return () =>
       Effect.gen(function* () {
         const cfg = yield* config.get()
-        const shell = Shell.acceptable(cfg.shell)
+        const shell = yield* Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
         const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
@@ -624,7 +629,7 @@ export const ShellTool = Tool.define(
                   )
                   const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
                   if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
-                  yield* ask(ctx, scan, params)
+                  yield* ask(fs, ctx, scan, params)
                 }),
               )
 

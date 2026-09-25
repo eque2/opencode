@@ -1,7 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Effect, Exit, Layer } from "effect"
+import { Cause, Effect, Exit, Layer, Option } from "effect"
 import type * as Scope from "effect/Scope"
 import os from "os"
 import path from "path"
@@ -87,15 +87,14 @@ const quote = (text: string) => `"${text}"`
 const squote = (text: string) => `'${text}'`
 const projectRoot = path.join(__dirname, "../..")
 const bin = quote(process.execPath.replaceAll("\\", "/"))
-const bash = (() => {
-  const shell = Shell.acceptable()
-  if (Shell.name(shell) === "bash") return shell
-  return Shell.gitbash()
-})()
+const acceptableShell = await Effect.runPromise(Shell.acceptable())
+const bash =
+  Shell.name(acceptableShell) === "bash"
+    ? acceptableShell
+    : Option.getOrUndefined(await Effect.runPromise(Shell.gitbash()))
 const shells = (() => {
   if (process.platform !== "win32") {
-    const shell = Shell.acceptable()
-    return [{ label: Shell.name(shell), shell }]
+    return [{ label: Shell.name(acceptableShell), shell: acceptableShell }]
   }
 
   const list = [bash, Bun.which("pwsh"), Bun.which("powershell"), process.env.COMSPEC || Bun.which("cmd.exe")]
@@ -110,18 +109,16 @@ const PS = new Set(["pwsh", "powershell"])
 const ps = shells.filter((item) => PS.has(item.label))
 const cmdShell = shells.find((item) => item.label === "cmd")
 
-const sh = () => Shell.name(Shell.acceptable())
-const evalarg = (text: string) => (sh() === "cmd" ? quote(text) : squote(text))
-
-const fill = (mode: "lines" | "bytes", n: number) => {
+const fill = Effect.fn("ShellToolTest.fill")(function* (mode: "lines" | "bytes", n: number) {
+  const sh = Shell.name(yield* Shell.acceptable())
   const code =
     mode === "lines"
       ? "console.log(Array.from({length:Number(Bun.argv[1])},(_,i)=>i+1).join(String.fromCharCode(10)))"
       : "process.stdout.write(String.fromCharCode(97).repeat(Number(Bun.argv[1])))"
-  const text = `${bin} -e ${evalarg(code)} ${n}`
-  if (PS.has(sh())) return `& ${text}`
+  const text = `${bin} -e ${sh === "cmd" ? quote(code) : squote(code)} ${n}`
+  if (PS.has(sh)) return `& ${text}`
   return text
-}
+})
 const glob = (p: string) =>
   process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
 
@@ -201,7 +198,7 @@ describe("tool.shell", () => {
         tmp,
         Effect.gen(function* () {
           const bash = yield* initBash()
-          const fallback = Shell.name(Shell.acceptable("fish"))
+          const fallback = Shell.name(yield* Shell.acceptable("fish"))
           expect(fallback).not.toBe("fish")
           expect(bash.description).toContain(fallback)
 
@@ -1138,7 +1135,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const lineCount = Truncate.MAX_LINES + 500
         const result = yield* run({
-          command: fill("lines", lineCount),
+          command: yield* fill("lines", lineCount),
         })
         mustTruncate(result)
         expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
@@ -1153,7 +1150,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const byteCount = Truncate.MAX_BYTES + 10000
         const result = yield* run({
-          command: fill("bytes", byteCount),
+          command: yield* fill("bytes", byteCount),
         })
         mustTruncate(result)
         expect(result.output).toMatch(/\.\.\.output truncated\.\.\./)
@@ -1167,7 +1164,7 @@ describe("tool.shell truncation", () => {
       projectRoot,
       Effect.gen(function* () {
         const result = yield* run({
-          command: fill("lines", 1),
+          command: yield* fill("lines", 1),
         })
         expect((result.metadata as { truncated?: boolean }).truncated).toBe(false)
         expect(result.output).toContain("1")
@@ -1181,7 +1178,7 @@ describe("tool.shell truncation", () => {
       Effect.gen(function* () {
         const lineCount = Truncate.MAX_LINES + 100
         const result = yield* run({
-          command: fill("lines", lineCount),
+          command: yield* fill("lines", lineCount),
         })
         mustTruncate(result)
 
