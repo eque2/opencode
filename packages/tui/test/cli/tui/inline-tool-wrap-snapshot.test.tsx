@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { createSignal, For, Show } from "solid-js"
 import type { BoxRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { testRender, type JSX } from "@opentui/solid"
@@ -254,8 +255,8 @@ describe("TUI inline tool wrapping", () => {
       { status: "pending", content: "Safe" },
     ])
     expect(parseQuestions([{}, { question: 1 }, { question: "Continue?" }])).toEqual([{ question: "Continue?" }])
-    expect(parseQuestionAnswers([null, ["yes", 1], "no"])).toEqual([[], ["yes"], []])
-    expect(parseQuestionAnswers({})).toBeUndefined()
+    expect(parseQuestionAnswers([null, ["yes", 1], "no"])).toEqual(Option.some([[], ["yes"], []]))
+    expect(Option.isNone(parseQuestionAnswers({}))).toBe(true)
   })
 
   test("ignores diagnostics with malformed nested ranges", () => {

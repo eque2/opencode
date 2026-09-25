@@ -96,21 +96,23 @@ export const alwaysSeparate = new WeakSet<BoxRenderable>()
 
 type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
 
-function goUpsellKeys(action: RetryAction) {
-  if (!action) return
-  if (!HashSet.has(GO_UPSELL_PROVIDERS, action.provider)) return
+// The KV keys that throttle the Go upsell for a retry action, or none when the action gets no upsell.
+function goUpsellKeys(action: RetryAction): Option.Option<{ lastSeenAt: string; dontShow: string }> {
+  if (!action) return Option.none()
+  if (!HashSet.has(GO_UPSELL_PROVIDERS, action.provider)) return Option.none()
   if (action.reason === "free_tier_limit") {
-    return {
+    return Option.some({
       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
       dontShow: GO_UPSELL_FREE_TIER_DONT_SHOW,
-    }
+    })
   }
   if (action.reason === "account_rate_limit") {
-    return {
+    return Option.some({
       lastSeenAt: GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT,
       dontShow: GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW,
-    }
+    })
   }
+  return Option.none()
 }
 
 const sessionBindingCommands = [
@@ -363,8 +365,9 @@ export function Session() {
     if (!evt.properties.status.action) return
     if (dialog.stack.length > 0) return
 
-    const keys = goUpsellKeys(evt.properties.status.action)
-    if (!keys) return
+    const upsell = goUpsellKeys(evt.properties.status.action)
+    if (Option.isNone(upsell)) return
+    const keys = upsell.value
 
     const seen = kv.get(keys.lastSeenAt)
     if (typeof seen === "number" && DateTime.toEpochMillis(DateTime.nowUnsafe()) - seen < GO_UPSELL_WINDOW) return
@@ -1161,17 +1164,17 @@ export function Session() {
       .filter((message) => message.role === "user")
   })
 
-  const revert = createMemo(() => {
-    const info = revertInfo()
-    if (!info) return
-    if (!info.messageID) return
-    return {
-      messageID: info.messageID,
-      reverted: revertRevertedMessages(),
-      diff: info.diff,
-      diffFiles: revertDiffFiles(),
-    }
-  })
+  const revert = createMemo(() =>
+    Option.fromNullishOr(revertInfo()).pipe(
+      Option.filter((info) => Boolean(info.messageID)),
+      Option.map((info) => ({
+        messageID: info.messageID,
+        reverted: revertRevertedMessages(),
+        diff: info.diff,
+        diffFiles: revertDiffFiles(),
+      })),
+    ),
+  )
 
   // snap to bottom when session changes
   createEffect(on(() => route.sessionID, toBottom))
@@ -1221,8 +1224,10 @@ export function Session() {
                 <For each={messages()}>
                   {(message, index) => (
                     <Switch>
-                      <Match when={message.id === revert()?.messageID}>
-                        {(function () {
+                      <Match
+                        when={Option.getOrUndefined(Option.filter(revert(), (value) => value.messageID === message.id))}
+                      >
+                        {(reverted) => {
                           const redoShortcut = useCommandShortcut("session.redo")
                           const [hover, setHover] = createSignal(false)
                           const dialog = useDialog()
@@ -1255,13 +1260,13 @@ export function Session() {
                                 paddingLeft={2}
                                 backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
                               >
-                                <text fg={theme.textMuted}>{revert()!.reverted.length} message reverted</text>
+                                <text fg={theme.textMuted}>{reverted().reverted.length} message reverted</text>
                                 <text fg={theme.textMuted}>
                                   <span style={{ fg: theme.text }}>{redoShortcut()}</span> or /redo to restore
                                 </text>
-                                <Show when={revert()!.diffFiles?.length}>
+                                <Show when={reverted().diffFiles?.length}>
                                   <box marginTop={1}>
-                                    <For each={revert()!.diffFiles}>
+                                    <For each={reverted().diffFiles}>
                                       {(file) => (
                                         <text fg={theme.text}>
                                           {file.filename}
@@ -1279,10 +1284,10 @@ export function Session() {
                               </box>
                             </box>
                           )
-                        })()}
+                        }}
                       </Match>
                       <Match
-                        when={revert()?.messageID && revertMessageIndex() !== -1 && index() >= revertMessageIndex()}
+                        when={Option.isSome(revert()) && revertMessageIndex() !== -1 && index() >= revertMessageIndex()}
                       >
                         <></>
                       </Match>
@@ -2084,25 +2089,20 @@ function Shell(props: ToolProps) {
     return collapsed().output
   })
 
-  const workdirDisplay = createMemo(() => {
-    const workdir = stringValue(props.input.workdir)
-    if (!workdir || workdir === ".") return undefined
-    const formatted = pathFormatter.format(workdir)
-    if (formatted === ".") return undefined
-    return formatted
-  })
-
+  // The block title names the working directory only when it is not the session directory.
   const title = createMemo(() => {
-    const wd = workdirDisplay()
-    if (!wd) return
-    return `# Running in ${wd}`
+    const workdir = stringValue(props.input.workdir)
+    if (!workdir || workdir === ".") return Option.none()
+    const formatted = pathFormatter.format(workdir)
+    if (!formatted || formatted === ".") return Option.none()
+    return Option.some(`# Running in ${formatted}`)
   })
 
   return (
     <Switch>
       <Match when={stringValue(props.metadata.output) !== undefined}>
         <BlockTool
-          title={title()}
+          {...Option.match(title(), { onNone: () => ({}), onSome: (value) => ({ title: value }) })}
           part={props.part}
           onClick={collapsed().overflow ? () => setExpanded((prev) => !prev) : undefined}
         >
@@ -2274,8 +2274,7 @@ function Task(props: ToolProps) {
   })
   const retry = createMemo(() => {
     const value = status()
-    if (value?.type !== "retry") return
-    return value
+    return value?.type === "retry" ? Option.some(value) : Option.none()
   })
 
   const duration = createMemo(() => {
@@ -2297,8 +2296,8 @@ function Task(props: ToolProps) {
     ]
 
     const retrying = retry()
-    if (isRunning() && retrying) {
-      content.push(`↳ ${formatSubagentRetry(retrying.attempt, Locale.truncate(retrying.message, 80))}`)
+    if (isRunning() && Option.isSome(retrying)) {
+      content.push(`↳ ${formatSubagentRetry(retrying.value.attempt, Locale.truncate(retrying.value.message, 80))}`)
     } else if (isRunning() && tools().length > 0) {
       if (current()) {
         const state = current()!.state
@@ -2318,7 +2317,7 @@ function Task(props: ToolProps) {
     <InlineTool
       icon={props.part.state.status === "completed" ? "✓" : "│"}
       separate={true}
-      color={retry() ? theme.error : undefined}
+      {...(Option.isSome(retry()) ? { color: theme.error } : {})}
       spinner={isRunning()}
       complete={stringValue(props.input.description)}
       pending="Delegating…"
@@ -2328,7 +2327,7 @@ function Task(props: ToolProps) {
           navigate({ type: "session", sessionID: sessionID()! })
         }
         const status = retry()
-        if (status) void DialogAlert.show(dialog, "Retry Error", status.message)
+        if (Option.isSome(status)) void DialogAlert.show(dialog, "Retry Error", status.value.message)
       }}
     >
       {content()}
@@ -2353,7 +2352,7 @@ export function formatCompletedSubagentDetail(toolcalls: number, duration: strin
   return `${formatSubagentToolcalls(toolcalls)} · ${duration}`
 }
 
-type ExecuteCall = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
+type ExecuteCall = { tool: string; status: "running" | "completed" | "error"; input: Record<string, unknown> }
 
 function isExecuteStatus(value: unknown): value is ExecuteCall["status"] {
   return value === "running" || value === "completed" || value === "error"
@@ -2362,11 +2361,11 @@ function isExecuteStatus(value: unknown): value is ExecuteCall["status"] {
 function executeCalls(value: unknown): ExecuteCall[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((call) => {
-    const item = recordValue(call)
-    const tool = stringValue(item?.tool)
-    const status = item?.status
+    const item = fieldsOf(call)
+    const tool = stringValue(item.tool)
+    const status = item.status
     if (!tool || !isExecuteStatus(status)) return []
-    return [{ tool, status, input: recordValue(item?.input) }]
+    return [{ tool, status, input: fieldsOf(item.input) }]
   })
 }
 
@@ -2384,7 +2383,7 @@ function Execute(props: ToolProps) {
     const lines = [
       "execute",
       ...calls().map((call) => {
-        const args = input(call.input ?? {})
+        const args = input(call.input)
         return `↳ ${call.tool}${args ? ` ${args}` : ""}${call.status === "error" ? " (failed)" : ""}`
       }),
     ]
@@ -2574,26 +2573,28 @@ function Question(props: ToolProps) {
   const answers = createMemo(() => parseQuestionAnswers(props.metadata.answers))
   const count = createMemo(() => questions().length)
 
-  function format(answer?: ReadonlyArray<string>) {
-    if (!answer?.length) return "(no answer)"
+  function format(answer: ReadonlyArray<string>) {
+    if (!answer.length) return "(no answer)"
     return answer.join(", ")
   }
 
   return (
     <Switch>
-      <Match when={answers()}>
-        <BlockTool title="# Questions" part={props.part}>
-          <box gap={1}>
-            <For each={questions()}>
-              {(q, i) => (
-                <box flexDirection="column">
-                  <text fg={theme.textMuted}>{q.question}</text>
-                  <text fg={theme.text}>{format(answers()?.[i()])}</text>
-                </box>
-              )}
-            </For>
-          </box>
-        </BlockTool>
+      <Match when={Option.getOrUndefined(answers())}>
+        {(all) => (
+          <BlockTool title="# Questions" part={props.part}>
+            <box gap={1}>
+              <For each={questions()}>
+                {(q, i) => (
+                  <box flexDirection="column">
+                    <text fg={theme.textMuted}>{q.question}</text>
+                    <text fg={theme.text}>{format(all().at(i()) ?? [])}</text>
+                  </box>
+                )}
+              </For>
+            </box>
+          </BlockTool>
+        )}
       </Match>
       <Match when={true}>
         <InlineTool icon="→" pending="Asking questions…" complete={count()} part={props.part}>
@@ -2689,16 +2690,22 @@ export function toolDisplay(tool: string) {
   return HashSet.has(toolDisplays, tool) ? tool : "generic"
 }
 
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  if (!Predicate.isObject(value)) return
-  return value
+// Tool metadata arrives as unknown wire data. A value is a record only when it is a non-null, non-array object.
+function recordValue(value: unknown): Option.Option<Record<string, unknown>> {
+  return Option.liftPredicate(value, Predicate.isObject)
+}
+
+// The fields of a wire record. A value that is not a record has no fields, so every field read is absent.
+function fieldsOf(value: unknown): Record<string, unknown> {
+  return Option.getOrElse(recordValue(value), () => ({}))
 }
 
 export function parseApplyPatchFiles(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
-    const file = recordValue(item)
-    if (!file) return []
+    const record = recordValue(item)
+    if (Option.isNone(record)) return []
+    const file = record.value
     const type = stringValue(file.type)
     const relativePath = stringValue(file.relativePath)
     const filePath = stringValue(file.filePath)
@@ -2712,9 +2719,9 @@ export function parseApplyPatchFiles(value: unknown) {
 export function parseTodos(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
-    const todo = recordValue(item)
-    const status = stringValue(todo?.status)
-    const content = stringValue(todo?.content)
+    const todo = fieldsOf(item)
+    const status = stringValue(todo.status)
+    const content = stringValue(todo.content)
     return status && content ? [{ status, content }] : []
   })
 }
@@ -2722,29 +2729,32 @@ export function parseTodos(value: unknown) {
 export function parseQuestions(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
-    const question = stringValue(recordValue(item)?.question)
+    const question = stringValue(fieldsOf(item).question)
     return question ? [{ question }] : []
   })
 }
 
-export function parseQuestionAnswers(value: unknown) {
-  if (!Array.isArray(value)) return
-  return value.map((answer) =>
-    Array.isArray(answer) ? answer.filter((item): item is string => typeof item === "string") : [],
+// The answers per question, or none when the metadata holds no answer list.
+export function parseQuestionAnswers(value: unknown): Option.Option<string[][]> {
+  if (!Array.isArray(value)) return Option.none()
+  return Option.some(
+    value.map((answer) =>
+      Array.isArray(answer) ? answer.filter((item): item is string => typeof item === "string") : [],
+    ),
   )
 }
 
 export function parseDiagnostics(value: unknown, filePath: string) {
-  const diagnostics = recordValue(value)?.[filePath]
+  const diagnostics = fieldsOf(value)[filePath]
   if (!Array.isArray(diagnostics)) return []
   return diagnostics
     .flatMap((item) => {
-      const diagnostic = recordValue(item)
-      const start = recordValue(recordValue(diagnostic?.range)?.start)
-      const line = numberValue(start?.line)
-      const character = numberValue(start?.character)
-      const message = stringValue(diagnostic?.message)
-      if (diagnostic?.severity !== 1 || line === undefined || character === undefined || !message) return []
+      const diagnostic = fieldsOf(item)
+      const start = fieldsOf(fieldsOf(diagnostic.range).start)
+      const line = numberValue(start.line)
+      const character = numberValue(start.character)
+      const message = stringValue(diagnostic.message)
+      if (diagnostic.severity !== 1 || line === undefined || character === undefined || !message) return []
       return [{ range: { start: { line, character } }, message }]
     })
     .slice(0, 3)
