@@ -283,7 +283,7 @@ const WorkspaceSessionList = (props: {
           size="large"
           onClick={(e: MouseEvent) => {
             void props.loadMore()
-            ;(e.currentTarget as HTMLButtonElement).blur()
+            if (e.currentTarget instanceof HTMLElement) e.currentTarget.blur()
           }}
         >
           {props.language.t("common.loadMore")}

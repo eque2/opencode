@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import { pathKey } from "@/utils/path-key"
@@ -109,9 +110,10 @@ export function projectForSession<T extends { id?: string; worktree: string; san
 }
 
 export const errorMessage = (err: unknown, fallback: string) => {
-  if (err && typeof err === "object" && "data" in err) {
-    const data = (err as { data?: { message?: string } }).data
-    if (data?.message) return data.message
+  if (Predicate.isObjectOrArray(err) && "data" in err) {
+    const data = err.data
+    if (Predicate.isObjectOrArray(data) && "message" in data && Predicate.isString(data.message) && data.message)
+      return data.message
   }
   if (err instanceof Error) return err.message
   return fallback

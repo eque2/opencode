@@ -34,8 +34,10 @@ const DEFAULT_TERMINAL_HEIGHT = 280
 const DEFAULT_REVIEW_PANEL_OPENED = false
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
+const isAvatarColorKey = (key: string): key is AvatarColorKey => AVATAR_COLOR_KEYS.some((item) => item === key)
+
 export function getAvatarColors(key?: string) {
-  if (key && AVATAR_COLOR_KEYS.includes(key as AvatarColorKey)) {
+  if (key && isAvatarColorKey(key)) {
     return {
       background: `var(--avatar-background-${key})`,
       foreground: `var(--avatar-text-${key})`,

@@ -27,16 +27,14 @@ import { ServerConnection } from "@/context/server"
 
 const serverKey = ServerConnection.Key.make
 
-const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
-  ({
-    title: "",
-    version: "v2",
-    parentID: undefined,
-    messageCount: 0,
-    permissions: { session: {}, share: {} },
-    time: { created: 0, updated: 0, archived: undefined },
-    ...input,
-  }) as Session
+const session = (input: Partial<Session> & Pick<Session, "id" | "directory">): Session => ({
+  slug: input.id,
+  projectID: "project",
+  title: "",
+  version: "v2",
+  time: { created: 0, updated: 0 },
+  ...input,
+})
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
@@ -105,7 +103,7 @@ describe("layout deep links", () => {
       __OPENCODE__: {
         deepLinks: ["opencode://open-project?directory=/a"],
       },
-    } as unknown as Window & { __OPENCODE__?: { deepLinks?: string[] } }
+    }
 
     expect(drainPendingDeepLinks(target)).toEqual(["opencode://open-project?directory=/a"])
     expect(drainPendingDeepLinks(target)).toEqual([])

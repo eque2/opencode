@@ -48,13 +48,10 @@ export const collectOpenProjectDeepLinks = (urls: string[]) =>
 export const collectNewSessionDeepLinks = (urls: string[]) =>
   urls.flatMap((url) => Option.toArray(newSessionLink(url)))
 
-type OpenCodeWindow = Window & {
-  __OPENCODE__?: {
-    deepLinks?: string[]
-  }
-}
+/** The part of the window that the desktop shell fills with deep links received before the app loaded. */
+type DeepLinkQueue = Pick<Window, "__OPENCODE__">
 
-export const drainPendingDeepLinks = (target: OpenCodeWindow) => {
+export const drainPendingDeepLinks = (target: DeepLinkQueue) => {
   const pending = target.__OPENCODE__?.deepLinks ?? []
   if (pending.length === 0) return []
   if (target.__OPENCODE__) target.__OPENCODE__.deepLinks = []
