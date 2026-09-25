@@ -1,7 +1,7 @@
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { which } from "@opencode-ai/core/util/which"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Effect, Option, Schema } from "effect"
+import { Effect, MutableHashMap, Option, Schema } from "effect"
 import { OAUTH_DUMMY_KEY } from "../auth"
 import { Process } from "../util/process"
 
@@ -27,10 +27,10 @@ export function createAzureAuthHooks(
   request: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
   available: boolean,
 ): Hooks {
-  const tokens = new Map<string, { token: string; expires: number }>()
+  const tokens = MutableHashMap.empty<string, { token: string; expires: number }>()
   async function token(scope: string) {
-    const cached = tokens.get(scope)
-    if (cached && cached.expires - Date.now() > AZURE_TOKEN_REFRESH_BUFFER) return cached.token
+    const cached = MutableHashMap.get(tokens, scope)
+    if (Option.isSome(cached) && cached.value.expires - Date.now() > AZURE_TOKEN_REFRESH_BUFFER) return cached.value.token
 
     const result = await decodeAzureCliToken(
       await run(["account", "get-access-token", "--scope", scope, "--output", "json"]),
@@ -38,7 +38,7 @@ export function createAzureAuthHooks(
     const expires = result.expires_on !== undefined ? result.expires_on * 1000 : Date.parse(result.expiresOn ?? "")
     if (!Number.isFinite(expires)) throw new Error("Azure CLI returned an invalid token expiration")
     const refreshed = { token: result.accessToken, expires }
-    tokens.set(scope, refreshed)
+    MutableHashMap.set(tokens, scope, refreshed)
     return refreshed.token
   }
 
