@@ -4,12 +4,12 @@ import path from "path"
 import { mergeDeep, unique } from "remeda"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Context, Effect, Fiber, Layer } from "effect"
+import { Cause, Context, Effect, Fiber, Layer, Option } from "effect"
 import { ConfigParse } from "@/config/parse"
 import * as ConfigPaths from "@/config/paths"
 import { migrateTuiConfig } from "./tui-migrate"
 import { resolveHostAttentionSoundPaths } from "./tui-host-attention"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { isRecord } from "@opencode-ai/tui/util/record"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -171,9 +171,11 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   // Every config dir we may read from: global config dir, any `.opencode`
   // folders between cwd and home, and OPENCODE_CONFIG_DIR.
   const directories = yield* ConfigPaths.directories(ctx.directory)
-  yield* Effect.promise(() => migrateTuiConfig({ directories, cwd: ctx.directory }))
+  // OPENCODE_CONFIG reads the ambient ConfigProvider. It is optional, so a ConfigError is a defect.
+  const customConfig = yield* FlagConfig.OPENCODE_CONFIG.pipe(Effect.orDie)
+  yield* Effect.promise(() => migrateTuiConfig({ directories, cwd: ctx.directory, customConfig }))
 
-  const projectFiles = Flag.OPENCODE_DISABLE_PROJECT_CONFIG ? [] : yield* ConfigPaths.files("tui", ctx.directory)
+  const projectFiles = (yield* ConfigPaths.projectConfigDisabled) ? [] : yield* ConfigPaths.files("tui", ctx.directory)
 
   const acc: Acc = {
     result: {},
@@ -185,9 +187,10 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
     yield* mergeFile(acc, file)
   }
 
-  // 2. Explicit OPENCODE_TUI_CONFIG override, if set.
-  if (Flag.OPENCODE_TUI_CONFIG) {
-    const configFile = Flag.OPENCODE_TUI_CONFIG
+  // 2. Explicit OPENCODE_TUI_CONFIG override, if set. The flag is optional, so a ConfigError is a defect.
+  const tuiConfig = Option.filter(yield* FlagConfig.OPENCODE_TUI_CONFIG.pipe(Effect.orDie), (file) => file !== "")
+  if (Option.isSome(tuiConfig)) {
+    const configFile = tuiConfig.value
     yield* mergeFile(acc, configFile)
     yield* Effect.logDebug("loaded custom tui config", { path: configFile })
   }
@@ -200,10 +203,11 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   // 4. `.opencode` directories (and OPENCODE_CONFIG_DIR) discovered while
   // walking up the tree. Also returned below so callers can install plugin
   // dependencies from each location.
-  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR)
+  const customDirectory = yield* ConfigPaths.customDirectory
+  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || Option.contains(customDirectory, dir))
 
   for (const dir of dirs) {
-    if (!dir.endsWith(".opencode") && dir !== Flag.OPENCODE_CONFIG_DIR) continue
+    if (!dir.endsWith(".opencode") && !Option.contains(customDirectory, dir)) continue
     for (const file of ConfigPaths.fileInDirectory(dir, "tui")) {
       yield* mergeFile(acc, file)
     }
@@ -259,7 +263,7 @@ const layer = Layer.effect(
   }).pipe(Effect.withSpan("TuiConfig.layer")),
 )
 
-export const node = LayerNode.make({ service: Service, layer, deps: [Npm.node, FSUtil.node] })
+export const node = LayerNode.make({ service: Service, layer, deps: [Npm.node, FSUtil.node, Global.node] })
 
 const { runPromise } = makeRuntime(Service, AppNodeBuilder.build(node))
 

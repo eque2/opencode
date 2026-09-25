@@ -7,7 +7,8 @@ import os from "os"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
 import fsNode from "fs/promises"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { Auth } from "../auth"
 import { Env } from "../env"
 import { applyEdits, modify } from "jsonc-parser"
@@ -109,6 +110,15 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPluginV1.Spec[] }
   return config
 }
 
+// OPENCODE_CONFIG_CONTENT is read live, as the former process.env read was: tests and hosts set it
+// after start. An empty value counts as not set.
+const configContent = readEnvSnapshot(FlagConfig.OPENCODE_CONFIG_CONTENT).pipe(
+  Effect.map(Option.filter((text) => text !== "")),
+)
+
+// OPENCODE_CONFIG reads the ambient ConfigProvider. It is optional, so a ConfigError is a defect.
+const customConfigFile = FlagConfig.OPENCODE_CONFIG.pipe(Effect.orDie)
+
 type Info = ConfigV1.Info & {
   // plugin_origins is derived state, not a persisted config field. It keeps each winning plugin spec together
   // with the file and scope it came from so later runtime code can make location-sensitive decisions.
@@ -177,6 +187,7 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
+    const global = yield* Global.Service
     const authSvc = yield* Auth.Service
     const accountSvc = yield* Account.Service
     const env = yield* Env.Service
@@ -261,7 +272,8 @@ const layer = Layer.effect(
       let result: Info = {}
       // Seed the default global config with the schema for editor completion, but avoid writing when the user
       // explicitly routes config through env-provided paths or content.
-      if (!Flag.OPENCODE_CONFIG && !Flag.OPENCODE_CONFIG_DIR && !Flag.OPENCODE_CONFIG_CONTENT) {
+      const routed = [yield* customConfigFile, yield* ConfigPaths.customDirectory, yield* configContent]
+      if (routed.every(Option.isNone)) {
         const file = globalConfigFile()
         if (!existsSync(file)) {
           yield* fs
@@ -412,12 +424,13 @@ const layer = Layer.effect(
         const global = Object.keys(authEnv).length ? yield* loadGlobal(authEnv) : yield* getGlobal()
         yield* merge(Global.Path.config, global, "global")
 
-        if (Flag.OPENCODE_CONFIG) {
-          yield* merge(Flag.OPENCODE_CONFIG, yield* loadFile(Flag.OPENCODE_CONFIG, authEnv))
-          yield* Effect.logDebug("loaded custom config", { path: Flag.OPENCODE_CONFIG })
+        const customConfig = yield* customConfigFile
+        if (Option.isSome(customConfig)) {
+          yield* merge(customConfig.value, yield* loadFile(customConfig.value, authEnv))
+          yield* Effect.logDebug("loaded custom config", { path: customConfig.value })
         }
 
-        if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+        if (!(yield* ConfigPaths.projectConfigDisabled)) {
           for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
             yield* merge(file, yield* loadFile(file, authEnv), "local")
           }
@@ -429,14 +442,15 @@ const layer = Layer.effect(
 
         const directories = yield* ConfigPaths.directories(ctx.directory, ctx.worktree)
 
-        if (Flag.OPENCODE_CONFIG_DIR) {
-          yield* Effect.logDebug("loading config from OPENCODE_CONFIG_DIR", { path: Flag.OPENCODE_CONFIG_DIR })
+        const customDirectory = yield* ConfigPaths.customDirectory
+        if (Option.isSome(customDirectory)) {
+          yield* Effect.logDebug("loading config from OPENCODE_CONFIG_DIR", { path: customDirectory.value })
         }
 
         const deps: Fiber.Fiber<void>[] = []
 
         for (const dir of directories) {
-          if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
+          if (dir.endsWith(".opencode") || Option.contains(customDirectory, dir)) {
             for (const file of ["opencode.json", "opencode.jsonc"]) {
               const source = path.join(dir, file)
               yield* Effect.logDebug(`loading config from ${source}`)
@@ -479,9 +493,10 @@ const layer = Layer.effect(
           yield* mergePluginOrigins(dir, list)
         }
 
-        if (process.env.OPENCODE_CONFIG_CONTENT) {
+        const content = yield* configContent
+        if (Option.isSome(content)) {
           const source = "OPENCODE_CONFIG_CONTENT"
-          const next = yield* loadConfig(process.env.OPENCODE_CONFIG_CONTENT, {
+          const next = yield* loadConfig(content.value, {
             dir: ctx.directory,
             source,
           })
@@ -556,9 +571,14 @@ const layer = Layer.effect(
           })
         }
 
-        if (Flag.OPENCODE_PERMISSION) {
+        // OPENCODE_PERMISSION is optional, so a ConfigError is a defect. An empty value counts as not set.
+        const permission = Option.filter(
+          yield* FlagConfig.OPENCODE_PERMISSION.pipe(Effect.orDie),
+          (text) => text !== "",
+        )
+        if (Option.isSome(permission)) {
           try {
-            result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+            result.permission = mergeDeep(result.permission ?? {}, JSON.parse(permission.value))
           } catch (err) {
             yield* Effect.logWarning("OPENCODE_PERMISSION contains invalid JSON, skipping", { err })
           }
@@ -590,10 +610,11 @@ const layer = Layer.effect(
           result.share = "auto"
         }
 
-        if (Flag.OPENCODE_DISABLE_AUTOCOMPACT) {
+        // Both flags default to false, so a ConfigError is a defect.
+        if (yield* FlagConfig.OPENCODE_DISABLE_AUTOCOMPACT.pipe(Effect.orDie)) {
           result.compaction = { ...result.compaction, auto: false }
         }
-        if (Flag.OPENCODE_DISABLE_PRUNE) {
+        if (yield* FlagConfig.OPENCODE_DISABLE_PRUNE.pipe(Effect.orDie)) {
           result.compaction = { ...result.compaction, prune: false }
         }
 
@@ -609,6 +630,7 @@ const layer = Layer.effect(
         }
       },
       Effect.provideService(FSUtil.Service, fs),
+      Effect.provideService(Global.Service, global),
     )
 
     const state = yield* InstanceState.make<State>(
@@ -695,7 +717,7 @@ const layer = Layer.effect(
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [FSUtil.node, Auth.node, Account.node, Env.node, Npm.node, httpClient],
+  deps: [FSUtil.node, Global.node, Auth.node, Account.node, Env.node, Npm.node, httpClient],
 })
 
 export * as Config from "./config"
