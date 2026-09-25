@@ -110,16 +110,16 @@ export function selectedForeground(theme: Theme, bg?: RGBA): RGBA {
   return theme.background
 }
 
-type HexColor = `#${string}`
-type RefName = string
+// A hex color ("#rrggbb"), "transparent", "none", or the name of a def or theme color.
+type ColorString = string
 type Variant = {
-  dark: HexColor | RefName
-  light: HexColor | RefName
+  dark: ColorString
+  light: ColorString
 }
-type ColorValue = HexColor | RefName | Variant | RGBA
+type ColorValue = ColorString | Variant | RGBA
 export type ThemeJson = {
   $schema?: string
-  defs?: Record<string, HexColor | RefName>
+  defs?: Record<string, ColorString>
   theme: Omit<Record<ThemeColor, ColorValue>, "selectedListItemText" | "backgroundMenu"> & {
     selectedListItemText?: ColorValue
     backgroundMenu?: ColorValue
