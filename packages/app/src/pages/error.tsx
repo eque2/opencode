@@ -8,7 +8,7 @@ import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
 import { Icon } from "@opencode-ai/ui/icon"
 import { errorDescriptionKey } from "./error-description"
-import { Option, Schema } from "effect"
+import { Option, Predicate, Schema } from "effect"
 
 export type InitError = {
   name: string
@@ -29,13 +29,7 @@ function isIssue(value: unknown): value is { message: string; path: string[] } {
 }
 
 function isInitError(error: unknown): error is InitError {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    "data" in error &&
-    typeof (error as InitError).data === "object"
-  )
+  return Predicate.isObjectOrArray(error) && "name" in error && "data" in error && typeof error.data === "object"
 }
 
 /**
@@ -85,19 +79,14 @@ function formatInitError(error: InitError, t: Translator): string {
       ].join("\n")
     }
     case "ProviderModelNotFoundError": {
-      const { providerID, modelID, suggestions } = data as {
-        providerID: string
-        modelID: string
-        suggestions?: string[]
-      }
-
       const suggestionsLine =
-        Array.isArray(suggestions) && suggestions.length
-          ? [t("error.chain.didYouMean", { suggestions: suggestions.join(", ") })]
+        Array.isArray(data.suggestions) && data.suggestions.length
+          ? [t("error.chain.didYouMean", { suggestions: data.suggestions.join(", ") })]
           : []
 
+      // The template shows a field of another type as its String form, as it did before these reads were typed.
       return [
-        t("error.chain.modelNotFound", { provider: providerID, model: modelID }),
+        t("error.chain.modelNotFound", { provider: String(data.providerID), model: String(data.modelID) }),
         ...suggestionsLine,
         t("error.chain.checkConfig"),
       ].join("\n")
