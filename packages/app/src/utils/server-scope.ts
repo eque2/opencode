@@ -1,10 +1,12 @@
-import { Brand } from "effect"
+import { Brand, Data, Result } from "effect"
 import type { ServerConnection } from "@/context/server"
 
 export type ServerScope = string & Brand.Brand<"ServerScope">
 export type SessionRouteKey = string & Brand.Brand<"SessionRouteKey">
 export type SessionStateKey = string & Brand.Brand<"SessionStateKey">
 export type ScopedKey = string & Brand.Brand<"ScopedKey">
+
+class ScopeFragmentError extends Data.TaggedError("App.ScopeFragmentError")<{ readonly message: string }> {}
 
 const separator = "\u0000"
 
@@ -13,19 +15,26 @@ const sessionRouteKey = Brand.nominal<SessionRouteKey>()
 const sessionStateKey = Brand.nominal<SessionStateKey>()
 const scopedKey = Brand.nominal<ScopedKey>()
 
-function fragment(label: string, value: string) {
-  if (value.includes(separator)) throw new Error(`${label} cannot contain null bytes`)
-  return value
+function fragment(label: string, value: string): Result.Result<string, ScopeFragmentError> {
+  if (value.includes(separator)) {
+    return Result.fail(new ScopeFragmentError({ message: `${label} cannot contain null bytes` }))
+  }
+  return Result.succeed(value)
 }
 
-function compose(scope: ServerScope, parts: string[]) {
-  return [fragment("Server scope", scope), ...parts.map((part) => fragment("Scoped key part", part))].join(separator)
+function compose(scope: ServerScope, parts: ReadonlyArray<string>): Result.Result<string, ScopeFragmentError> {
+  const fragments = Result.all([
+    fragment("Server scope", scope),
+    ...parts.map((part) => fragment("Scoped key part", part)),
+  ])
+  return Result.map(fragments, (values) => values.join(separator))
 }
 
+// The key constructors below are synchronous and throw ScopeFragmentError for a fragment with a null byte.
 export const ServerScope = {
   local: serverScope("local"),
   make(value: string): ServerScope {
-    return serverScope(fragment("Server scope", value))
+    return serverScope(Result.getOrThrow(fragment("Server scope", value)))
   },
   fromServerKey(key: ServerConnection.Key, canonicalLocalServer?: ServerConnection.Key): ServerScope {
     return ServerScope.make(key === "sidecar" || key === canonicalLocalServer ? ServerScope.local : key)
@@ -34,16 +43,17 @@ export const ServerScope = {
 
 export const SessionRouteKey = {
   fromRoute(dir: string | undefined, sessionID?: string): SessionRouteKey {
-    return sessionRouteKey(fragment("Session route", `${dir ?? ""}${sessionID ? "/" + sessionID : ""}`))
+    const route = `${dir ?? ""}${sessionID ? "/" + sessionID : ""}`
+    return sessionRouteKey(Result.getOrThrow(fragment("Session route", route)))
   },
   fromLegacy(key: string): SessionRouteKey {
-    return sessionRouteKey(fragment("Legacy session route", key))
+    return sessionRouteKey(Result.getOrThrow(fragment("Legacy session route", key)))
   },
 }
 
 export const SessionStateKey = {
   from(scope: ServerScope, route: SessionRouteKey): SessionStateKey {
-    return sessionStateKey(compose(scope, [route]))
+    return sessionStateKey(Result.getOrThrow(compose(scope, [route])))
   },
   route(key: string): SessionRouteKey {
     const split = key.lastIndexOf(separator)
@@ -52,13 +62,13 @@ export const SessionStateKey = {
   scope(key: string): ServerScope {
     const split = key.indexOf(separator)
     if (split === -1) return ServerScope.local
-    return serverScope(fragment("Stored server scope", key.slice(0, split)))
+    return serverScope(Result.getOrThrow(fragment("Stored server scope", key.slice(0, split))))
   },
 }
 
 export const ScopedKey = {
   from(scope: ServerScope, ...parts: string[]): ScopedKey {
-    return scopedKey(compose(scope, parts))
+    return scopedKey(Result.getOrThrow(compose(scope, parts)))
   },
   prefix(scope: ServerScope, ...parts: string[]) {
     return `${ScopedKey.from(scope, ...parts)}${separator}`
