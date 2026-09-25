@@ -21,7 +21,7 @@ export function createPromptSubmissionState(input: {
       cleared = target.current()
     },
     retarget(next: PromptTarget) {
-      input.context.forEach(next.context.add)
+      input.context.forEach((item) => next.context.add(item))
       target = next
     },
     current: (value: PromptTarget) => target === value,
