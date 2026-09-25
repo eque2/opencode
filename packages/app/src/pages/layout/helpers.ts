@@ -56,7 +56,20 @@ export function toggleHomeProjectSelection(
   server: ServerConnection.Key,
   directory: string,
 ): HomeProjectSelection {
-  if (current?.server === server && current.directory === directory) return { server }
+  return toggleHomeProjectSelectionOption(Option.fromNullishOr(current), server, directory)
+}
+
+/**
+ * Selects the project, or clears the directory when the project is already selected.
+ * `current` is None when no project is selected.
+ */
+export function toggleHomeProjectSelectionOption(
+  current: Option.Option<HomeProjectSelection>,
+  server: ServerConnection.Key,
+  directory: string,
+): HomeProjectSelection {
+  if (Option.exists(current, (selection) => selection.server === server && selection.directory === directory))
+    return { server }
   return { server, directory }
 }
 
@@ -81,8 +94,11 @@ export function homeProjectDirectories(result: string | string[] | null) {
   return Array.isArray(result) ? result : [result]
 }
 
-export function homeSessionServerStatus(active: boolean, status: () => { working: boolean; tint?: string }) {
-  if (!active) return { working: false, tint: undefined }
+export function homeSessionServerStatus(
+  active: boolean,
+  status: () => { working: boolean; tint?: string },
+): { working: boolean; tint?: string } {
+  if (!active) return { working: false }
   return status()
 }
 

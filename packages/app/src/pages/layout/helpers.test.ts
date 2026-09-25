@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import {
   collectNewSessionDeepLinks,
   collectOpenProjectDeepLinks,
@@ -22,6 +22,7 @@ import {
   latestRootSession,
   sortedRootSessions,
   toggleHomeProjectSelection,
+  toggleHomeProjectSelectionOption,
 } from "./helpers"
 import { pathKey } from "@/utils/path-key"
 import { ServerConnection } from "@/context/server"
@@ -144,7 +145,7 @@ describe("layout workspace helpers", () => {
       [
         {
           path: { directory: "/root" },
-          session: [session({ id: "root", directory: "/root", time: { created: 1, updated: 1, archived: undefined } })],
+          session: [session({ id: "root", directory: "/root", time: { created: 1, updated: 1 } })],
         },
         {
           path: { directory: "/workspace" },
@@ -152,7 +153,7 @@ describe("layout workspace helpers", () => {
             session({
               id: "workspace",
               directory: "/workspace",
-              time: { created: 2, updated: 2, archived: undefined },
+              time: { created: 2, updated: 2 },
             }),
           ],
         },
@@ -168,8 +169,8 @@ describe("layout workspace helpers", () => {
       {
         path: { directory: "/workspace" },
         session: [
-          session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
-          session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 3, archived: undefined } }),
+          session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2 } }),
+          session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 3 } }),
         ],
       },
       3,
@@ -180,8 +181,8 @@ describe("layout workspace helpers", () => {
 
   test("uses id only to break equal session timestamps", () => {
     const sessions = [
-      session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
-      session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 2, archived: undefined } }),
+      session({ id: "ses_z", directory: "/workspace", time: { created: 1, updated: 2 } }),
+      session({ id: "ses_a", directory: "/workspace", time: { created: 1, updated: 2 } }),
     ]
 
     expect(sessions.sort(compareSessionTime).map((item) => item.id)).toEqual(["ses_a", "ses_z"])
@@ -225,12 +226,12 @@ describe("layout workspace helpers", () => {
               id: "child",
               directory: "/workspace",
               parentID: "parent",
-              time: { created: 20, updated: 20, archived: undefined },
+              time: { created: 20, updated: 20 },
             }),
             session({
               id: "root",
               directory: "/workspace",
-              time: { created: 30, updated: 30, archived: undefined },
+              time: { created: 30, updated: 30 },
             }),
           ],
         },
@@ -262,7 +263,7 @@ describe("layout workspace helpers", () => {
 
   test("scopes home project selection by server", () => {
     expect(
-      toggleHomeProjectSelection(undefined, serverKey("https://debian.example"), "/home/luke/repos/amazon"),
+      toggleHomeProjectSelectionOption(Option.none(), serverKey("https://debian.example"), "/home/luke/repos/amazon"),
     ).toEqual({
       server: serverKey("https://debian.example"),
       directory: "/home/luke/repos/amazon",
@@ -338,7 +339,6 @@ describe("layout workspace helpers", () => {
     }
     expect(homeSessionServerStatus(false, status)).toEqual({
       working: false,
-      tint: undefined,
     })
     expect(reads).toBe(0)
     expect(homeSessionServerStatus(true, status)).toEqual({
