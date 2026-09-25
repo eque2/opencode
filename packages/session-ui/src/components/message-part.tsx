@@ -27,9 +27,8 @@ import {
   TextPart,
   ToolPart,
   UserMessage,
-  Todo,
 } from "@opencode-ai/sdk/v2"
-import { Predicate } from "effect"
+import { Array, HashMap, Option, Predicate } from "effect"
 import { useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -707,7 +706,7 @@ export function groupParts(parts: { messageID: string; part: PartType }[]) {
 }
 
 function index<T extends { id: string }>(items: readonly T[]) {
-  return new Map(items.map((item) => [item.id, item] as const))
+  return HashMap.fromIterable(items.map((item) => [item.id, item] as const))
 }
 
 export function renderable(part: PartType, showReasoningSummaries = true) {
@@ -737,12 +736,13 @@ export function AssistantParts(props: {
   const emptyParts: PartType[] = []
   const emptyTools: ToolPart[] = []
   const msgs = createMemo(() => index(props.messages))
-  const part = createMemo(
-    () =>
-      new Map(
-        props.messages.map((message) => [message.id, index(list(data.store.part?.[message.id], emptyParts))] as const),
-      ),
+  const part = createMemo(() =>
+    HashMap.fromIterable(
+      props.messages.map((message) => [message.id, index(list(data.store.part?.[message.id], emptyParts))] as const),
+    ),
   )
+  const lookup = (ref: PartRef) =>
+    HashMap.get(part(), ref.messageID).pipe(Option.flatMap((parts) => HashMap.get(parts, ref.partID)))
 
   const grouped = createMemo(
     () =>
@@ -775,9 +775,7 @@ export function AssistantParts(props: {
                   () => {
                     const entry = entryAccessor()
                     if (entry.type !== "context") return emptyTools
-                    return entry.refs
-                      .map((ref) => part().get(ref.messageID)?.get(ref.partID))
-                      .filter((part): part is ToolPart => !!part && isContextGroupTool(part))
+                    return Array.getSomes(entry.refs.map((ref) => lookup(ref).pipe(Option.filter(isContextGroupTool))))
                   },
                   emptyTools,
                   { equals: same },
@@ -795,27 +793,29 @@ export function AssistantParts(props: {
               {(() => {
                 const message = createMemo(() => {
                   const entry = entryAccessor()
-                  if (entry.type !== "part") return
-                  return msgs().get(entry.ref.messageID)
+                  return entry.type === "part" ? HashMap.get(msgs(), entry.ref.messageID) : Option.none()
                 })
                 const item = createMemo(() => {
                   const entry = entryAccessor()
-                  if (entry.type !== "part") return
-                  return part().get(entry.ref.messageID)?.get(entry.ref.partID)
+                  return entry.type === "part" ? lookup(entry.ref) : Option.none()
                 })
 
                 return (
-                  <Show when={message()}>
-                    <Show when={item()}>
-                      <Part
-                        part={item()!}
-                        message={message()!}
-                        showAssistantCopyPartID={props.showAssistantCopyPartID}
-                        turnDurationMs={props.turnDurationMs}
-                        useV2Actions={props.useV2Actions}
-                        defaultOpen={partDefaultOpen(item()!, props.shellToolDefaultOpen, props.editToolDefaultOpen)}
-                      />
-                    </Show>
+                  <Show when={Option.getOrUndefined(message())}>
+                    {(message) => (
+                      <Show when={Option.getOrUndefined(item())}>
+                        {(item) => (
+                          <Part
+                            part={item()}
+                            message={message()}
+                            showAssistantCopyPartID={props.showAssistantCopyPartID}
+                            turnDurationMs={props.turnDurationMs}
+                            useV2Actions={props.useV2Actions}
+                            defaultOpen={partDefaultOpen(item(), props.shellToolDefaultOpen, props.editToolDefaultOpen)}
+                          />
+                        )}
+                      </Show>
+                    )}
                   </Show>
                 )
               })()}
@@ -1000,9 +1000,9 @@ export function AssistantMessageDisplay(props: {
                   () => {
                     const entry = entryAccessor()
                     if (entry.type !== "context") return emptyTools
-                    return entry.refs
-                      .map((ref) => part().get(ref.partID))
-                      .filter((part): part is ToolPart => !!part && isContextGroupTool(part))
+                    return Array.getSomes(
+                      entry.refs.map((ref) => HashMap.get(part(), ref.partID).pipe(Option.filter(isContextGroupTool))),
+                    )
                   },
                   emptyTools,
                   { equals: same },
@@ -1019,18 +1019,19 @@ export function AssistantMessageDisplay(props: {
               {(() => {
                 const item = createMemo(() => {
                   const entry = entryAccessor()
-                  if (entry.type !== "part") return
-                  return part().get(entry.ref.partID)
+                  return entry.type === "part" ? HashMap.get(part(), entry.ref.partID) : Option.none()
                 })
 
                 return (
-                  <Show when={item()}>
-                    <Part
-                      part={item()!}
-                      message={props.message}
-                      showAssistantCopyPartID={props.showAssistantCopyPartID}
-                      useV2Actions={props.useV2Actions}
-                    />
+                  <Show when={Option.getOrUndefined(item())}>
+                    {(item) => (
+                      <Part
+                        part={item()}
+                        message={props.message}
+                        showAssistantCopyPartID={props.showAssistantCopyPartID}
+                        useV2Actions={props.useV2Actions}
+                      />
+                    )}
                   </Show>
                 )
               })()}
@@ -2553,6 +2554,16 @@ ToolRegistry.register({
   },
 })
 
+// Todo lists arrive untyped in tool metadata or input. Read the two fields the list renders, and keep
+// the original items so that the list updates in place.
+function todoCompleted(todo: unknown) {
+  return Predicate.hasProperty(todo, "status") && todo.status === "completed"
+}
+
+function todoContent(todo: unknown) {
+  return Predicate.hasProperty(todo, "content") && Predicate.isString(todo.content) ? todo.content : ""
+}
+
 ToolRegistry.register({
   name: "todowrite",
   render(props) {
@@ -2570,7 +2581,7 @@ ToolRegistry.register({
     const subtitle = createMemo(() => {
       const list = todos()
       if (list.length === 0) return ""
-      return `${list.filter((t: Todo) => t.status === "completed").length}/${list.length}`
+      return `${list.filter(todoCompleted).length}/${list.length}`
     })
 
     return (
@@ -2586,13 +2597,13 @@ ToolRegistry.register({
         <Show when={todos().length}>
           <div data-component="todos">
             <For each={todos()}>
-              {(todo: Todo) => (
-                <Checkbox readOnly checked={todo.status === "completed"}>
+              {(todo) => (
+                <Checkbox readOnly checked={todoCompleted(todo)}>
                   <span
                     data-slot="message-part-todo-content"
-                    data-completed={todo.status === "completed" ? "completed" : undefined}
+                    data-completed={todoCompleted(todo) ? "completed" : undefined}
                   >
-                    {todo.content}
+                    {todoContent(todo)}
                   </span>
                 </Checkbox>
               )}
