@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { HashSet, Option } from "effect"
 
 // One-off copy from GitHub Linguist languages.yml (e9fe3c9f230cd9220afcd057f75702de4d7700c9), plus common lockfile suffixes.
 // Normalized to lower-case; numeric manpage-style extensions are excluded so versions like `1.2` stay plain code.
@@ -1890,14 +1890,16 @@ const pathFileNamePrefixes = HashSet.fromIterable([
   "zshrc",
 ])
 
-export function inlineCodeKind(text: string): "path" | "url" | undefined {
-  if (/^https?:\/\//i.test(text)) return "url"
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return
-  if (text === "/") return
-  if (/^\/[a-z][a-z0-9-]*$/i.test(text)) return
-  if (/\s/.test(text)) return
-  if (/[()\[\]{}*+=<>|&^"';]/.test(text)) return
-  if (/[/\\]/.test(text) || /^\.\.?[/\\]/.test(text) || hasPathExtension(text) || hasPathFileName(text)) return "path"
+export function inlineCodeKind(text: string): Option.Option<"path" | "url"> {
+  if (/^https?:\/\//i.test(text)) return Option.some("url")
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return Option.none()
+  if (text === "/") return Option.none()
+  if (/^\/[a-z][a-z0-9-]*$/i.test(text)) return Option.none()
+  if (/\s/.test(text)) return Option.none()
+  if (/[()\[\]{}*+=<>|&^"';]/.test(text)) return Option.none()
+  if (/[/\\]/.test(text) || /^\.\.?[/\\]/.test(text) || hasPathExtension(text) || hasPathFileName(text))
+    return Option.some("path")
+  return Option.none()
 }
 
 function hasPathExtension(text: string) {

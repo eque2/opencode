@@ -213,30 +213,34 @@ function disposeCopyButtons(root: Element) {
 
 const shellLanguages = HashSet.fromIterable(["bash", "sh", "shell", "zsh", "fish", "console", "terminal"])
 
-function codeKind(language: string | undefined) {
-  const value = language?.toLowerCase()
-  if (!value) return
-  if (HashSet.has(shellLanguages, value)) return "shell"
+function codeKind(language: Option.Option<string>): Option.Option<"shell"> {
+  return Option.flatMap(
+    language,
+    (value): Option.Option<"shell"> =>
+      HashSet.has(shellLanguages, value.toLowerCase()) ? Option.some("shell") : Option.none(),
+  )
 }
 
-function codeLanguage(block: HTMLPreElement) {
+function codeLanguage(block: HTMLPreElement): Option.Option<string> {
   const code = block.querySelector("code")
-  if (!(code instanceof HTMLElement)) return
-  return code.className.match(/(?:^|\s)language-([^\s]+)/)?.[1]
+  if (!(code instanceof HTMLElement)) return Option.none()
+  return Option.fromNullishOr(code.className.match(/(?:^|\s)language-([^\s]+)/)?.[1])
 }
 
-function applyCodeMetadata(wrapper: HTMLElement, language: string | undefined) {
+function applyCodeMetadata(wrapper: HTMLElement, language: Option.Option<string>) {
   if (!document.body.hasAttribute("data-new-layout")) {
     delete wrapper.dataset.language
     delete wrapper.dataset.codeKind
     return
   }
 
-  if (language) wrapper.dataset.language = language
+  // An empty language counts as no language, as the old truthiness checks did.
+  const name = Option.filter(language, (value) => value.length > 0)
+  if (Option.isSome(name)) wrapper.dataset.language = name.value
   else delete wrapper.dataset.language
 
-  const kind = codeKind(language)
-  if (kind) wrapper.dataset.codeKind = kind
+  const kind = codeKind(name)
+  if (Option.isSome(kind)) wrapper.dataset.codeKind = kind.value
   else delete wrapper.dataset.codeKind
 }
 
@@ -307,7 +311,7 @@ function markInlineCode(root: HTMLDivElement) {
     if (!(code instanceof HTMLElement)) continue
     delete code.dataset.inlineCodeKind
     const kind = inlineCodeKind(code.textContent ?? "")
-    if (kind) code.dataset.inlineCodeKind = kind
+    if (Option.isSome(kind)) code.dataset.inlineCodeKind = kind.value
   }
 }
 
@@ -412,10 +416,11 @@ export function Markdown(
   let streamed = false
   const [projection] = createResource(
     () => {
-      if (isServer) return
+      // false tells createResource not to fetch.
+      if (isServer) return false
       const live = local.streaming ?? false
       if (live) streamed = true
-      if (!live && !streamed) return
+      if (!live && !streamed) return false
       return { key: owner, text: local.text, live }
     },
     (src) => Effect.runPromise(projectMarkdown(src.key, src.text, src.live)),
@@ -437,7 +442,7 @@ export function Markdown(
           projection: pendingProjection(local.text),
         }
       const value = !(local.streaming ?? false) && !streamed ? completedProjection(local.text) : projection.latest
-      if (!value || value.text !== local.text) return
+      if (!value || value.text !== local.text) return false
       return {
         text: local.text,
         key: local.cacheKey,
@@ -688,7 +693,7 @@ function updateCodeBlock(
   if (Option.isSome(existingCode)) {
     const code = existingCode.value
     const wrapper = code.closest('[data-component="markdown-code"]')
-    if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, block.language)
+    if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, Option.some(block.language))
     code.className = `language-${block.language}`
     const previous = renderedCodeTokens.get(next)
     const reset = shouldResetCodeTokens(previous, {
@@ -719,7 +724,7 @@ function updateCodeBlock(
 
   const wrapper = document.createElement("div")
   wrapper.setAttribute("data-component", "markdown-code")
-  applyCodeMetadata(wrapper, block.language)
+  applyCodeMetadata(wrapper, Option.some(block.language))
   const pre = document.createElement("pre")
   pre.className = "shiki OpenCode"
   const codeElement = document.createElement("code")
