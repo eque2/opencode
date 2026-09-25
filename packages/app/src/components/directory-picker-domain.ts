@@ -1,4 +1,6 @@
+import { getFilename } from "@opencode-ai/core/util/path"
 import { MutableHashMap, MutableHashSet, Option } from "effect"
+import fuzzysort from "fuzzysort"
 
 export function treeEntries(parent: string, nodes: ReadonlyArray<{ name: string; type: "file" | "directory" }>) {
   const prefix = parent.replace(/^\/+|\/+$/g, "")
@@ -263,9 +265,6 @@ export function nativePickerPath(path: string) {
   if (/^[A-Za-z]:\//.test(value) || value.startsWith("//")) return value.replaceAll("/", "\\")
   return value
 }
-import { getFilename } from "@opencode-ai/core/util/path"
-import fuzzysort from "fuzzysort"
-import { ServerSDK } from "@/context/server-sdk"
 
 export function cleanPickerInput(value: string) {
   const first = (value ?? "").split(/\r?\n/)[0] ?? ""
@@ -339,7 +338,28 @@ export function displayPickerPath(path: string, input: string, home: string) {
   return pickerTilde(value, home) || value
 }
 
-export function createDirectorySearch(args: { sdk: ServerSDK; base: () => Option.Option<string>; home: () => string }) {
+/** The file calls the directory search makes. ServerSDK satisfies it, and so does a test stand-in. */
+export type DirectorySearchClient = {
+  readonly api: {
+    readonly file: {
+      readonly list: (input: { location: { directory: string } }) => Promise<{
+        readonly data: ReadonlyArray<{ readonly path: string; readonly type: "file" | "directory" }>
+      }>
+      readonly find: (input: {
+        location: { directory: string }
+        query: string
+        type: "directory"
+        limit: number
+      }) => Promise<{ readonly data: ReadonlyArray<{ readonly path: string }> }>
+    }
+  }
+}
+
+export function createDirectorySearch(args: {
+  sdk: DirectorySearchClient
+  base: () => Option.Option<string>
+  home: () => string
+}) {
   const cache = MutableHashMap.empty<string, Promise<Array<{ name: string; absolute: string }>>>()
   let current = 0
 
