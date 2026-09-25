@@ -109,14 +109,15 @@ export type EditorMention = Schema.Schema.Type<typeof EditorMentionSchema>
 export type EditorLabelState = "pending" | "sent" | "none"
 type EditorServerInfo = Schema.Schema.Type<typeof EditorServerInfoSchema>
 
-type EditorConnection = {
+export type EditorConnection = {
   url: string
   authToken?: string
   source: string
 }
 
 export type EditorIntegration = Readonly<{
-  connection?(directory: string): EditorConnection | undefined
+  /** Finds the editor WebSocket for a directory. None means no editor serves it. */
+  connection?(directory: string): Effect.Effect<Option.Option<EditorConnection>>
   /** Reads the editor selection for a directory, for example from the Zed database. A failure keeps the last selection. */
   selection?(directory: string): Effect.Effect<unknown, unknown>
 }>
@@ -145,6 +146,8 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       // The configured editor port and the Zed terminal flag. The provider reads both from the environment on mount.
       port: Option.Option<number>
       zedTerminal: boolean
+      // Whether the last connection attempt found an editor, or can read the Zed selection.
+      enabled: boolean
     }>({
       status: "disabled",
       selection: Option.none(),
@@ -152,6 +155,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
       server: Option.none(),
       port: Option.none(),
       zedTerminal: false,
+      enabled: false,
     })
 
     let socket: Option.Option<WebSocket> = Option.none()
@@ -300,7 +304,8 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
     // Tries once to reach the editor. The result is the delay before the next try, or none when a socket
     // holds the connection. In a Zed terminal with no socket, each try reads the Zed selection.
     const connectOnce = Effect.gen(function* () {
-      const connection = resolveEditorConnection(directory, store.port, editor.connection)
+      const connection = yield* resolveEditorConnection(directory, store.port, editor)
+      setStore("enabled", Option.isSome(connection) || (store.zedTerminal && Boolean(editor.selection)))
       if (Option.isSome(connection)) {
         openSocket(connection.value)
         return Option.none<Duration.Duration>()
@@ -375,10 +380,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
     return {
       enabled() {
-        return (
-          Option.isSome(resolveEditorConnection(directory, store.port, editor.connection)) ||
-          (store.zedTerminal && Boolean(editor.selection))
-        )
+        return store.enabled
       },
       connected() {
         return store.status === "connected"
@@ -423,19 +425,20 @@ function parsePort(value: string): Option.Option<number> {
   return Number.isInteger(port) && port > 0 && port <= 65535 ? Option.some(port) : Option.none()
 }
 
+// A configured port wins over the integration's lookup.
 function resolveEditorConnection(
   directory: string,
   port: Option.Option<number>,
-  discover: ((directory: string) => EditorConnection | undefined) | undefined,
-): Option.Option<EditorConnection> {
+  editor: EditorIntegration,
+): Effect.Effect<Option.Option<EditorConnection>> {
   if (Option.isSome(port)) {
-    return Option.some({
+    return Effect.succeedSome({
       url: `ws://127.0.0.1:${port.value}`,
       source: `env:${port.value}`,
     })
   }
 
-  return Option.fromNullishOr(discover?.(directory))
+  return editor.connection ? editor.connection(directory) : Effect.succeedNone
 }
 
 /** A key that differs when the file, a range or its text differs. An empty key means no selection. */
