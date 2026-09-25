@@ -57,7 +57,6 @@ describe("model variant", () => {
   test("cycles from configured variant to next", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: undefined,
       configured: "high",
     })
 
@@ -67,7 +66,6 @@ describe("model variant", () => {
   test("wraps from configured last variant to first", () => {
     const value = cycleModelVariant({
       variants: ["low", "high", "xhigh"],
-      selected: undefined,
       configured: "xhigh",
     })
 

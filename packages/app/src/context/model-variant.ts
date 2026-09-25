@@ -1,3 +1,5 @@
+import { Predicate } from "effect"
+
 type AgentModel = {
   providerID: string
   modelID: string
@@ -12,10 +14,11 @@ type Model = AgentModel & {
   variants?: Record<string, unknown>
 }
 
+// `selected` is null for an explicit "default" choice, and missing when nothing is chosen.
 type VariantInput = {
   variants: string[]
-  selected: string | null | undefined
-  configured: string | undefined
+  selected?: string | null
+  configured?: string
 }
 
 export function getConfiguredAgentVariant(input: { agent: Agent | undefined; model: Model | undefined }) {
@@ -29,7 +32,7 @@ export function getConfiguredAgentVariant(input: { agent: Agent | undefined; mod
 }
 
 export function resolveModelVariant(input: VariantInput) {
-  if (input.selected === null) return undefined
+  if (Predicate.isNull(input.selected)) return undefined
   if (input.selected && input.variants.includes(input.selected)) return input.selected
   if (input.configured && input.variants.includes(input.configured)) return input.configured
   return undefined
@@ -37,7 +40,7 @@ export function resolveModelVariant(input: VariantInput) {
 
 export function cycleModelVariant(input: VariantInput) {
   if (input.variants.length === 0) return undefined
-  if (input.selected === null) return input.variants[0]
+  if (Predicate.isNull(input.selected)) return input.variants[0]
   if (input.selected && input.variants.includes(input.selected)) {
     const index = input.variants.indexOf(input.selected)
     if (index === input.variants.length - 1) return undefined
