@@ -13,7 +13,7 @@
  * ```
  */
 
-import { Option } from "effect"
+import { Data, Option } from "effect"
 import type { ITerminalAddon, ITerminalCore, IBufferRange } from "ghostty-web"
 
 // ============================================================================
@@ -555,6 +555,11 @@ function serializeBufferByScrollback(
 // SerializeAddon Class
 // ============================================================================
 
+/** A serialize call on an addon that no terminal has loaded, or that the terminal disposed. */
+class SerializeAddonNotLoadedError extends Data.TaggedError("App.SerializeAddonNotLoadedError")<{
+  readonly message: string
+}> {}
+
 export class SerializeAddon implements ITerminalAddon {
   private _terminal: Option.Option<ITerminalCore> = Option.none()
 
@@ -572,6 +577,14 @@ export class SerializeAddon implements ITerminalAddon {
     this._terminal = Option.none()
   }
 
+  /** The terminal that loaded the addon. Throws SerializeAddonNotLoadedError before activate or after dispose. */
+  private _loadedTerminal(): ITerminalCore {
+    return Option.getOrThrowWith(
+      this._terminal,
+      () => new SerializeAddonNotLoadedError({ message: "Cannot use addon until it has been loaded" }),
+    )
+  }
+
   /**
    * Serializes terminal rows into a string that can be written back to the
    * terminal to restore the state. The cursor will also be positioned to the
@@ -580,10 +593,7 @@ export class SerializeAddon implements ITerminalAddon {
    * @param options Custom options to allow control over what gets serialized.
    */
   public serialize(options?: ISerializeOptions): string {
-    if (Option.isNone(this._terminal)) {
-      throw new Error("Cannot use addon until it has been loaded")
-    }
-    const terminal = this._terminal.value
+    const terminal = this._loadedTerminal()
 
     const buffer = getTerminalBuffers(terminal)
 
@@ -620,10 +630,7 @@ export class SerializeAddon implements ITerminalAddon {
    * @param options Custom options to allow control over what gets serialized.
    */
   public serializeAsText(options?: { scrollback?: number; trimWhitespace?: boolean }): string {
-    if (Option.isNone(this._terminal)) {
-      throw new Error("Cannot use addon until it has been loaded")
-    }
-    const terminal = this._terminal.value
+    const terminal = this._loadedTerminal()
 
     const buffer = getTerminalBuffers(terminal)
 
