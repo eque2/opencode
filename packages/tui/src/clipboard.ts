@@ -92,6 +92,7 @@ export function copyCommand(
       "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())",
     ]
   }
+  return undefined
 }
 
 let copyMethod: Promise<(text: string) => Promise<void>> | undefined
