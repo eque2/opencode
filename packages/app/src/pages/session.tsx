@@ -1225,8 +1225,8 @@ export default function Page() {
   const openReviewFile = createOpenReviewFile({
     showAllFiles,
     tabForPath: file.tab,
-    openTab: tabs().open,
-    setActive: tabs().setActive,
+    openTab: (tab) => tabs().open(tab),
+    setActive: (tab) => tabs().setActive(tab),
     loadFile: file.load,
   })
 
@@ -1386,7 +1386,7 @@ export default function Page() {
     get diffStyle() {
       return layout.review.diffStyle()
     },
-    onDiffStyleChange: layout.review.setDiffStyle,
+    onDiffStyleChange: (style: DiffStyle) => layout.review.setDiffStyle(style),
     state: reviewV2State,
     onLineComment: (comment: SessionReviewLineComment) => addCommentToContext({ ...comment, origin: "review" }),
     onLineCommentUpdate: updateCommentInContext,
@@ -1436,7 +1436,7 @@ export default function Page() {
       <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
         {reviewContent({
           diffStyle: layout.review.diffStyle(),
-          onDiffStyleChange: layout.review.setDiffStyle,
+          onDiffStyleChange: (style) => layout.review.setDiffStyle(style),
           loadingClass: "px-6 py-4 text-text-weak",
           emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
         })}
@@ -2105,7 +2105,7 @@ export default function Page() {
     anchor,
     revealMessage: (id) => revealMessage(id),
     scheduleScrollState,
-    consumePendingMessage: layout.pendingMessage.consume,
+    consumePendingMessage: (key) => layout.pendingMessage.consume(key),
   })
 
   createEffect(

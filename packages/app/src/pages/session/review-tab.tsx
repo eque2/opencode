@@ -147,7 +147,7 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
       onScroll={handleScroll}
       onDiffRendered={queueRestore}
       open={props.view().review.open()}
-      onOpenChange={props.view().review.setOpen}
+      onOpenChange={(open) => props.view().review.setOpen(open)}
       classes={{
         root: props.classes?.root ?? "pr-3",
         header: props.classes?.header ?? "px-3",
