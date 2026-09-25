@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useRenderer } from "@opentui/solid"
 import type { TextareaRenderable } from "@opentui/core"
@@ -21,7 +22,7 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
   const questions = createMemo(() => props.request.questions)
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const tabs = createMemo(() => (single() ? 1 : questions().length + 1)) // questions + confirm tab (no confirm for single select)
-  const [tabHover, setTabHover] = createSignal<number | "confirm" | null>(null)
+  const [tabHover, setTabHover] = createSignal(Option.none<number | "confirm">())
   const [store, setStore] = createStore({
     tab: 0,
     answers: [] as QuestionAnswer[],
@@ -308,12 +309,12 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
                     backgroundColor={
                       isActive()
                         ? theme.accent
-                        : tabHover() === index()
+                        : Option.contains(tabHover(), index())
                           ? theme.backgroundElement
                           : theme.backgroundPanel
                     }
-                    onMouseOver={() => setTabHover(index())}
-                    onMouseOut={() => setTabHover(null)}
+                    onMouseOver={() => setTabHover(Option.some(index()))}
+                    onMouseOut={() => setTabHover(Option.none())}
                     onMouseUp={() => {
                       if (renderer.getSelection()?.getSelectedText()) return
                       selectTab(index())
@@ -338,10 +339,14 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
               paddingLeft={1}
               paddingRight={1}
               backgroundColor={
-                confirm() ? theme.accent : tabHover() === "confirm" ? theme.backgroundElement : theme.backgroundPanel
+                confirm()
+                  ? theme.accent
+                  : Option.contains(tabHover(), "confirm")
+                    ? theme.backgroundElement
+                    : theme.backgroundPanel
               }
-              onMouseOver={() => setTabHover("confirm")}
-              onMouseOut={() => setTabHover(null)}
+              onMouseOver={() => setTabHover(Option.some("confirm"))}
+              onMouseOut={() => setTabHover(Option.none())}
               onMouseUp={() => {
                 if (renderer.getSelection()?.getSelectedText()) return
                 selectTab(questions().length)

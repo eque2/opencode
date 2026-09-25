@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { createMemo, createSignal, Show } from "solid-js"
 import { useRouteData } from "../../context/route"
 import { useSync } from "../../context/sync"
@@ -59,7 +60,7 @@ export function SubagentFooter() {
   const parentShortcut = useCommandShortcut("session.parent")
   const previousShortcut = useCommandShortcut("session.child.previous")
   const nextShortcut = useCommandShortcut("session.child.next")
-  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
+  const [hover, setHover] = createSignal(Option.none<"parent" | "prev" | "next">())
   useTerminalDimensions()
 
   return (
@@ -95,30 +96,30 @@ export function SubagentFooter() {
           </box>
           <box flexDirection="row" gap={2}>
             <box
-              onMouseOver={() => setHover("parent")}
-              onMouseOut={() => setHover(null)}
+              onMouseOver={() => setHover(Option.some("parent"))}
+              onMouseOut={() => setHover(Option.none())}
               onMouseUp={() => keymap.dispatchCommand("session.parent")}
-              backgroundColor={hover() === "parent" ? theme.backgroundElement : theme.backgroundPanel}
+              backgroundColor={Option.contains(hover(), "parent") ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
                 Parent <span style={{ fg: theme.textMuted }}>{parentShortcut()}</span>
               </text>
             </box>
             <box
-              onMouseOver={() => setHover("prev")}
-              onMouseOut={() => setHover(null)}
+              onMouseOver={() => setHover(Option.some("prev"))}
+              onMouseOut={() => setHover(Option.none())}
               onMouseUp={() => keymap.dispatchCommand("session.child.previous")}
-              backgroundColor={hover() === "prev" ? theme.backgroundElement : theme.backgroundPanel}
+              backgroundColor={Option.contains(hover(), "prev") ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
                 Prev <span style={{ fg: theme.textMuted }}>{previousShortcut()}</span>
               </text>
             </box>
             <box
-              onMouseOver={() => setHover("next")}
-              onMouseOut={() => setHover(null)}
+              onMouseOver={() => setHover(Option.some("next"))}
+              onMouseOut={() => setHover(Option.none())}
               onMouseUp={() => keymap.dispatchCommand("session.child.next")}
-              backgroundColor={hover() === "next" ? theme.backgroundElement : theme.backgroundPanel}
+              backgroundColor={Option.contains(hover(), "next") ? theme.backgroundElement : theme.backgroundPanel}
             >
               <text fg={theme.text}>
                 Next <span style={{ fg: theme.textMuted }}>{nextShortcut()}</span>

@@ -409,7 +409,7 @@ export function Session() {
   })
 
   // Helper: Find next visible message boundary in direction
-  const findNextVisibleMessage = (direction: "next" | "prev"): string | null => {
+  const findNextVisibleMessage = (direction: "next" | "prev"): Option.Option<string> => {
     const children = scroll.getChildren()
     const messagesList = messages()
     const scrollTop = scroll.y
@@ -429,27 +429,27 @@ export function Session() {
       })
       .sort((a, b) => a.y - b.y)
 
-    if (visibleMessages.length === 0) return null
+    if (visibleMessages.length === 0) return Option.none()
 
     if (direction === "next") {
       // Find first message below current position
-      return visibleMessages.find((c) => c.y > scrollTop + 10)?.id ?? null
+      return Option.fromUndefinedOr(visibleMessages.find((c) => c.y > scrollTop + 10)?.id)
     }
     // Find last message above current position
-    return [...visibleMessages].reverse().find((c) => c.y < scrollTop - 10)?.id ?? null
+    return Option.fromUndefinedOr([...visibleMessages].reverse().find((c) => c.y < scrollTop - 10)?.id)
   }
 
   // Helper: Scroll to message in direction or fallback to page scroll
   const scrollToMessage = (direction: "next" | "prev", dialog: ReturnType<typeof useDialog>) => {
-    const targetID = findNextVisibleMessage(direction)
+    const target = findNextVisibleMessage(direction)
 
-    if (!targetID) {
+    if (Option.isNone(target)) {
       scroll.scrollBy(direction === "next" ? scroll.height : -scroll.height)
       dialog.clear()
       return
     }
 
-    const child = scroll.getChildren().find((c) => c.id === targetID)
+    const child = scroll.getChildren().find((c) => c.id === target.value)
     if (child) scroll.scrollBy(child.y - scroll.y - 1)
     dialog.clear()
   }
@@ -1225,7 +1225,7 @@ export function Session() {
   }))
 
   useBindings(() => ({
-    enabled: () => renderer.currentFocusedEditor === null,
+    enabled: () => Predicate.isNull(renderer.currentFocusedEditor),
     bindings: tuiConfig.keybinds.gather("session.global.unfocused", sessionGlobalUnfocusedBindingCommands),
   }))
 
@@ -1505,14 +1505,8 @@ function UserMessage(props: {
   const ctx = use()
   const local = useLocal()
   const text = createMemo(() => {
-    const texts = props.parts
-      .map((x) => {
-        if (x.type === "text" && !x.synthetic) {
-          return x.text
-        }
-        return null
-      })
-      .filter(Boolean)
+    // The user's own non-empty text parts; synthetic parts are not shown.
+    const texts = props.parts.flatMap((x) => (x.type === "text" && !x.synthetic && x.text ? [x.text] : []))
     return texts.join("\n\n")
   })
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
@@ -1786,18 +1780,20 @@ function ReasoningHeader(props: {
   toggleable: boolean
   open: boolean
   done: boolean
-  title: string | null
+  title: Option.Option<string>
   duration?: string
   encrypted?: boolean
 }) {
   const { theme } = useTheme()
+  // An empty summary title shows as no title.
+  const title = () => Option.filter(props.title, (value) => value.length > 0)
   const fg = () =>
     props.open
       ? RGBA.fromValues(theme.warning.r, theme.warning.g, theme.warning.b, theme.thinkingOpacity)
       : theme.warning
   const completed = () => {
     if (props.encrypted) return `Thought${props.duration ? ` · ${props.duration}` : ""}`
-    const detail = [props.title, props.duration].filter(Boolean).join(" · ")
+    const detail = [...Option.toArray(title()), props.duration].filter(Boolean).join(" · ")
     return `${props.toggleable ? (props.open ? "- " : "+ ") : ""}Thought${detail ? `: ${detail}` : ""}`
   }
 
@@ -1805,7 +1801,9 @@ function ReasoningHeader(props: {
     <Switch>
       <Match when={!props.done}>
         <box flexDirection="row">
-          <Spinner color={fg()}>{props.title ? "Thinking: " + props.title : "Thinking"}</Spinner>
+          <Spinner color={fg()}>
+            {Option.match(title(), { onNone: () => "Thinking", onSome: (value) => "Thinking: " + value })}
+          </Spinner>
         </box>
       </Match>
       <Match when={true}>
