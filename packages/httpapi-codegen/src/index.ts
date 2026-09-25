@@ -530,6 +530,7 @@ const promiseRuntimeReason =
   "(c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle"
 const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
+const tryCatchRule = "effect/no-try-catch-use-effect"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
   `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
@@ -730,6 +731,7 @@ export function make(options: ClientOptions) {
 
   ${runtimeDirective(asyncAwaitRule)}
   const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
+    ${runtimeDirective(tryCatchRule)}
     try {
       const prepared = prepare(descriptor, requestOptions)
       ${runtimeDirective(asyncAwaitRule)}
@@ -744,6 +746,7 @@ export function make(options: ClientOptions) {
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
     ${runtimeDirective(throwRule, asyncAwaitRule)}
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
+    ${runtimeDirective(tryCatchRule)}
     try {
       ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
@@ -767,6 +770,7 @@ export function make(options: ClientOptions) {
     ${runtimeDirective(asyncAwaitRule)}
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    ${runtimeDirective(tryCatchRule)}
     try {
       ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
@@ -781,6 +785,7 @@ export function make(options: ClientOptions) {
       ${runtimeDirective(asyncAwaitRule)}
       if (response.status !== descriptor.successStatus) await responseError(response, descriptor)
       if (!isContentType(response, "text/event-stream")) {
+        ${runtimeDirective(tryCatchRule)}
         try {
           ${runtimeDirective(asyncAwaitRule)}
           await response.body?.cancel()
@@ -795,9 +800,11 @@ export function make(options: ClientOptions) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
+      ${runtimeDirective(tryCatchRule)}
       try {
         while (true) {
           let next: ReadableStreamReadResult<Uint8Array>
+          ${runtimeDirective(tryCatchRule)}
           try {
             ${runtimeDirective(asyncAwaitRule)}
             next = await reader.read()
@@ -819,6 +826,7 @@ export function make(options: ClientOptions) {
             buffer = buffer.slice(boundary + 2)
             const data = block.split("\\n").flatMap((line) => line.startsWith("data:") ? [line.slice(5).trimStart()] : []).join("\\n")
             if (data !== "") {
+              ${runtimeDirective(tryCatchRule)}
               try {
                 yield JSON.parse(data) as A
               } catch (cause) {
@@ -831,6 +839,7 @@ export function make(options: ClientOptions) {
           if (next.done) return
         }
       } finally {
+        ${runtimeDirective(tryCatchRule)}
         try {
           ${runtimeDirective(asyncAwaitRule)}
           await reader.cancel()
@@ -863,6 +872,7 @@ function isPrimitive(value: unknown): value is string | number | boolean | bigin
 ${runtimeDirective(asyncAwaitRule)}
 async function json(response: Response): Promise<unknown> {
   if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {
+    ${runtimeDirective(tryCatchRule)}
     try {
       ${runtimeDirective(asyncAwaitRule)}
       await response.body?.cancel()
@@ -871,6 +881,7 @@ async function json(response: Response): Promise<unknown> {
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
+  ${runtimeDirective(tryCatchRule)}
   try {
     ${runtimeDirective(asyncAwaitRule)}
     text = await response.text()
@@ -880,6 +891,7 @@ async function json(response: Response): Promise<unknown> {
   }
   ${runtimeDirective(throwRule)}
   if (text === "") throw new ClientError("MalformedResponse")
+  ${runtimeDirective(tryCatchRule)}
   try {
     return JSON.parse(text)
   } catch (cause) {

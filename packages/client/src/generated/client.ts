@@ -161,6 +161,7 @@ export function make(options: ClientOptions) {
 
   // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   const execute = async (descriptor: RequestDescriptor, requestOptions?: RequestOptions) => {
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
       const prepared = prepare(descriptor, requestOptions)
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
@@ -175,6 +176,7 @@ export function make(options: ClientOptions) {
   const responseError = async (response: Response, descriptor: RequestDescriptor): Promise<never> => {
     // eslint-disable-next-line effect/no-throw-use-effect, effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     if (descriptor.declaredStatuses.includes(response.status)) throw await json(response)
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
@@ -198,6 +200,7 @@ export function make(options: ClientOptions) {
     // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     const response = await execute(descriptor, requestOptions)
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
@@ -212,6 +215,7 @@ export function make(options: ClientOptions) {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       if (response.status !== descriptor.successStatus) await responseError(response, descriptor)
       if (!isContentType(response, "text/event-stream")) {
+        // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         try {
           // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           await response.body?.cancel()
@@ -226,9 +230,11 @@ export function make(options: ClientOptions) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ""
+      // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       try {
         while (true) {
           let next
+          // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           try {
             // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
             next = await reader.read()
@@ -253,6 +259,7 @@ export function make(options: ClientOptions) {
               .flatMap((line) => (line.startsWith("data:") ? [line.slice(5).trimStart()] : []))
               .join("\n")
             if (data !== "") {
+              // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
               try {
                 yield JSON.parse(data) as A
               } catch (cause) {
@@ -265,6 +272,7 @@ export function make(options: ClientOptions) {
           if (next.done) return
         }
       } finally {
+        // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         try {
           // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
           await reader.cancel()
@@ -1000,6 +1008,7 @@ function isPrimitive(value: unknown): value is string | number | boolean | bigin
 // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
 async function json(response: Response): Promise<unknown> {
   if (!isContentType(response, "application/json") && !response.headers.get("content-type")?.includes("+json")) {
+    // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     try {
       // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
       await response.body?.cancel()
@@ -1008,6 +1017,7 @@ async function json(response: Response): Promise<unknown> {
     throw new ClientError("UnsupportedContentType")
   }
   let text: string
+  // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   try {
     // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     text = await response.text()
@@ -1017,6 +1027,7 @@ async function json(response: Response): Promise<unknown> {
   }
   // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   if (text === "") throw new ClientError("MalformedResponse")
+  // eslint-disable-next-line effect/no-try-catch-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
   try {
     return JSON.parse(text)
   } catch (cause) {
