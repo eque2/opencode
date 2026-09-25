@@ -11,6 +11,7 @@ import { showToast } from "@/utils/toast"
 import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, createResource, Show } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useGlobal } from "@/context/global"
 import { useLanguage } from "@/context/language"
@@ -23,6 +24,9 @@ import { useTabs } from "@/context/tabs"
 
 const DEFAULT_USERNAME = "opencode"
 
+// A form field counts as set when it is not empty.
+const nonEmpty = (value: string) => (value ? Option.some(value) : Option.none<string>())
+
 interface ServerFormProps {
   value: string
   name: string
@@ -31,7 +35,7 @@ interface ServerFormProps {
   placeholder: string
   busy: boolean
   error: string
-  status: boolean | undefined
+  status: Option.Option<boolean>
   onChange: (value: string) => void
   onNameChange: (value: string) => void
   onUsernameChange: (value: string) => void
@@ -94,9 +98,9 @@ function useServerPreview() {
     value: string,
     username: string,
     password: string,
-    setStatus: (value: boolean | undefined) => void,
+    setStatus: (value: Option.Option<boolean>) => void,
   ) => {
-    setStatus(undefined)
+    setStatus(Option.none())
     if (!looksComplete(value)) return
     const normalized = normalizeServerUrl(value)
     if (!normalized) return
@@ -104,7 +108,7 @@ function useServerPreview() {
     if (username) http.username = username
     if (password) http.password = password
     const result = await checkServerHealth(http)
-    setStatus(result.healthy)
+    setStatus(Option.some(result.healthy))
   }
 
   return { previewStatus }
@@ -208,16 +212,16 @@ export function useServerManagementController(options: { onSelect?: () => void; 
       password: "",
       error: "",
       showForm: false,
-      status: undefined as boolean | undefined,
+      status: Option.none<boolean>(),
     },
     editServer: {
-      id: undefined as string | undefined,
+      id: Option.none<string>(),
       value: "",
       name: "",
       username: "",
       password: "",
       error: "",
-      status: undefined as boolean | undefined,
+      status: Option.none<boolean>(),
     },
   })
 
@@ -229,18 +233,18 @@ export function useServerManagementController(options: { onSelect?: () => void; 
       password: "",
       error: "",
       showForm: false,
-      status: undefined,
+      status: Option.none(),
     })
   }
   const resetEdit = () => {
     setStore("editServer", {
-      id: undefined,
+      id: Option.none(),
       value: "",
       name: "",
       username: "",
       password: "",
       error: "",
-      status: undefined,
+      status: Option.none(),
     })
   }
 
@@ -291,24 +295,28 @@ export function useServerManagementController(options: { onSelect?: () => void; 
         return
       }
 
-      const name = store.editServer.name.trim() || undefined
-      const username = store.editServer.username || undefined
-      const password = store.editServer.password || undefined
-      const existingName = input.original.displayName
+      const name = nonEmpty(store.editServer.name.trim())
+      const username = nonEmpty(store.editServer.username)
+      const password = nonEmpty(store.editServer.password)
       if (
         normalized === input.original.http.url &&
-        name === existingName &&
-        username === input.original.http.username &&
-        password === input.original.http.password
+        Option.getOrUndefined(name) === input.original.displayName &&
+        Option.getOrUndefined(username) === input.original.http.username &&
+        Option.getOrUndefined(password) === input.original.http.password
       ) {
         resetEdit()
         return
       }
 
+      // An empty field keeps its key with no value, so the store merge in server.add clears the saved value.
       const conn: ServerConnection.Http = {
         type: "http",
-        displayName: name,
-        http: { url: normalized, username, password },
+        displayName: Option.getOrUndefined(name),
+        http: {
+          url: normalized,
+          username: Option.getOrUndefined(username),
+          password: Option.getOrUndefined(password),
+        },
       }
       const result = await checkServerHealth(conn.http)
       if (!result.healthy) {
@@ -352,10 +360,10 @@ export function useServerManagementController(options: { onSelect?: () => void; 
   })
 
   const settings = useSettings()
-  const current = createMemo<ServerConnection.Any | undefined>(() =>
+  const current = createMemo<Option.Option<ServerConnection.Any>>(() =>
     settings.general.newLayoutDesigns()
-      ? undefined
-      : (items().find((x) => ServerConnection.key(x) === server.key) ?? items()[0]),
+      ? Option.none()
+      : Option.fromNullishOr(items().find((x) => ServerConnection.key(x) === server.key) ?? items()[0]),
   )
 
   const sortedItems = createMemo(() => {
@@ -374,8 +382,8 @@ export function useServerManagementController(options: { onSelect?: () => void; 
     return list
       .map((conn, index) => ({ conn, index }))
       .sort((a, b) => {
-        if (a.conn === active) return -1
-        if (b.conn === active) return 1
+        if (Option.exists(active, (conn) => conn === a.conn)) return -1
+        if (Option.exists(active, (conn) => conn === b.conn)) return 1
         const diff =
           rank(global.servers.health[ServerConnection.key(a.conn)]) -
           rank(global.servers.health[ServerConnection.key(b.conn)])
@@ -456,15 +464,16 @@ export function useServerManagementController(options: { onSelect?: () => void; 
   }
 
   const mode = createMemo<"list" | "add" | "edit">(() => {
-    if (store.editServer.id) return "edit"
+    if (Option.isSome(store.editServer.id)) return "edit"
     if (store.addServer.showForm) return "add"
     return "list"
   })
 
-  const editing = createMemo(() => {
-    if (!store.editServer.id) return
-    return items().find((x) => x.type === "http" && x.http.url === store.editServer.id)
-  })
+  const editing = createMemo(() =>
+    Option.flatMap(store.editServer.id, (id) =>
+      Option.fromNullishOr(items().find((x) => x.type === "http" && x.http.url === id)),
+    ),
+  )
 
   const resetForm = () => {
     resetAdd()
@@ -480,20 +489,20 @@ export function useServerManagementController(options: { onSelect?: () => void; 
       username: DEFAULT_USERNAME,
       password: "",
       error: "",
-      status: undefined,
+      status: Option.none(),
     })
   }
 
   const startEdit = (conn: ServerConnection.Http) => {
     resetAdd()
     setStore("editServer", {
-      id: conn.http.url,
+      id: Option.some(conn.http.url),
       value: conn.http.url,
       name: conn.displayName ?? "",
       username: conn.http.username ?? "",
       password: conn.http.password ?? "",
       error: "",
-      status: global.servers.health[ServerConnection.key(conn)]?.healthy,
+      status: Option.fromNullishOr(global.servers.health[ServerConnection.key(conn)]?.healthy),
     })
   }
 
@@ -505,10 +514,10 @@ export function useServerManagementController(options: { onSelect?: () => void; 
       return
     }
     const original = editing()
-    if (!original) return
+    if (Option.isNone(original)) return
     if (editMutation.isPending) return
     setStore("editServer", { error: "" })
-    editMutation.mutate({ original, value: store.editServer.value })
+    editMutation.mutate({ original: original.value, value: store.editServer.value })
   }
 
   const isFormMode = createMemo(() => mode() !== "list")
@@ -526,8 +535,8 @@ export function useServerManagementController(options: { onSelect?: () => void; 
   })
 
   createEffect(() => {
-    if (!store.editServer.id) return
-    if (editing()) return
+    if (Option.isNone(store.editServer.id)) return
+    if (Option.isSome(editing())) return
     resetEdit()
   })
 
@@ -617,7 +626,7 @@ export function ServerConnectionList(props: { controller: ReturnType<typeof useS
                 showCredentials
               />
               <div class="flex items-center justify-center gap-4 pl-4">
-                <Show when={props.controller.current() && ServerConnection.key(props.controller.current()!) === key}>
+                <Show when={Option.exists(props.controller.current(), (conn) => ServerConnection.key(conn) === key)}>
                   <Icon name="check" class="h-6" />
                 </Show>
 
