@@ -1,5 +1,5 @@
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
-import { DateTime, HashSet } from "effect"
+import { DateTime, HashSet, MutableHashMap, Option } from "effect"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { Dialog, DialogBody } from "@opencode-ai/ui/v2/dialog-v2"
@@ -25,10 +25,14 @@ import {
 } from "./command-palette"
 import "./dialog-command-palette-v2.css"
 
+/** Groups entries by category, in the order each category first appears. */
 function groups(entries: CommandPaletteEntry[]) {
-  const map = new Map<string, CommandPaletteEntry[]>()
-  for (const entry of entries) map.set(entry.category, [...(map.get(entry.category) ?? []), entry])
-  return Array.from(map.entries()).map(([category, entries]) => ({ category, entries }))
+  const map = MutableHashMap.empty<string, CommandPaletteEntry[]>()
+  for (const entry of entries) {
+    const previous = Option.getOrElse(MutableHashMap.get(map, entry.category), () => [])
+    MutableHashMap.set(map, entry.category, [...previous, entry])
+  }
+  return Array.from(map).map(([category, entries]) => ({ category, entries }))
 }
 
 function matchesEntry(entry: CommandPaletteEntry, query: string) {

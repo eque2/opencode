@@ -2,7 +2,7 @@ import { getFilename } from "@opencode-ai/core/util/path"
 import type { Project } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { MutableHashSet } from "effect"
+import { HashMap, MutableHashSet, Option } from "effect"
 import { createMemo, onCleanup } from "solid-js"
 import { commandPaletteOptions, useCommand, type CommandOption } from "@/context/command"
 import { useFile } from "@/context/file"
@@ -43,6 +43,9 @@ const COMMON_COMMAND_IDS = [
   "terminal.toggle",
   "review.toggle",
 ] as const
+// The position of each common command in the preferred list.
+const COMMON_COMMAND_ORDER = HashMap.fromIterable<string, number>(COMMON_COMMAND_IDS.map((id, index) => [id, index]))
+const commonCommandRank = (id: string) => Option.getOrElse(HashMap.get(COMMON_COMMAND_ORDER, id), () => 0)
 
 export function uniqueCommandPaletteEntries(items: CommandPaletteEntry[]) {
   const seen = MutableHashSet.empty<string>()
@@ -103,10 +106,9 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
   })
   const preferredCommandEntries = createMemo(() => {
     const all = allowedCommands()
-    const order = new Map<string, number>(COMMON_COMMAND_IDS.map((id, index) => [id, index]))
-    const picked = all.filter((option) => order.has(option.id))
+    const picked = all.filter((option) => HashMap.has(COMMON_COMMAND_ORDER, option.id))
     const base = picked.length ? picked : all.slice(0, ENTRY_LIMIT)
-    const sorted = picked.length ? [...base].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)) : base
+    const sorted = picked.length ? [...base].sort((a, b) => commonCommandRank(a.id) - commonCommandRank(b.id)) : base
     const category = language.t("palette.group.commands")
     return sorted.map((option) => createCommandPaletteCommandEntry(option, category))
   })
@@ -251,9 +253,11 @@ export function createServerSessionEntries(props: {
     })
     if (current.signal.aborted) return []
     const opened = props.opened()
-    const openedByID = new Map(opened.flatMap((project) => (project.id ? [[project.id, project] as const] : [])))
+    const openedByID = HashMap.fromIterable(
+      opened.flatMap((project) => (project.id ? [[project.id, project] as const] : [])),
+    )
     const stored = props.stored().map((project) => ({ ...project, expanded: false }))
-    const storedByID = new Map(stored.map((project) => [project.id, project] as const))
+    const storedByID = HashMap.fromIterable(stored.map((project) => [project.id, project] as const))
     return props
       .load(search, current.signal)
       .then((result) =>
