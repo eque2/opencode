@@ -13,7 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
-import { Random, Result } from "effect"
+import { HashMap, Option, Random, Result } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -288,7 +288,7 @@ export function Prompt(props: PromptProps) {
   const [store, setStore] = createStore<{
     prompt: PromptInfo
     mode: "normal" | "shell"
-    extmarkToPartIndex: Map<number, number>
+    extmarkToPartIndex: HashMap.HashMap<number, number>
     interrupt: number
     placeholder: number
   }>({
@@ -298,7 +298,7 @@ export function Prompt(props: PromptProps) {
       parts: [],
     },
     mode: "normal",
-    extmarkToPartIndex: new Map(),
+    extmarkToPartIndex: HashMap.empty(),
     interrupt: 0,
   })
 
@@ -609,7 +609,7 @@ export function Prompt(props: PromptProps) {
         input: "",
         parts: [],
       })
-      setStore("extmarkToPartIndex", new Map())
+      setStore("extmarkToPartIndex", HashMap.empty())
     },
     submit() {
       void submit()
@@ -661,7 +661,7 @@ export function Prompt(props: PromptProps) {
 
   function restoreExtmarksFromParts(parts: PromptInfo["parts"]) {
     input.extmarks.clear()
-    setStore("extmarkToPartIndex", new Map())
+    setStore("extmarkToPartIndex", HashMap.empty())
 
     parts.forEach((part, partIndex) => {
       let start = 0
@@ -694,11 +694,7 @@ export function Prompt(props: PromptProps) {
           styleId,
           typeId: promptPartTypeId,
         })
-        setStore("extmarkToPartIndex", (map: Map<number, number>) => {
-          const newMap = new Map(map)
-          newMap.set(extmarkId, partIndex)
-          return newMap
-        })
+        setStore("extmarkToPartIndex", (map) => HashMap.set(map, extmarkId, partIndex))
       }
     })
   }
@@ -707,32 +703,29 @@ export function Prompt(props: PromptProps) {
     const allExtmarks = input.extmarks.getAllForTypeId(promptPartTypeId)
     setStore(
       produce((draft) => {
-        const newMap = new Map<number, number>()
-        const newParts: typeof draft.prompt.parts = []
-
-        for (const extmark of allExtmarks) {
-          const partIndex = draft.extmarkToPartIndex.get(extmark.id)
-          if (partIndex !== undefined) {
-            const part = draft.prompt.parts[partIndex]
-            if (part) {
-              if (part.type === "agent" && part.source) {
-                part.source.start = extmark.start
-                part.source.end = extmark.end
-              } else if (part.type === "file" && part.source?.text) {
-                part.source.text.start = extmark.start
-                part.source.text.end = extmark.end
-              } else if (part.type === "text" && part.source?.text) {
-                part.source.text.start = extmark.start
-                part.source.text.end = extmark.end
-              }
-              newMap.set(extmark.id, newParts.length)
-              newParts.push(part)
-            }
+        // Keep the parts whose extmark still exists, in extmark order, with their new positions.
+        const kept = allExtmarks.flatMap((extmark) => {
+          const found = Option.flatMapNullishOr(
+            HashMap.get(draft.extmarkToPartIndex, extmark.id),
+            (partIndex) => draft.prompt.parts[partIndex],
+          )
+          if (Option.isNone(found)) return []
+          const part = found.value
+          if (part.type === "agent" && part.source) {
+            part.source.start = extmark.start
+            part.source.end = extmark.end
+          } else if (part.type === "file" && part.source?.text) {
+            part.source.text.start = extmark.start
+            part.source.text.end = extmark.end
+          } else if (part.type === "text" && part.source?.text) {
+            part.source.text.start = extmark.start
+            part.source.text.end = extmark.end
           }
-        }
+          return [{ extmarkId: extmark.id, part }]
+        })
 
-        draft.extmarkToPartIndex = newMap
-        draft.prompt.parts = newParts
+        draft.extmarkToPartIndex = HashMap.fromIterable(kept.map(({ extmarkId }, index) => [extmarkId, index] as const))
+        draft.prompt.parts = kept.map(({ part }) => part)
       }),
     )
   }
@@ -753,7 +746,7 @@ export function Prompt(props: PromptProps) {
           input.extmarks.clear()
           input.clear()
           setStore("prompt", { input: "", parts: [] })
-          setStore("extmarkToPartIndex", new Map())
+          setStore("extmarkToPartIndex", HashMap.empty())
           dialog.clear()
         },
       },
@@ -1030,10 +1023,12 @@ export function Prompt(props: PromptProps) {
     const inputText = expandTrackedPastedText(
       store.prompt.input,
       input.extmarks.getAllForTypeId(promptPartTypeId).flatMap((extmark) => {
-        const partIndex = store.extmarkToPartIndex.get(extmark.id)
-        const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
-        if (part?.type !== "text") return []
-        return [{ start: extmark.start, end: extmark.end, text: part.text }]
+        const part = Option.flatMapNullishOr(
+          HashMap.get(store.extmarkToPartIndex, extmark.id),
+          (partIndex) => store.prompt.parts[partIndex],
+        )
+        if (Option.isNone(part) || part.value.type !== "text") return []
+        return [{ start: extmark.start, end: extmark.end, text: part.value.text }]
       }),
     )
 
@@ -1132,7 +1127,7 @@ export function Prompt(props: PromptProps) {
       input: "",
       parts: [],
     })
-    setStore("extmarkToPartIndex", new Map())
+    setStore("extmarkToPartIndex", HashMap.empty())
     props.onSubmit?.()
 
     // temporary hack to make sure the message is sent
@@ -1179,7 +1174,7 @@ export function Prompt(props: PromptProps) {
             },
           },
         })
-        draft.extmarkToPartIndex.set(extmarkId, partIndex)
+        draft.extmarkToPartIndex = HashMap.set(draft.extmarkToPartIndex, extmarkId, partIndex)
       }),
     )
   }
@@ -1267,7 +1262,7 @@ export function Prompt(props: PromptProps) {
       produce((draft) => {
         const partIndex = draft.prompt.parts.length
         draft.prompt.parts.push(part)
-        draft.extmarkToPartIndex.set(extmarkId, partIndex)
+        draft.extmarkToPartIndex = HashMap.set(draft.extmarkToPartIndex, extmarkId, partIndex)
       }),
     )
     return
@@ -1286,7 +1281,7 @@ export function Prompt(props: PromptProps) {
       input: "",
       parts: [],
     })
-    setStore("extmarkToPartIndex", new Map())
+    setStore("extmarkToPartIndex", HashMap.empty())
   }
 
   const highlight = createMemo(() => {
@@ -1704,11 +1699,7 @@ export function Prompt(props: PromptProps) {
           setStore("prompt", produce(cb))
         }}
         setExtmark={(partIndex, extmarkId) => {
-          setStore("extmarkToPartIndex", (map: Map<number, number>) => {
-            const newMap = new Map(map)
-            newMap.set(extmarkId, partIndex)
-            return newMap
-          })
+          setStore("extmarkToPartIndex", (map) => HashMap.set(map, extmarkId, partIndex))
         }}
         value={store.prompt.input}
         fileStyleId={fileStyleId}
