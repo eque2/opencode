@@ -13,7 +13,7 @@ const AzureCliToken = Schema.Struct({
   accessToken: Schema.NonEmptyString,
   expires_on: Schema.optional(Schema.Number),
   expiresOn: Schema.optional(Schema.NonEmptyString),
-})
+}).annotate({ identifier: "AzureCliToken" })
 const decodeAzureCliToken = Schema.decodeUnknownPromise(AzureCliToken)
 type AzureCommand = (args: string[]) => Promise<unknown>
 
