@@ -6,6 +6,7 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
+import { HashMap, Option } from "effect"
 import { createEffect, createMemo, on, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
@@ -143,24 +144,28 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     )
 
   const historyComments = () => {
-    const byID = new Map(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
+    const byID = HashMap.fromIterable(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
     return prompt.context.items().flatMap((item) => {
       const comment = item.comment?.trim()
       if (!comment) return []
-      const selection = item.commentID ? byID.get(`${item.path}\n${item.commentID}`)?.selection : undefined
-      const nextSelection =
-        selection ??
-        (item.selection
-          ? ({ start: item.selection.startLine, end: item.selection.endLine } satisfies SelectedLineRange)
-          : undefined)
-      if (!nextSelection) return []
+      const saved = item.commentID ? HashMap.get(byID, `${item.path}\n${item.commentID}`) : Option.none()
+      const nextSelection = saved.pipe(
+        Option.map((entry) => entry.selection),
+        Option.orElse(() =>
+          Option.map(
+            Option.fromNullishOr(item.selection),
+            (selection) => ({ start: selection.startLine, end: selection.endLine }) satisfies SelectedLineRange,
+          ),
+        ),
+      )
+      if (Option.isNone(nextSelection)) return []
       return [
         {
           id: item.commentID ?? item.key,
           path: item.path,
-          selection: { ...nextSelection },
+          selection: { ...nextSelection.value },
           comment,
-          time: item.commentID ? (byID.get(`${item.path}\n${item.commentID}`)?.time ?? Date.now()) : Date.now(),
+          time: Option.match(saved, { onNone: () => Date.now(), onSome: (entry) => entry.time }),
           origin: item.commentOrigin,
           preview: item.preview,
         } satisfies PromptHistoryComment,

@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { HashMap, HashSet, Option } from "effect"
 import { ACCEPTED_FILE_TYPES, ACCEPTED_IMAGE_TYPES } from "@/constants/file-picker"
 
 export { ACCEPTED_FILE_TYPES }
@@ -36,7 +36,7 @@ export function pickAttachmentFiles(input: {
 }
 
 const IMAGE_MIMES = HashSet.fromIterable(ACCEPTED_IMAGE_TYPES)
-const IMAGE_EXTS = new Map([
+const IMAGE_EXTS = HashMap.fromIterable([
   ["gif", "image/gif"],
   ["jpeg", "image/jpeg"],
   ["jpg", "image/jpeg"],
@@ -89,8 +89,10 @@ export async function attachmentMime(file: File) {
   if (type === "application/pdf") return type
 
   const suffix = ext(file.name)
-  const fallback = IMAGE_EXTS.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
-  if ((!type || type === "application/octet-stream") && fallback) return fallback
+  const fallback = HashMap.get(IMAGE_EXTS, suffix).pipe(
+    Option.orElse(() => (suffix === "pdf" ? Option.some("application/pdf") : Option.none())),
+  )
+  if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback.value
 
   if (textMime(type)) return "text/plain"
   const bytes = new Uint8Array(await file.slice(0, SAMPLE).arrayBuffer())

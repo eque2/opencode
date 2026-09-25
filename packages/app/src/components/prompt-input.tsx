@@ -1,16 +1,7 @@
-import { HashSet } from "effect"
+import { HashMap, HashSet, Option } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
-import {
-  createEffect,
-  on,
-  Component,
-  Show,
-  onCleanup,
-  createMemo,
-  createSignal,
-  createResource,
-} from "solid-js"
+import { createEffect, on, Component, Show, onCleanup, createMemo, createSignal, createResource } from "solid-js"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import {
   ContentPart,
@@ -314,30 +305,35 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   )
 
   const historyComments = () => {
-    const byID = new Map(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
+    const byID = HashMap.fromIterable(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))
     return prompt.context.items().flatMap((item) => {
       if (item.type !== "file") return []
       const comment = item.comment?.trim()
       if (!comment) return []
 
-      const selection = item.commentID ? byID.get(`${item.path}\n${item.commentID}`)?.selection : undefined
-      const nextSelection =
-        selection ??
-        (item.selection
-          ? ({
-              start: item.selection.startLine,
-              end: item.selection.endLine,
-            } satisfies SelectedLineRange)
-          : undefined)
-      if (!nextSelection) return []
+      const saved = item.commentID ? HashMap.get(byID, `${item.path}\n${item.commentID}`) : Option.none()
+      const nextSelection = saved.pipe(
+        Option.map((entry) => entry.selection),
+        Option.orElse(() =>
+          Option.map(
+            Option.fromNullishOr(item.selection),
+            (selection) =>
+              ({
+                start: selection.startLine,
+                end: selection.endLine,
+              }) satisfies SelectedLineRange,
+          ),
+        ),
+      )
+      if (Option.isNone(nextSelection)) return []
 
       return [
         {
           id: item.commentID ?? item.key,
           path: item.path,
-          selection: { ...nextSelection },
+          selection: { ...nextSelection.value },
           comment,
-          time: item.commentID ? (byID.get(`${item.path}\n${item.commentID}`)?.time ?? Date.now()) : Date.now(),
+          time: Option.match(saved, { onNone: () => Date.now(), onSome: (entry) => entry.time }),
           origin: item.commentOrigin,
           preview: item.preview,
         } satisfies PromptHistoryComment,
