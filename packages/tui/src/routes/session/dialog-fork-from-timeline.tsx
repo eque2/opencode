@@ -37,8 +37,8 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     for (const message of messages) {
       if (message.role !== "user") continue
       const part = (sync.data.part[message.id] ?? []).find(
-        (x) => x.type === "text" && !x.synthetic && !x.ignored,
-      ) as TextPart
+        (x): x is TextPart => x.type === "text" && !x.synthetic && !x.ignored,
+      )
       if (!part) continue
       result.push({
         title: part.text.replace(/\n/g, " "),

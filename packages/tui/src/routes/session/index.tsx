@@ -16,7 +16,7 @@ import {
 } from "solid-js"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
-import { DateTime, HashSet } from "effect"
+import { DateTime, HashSet, Predicate } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -40,7 +40,7 @@ import type {
 import { useLocal } from "../../context/local"
 import { Locale } from "../../util/locale"
 import { webSearchProviderLabel } from "../../util/tool-display"
-import { Dynamic, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
+import { useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
 import { useSDK } from "../../context/sdk"
 import { useEditorContext } from "../../context/editor"
 import { openEditor } from "../../editor"
@@ -1265,30 +1265,34 @@ export function Session() {
                       >
                         <></>
                       </Match>
-                      <Match when={message.role === "user"}>
-                        <UserMessage
-                          index={index()}
-                          onMouseUp={() => {
-                            if (renderer.getSelection()?.getSelectedText()) return
-                            dialog.replace(() => (
-                              <DialogMessage
-                                messageID={message.id}
-                                sessionID={route.sessionID}
-                                setPrompt={(promptInfo) => prompt?.set(promptInfo)}
-                              />
-                            ))
-                          }}
-                          message={message as UserMessage}
-                          parts={sync.data.part[message.id] ?? []}
-                          pending={pending()}
-                        />
+                      <Match when={message.role === "user" && message}>
+                        {(user) => (
+                          <UserMessage
+                            index={index()}
+                            onMouseUp={() => {
+                              if (renderer.getSelection()?.getSelectedText()) return
+                              dialog.replace(() => (
+                                <DialogMessage
+                                  messageID={message.id}
+                                  sessionID={route.sessionID}
+                                  setPrompt={(promptInfo) => prompt?.set(promptInfo)}
+                                />
+                              ))
+                            }}
+                            message={user()}
+                            parts={sync.data.part[message.id] ?? []}
+                            pending={pending()}
+                          />
+                        )}
                       </Match>
-                      <Match when={message.role === "assistant"}>
-                        <AssistantMessage
-                          last={lastAssistant()?.id === message.id}
-                          message={message as AssistantMessage}
-                          parts={sync.data.part[message.id] ?? []}
-                        />
+                      <Match when={message.role === "assistant" && message}>
+                        {(assistant) => (
+                          <AssistantMessage
+                            last={lastAssistant()?.id === message.id}
+                            message={assistant()}
+                            parts={sync.data.part[message.id] ?? []}
+                          />
+                        )}
                       </Match>
                     </Switch>
                   )}
@@ -1493,19 +1497,25 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   return (
     <>
       <For each={props.parts}>
-        {(part, index) => {
-          const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
-          return (
-            <Show when={component()}>
-              <Dynamic
-                last={index() === props.parts.length - 1}
-                component={component()}
-                part={part as any}
-                message={props.message}
-              />
-            </Show>
-          )
-        }}
+        {(part, index) => (
+          <Switch>
+            <Match when={part.type === "text" && part}>
+              {(text) => (
+                <TextPart last={index() === props.parts.length - 1} part={text()} message={props.message} />
+              )}
+            </Match>
+            <Match when={part.type === "tool" && part}>
+              {(tool) => (
+                <ToolPart last={index() === props.parts.length - 1} part={tool()} message={props.message} />
+              )}
+            </Match>
+            <Match when={part.type === "reasoning" && part}>
+              {(reasoning) => (
+                <ReasoningPart last={index() === props.parts.length - 1} part={reasoning()} message={props.message} />
+              )}
+            </Match>
+          </Switch>
+        )}
       </For>
       <Show when={props.parts.some((x) => x.type === "tool" && x.tool === "task")}>
         <box paddingTop={1} paddingLeft={3}>
@@ -1574,12 +1584,6 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
       </Switch>
     </>
   )
-}
-
-const PART_MAPPING = {
-  text: TextPart,
-  tool: ToolPart,
-  reasoning: ReasoningPart,
 }
 
 const INLINE_TOOL_ICON_WIDTH = 2
@@ -2330,14 +2334,18 @@ export function formatCompletedSubagentDetail(toolcalls: number, duration: strin
 
 type ExecuteCall = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
 
+function isExecuteStatus(value: unknown): value is ExecuteCall["status"] {
+  return value === "running" || value === "completed" || value === "error"
+}
+
 function executeCalls(value: unknown): ExecuteCall[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((call) => {
     const item = recordValue(call)
     const tool = stringValue(item?.tool)
-    const status = stringValue(item?.status)
-    if (!tool || !status || !["running", "completed", "error"].includes(status)) return []
-    return [{ tool, status: status as ExecuteCall["status"], input: recordValue(item?.input) }]
+    const status = item?.status
+    if (!tool || !isExecuteStatus(status)) return []
+    return [{ tool, status, input: recordValue(item?.input) }]
   })
 }
 
@@ -2646,8 +2654,8 @@ export function toolDisplay(tool: string) {
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return
-  return value as Record<string, unknown>
+  if (!Predicate.isObject(value)) return
+  return value
 }
 
 export function parseApplyPatchFiles(value: unknown) {
