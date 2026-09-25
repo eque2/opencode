@@ -9,7 +9,7 @@ import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
@@ -33,7 +33,7 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount } from "../titlebar"
-import { Option, Schema } from "effect"
+import { Data, Effect, Option, Schema } from "effect"
 
 const OPEN_APPS = [
   "vscode",
@@ -131,11 +131,39 @@ const detectOS = (platform: ReturnType<typeof usePlatform>): OS => {
   return "unknown"
 }
 
-const showRequestError = (language: ReturnType<typeof useLanguage>, err: unknown) => {
+/** A platform or clipboard request of the "open in" menu that rejected. `message` is shown in the error toast. */
+class OpenInAppError extends Data.TaggedError("App.OpenInAppError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+const toOpenInAppError = (cause: unknown) =>
+  new OpenInAppError({ message: cause instanceof Error ? cause.message : String(cause), cause })
+
+/** Runs a menu request in the background. A defect goes to the Effect logger. */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
+/**
+ * Runs a request of an optional platform method. A platform without the
+ * method returns no Promise from the optional call; then nothing runs and the
+ * result is Option.none().
+ */
+const platformRequest = <A,>(request: () => Promise<A> | undefined) =>
+  Effect.suspend(() =>
+    Option.match(Option.fromNullishOr(request()), {
+      onNone: () => Effect.succeedNone,
+      onSome: (pending) =>
+        Effect.tryPromise({ try: () => pending, catch: toOpenInAppError }).pipe(Effect.map(Option.some)),
+    }),
+  )
+
+const showRequestError = (language: ReturnType<typeof useLanguage>, error: OpenInAppError) => {
   showToast({
     variant: "error",
     title: language.t("common.requestFailed"),
-    description: err instanceof Error ? err.message : String(err),
+    description: error.message,
   })
 }
 
@@ -186,18 +214,35 @@ export function SessionHeader() {
 
     const list = apps()
 
-    setExists(Object.fromEntries(list.map((app) => [app.id, undefined])) as Partial<Record<OpenApp, boolean>>)
+    // Each app is unknown until its check answers; the menu lists only apps marked true.
+    setExists(
+      produce((draft) => {
+        for (const app of list) delete draft[app.id]
+      }),
+    )
 
-    void Promise.all(
-      list.map((app) =>
-        Promise.resolve(platform.checkAppExists?.(app.openWith))
-          .then((value) => Boolean(value))
-          .catch(() => false)
-          .then((ok) => [app.id, ok] as const),
+    runDetached(
+      Effect.forEach(
+        list,
+        (app) =>
+          platformRequest(() => platform.checkAppExists?.(app.openWith)).pipe(
+            Effect.map((found) => Option.getOrElse(found, () => false)),
+            Effect.orElseSucceed(() => false),
+            Effect.map((ok) => [app.id, ok] as const),
+          ),
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.andThen((entries) =>
+          Effect.sync(() =>
+            setExists(
+              produce((draft) => {
+                for (const [id, ok] of entries) draft[id] = ok
+              }),
+            ),
+          ),
+        ),
       ),
-    ).then((entries) => {
-      setExists(Object.fromEntries(entries) as Partial<Record<OpenApp, boolean>>)
-    })
+    )
   })
 
   const options = createMemo(() => {
@@ -222,7 +267,7 @@ export function SessionHeader() {
   const [prefs, setPrefs] = persisted(Persist.global("open.app"), createStore({ app: "finder" as OpenApp }))
   const [menu, setMenu] = createStore({ open: false })
   const [openRequest, setOpenRequest] = createStore({
-    app: undefined as OpenApp | undefined,
+    app: Option.none<OpenApp>(),
   })
 
   const canOpen = createMemo(() => platform.platform === "desktop" && !!platform.openPath && server.isLocal())
@@ -232,7 +277,7 @@ export function SessionHeader() {
       options()[0] ??
       ({ id: "finder", label: fileManager().label, icon: fileManager().icon } as const),
   )
-  const opening = createMemo(() => openRequest.app !== undefined)
+  const opening = createMemo(() => Option.isSome(openRequest.app))
   // Without a session there are no messages, so the spinner keeps the default color.
   const tint = createMemo(() => messageAgentColor(params.id ? sync().data.message[params.id] : [], sync().data.agent))
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
@@ -256,30 +301,40 @@ export function SessionHeader() {
     if (!directory) return
 
     const item = options().find((o) => o.id === app)
-    const openWith = item && "openWith" in item ? item.openWith : undefined
-    setOpenRequest("app", app)
-    platform
-      .openPath(directory, openWith)
-      .catch((err: unknown) => showRequestError(language, err))
-      .finally(() => {
-        setOpenRequest("app", undefined)
-      })
+    // The file manager entry has no openWith, so the platform opens the folder with its default app.
+    const openWith = item && "openWith" in item ? Option.some(item.openWith) : Option.none<string>()
+    setOpenRequest("app", Option.some(app))
+    runDetached(
+      platformRequest(() =>
+        Option.match(openWith, {
+          onNone: () => platform.openPath?.(directory),
+          onSome: (name) => platform.openPath?.(directory, name),
+        }),
+      ).pipe(
+        Effect.catch((error) => Effect.sync(() => showRequestError(language, error))),
+        Effect.ensuring(Effect.sync(() => setOpenRequest("app", Option.none()))),
+      ),
+    )
   }
 
   const copyPath = () => {
     const directory = projectDirectory()
     if (!directory) return
-    navigator.clipboard
-      .writeText(directory)
-      .then(() => {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("session.share.copy.copied"),
-          description: directory,
-        })
-      })
-      .catch((err: unknown) => showRequestError(language, err))
+    runDetached(
+      Effect.tryPromise({ try: () => navigator.clipboard.writeText(directory), catch: toOpenInAppError }).pipe(
+        Effect.andThen(
+          Effect.sync(() =>
+            showToast({
+              variant: "success",
+              icon: "circle-check",
+              title: language.t("session.share.copy.copied"),
+              description: directory,
+            }),
+          ),
+        ),
+        Effect.catch((error) => Effect.sync(() => showRequestError(language, error))),
+      ),
+    )
   }
 
   const [centerMount, setCenterMount] = createSignal(Option.none<HTMLElement>())
