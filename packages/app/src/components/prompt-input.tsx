@@ -1,3 +1,4 @@
+import { HashSet } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import {
@@ -227,18 +228,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     const all = tabs().all()
     const active = activeFileTab()
     const order = active ? [active, ...all.filter((x) => x !== active)] : all
-    const seen = new Set<string>()
-    const paths: string[] = []
-
-    for (const tab of order) {
+    return order.reduce<string[]>((paths, tab) => {
       const path = files.pathFromTab(tab)
-      if (!path) continue
-      if (seen.has(path)) continue
-      seen.add(path)
-      paths.push(path)
-    }
-
-    return paths
+      if (!path || paths.includes(path)) return paths
+      return [...paths, path]
+    }, [])
   })
   const info = createMemo(() => (props.controls.session.id ? sync().session.get(props.controls.session.id) : undefined))
   const working = createMemo(() => sync().data.session_working(props.controls.session.id ?? ""))
@@ -648,12 +642,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const agents = agentList()
       const mcpResources = mcpResourceList()
       const open = recent()
-      const seen = new Set(open)
+      const seen = HashSet.fromIterable(open)
       const pinned: AtOption[] = open.map((path) => ({ type: "file", path, display: path, recent: true }))
       if (!query.trim()) return [...references, ...agents, ...mcpResources, ...pinned]
       const paths = await files.searchFilesAndDirectories(query)
       const fileOptions: AtOption[] = paths
-        .filter((path) => !seen.has(path))
+        .filter((path) => !HashSet.has(seen, path))
         .map((path) => ({ type: "file", path, display: path }))
       return [...references, ...agents, ...mcpResources, ...pinned, ...fileOptions]
     },
