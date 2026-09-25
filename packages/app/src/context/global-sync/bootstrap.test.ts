@@ -110,139 +110,155 @@ function directoryState() {
 }
 
 describe("bootstrapDirectory", () => {
-  test("uses legacy MCP endpoints while refreshing a v1 directory", async () => {
-    const legacyConfigReads: string[] = []
-    const mcpReads: string[] = []
-    const [store, setStore] = directoryState()
-    const { sdk, api } = serve({
-      ...currentRoutes,
-      "GET /agent": reply([{ name: "build", mode: "primary" }]),
-      "GET /config": () =>
-        Effect.sync(() => {
-          legacyConfigReads.push("directory")
-          return {}
-        }),
-      "GET /session/status": reply({}),
-      "GET /vcs": reply({}),
-      "GET /command": () =>
-        Effect.sync(() => {
-          mcpReads.push("command")
-          return []
-        }),
-      "GET /permission": reply([]),
-      "GET /question": reply([]),
-      "GET /mcp": () =>
-        Effect.sync(() => {
-          mcpReads.push("status")
-          return {}
-        }),
-      "GET /experimental/resource": () =>
-        Effect.sync(() => {
-          mcpReads.push("resource")
-          return {}
-        }),
-      "GET /provider": reply({ all: [], connected: [], default: {} }),
-    })
+  test("uses legacy MCP endpoints while refreshing a v1 directory", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const legacyConfigReads: string[] = []
+        const mcpReads: string[] = []
+        const [store, setStore] = directoryState()
+        const { sdk, api } = serve({
+          ...currentRoutes,
+          "GET /agent": reply([{ name: "build", mode: "primary" }]),
+          "GET /config": () =>
+            Effect.sync(() => {
+              legacyConfigReads.push("directory")
+              return {}
+            }),
+          "GET /session/status": reply({}),
+          "GET /vcs": reply({}),
+          "GET /command": () =>
+            Effect.sync(() => {
+              mcpReads.push("command")
+              return []
+            }),
+          "GET /permission": reply([]),
+          "GET /question": reply([]),
+          "GET /mcp": () =>
+            Effect.sync(() => {
+              mcpReads.push("status")
+              return {}
+            }),
+          "GET /experimental/resource": () =>
+            Effect.sync(() => {
+              mcpReads.push("resource")
+              return {}
+            }),
+          "GET /provider": reply({ all: [], connected: [], default: {} }),
+        })
 
-    await bootstrapDirectory({
-      directory: "/project",
-      scope: ServerScope.local,
-      mcp: true,
-      global: {
-        config: {} satisfies Config,
-        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
-        project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
-        provider,
-      },
-      sdk,
-      api,
-      store,
-      setStore,
-      vcsCache: { setStore() {} },
-      loadSessions() {},
-      translate: (key) => key,
-      queryClient: new QueryClient(),
-      protocol: Promise.resolve("v1"),
-    })
+        yield* Effect.promise(() =>
+          bootstrapDirectory({
+            directory: "/project",
+            scope: ServerScope.local,
+            mcp: true,
+            global: {
+              config: {} satisfies Config,
+              path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+              project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
+              provider,
+            },
+            sdk,
+            api,
+            store,
+            setStore,
+            vcsCache: { setStore() {} },
+            loadSessions() {},
+            translate: (key) => key,
+            queryClient: new QueryClient(),
+            protocol: resolved("v1"),
+          }),
+        )
 
-    expect(store.status).toBe("partial")
+        expect(store.status).toBe("partial")
 
-    await new Promise((resolve) => setTimeout(resolve, 80))
+        yield* Effect.sleep("80 millis")
 
-    expect(store.status).toBe("complete")
-    expect(legacyConfigReads).toEqual(["directory"])
-    expect(mcpReads.sort()).toEqual(["command", "resource", "status"])
-  })
+        expect(store.status).toBe("complete")
+        expect(legacyConfigReads).toEqual(["directory"])
+        expect(mcpReads.sort()).toEqual(["command", "resource", "status"])
+      }),
+    ))
 
-  test("skips legacy config while refreshing a v2 directory", async () => {
-    const [store, setStore] = directoryState()
-    const { sdk, api } = serve({
-      ...currentRoutes,
-      "GET /config": () =>
-        Effect.fail(new UnexpectedRequest({ message: "legacy directory config should not be called" })),
-    })
+  test("skips legacy config while refreshing a v2 directory", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const [store, setStore] = directoryState()
+        const { sdk, api } = serve({
+          ...currentRoutes,
+          "GET /config": () =>
+            Effect.fail(new UnexpectedRequest({ message: "legacy directory config should not be called" })),
+        })
 
-    await bootstrapDirectory({
-      directory: "/project",
-      scope: ServerScope.local,
-      mcp: false,
-      global: {
-        config: {} satisfies Config,
-        path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
-        project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
-        provider,
-      },
-      sdk,
-      api,
-      store,
-      setStore,
-      vcsCache: { setStore() {} },
-      loadSessions() {},
-      translate: (key) => key,
-      queryClient: new QueryClient(),
-      protocol: Promise.resolve("v2"),
-    })
+        yield* Effect.promise(() =>
+          bootstrapDirectory({
+            directory: "/project",
+            scope: ServerScope.local,
+            mcp: false,
+            global: {
+              config: {} satisfies Config,
+              path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
+              project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
+              provider,
+            },
+            sdk,
+            api,
+            store,
+            setStore,
+            vcsCache: { setStore() {} },
+            loadSessions() {},
+            translate: (key) => key,
+            queryClient: new QueryClient(),
+            protocol: resolved("v2"),
+          }),
+        )
 
-    expect(store.status).toBe("partial")
+        expect(store.status).toBe("partial")
 
-    await new Promise((resolve) => setTimeout(resolve, 80))
+        yield* Effect.sleep("80 millis")
 
-    expect(store.status).toBe("complete")
-  })
+        expect(store.status).toBe("complete")
+      }),
+    ))
 })
 
 describe("config queries", () => {
-  test("skips legacy global config for v2 servers", async () => {
-    const { sdk } = serve({
-      "GET /global/config": () =>
-        Effect.fail(new UnexpectedRequest({ message: "legacy global config should not be called" })),
-    })
+  test("skips legacy global config for v2 servers", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { sdk } = serve({
+          "GET /global/config": () =>
+            Effect.fail(new UnexpectedRequest({ message: "legacy global config should not be called" })),
+        })
 
-    const result = await new QueryClient().fetchQuery(
-      loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v2")),
-    )
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadGlobalConfigQuery(ServerScope.local, sdk, resolved("v2"))),
+        )
 
-    expect(result).toEqual({})
-  })
+        expect(result).toEqual({})
+      }),
+    ))
 
-  test("loads legacy global config for v1 servers", async () => {
-    const calls: string[] = []
-    const config = { shell: "zsh" } satisfies Config
-    const { sdk } = serve({
-      "GET /global/config": () =>
-        Effect.sync(() => {
-          calls.push("global")
-          return config
-        }),
-    })
+  test("loads legacy global config for v1 servers", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: string[] = []
+        const config = { shell: "zsh" } satisfies Config
+        const { sdk } = serve({
+          "GET /global/config": () =>
+            Effect.sync(() => {
+              calls.push("global")
+              return config
+            }),
+        })
 
-    const result = await new QueryClient().fetchQuery(
-      loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v1")),
-    )
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadGlobalConfigQuery(ServerScope.local, sdk, resolved("v1"))),
+        )
 
-    expect(result).toEqual(config)
-    expect(calls).toEqual(["global"])
-  })
+        expect(result).toEqual(config)
+        expect(calls).toEqual(["global"])
+      }),
+    ))
 })
 
 describe("query keys", () => {
@@ -255,102 +271,127 @@ describe("query keys", () => {
     expect([...loadProvidersQuery(remote, null, api).queryKey]).toEqual(["https://debian.example", null, "providers"])
   })
 
-  test("loads the current provider and model catalog", async () => {
-    const calls: unknown[] = []
-    const api: Parameters<typeof loadProvidersQuery>[2] = {
-      provider: {
-        list: (input: unknown) => {
-          calls.push(["provider", input])
-          return resolved({
-            location: location("/repo"),
-            data: [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }],
-          })
-        },
-      },
-      model: {
-        list: (input: unknown) => {
-          calls.push(["model", input])
-          return resolved({ location: location("/repo"), data: [] })
-        },
-        default: (input: unknown) => {
-          calls.push(["default", input])
-          return resolved({ location: location("/repo"), data: null })
-        },
-      },
-    }
+  test("loads the current provider and model catalog", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const api: Parameters<typeof loadProvidersQuery>[2] = {
+          provider: {
+            list: (input: unknown) => {
+              calls.push(["provider", input])
+              return resolved({
+                location: location("/repo"),
+                data: [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }],
+              })
+            },
+          },
+          model: {
+            list: (input: unknown) => {
+              calls.push(["model", input])
+              return resolved({ location: location("/repo"), data: [] })
+            },
+            default: (input: unknown) => {
+              calls.push(["default", input])
+              return resolved({ location: location("/repo"), data: null })
+            },
+          },
+        }
 
-    const result = await new QueryClient().fetchQuery(loadProvidersQuery(ServerScope.local, "/repo", api))
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadProvidersQuery(ServerScope.local, "/repo", api)),
+        )
 
-    expect(calls).toEqual([
-      ["provider", { location: { directory: "/repo" } }],
-      ["model", { location: { directory: "/repo" } }],
-      ["default", { location: { directory: "/repo" } }],
-    ])
-    expect(result.connected).toEqual(["openai"])
-  })
+        expect(calls).toEqual([
+          ["provider", { location: { directory: "/repo" } }],
+          ["model", { location: { directory: "/repo" } }],
+          ["default", { location: { directory: "/repo" } }],
+        ])
+        expect(result.connected).toEqual(["openai"])
+      }),
+    ))
 
-  test("loads agents from the current location-scoped endpoint", async () => {
-    const calls: unknown[] = []
-    const api: Parameters<typeof loadAgentsQuery>[2] = {
-      list: (input: unknown) => {
-        calls.push(input)
-        return resolved({ location: location("/repo"), data: [] })
-      },
-    }
+  test("loads agents from the current location-scoped endpoint", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const api: Parameters<typeof loadAgentsQuery>[2] = {
+          list: (input: unknown) => {
+            calls.push(input)
+            return resolved({ location: location("/repo"), data: [] })
+          },
+        }
 
-    const result = await new QueryClient().fetchQuery(loadAgentsQuery(ServerScope.local, "/repo", api))
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadAgentsQuery(ServerScope.local, "/repo", api)),
+        )
 
-    expect(calls).toEqual([{ location: { directory: "/repo" } }])
-    expect(result).toEqual([])
-  })
+        expect(calls).toEqual([{ location: { directory: "/repo" } }])
+        expect(result).toEqual([])
+      }),
+    ))
 
-  test("loads commands from the current location-scoped endpoint", async () => {
-    const calls: unknown[] = []
-    const api: Parameters<typeof loadCommands>[1] = {
-      list: (input: unknown) => {
-        calls.push(input)
-        return resolved({
-          location: location("/repo"),
-          data: [{ name: "review", template: "Review files" /* source: "command" as const */ }],
-        })
-      },
-    }
+  test("loads commands from the current location-scoped endpoint", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const api: Parameters<typeof loadCommands>[1] = {
+          list: (input: unknown) => {
+            calls.push(input)
+            return resolved({
+              location: location("/repo"),
+              data: [{ name: "review", template: "Review files" /* source: "command" as const */ }],
+            })
+          },
+        }
 
-    const result = await loadCommands("/repo", api)
+        const result = yield* Effect.promise(() => loadCommands("/repo", api))
 
-    expect(calls).toEqual([{ location: { directory: "/repo" } }])
-    expect(result).toEqual([{ name: "review", template: "Review files" /* source: "command" */ }])
-  })
+        expect(calls).toEqual([{ location: { directory: "/repo" } }])
+        expect(result).toEqual([{ name: "review", template: "Review files" /* source: "command" */ }])
+      }),
+    ))
 
-  test("loads projects from the current endpoint", async () => {
-    const api: Parameters<typeof loadProjectsQuery>[1] = {
-      list: () =>
-        resolved([
-          { id: "b", worktree: "/b", time: { created: 1, updated: 1 }, sandboxes: [] },
-          { id: "a", worktree: "/a", time: { created: 1, updated: 1 }, sandboxes: [] },
-        ]),
-    }
+  test("loads projects from the current endpoint", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const api: Parameters<typeof loadProjectsQuery>[1] = {
+          list: () =>
+            resolved([
+              { id: "b", worktree: "/b", time: { created: 1, updated: 1 }, sandboxes: [] },
+              { id: "a", worktree: "/a", time: { created: 1, updated: 1 }, sandboxes: [] },
+            ]),
+        }
 
-    const result = await new QueryClient().fetchQuery(loadProjectsQuery(ServerScope.local, api))
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadProjectsQuery(ServerScope.local, api)),
+        )
 
-    expect(result.map((project) => project.id)).toEqual(["a", "b"])
-  })
+        expect(result.map((project) => project.id)).toEqual(["a", "b"])
+      }),
+    ))
 
-  test("loads references from the current location-scoped endpoint", async () => {
-    const calls: unknown[] = []
-    const api: Parameters<typeof loadReferencesQuery>[2] = {
-      list: (input: unknown) => {
-        calls.push(input)
-        return resolved({
-          location: location("/repo"),
-          data: [{ name: "AGENTS.md", path: "/repo/AGENTS.md", source: { type: "local", path: "/repo/AGENTS.md" } }],
-        })
-      },
-    }
+  test("loads references from the current location-scoped endpoint", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const api: Parameters<typeof loadReferencesQuery>[2] = {
+          list: (input: unknown) => {
+            calls.push(input)
+            return resolved({
+              location: location("/repo"),
+              data: [
+                { name: "AGENTS.md", path: "/repo/AGENTS.md", source: { type: "local", path: "/repo/AGENTS.md" } },
+              ],
+            })
+          },
+        }
 
-    const result = await new QueryClient().fetchQuery(loadReferencesQuery(ServerScope.local, "/repo", api))
+        const result = yield* Effect.promise(() =>
+          new QueryClient().fetchQuery(loadReferencesQuery(ServerScope.local, "/repo", api)),
+        )
 
-    expect(calls).toEqual([{ location: { directory: "/repo" } }])
-    expect(result).toHaveLength(1)
-  })
+        expect(calls).toEqual([{ location: { directory: "/repo" } }])
+        expect(result).toHaveLength(1)
+      }),
+    ))
 })
