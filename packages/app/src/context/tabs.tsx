@@ -13,7 +13,7 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
-import { Array as Arr, HashMap, HashSet, MutableHashSet, Option } from "effect"
+import { Array as Arr, Data, HashMap, HashSet, MutableHashSet, Option } from "effect"
 
 export type SessionTab = {
   type: "session"
@@ -30,6 +30,9 @@ export type DraftTab = {
 }
 
 export type Tab = SessionTab | DraftTab
+
+/** No open draft tab has the requested draft ID. tabs.draft throws it synchronously. */
+class DraftNotFoundError extends Data.TaggedError("App.DraftNotFoundError")<{ readonly message: string }> {}
 
 export type TabInfo = {
   title?: string
@@ -191,9 +194,10 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         })
       },
       draft(draftID: string) {
-        const tab = store.find((item) => item.type === "draft" && item.draftID === draftID)
-        if (!tab || tab.type !== "draft") throw new Error(`Draft not found: ${draftID}`)
-        return tab
+        return Option.getOrThrowWith(
+          Arr.findFirst(store, (item): item is DraftTab => item.type === "draft" && item.draftID === draftID),
+          () => new DraftNotFoundError({ message: `Draft not found: ${draftID}` }),
+        )
       },
       async newDraft(draft: Omit<DraftTab, "type" | "draftID">, prompt?: string, model?: PromptModel) {
         const draftID = uuid()
