@@ -47,7 +47,10 @@ export function dismissToast(toastId: number) {
   return toasterV2.dismiss(toastId)
 }
 
-function resolveIcon(icon: IconProps["name"] | undefined, variant: ToastVariant | undefined): Option.Option<JSX.Element> {
+function resolveIcon(
+  icon: IconProps["name"] | undefined,
+  variant: ToastVariant | undefined,
+): Option.Option<JSX.Element> {
   return Option.fromNullishOr(icon).pipe(
     Option.orElse(() => (variant === "success" ? Option.some<IconProps["name"]>("check") : Option.none())),
     Option.map((name) => <Icon name={name} />),

@@ -93,7 +93,10 @@ const ModelList: Component<{
       )}
       onSelect={(x) => {
         // List passes no item when nothing is active; model.set reads undefined as "clear the model".
-        const selected = Option.map(Option.fromNullishOr(x), (item) => ({ modelID: item.id, providerID: item.provider.id }))
+        const selected = Option.map(Option.fromNullishOr(x), (item) => ({
+          modelID: item.id,
+          providerID: item.provider.id,
+        }))
         model.set(Option.getOrUndefined(selected), {
           recent: true,
         })
@@ -487,7 +490,9 @@ function ModelSelectorPopoverV2View(props: {
                               <MenuV2.RadioItem
                                 value={modelKey(item)}
                                 data-option-key={modelKey(item)}
-                                {...(Option.contains(props.current(), modelKey(item)) ? { "data-selected-model": true } : {})}
+                                {...(Option.contains(props.current(), modelKey(item))
+                                  ? { "data-selected-model": true }
+                                  : {})}
                                 class="scroll-my-6 w-full"
                                 classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === modelKey(item) }}
                                 onMouseEnter={() => {
