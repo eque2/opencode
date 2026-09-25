@@ -67,10 +67,15 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
     set(item: ModelKey | undefined, options?: { recent?: boolean }) {
       startTransition(() =>
         batch(() => {
-          prompt.model.set(item ? { ...item, variant: prompt.model.current()?.variant } : undefined)
-          if (!item) return
-          models.setVisibility(item, true)
-          if (options?.recent) models.recent.push(item)
+          const selected = Option.fromNullishOr(item)
+          prompt.model.set(
+            Option.getOrUndefined(
+              Option.map(selected, (key) => ({ ...key, variant: prompt.model.current()?.variant })),
+            ),
+          )
+          if (Option.isNone(selected)) return
+          models.setVisibility(selected.value, true)
+          if (options?.recent) models.recent.push(selected.value)
         }),
       )
     },

@@ -5,36 +5,45 @@ import type {
   PermissionV2Request,
   ProviderListOutput,
 } from "@opencode-ai/client/promise"
-import type { Agent, Model, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
+import type {
+  Agent,
+  Model,
+  PermissionRequest,
+  Project,
+  Provider,
+  ProviderListResponse,
+} from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
-import { HashMap } from "effect"
+import { HashMap, Predicate } from "effect"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Agent[] {
   if (input.every((agent) => !("request" in agent))) return input as Agent[]
-  return (input as AgentListOutput["data"]).map((agent) => ({
-    name: agent.id,
-    description: agent.description,
-    mode: agent.mode,
-    hidden: agent.hidden,
-    temperature:
-      typeof agent.request.settings.temperature === "number" ? agent.request.settings.temperature : undefined,
-    topP: typeof agent.request.settings.topP === "number" ? agent.request.settings.topP : undefined,
-    color: agent.color,
-    permission: agent.permissions.map((rule) => ({
-      permission: rule.action,
-      pattern: rule.resource,
-      action: rule.effect,
-    })),
-    model: agent.model && { providerID: agent.model.providerID, modelID: agent.model.id },
-    variant: agent.model?.variant,
-    prompt: agent.system,
-    options: agent.request.settings,
-    steps: agent.steps,
-  }))
+  return (input as AgentListOutput["data"]).map((agent) => {
+    const { temperature, topP } = agent.request.settings
+    return {
+      name: agent.id,
+      description: agent.description,
+      mode: agent.mode,
+      hidden: agent.hidden,
+      ...(Predicate.isNumber(temperature) ? { temperature } : {}),
+      ...(Predicate.isNumber(topP) ? { topP } : {}),
+      color: agent.color,
+      permission: agent.permissions.map((rule) => ({
+        permission: rule.action,
+        pattern: rule.resource,
+        action: rule.effect,
+      })),
+      model: agent.model && { providerID: agent.model.providerID, modelID: agent.model.id },
+      variant: agent.model?.variant,
+      prompt: agent.system,
+      options: agent.request.settings,
+      steps: agent.steps,
+    }
+  })
 }
 
 export function normalizePermissionRequest(input: PermissionV2Request | PermissionRequest): PermissionRequest {
@@ -46,8 +55,9 @@ export function normalizePermissionRequest(input: PermissionV2Request | Permissi
     patterns: input.resources,
     always: input.save ?? [],
     metadata: input.metadata ?? {},
-    tool:
-      input.source?.type === "tool" ? { messageID: input.source.messageID, callID: input.source.callID } : undefined,
+    ...(input.source?.type === "tool"
+      ? { tool: { messageID: input.source.messageID, callID: input.source.callID } }
+      : {}),
   }
 }
 
@@ -159,19 +169,11 @@ export function normalizeProviderList(
 
 export function sanitizeProject(project: Project) {
   if (!project.icon?.url && !project.icon?.override) return project
-  return {
-    ...project,
-    icon: {
-      ...project.icon,
-      url: undefined,
-      override: undefined,
-    },
-  }
+  const { url: _url, override: _override, ...icon } = project.icon ?? {}
+  return { ...project, icon }
 }
 
 export function normalizeProjectInfo(project: Project | CurrentProject): Project {
-  return {
-    ...project,
-    vcs: project.vcs === "git" ? "git" : undefined,
-  }
+  const { vcs, ...rest } = project
+  return { ...rest, ...(vcs === "git" ? { vcs } : {}) }
 }

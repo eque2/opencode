@@ -27,7 +27,6 @@ describe("normalizeAgentList", () => {
     expect(result).toEqual([
       {
         name: "build",
-        description: undefined,
         mode: "primary",
         hidden: false,
         temperature: 0.2,
@@ -38,7 +37,6 @@ describe("normalizeAgentList", () => {
         variant: "high",
         prompt: "Build software",
         options: { temperature: 0.2, topP: 0.9 },
-        steps: undefined,
       },
     ])
   })

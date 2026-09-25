@@ -16,7 +16,7 @@ import { getSessionContext } from "@/components/session/session-context-metrics"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { useSettings } from "@/context/settings"
-import { HashMap } from "effect"
+import { HashMap, Option } from "effect"
 
 interface SessionContextUsageProps {
   variant?: "button" | "indicator"
@@ -64,7 +64,9 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
     fileBrowser: () => settings.general.newLayoutDesigns() && isDesktop() && !!params.id,
   })
   const messages = createMemo(() => (params.id ? (sync().data.message[params.id] ?? []) : []))
-  const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
+  const info = createMemo(() =>
+    Option.fromNullishOr(params.id).pipe(Option.flatMapNullishOr((id) => sync().session.get(id))),
+  )
 
   const usd = createMemo(
     () =>
@@ -76,7 +78,12 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
 
   const context = createMemo(() => getSessionContext(messages(), HashMap.toValues(providers.all())))
   const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
+    return usd().format(
+      info().pipe(
+        Option.flatMapNullishOr((session) => session.cost),
+        Option.getOrElse(() => 0),
+      ),
+    )
   })
   const contextVisible = createMemo(() => view().reviewPanel.opened() && tabState.activeTab() === "context")
   const hasOtherTabs = createMemo(() =>
@@ -108,15 +115,15 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
         size={16}
         strokeWidth={2}
         percentage={context()?.usage ?? 0}
-        style={
-          variant() === "indicator"
-            ? {
+        {...(variant() === "indicator"
+          ? {
+              style: {
                 "--progress-circle-background": "var(--v2-background-bg-layer-04, var(--border-weak-base))",
                 "--progress-circle-background-overlay": "var(--v2-overlay-simple-overlay-pressed, transparent)",
                 "--progress-circle-progress": "var(--v2-icon-icon-base, var(--icon-base))",
-              }
-            : undefined
-        }
+              },
+            }
+          : {})}
       />
     </div>
   )

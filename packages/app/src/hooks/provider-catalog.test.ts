@@ -75,7 +75,7 @@ test("does not use legacy config when the current server has no default", () => 
 })
 
 test("uses config for legacy servers", () => {
-  expect(resolveDefaultModel(undefined, "anthropic/claude")).toEqual({
+  expect(resolveDefaultModel(catalog("legacy").defaultModel, "anthropic/claude")).toEqual({
     providerID: "anthropic",
     modelID: "claude",
   })

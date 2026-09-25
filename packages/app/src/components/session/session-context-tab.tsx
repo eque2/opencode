@@ -21,7 +21,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContext } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
 import { createSessionContextFormatter } from "./session-context-format"
-import { HashMap } from "effect"
+import { HashMap, Option } from "effect"
 
 const BREAKDOWN_COLOR: Record<SessionContextBreakdownKey, string> = {
   system: "var(--syntax-info)",
@@ -102,7 +102,9 @@ export function SessionContextTab() {
   const providers = useProviders(() => sdk().directory)
   const { params, view } = useSessionLayout()
 
-  const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
+  const info = createMemo(() =>
+    Option.fromNullishOr(params.id).pipe(Option.flatMapNullishOr((id) => sync().session.get(id))),
+  )
 
   const messages = createMemo(
     () => {
@@ -122,9 +124,9 @@ export function SessionContextTab() {
 
   const visibleUserMessages = createMemo(
     () => {
-      const revert = info()?.revert?.messageID
-      if (!revert) return userMessages()
-      const boundary = userMessages().findIndex((message) => message.id === revert)
+      const revert = Option.flatMapNullishOr(info(), (session) => session.revert?.messageID)
+      if (Option.isNone(revert) || !revert.value) return userMessages()
+      const boundary = userMessages().findIndex((message) => message.id === revert.value)
       return boundary < 0 ? userMessages() : userMessages().slice(0, boundary)
     },
     emptyUserMessages,
@@ -143,7 +145,12 @@ export function SessionContextTab() {
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
 
   const cost = createMemo(() => {
-    return usd().format(info()?.cost ?? 0)
+    return usd().format(
+      info().pipe(
+        Option.flatMapNullishOr((session) => session.cost),
+        Option.getOrElse(() => 0),
+      ),
+    )
   })
 
   const counts = createMemo(() => {
@@ -203,7 +210,14 @@ export function SessionContextTab() {
   }
 
   const stats = [
-    { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
+    {
+      label: "context.stats.session",
+      value: () =>
+        Option.match(info(), {
+          onNone: () => params.id ?? "—",
+          onSome: (session) => session.title,
+        }),
+    },
     { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
     { label: "context.stats.provider", value: providerLabel },
     { label: "context.stats.model", value: modelLabel },
@@ -221,7 +235,10 @@ export function SessionContextTab() {
     { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
     { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
     { label: "context.stats.totalCost", value: cost },
-    { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
+    {
+      label: "context.stats.sessionCreated",
+      value: () => formatter().time(Option.getOrUndefined(Option.map(info(), (session) => session.time.created))),
+    },
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]
 
@@ -251,8 +268,8 @@ export function SessionContextTab() {
   }
 
   let scroll: HTMLDivElement | undefined
-  let frame: number | undefined
-  let pending: { x: number; y: number } | undefined
+  let frame: Option.Option<number> = Option.none()
+  let pending: Option.Option<{ x: number; y: number }> = Option.none()
   const getParts = (id: string) => (sync().data.part[id] ?? []) as Part[]
 
   const restoreScroll = () => {
@@ -267,21 +284,23 @@ export function SessionContextTab() {
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
-    pending = {
+    pending = Option.some({
       x: event.currentTarget.scrollLeft,
       y: event.currentTarget.scrollTop,
-    }
-    if (frame !== undefined) return
-
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-
-      const next = pending
-      pending = undefined
-      if (!next) return
-
-      view().setScroll("context", next)
     })
+    if (Option.isSome(frame)) return
+
+    frame = Option.some(
+      requestAnimationFrame(() => {
+        frame = Option.none()
+
+        const next = pending
+        pending = Option.none()
+        if (Option.isNone(next)) return
+
+        view().setScroll("context", next.value)
+      }),
+    )
   }
 
   createEffect(
@@ -295,8 +314,8 @@ export function SessionContextTab() {
   )
 
   onCleanup(() => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
+    if (Option.isNone(frame)) return
+    cancelAnimationFrame(frame.value)
   })
 
   return (
