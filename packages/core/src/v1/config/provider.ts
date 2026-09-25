@@ -10,7 +10,7 @@ export const ModelStatus = Schema.Literals(["alpha", "beta", "deprecated", "acti
 // as Record<string, any> (ProviderContext.options, chat.params output.options, the v2
 // aisdk hooks). opencode reads them with that typing, so Schema.Json would break those
 // reads. This is the one unchecked boundary for all five option fields.
-// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin ProviderContext.options and chat.params output.options are Record<string, any>
+// eslint-disable-next-line effect/no-schema-any-unknown -- (a) the bags pass unchecked to the AI SDK package named by npm; @opencode-ai/plugin types them Record<string, any> (ProviderContext.options, chat.params)
 export const Options = Schema.Record(Schema.String, Schema.Any)
 
 const InterleavedField = Schema.Union([

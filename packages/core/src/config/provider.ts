@@ -8,7 +8,7 @@ import { ModelV2 } from "../model"
 // hooks expose as Record<string, any>. ConfigMigrateV1 fills it from the V1 option bags
 // (ConfigProviderV1.Options, Schema.Any) and agent files add gray-matter YAML values, so
 // Schema.Json rejects valid inputs ("Expected JSON value" in the V1 migration test).
-// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin v2 aisdk hook options are Record<string, any>; the body carries migrated V1 Schema.Any option bags
+// eslint-disable-next-line effect/no-schema-any-unknown -- (a) @opencode-ai/plugin v2 aisdk hooks type this AI SDK request body as Record<string, any>; it carries V1 option bags and YAML values
 const Body = Schema.Record(Schema.String, Schema.Unknown)
 
 export class Request extends Schema.Class<Request>("ConfigV2.Provider.Request")({
