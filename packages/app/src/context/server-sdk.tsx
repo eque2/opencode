@@ -66,6 +66,7 @@ export function adaptServerEvent(event: OpenCodeEvent): ServerEvent {
     return { id: event.id, type: "question.replied", properties: event.data, current: event } as ServerEvent
   if (event.type === "question.v2.rejected")
     return { id: event.id, type: "question.rejected", properties: event.data, current: event } as ServerEvent
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) the generated V2Event union has types the generated v1 Event lacks; they pass through in the v1 envelope and consumers read `current`
   return { id: event.id, type: event.type, properties: event.data, current: event } as ServerEvent
 }
 
