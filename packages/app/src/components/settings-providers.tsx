@@ -3,19 +3,19 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { Tag } from "@opencode-ai/ui/tag"
 import { showToast } from "@/utils/toast"
-import { popularProviders, useProviders } from "@/hooks/use-providers"
+import { popularProviders, useGlobalProviders } from "@/hooks/use-providers"
 import { createMemo, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerProtocol, useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
-import { Data, Effect, HashSet, Option } from "effect"
+import { Data, Effect, HashSet } from "effect"
 import { DialogConnectProvider, useProviderConnectController } from "./dialog-connect-provider"
 import { DialogCustomProvider } from "./dialog-custom-provider"
 import { SettingsList } from "./settings-list"
 import { SettingsServerPicker, SettingsServerScope } from "./settings-server-picker"
 
 type ProviderSource = "env" | "api" | "config" | "custom"
-type ProviderItem = ReturnType<ReturnType<typeof useProviders>["connected"]>[number]
+type ProviderItem = ReturnType<ReturnType<typeof useGlobalProviders>["connected"]>[number]
 
 const PROVIDER_NOTES = [
   { match: (id: string) => id === "opencode", key: "dialog.provider.opencode.note" },
@@ -43,9 +43,6 @@ function request<A>(run: () => Promise<A>) {
   })
 }
 
-/** The v1 settings screen reads the global provider catalog, so it names no project directory. */
-const globalCatalog = Option.none<string>()
-
 export const SettingsProviders: Component<{ onBack?: () => void }> = (props) => {
   return (
     <SettingsServerScope>
@@ -60,7 +57,8 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
   const serverSDK = useServerSDK()
   const protocol = useServerProtocol()
   const serverSync = useServerSync()
-  const providers = useProviders(() => Option.getOrUndefined(globalCatalog))
+  // The v1 settings screen reads the global provider catalog, so it names no project directory.
+  const providers = useGlobalProviders()
   const providerConnect = useProviderConnectController({ onBack: props.onBack })
 
   const connect = (provider?: string) => {

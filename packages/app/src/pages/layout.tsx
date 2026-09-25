@@ -46,7 +46,7 @@ import { useSettings } from "@/context/settings"
 import { createStore, produce } from "solid-js/store"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
-import { useProviders } from "@/hooks/use-providers"
+import { useGlobalProviders } from "@/hooks/use-providers"
 import { dismissToast, setV2Toast, showToast, ToastRegion } from "@/utils/toast"
 import { useServerSDK } from "@/context/server-sdk"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
@@ -143,9 +143,6 @@ type LayoutUiState = {
   debugTools: boolean
 }
 
-/** The layout reads the global provider catalog, so it names no project directory. */
-const globalCatalog = Option.none<string>()
-
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const [store, setStore, , ready] = persisted(
@@ -177,7 +174,8 @@ export default function LegacyLayout(props: ParentProps) {
   const notification = useNotification()
   const permission = usePermission()
   const navigate = useNavigate()
-  const providers = useProviders(() => Option.getOrUndefined(globalCatalog))
+  // The layout reads the global provider catalog, so it names no project directory.
+  const providers = useGlobalProviders()
   const dialog = useDialog()
   const command = useCommand()
   const theme = useTheme()
