@@ -39,7 +39,7 @@ function normalizeToolMetadata(name: string, metadata: Record<string, unknown>) 
     ...metadata,
     filediff: {
       file: file.file,
-      patch: typeof file.patch === "string" ? file.patch : undefined,
+      ...(typeof file.patch === "string" ? { patch: file.patch } : {}),
       additions: typeof file.additions === "number" ? file.additions : 0,
       deletions: typeof file.deletions === "number" ? file.deletions : 0,
     },
@@ -51,7 +51,7 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
   let agent = ""
   let model = emptyModel
   // The latest user or synthetic message. A later assistant reply sets its agent and model.
-  let parent: UserMessage | undefined
+  let parent = Option.none<UserMessage>()
 
   // A single message returns unwrapped and a skipped entry returns the shared empty array, so flatMap allocates no wrapper.
   const messages = source.flatMap((message): Message | readonly Message[] => {
@@ -64,12 +64,13 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
       return noMessages
     }
     if (message.type === "user") {
-      parent = userMessage(sessionID, message, agent, model)
+      const user = userMessage(sessionID, message, agent, model)
+      parent = Option.some(user)
       parts.set(message.id, userParts(sessionID, message))
-      return parent
+      return user
     }
     if (message.type === "synthetic" && message.description?.trim()) {
-      parent = {
+      const user: UserMessage = {
         id: message.id,
         sessionID,
         role: "user",
@@ -77,35 +78,38 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
         agent,
         model: { providerID: model.providerID, modelID: model.id, variant: model.variant },
       }
+      parent = Option.some(user)
       parts.set(message.id, [textPart(sessionID, message.id, 0, message.description, true)])
-      return parent
+      return user
     }
     if (message.type === "shell") {
       parts.set(message.id, [textPart(sessionID, message.id, 0, message.command)])
       parts.set(`${message.id}:assistant`, [shellPart(sessionID, message)])
-      parent = undefined
+      parent = Option.none()
       return shellMessages(sessionID, message, agent, model)
     }
     if (message.type === "assistant") {
       agent = message.agent
       model = message.model
-      if (!parent) return noMessages
-      parent.agent = message.agent
-      parent.model = {
+      if (Option.isNone(parent)) return noMessages
+      const user = parent.value
+      user.agent = message.agent
+      user.model = {
         providerID: message.model.providerID,
         modelID: message.model.id,
         variant: message.model.variant,
       }
       parts.set(message.id, assistantParts(sessionID, message))
-      return assistantMessage(sessionID, parent.id, message)
+      return assistantMessage(sessionID, user.id, message)
     }
-    if (message.type !== "compaction" || !parent) return noMessages
-    parts.set(parent.id, [
-      ...(parts.get(parent.id) ?? []),
+    if (message.type !== "compaction" || Option.isNone(parent)) return noMessages
+    const parentID = parent.value.id
+    parts.set(parentID, [
+      ...(parts.get(parentID) ?? []),
       {
         id: `${message.id}:compaction`,
         sessionID,
-        messageID: parent.id,
+        messageID: parentID,
         type: "compaction",
         auto: message.reason === "auto",
       },
@@ -210,13 +214,15 @@ function userParts(sessionID: string, message: SessionMessageUser): Part[] {
         mime: file.mime,
         filename: file.name,
         url: file.source.type === "uri" ? file.source.uri : `data:${file.mime};base64,${file.data}`,
-        source: file.mention
+        ...(file.mention
           ? {
-              type: "file",
-              text: { value: file.mention.text, start: file.mention.start, end: file.mention.end },
-              path: file.mention.text.startsWith("@") ? file.mention.text.slice(1) : (file.name ?? file.mention.text),
+              source: {
+                type: "file" as const,
+                text: { value: file.mention.text, start: file.mention.start, end: file.mention.end },
+                path: file.mention.text.startsWith("@") ? file.mention.text.slice(1) : (file.name ?? file.mention.text),
+              },
             }
-          : undefined,
+          : {}),
       }),
     ),
     ...(message.agents ?? []).map(
@@ -226,9 +232,9 @@ function userParts(sessionID: string, message: SessionMessageUser): Part[] {
         messageID: message.id,
         type: "agent",
         name: item.name,
-        source: item.mention
-          ? { value: item.mention.text, start: item.mention.start, end: item.mention.end }
-          : undefined,
+        ...(item.mention
+          ? { source: { value: item.mention.text, start: item.mention.start, end: item.mention.end } }
+          : {}),
       }),
     ),
   ]
@@ -236,16 +242,19 @@ function userParts(sessionID: string, message: SessionMessageUser): Part[] {
 
 function assistantMessage(sessionID: string, parentID: string, message: SessionMessageAssistant): AssistantMessage {
   const error = message.error
-    ? message.error.type.toLowerCase().includes("abort") || message.error.type.toLowerCase().includes("interrupt")
-      ? { name: "MessageAbortedError" as const, data: { message: message.error.message } }
-      : { name: "UnknownError" as const, data: { message: message.error.message } }
-    : undefined
   return {
     id: message.id,
     sessionID,
     role: "assistant",
     time: message.time,
-    error,
+    ...(error
+      ? {
+          error:
+            error.type.toLowerCase().includes("abort") || error.type.toLowerCase().includes("interrupt")
+              ? { name: "MessageAbortedError" as const, data: { message: error.message } }
+              : { name: "UnknownError" as const, data: { message: error.message } },
+        }
+      : {}),
     parentID,
     modelID: message.model.id,
     providerID: message.model.providerID,
@@ -346,7 +355,7 @@ function toolPart(sessionID: string, messageID: string, tool: SessionMessageAssi
       // metadata: normalizeToolMetadata(tool.name, tool.state.structured),
       metadata: normalizeToolMetadata(tool.name, tool.state.metadata ?? {}),
       time: { start, end: tool.time.completed ?? start },
-      attachments: attachments.length ? attachments : undefined,
+      ...(attachments.length ? { attachments } : {}),
     }
   })()
   return {

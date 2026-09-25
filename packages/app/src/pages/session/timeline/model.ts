@@ -1,4 +1,5 @@
 import type { Message, UserMessage } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 import { createMemo, createResource, onCleanup, untrack, type Accessor } from "solid-js"
 import { useServerSync } from "@/context/server-sync"
 import { useSync } from "@/context/sync"
@@ -13,8 +14,8 @@ export function createTimelineModel(input: {
 }) {
   const serverSync = useServerSync()
   const sync = useSync()
-  let refreshFrame: number | undefined
-  let refreshTimer: number | undefined
+  let refreshFrame = Option.none<number>()
+  let refreshTimer = Option.none<number>()
 
   const [resource] = createResource(
     () => input.sessionID(),
@@ -25,16 +26,20 @@ export function createTimelineModel(input: {
       const cached = untrack(() => sync().data.message[id] !== undefined)
       const stale = cached && !serverSync().session.fresh(id, sessionFreshness)
 
-      refreshFrame = requestAnimationFrame(() => {
-        refreshFrame = undefined
-        refreshTimer = window.setTimeout(() => {
-          refreshTimer = undefined
-          if (input.sessionID() !== id) return
-          untrack(() => {
-            if (stale) void sync().session.sync(id, { force: true })
-          })
-        }, 0)
-      })
+      refreshFrame = Option.some(
+        requestAnimationFrame(() => {
+          refreshFrame = Option.none()
+          refreshTimer = Option.some(
+            window.setTimeout(() => {
+              refreshTimer = Option.none()
+              if (input.sessionID() !== id) return
+              untrack(() => {
+                if (stale) void sync().session.sync(id, { force: true })
+              })
+            }, 0),
+          )
+        }),
+      )
 
       return sync().session.sync(id)
     },
@@ -87,10 +92,10 @@ export function createTimelineModel(input: {
   }
 
   function clearRefresh() {
-    if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
-    if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
-    refreshFrame = undefined
-    refreshTimer = undefined
+    if (Option.isSome(refreshFrame)) cancelAnimationFrame(refreshFrame.value)
+    if (Option.isSome(refreshTimer)) window.clearTimeout(refreshTimer.value)
+    refreshFrame = Option.none()
+    refreshTimer = Option.none()
   }
 }
 

@@ -2,7 +2,7 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
 import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/message-part"
-import { Predicate } from "effect"
+import { Array as Arr, Option, Predicate } from "effect"
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
@@ -118,8 +118,9 @@ export namespace Timeline {
     const compaction = userParts.some((p) => p.type === "compaction")
     const interruptedMessageIndex = assistantMessages.findIndex((m) => m.error?.name === "MessageAbortedError")
     const interrupted = interruptedMessageIndex !== -1
-    const latestError = assistantMessages.at(-1)?.error
-    const error = latestError?.name === "MessageAbortedError" ? undefined : latestError
+    const error = Option.fromNullishOr(assistantMessages.at(-1)?.error).pipe(
+      Option.filter((value) => value.name !== "MessageAbortedError"),
+    )
 
     const assistantPartRefs = assistantMessages.flatMap((message, messageIndex) =>
       getMessageParts(message.id)
@@ -159,7 +160,7 @@ export namespace Timeline {
           }),
     )
     const thinking =
-      isActive && status === "busy" && !error && (showReasoning ? assistantPartRefs.length === 0 : true)
+      isActive && status === "busy" && Option.isNone(error) && (showReasoning ? assistantPartRefs.length === 0 : true)
     const diffs = uniqueSummaryDiffs(userMessage.summary?.diffs)
 
     // concat appends a row or an array of rows. The shared noRows adds nothing and allocates nothing.
@@ -184,10 +185,12 @@ export namespace Timeline {
       thinking
         ? new TimelineRow.Thinking({
             userMessageID: userMessage.id,
-            reasoningHeading: assistantMessages
-              .flatMap((message) => getMessageParts(message.id))
-              .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
-              .find((value): value is string => !!value),
+            reasoningHeading: Option.getOrUndefined(
+              Arr.findFirst(
+                assistantMessages.flatMap((message) => getMessageParts(message.id)),
+                (part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : Option.none()),
+              ),
+            ),
           })
         : noRows,
       isActive && status === "retry" ? new TimelineRow.Retry({ userMessageID: userMessage.id }) : noRows,
@@ -197,40 +200,42 @@ export namespace Timeline {
             diffs,
           })
         : noRows,
-      error
+      Option.isSome(error)
         ? new TimelineRow.Error({
             userMessageID: userMessage.id,
-            text: unwrapErrorMessage(errorDataMessage(error.data)),
+            text: unwrapErrorMessage(errorDataMessage(error.value.data)),
           })
         : noRows,
     )
   }
 
-  function reasoningHeading(text: string) {
+  /** Finds the first non-empty heading in a reasoning text. */
+  function reasoningHeading(text: string): Option.Option<string> {
     const markdown = text.replace(/\r\n?/g, "\n")
     const html = markdown.match(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i)
     if (html?.[1]) {
       const value = cleanHeading(html[1].replace(/<[^>]+>/g, " "))
-      if (value) return value
+      if (value) return Option.some(value)
     }
 
     const atx = markdown.match(/^\s{0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+[ \t]*)?$/m)
     if (atx?.[1]) {
       const value = cleanHeading(atx[1])
-      if (value) return value
+      if (value) return Option.some(value)
     }
 
     const setext = markdown.match(/^([^\n]+)\n(?:=+|-+)\s*$/m)
     if (setext?.[1]) {
       const value = cleanHeading(setext[1])
-      if (value) return value
+      if (value) return Option.some(value)
     }
 
     const strong = markdown.match(/^\s*(?:\*\*|__)(.+?)(?:\*\*|__)\s*$/m)
     if (strong?.[1]) {
       const value = cleanHeading(strong[1])
-      if (value) return value
+      if (value) return Option.some(value)
     }
+    return Option.none()
   }
 
   function cleanHeading(value: string) {
@@ -280,22 +285,19 @@ export namespace Timeline {
 
     if (!record(json)) return message
 
-    const err = record(json.error) ? json.error : undefined
-    if (err) {
-      const type = typeof err.type === "string" ? err.type : undefined
-      const msg = typeof err.message === "string" ? err.message : undefined
+    if (record(json.error)) {
+      const err = json.error
+      const type = Predicate.isString(err.type) ? err.type : ""
+      const msg = Predicate.isString(err.message) ? err.message : ""
       if (type && msg) return `${type}: ${msg}`
       if (msg) return msg
       if (type) return type
-      const code = typeof err.code === "string" ? err.code : undefined
-      if (code) return code
+      if (Predicate.isString(err.code) && err.code) return err.code
     }
 
-    const msg = typeof json.message === "string" ? json.message : undefined
-    if (msg) return msg
+    if (Predicate.isString(json.message) && json.message) return json.message
 
-    const reason = typeof json.error === "string" ? json.error : undefined
-    if (reason) return reason
+    if (Predicate.isString(json.error) && json.error) return json.error
 
     return message
   }
@@ -322,12 +324,14 @@ export namespace MessageComment {
     return {
       path: next.path,
       comment: next.comment,
-      selection: next.selection
+      ...(next.selection
         ? {
-            startLine: next.selection.startLine,
-            endLine: next.selection.endLine,
+            selection: {
+              startLine: next.selection.startLine,
+              endLine: next.selection.endLine,
+            },
           }
-        : undefined,
+        : {}),
     }
   }
 }

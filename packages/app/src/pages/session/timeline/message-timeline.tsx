@@ -13,6 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
+import { Option } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -92,15 +93,14 @@ const timelineCache = new Map<string, { measurements: VirtualItem[]; toolOpen: R
 
 const taskDescription = (part: PartType, sessionID: string) => {
   if (part.type !== "tool" || part.tool !== "task") return
-  const metadata = "metadata" in part.state ? part.state.metadata : undefined
-  if (metadata?.sessionId !== sessionID) return
+  if (!("metadata" in part.state) || part.state.metadata?.sessionId !== sessionID) return
   const value = part.state.input?.description
   if (typeof value === "string" && value) return value
 }
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
-  const current = target instanceof Element ? target : undefined
-  const nested = current?.closest("[data-scrollable]")
+  if (!(target instanceof Element)) return root
+  const nested = target.closest("[data-scrollable]")
   if (!nested || nested === root) return root
   if (!(nested instanceof HTMLElement)) return root
   return nested
@@ -158,7 +158,7 @@ function TimelineDiffSummaryRow(props: { diffs: SummaryDiff[] }) {
     <div
       data-slot="session-turn-diffs"
       data-component="session-turn-diffs-group"
-      data-show-all={showAll() || undefined}
+      bool:data-show-all={showAll()}
     >
       <div data-slot="session-turn-diffs-header">
         <span data-slot="session-turn-diffs-label">
@@ -256,7 +256,7 @@ export function MessageTimeline(props: {
   setScrollToEnd?: (fn: () => void) => void
   setHistoryAnchor?: (handlers: { capture: () => void; restore: (done: boolean) => void }) => void
 }) {
-  let touchGesture: number | undefined
+  let touchGesture = Option.none<number>()
 
   const navigate = useNavigate()
   const serverSDK = useServerSDK()
@@ -348,15 +348,15 @@ export function MessageTimeline(props: {
   const timelineRowByKey = projection.rowByKey
   const timelineRows = projection.rows
 
-  let prependAnchor: { key: string; offset: number } | undefined
-  let prependAnchorFrame: number | undefined
+  let prependAnchor = Option.none<{ key: string; offset: number }>()
+  let prependAnchorFrame = Option.none<number>()
   let prependLoading = false
   const clearPrependAnchor = () => {
     prependLoading = false
-    prependAnchor = undefined
-    if (prependAnchorFrame === undefined) return
-    cancelAnimationFrame(prependAnchorFrame)
-    prependAnchorFrame = undefined
+    prependAnchor = Option.none()
+    if (Option.isNone(prependAnchorFrame)) return
+    cancelAnimationFrame(prependAnchorFrame.value)
+    prependAnchorFrame = Option.none()
   }
   const capturePrependAnchor = () => {
     prependLoading = true
@@ -372,7 +372,7 @@ export function MessageTimeline(props: {
       .sort((a, b) => a.rect.top - b.rect.top)[0]
     if (!anchor) return
     if (!anchor.element.dataset.timelineKey) return
-    prependAnchor = { key: anchor.element.dataset.timelineKey, offset: anchor.rect.top - view.top }
+    prependAnchor = Option.some({ key: anchor.element.dataset.timelineKey, offset: anchor.rect.top - view.top })
   }
   const restorePrependAnchor = (done: boolean) => {
     if (done) prependLoading = false
@@ -380,19 +380,18 @@ export function MessageTimeline(props: {
   }
   const applyPrependAnchor = () => {
     const root = listRoot()
-    if (!root || !prependAnchor) return
-    if (prependAnchorFrame !== undefined) cancelAnimationFrame(prependAnchorFrame)
+    if (!root || Option.isNone(prependAnchor)) return
+    if (Option.isSome(prependAnchorFrame)) cancelAnimationFrame(prependAnchorFrame.value)
     let frames = 0
     let stable = 0
     const apply = () => {
-      prependAnchorFrame = undefined
-      const anchor = prependAnchor
-      if (!anchor) return
+      prependAnchorFrame = Option.none()
+      if (Option.isNone(prependAnchor)) return
+      const anchor = prependAnchor.value
       const element = root.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchor.key)}"]`)
-      const delta = element
-        ? element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset
-        : undefined
-      if (delta !== undefined && Math.abs(delta) > 0.5) {
+      // A missing element gives no correction, so the frame counts as stable.
+      const delta = element ? element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset : 0
+      if (Math.abs(delta) > 0.5) {
         root.scrollTop += delta
         stable = 0
       } else {
@@ -400,18 +399,18 @@ export function MessageTimeline(props: {
       }
       frames += 1
       if (stable >= 30 || frames >= 180) {
-        if (!prependLoading) prependAnchor = undefined
+        if (!prependLoading) prependAnchor = Option.none()
         return
       }
-      prependAnchorFrame = requestAnimationFrame(apply)
+      prependAnchorFrame = Option.some(requestAnimationFrame(apply))
     }
-    prependAnchorFrame = requestAnimationFrame(apply)
+    prependAnchorFrame = Option.some(requestAnimationFrame(apply))
   }
 
   const [toolOpen, setToolOpen] = createStore<Record<string, boolean | undefined>>(cached?.toolOpen ?? {})
   const [renderOverscan, setRenderOverscan] = createSignal(initialMeasurements?.length || coldBottomMount ? 6 : 20)
   let resizePinnedIndexes: number[] = []
-  let resizePinFrame: number | undefined
+  let resizePinFrame = Option.none<number>()
   let virtualContent: HTMLDivElement | undefined
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
@@ -467,9 +466,8 @@ export function MessageTimeline(props: {
   }
   virtualizer.resizeItem = (index, size) => {
     const item = virtualizer.measurementsCache[index]
-    const previous = item ? (virtualizer.itemSizeCache.get(item.key) ?? item.size) : undefined
     const root = listRoot()
-    if (root && previous !== undefined && Math.abs(size - previous) > root.clientHeight) {
+    if (root && item && Math.abs(size - (virtualizer.itemSizeCache.get(item.key) ?? item.size)) > root.clientHeight) {
       const view = root.getBoundingClientRect()
       resizePinnedIndexes = [...root.querySelectorAll<HTMLElement>("[data-index]")]
         .filter((element) => {
@@ -477,13 +475,17 @@ export function MessageTimeline(props: {
           return rect.bottom > view.top && rect.top < view.bottom
         })
         .map((element) => Number(element.dataset.index))
-      if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
-      resizePinFrame = requestAnimationFrame(() => {
-        resizePinFrame = requestAnimationFrame(() => {
-          resizePinFrame = undefined
-          resizePinnedIndexes = []
-        })
-      })
+      if (Option.isSome(resizePinFrame)) cancelAnimationFrame(resizePinFrame.value)
+      resizePinFrame = Option.some(
+        requestAnimationFrame(() => {
+          resizePinFrame = Option.some(
+            requestAnimationFrame(() => {
+              resizePinFrame = Option.none()
+              resizePinnedIndexes = []
+            }),
+          )
+        }),
+      )
     }
     resizeItem(index, size)
     if (root && props.shouldAnchorBottom()) anchorResizedBottom()
@@ -507,24 +509,28 @@ export function MessageTimeline(props: {
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
 
-  let overscanFrame: number | undefined
+  let overscanFrame = Option.none<number>()
   onMount(() => {
-    overscanFrame = requestAnimationFrame(() => {
-      if (props.shouldAnchorBottom()) virtualizer.scrollToEnd()
-      overscanFrame = requestAnimationFrame(() => {
-        overscanFrame = undefined
-        if (renderOverscan() < 20) setRenderOverscan(20)
+    overscanFrame = Option.some(
+      requestAnimationFrame(() => {
         if (props.shouldAnchorBottom()) virtualizer.scrollToEnd()
-      })
-    })
+        overscanFrame = Option.some(
+          requestAnimationFrame(() => {
+            overscanFrame = Option.none()
+            if (renderOverscan() < 20) setRenderOverscan(20)
+            if (props.shouldAnchorBottom()) virtualizer.scrollToEnd()
+          }),
+        )
+      }),
+    )
   })
 
   const maybeAnchorBottom = () => {
     if (timelineRows().length === 0) return
     if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-    if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
+    if (Option.isSome(resizePinFrame)) cancelAnimationFrame(resizePinFrame.value)
     clearPrependAnchor()
-    if (prependAnchorFrame !== undefined) cancelAnimationFrame(prependAnchorFrame)
+    if (Option.isSome(prependAnchorFrame)) cancelAnimationFrame(prependAnchorFrame.value)
     virtualizer.scrollToEnd()
   }
 
@@ -544,8 +550,8 @@ export function MessageTimeline(props: {
     timelineCache.delete(ownerSessionKey)
     timelineCache.set(ownerSessionKey, { measurements: virtualizer.takeSnapshot(), toolOpen: { ...toolOpen } })
     while (timelineCache.size > 16) timelineCache.delete(timelineCache.keys().next().value!)
-    if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
-    if (overscanFrame !== undefined) cancelAnimationFrame(overscanFrame)
+    if (Option.isSome(resizePinFrame)) cancelAnimationFrame(resizePinFrame.value)
+    if (Option.isSome(overscanFrame)) cancelAnimationFrame(overscanFrame.value)
     props.setRevealMessage?.(() => {})
     props.setScrollToEnd?.(() => {})
     props.setHistoryAnchor?.({ capture: () => {}, restore: () => {} })
@@ -586,16 +592,16 @@ export function MessageTimeline(props: {
 
   const handleListTouchStart = (event: TouchEvent) => {
     if (!prependLoading) clearPrependAnchor()
-    touchGesture = event.touches[0]?.clientY
+    touchGesture = Option.fromNullishOr(event.touches[0]?.clientY)
   }
 
   const handleListTouchMove = (event: TouchEvent & { currentTarget: HTMLDivElement }) => {
-    const next = event.touches[0]?.clientY
+    const next = Option.fromNullishOr(event.touches[0]?.clientY)
     const prev = touchGesture
     touchGesture = next
-    if (next === undefined || prev === undefined) return
+    if (Option.isNone(next) || Option.isNone(prev)) return
 
-    const delta = prev - next
+    const delta = prev.value - next.value
     if (!delta) return
 
     markBoundaryGesture({
@@ -607,7 +613,7 @@ export function MessageTimeline(props: {
   }
 
   const handleListTouchEnd = () => {
-    touchGesture = undefined
+    touchGesture = Option.none()
   }
 
   const handleListPointerDown = (event: PointerEvent & { currentTarget: HTMLDivElement }) => {
@@ -640,7 +646,7 @@ export function MessageTimeline(props: {
   }
 
   onCleanup(() => {
-    props.setScrollRef(undefined)
+    props.setScrollRef(Option.getOrUndefined(Option.none()))
   })
 
   const viewShare = () => {
@@ -820,7 +826,7 @@ export function MessageTimeline(props: {
 
     const sessions = (sync().data.session ?? []).filter((s) => !s.parentID && !s.time?.archived)
     const index = sessions.findIndex((s) => s.id === sessionID)
-    const nextSession = index === -1 ? undefined : (sessions[index + 1] ?? sessions[index - 1])
+    const nextSession = index === -1 ? Option.none() : Option.fromNullishOr(sessions[index + 1] ?? sessions[index - 1])
 
     const result = await sdk()
       .api.session.remove({ sessionID })
@@ -863,7 +869,11 @@ export function MessageTimeline(props: {
       }
     }
 
-    sessionArchive.navigateAfterRemoval(sessionID, session.parentID, nextSession?.id)
+    sessionArchive.navigateAfterRemoval(
+      sessionID,
+      session.parentID,
+      Option.getOrUndefined(Option.map(nextSession, (next) => next.id)),
+    )
 
     sync().set(
       produce((draft) => {
@@ -941,18 +951,17 @@ export function MessageTimeline(props: {
   const turnDurationMs = (userMessageID: string) => {
     const message = messageByID().get(userMessageID)
     if (!message || message.role !== "user") return
-    const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce<number | undefined>(
+    const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce(
       (max, item) => {
         const completed = item.time.completed
         if (typeof completed !== "number") return max
-        if (max === undefined) return completed
-        return Math.max(max, completed)
+        return Option.some(Option.isSome(max) ? Math.max(max.value, completed) : completed)
       },
-      undefined,
+      Option.none<number>(),
     )
-    if (typeof end !== "number") return
-    if (end < message.time.created) return
-    return end - message.time.created
+    if (Option.isNone(end)) return
+    if (end.value < message.time.created) return
+    return end.value - message.time.created
   }
 
   const assistantCopyPartID = (userMessageID: string) => {
@@ -1041,9 +1050,11 @@ export function MessageTimeline(props: {
   }
 
   function TimelineRowFrame(input: { row: Accessor<FramedTimelineRow>; children: JSX.Element }) {
-    const anchor = () => {
+    const anchorID = () => {
       const row = input.row()
       return row._tag === "CommentStrip" || (row._tag === "UserMessage" && row.anchor)
+        ? Option.some(props.anchor(row.userMessageID))
+        : Option.none<string>()
     }
     const previousAssistantPart = () => {
       const row = input.row()
@@ -1052,7 +1063,7 @@ export function MessageTimeline(props: {
 
     return (
       <div
-        id={anchor() ? props.anchor(input.row().userMessageID) : undefined}
+        id={Option.getOrUndefined(anchorID())}
         data-message-id={input.row().userMessageID}
         data-timeline-row={input.row()._tag}
         classList={{
@@ -1273,7 +1284,7 @@ export function MessageTimeline(props: {
           height: `${item().size}px`,
           overflow: "clip",
           // Rounded virtual measurements can otherwise clip a framed row's outer paint.
-          "overflow-clip-margin": row()._tag === "TurnGap" ? undefined : "0.5px",
+          ...(row()._tag === "TurnGap" ? {} : { "overflow-clip-margin": "0.5px" }),
         }}
       >
         <div
@@ -1281,7 +1292,7 @@ export function MessageTimeline(props: {
             element = value
           }}
           data-index={item().index}
-          style={{ "min-height": ready() ? undefined : `${initialItem.size}px` }}
+          style={ready() ? {} : { "min-height": `${initialItem.size}px` }}
         >
           <TimelineRowView
             row={row()}
@@ -1574,7 +1585,7 @@ export function MessageTimeline(props: {
                             icon={<IconV2 name="outline-dots" />}
                             variant="ghost-muted"
                             size="large"
-                            state={share.open || title.pendingShare ? "pressed" : undefined}
+                            {...(share.open || title.pendingShare ? { state: "pressed" as const } : {})}
                             aria-label={language.t("common.moreOptions")}
                             aria-expanded={title.menuOpen || share.open || title.pendingShare}
                             ref={(el: HTMLButtonElement) => {
