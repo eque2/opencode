@@ -1,6 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Context, Effect, FiberMap, Iterable, Layer, Schema, Stream } from "effect"
+import { Context, Effect, FiberMap, Iterable, Layer, Option, Schema, Stream } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
@@ -202,7 +202,8 @@ const layer = Layer.effect(
         Stream.decodeText(),
         Stream.splitLines,
         Stream.mapAccum(
-          () => ({ data: [] as string[], id: undefined as string | undefined, retry: 1000 }),
+          // An empty id means the stream sent no id, as in the SSE spec.
+          () => ({ data: [] as string[], id: "", retry: 1000 }),
           (state, line) => {
             if (line === "") {
               if (!state.data.length) return [state, []]
@@ -234,7 +235,7 @@ const layer = Layer.effect(
               type: "sse.message",
               properties: {
                 data: event.data,
-                id: event.id || undefined,
+                ...(event.id ? { id: event.id } : {}),
                 retry: event.retry,
               },
             }
@@ -245,7 +246,7 @@ const layer = Layer.effect(
     })
 
     const runInWorkspace = <A, E, R>(input: {
-      workspaceID?: WorkspaceV2.ID
+      workspaceID: Option.Option<WorkspaceV2.ID>
       local: () => Effect.Effect<A, E, R>
       remote: (input: {
         workspace: Info
@@ -255,9 +256,9 @@ const layer = Layer.effect(
       response?: "json" | "text"
     }) =>
       Effect.gen(function* () {
-        if (!input.workspaceID) return yield* input.local()
+        if (Option.isNone(input.workspaceID)) return yield* input.local()
 
-        const workspace = yield* get(input.workspaceID)
+        const workspace = yield* get(input.workspaceID.value)
         if (!workspace) return input.fallback
 
         const target = yield* WorkspaceAdapterRuntime.target(workspace)
@@ -267,15 +268,17 @@ const layer = Layer.effect(
           return yield* store.provide({ directory: target.directory }, input.local())
         }
 
-        const response = yield* http.execute(input.remote({ workspace, target })).pipe(
+        const sent = yield* http.execute(input.remote({ workspace, target })).pipe(
+          Effect.map(Option.some),
           Effect.catch((error) =>
             Effect.logWarning("workspace target request failed", {
               workspaceID: workspace.id,
               error: errorData(error),
-            }).pipe(Effect.as(undefined)),
+            }).pipe(Effect.as(Option.none())),
           ),
         )
-        if (!response) return input.fallback
+        if (Option.isNone(sent)) return input.fallback
+        const response = sent.value
         if (response.status < 200 || response.status >= 300) {
           const body = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")))
           yield* Effect.logWarning("workspace target request failed", {
@@ -558,6 +561,7 @@ const layer = Layer.effect(
           .where(eq(SessionTable.id, input.sessionID))
           .get()
           .pipe(Effect.orDie)
+        const targetID = Option.fromNullishOr(input.workspaceID)
 
         if (current?.workspaceID) {
           const previous = yield* get(current.workspaceID)
@@ -587,7 +591,7 @@ const layer = Layer.effect(
         const sourcePatch =
           input.copyChanges && current?.workspaceID
             ? yield* runInWorkspace({
-                workspaceID: current?.workspaceID ?? undefined,
+                workspaceID: Option.fromNullishOr(current?.workspaceID),
                 local: () => vcs.diffRaw(),
                 remote: ({ target }) =>
                   HttpClientRequest.get(route(target.url, "/vcs/diff/raw"), {
@@ -603,7 +607,7 @@ const layer = Layer.effect(
           // We intentionally do first so if it fails we don't warp
           // the session.
           yield* runInWorkspace({
-            workspaceID: input.workspaceID ?? undefined,
+            workspaceID: targetID,
             local: () => vcs.apply({ patch: sourcePatch }),
             remote: ({ target }) =>
               HttpClientRequest.post(route(target.url, "/vcs/apply"), {
@@ -614,13 +618,13 @@ const layer = Layer.effect(
           }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
         }
 
-        if (input.workspaceID === null) {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: undefined })
+        if (Option.isNone(targetID)) {
+          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: Option.getOrUndefined(targetID) })
 
           return
         }
 
-        const workspaceID = input.workspaceID
+        const workspaceID = targetID.value
         const space = yield* get(workspaceID)
         if (!space)
           return yield* new WorkspaceNotFoundError({
@@ -631,7 +635,7 @@ const layer = Layer.effect(
         const target = yield* WorkspaceAdapterRuntime.target(space)
 
         if (target.type === "local") {
-          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+          yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
 
           return
         }
@@ -703,7 +707,7 @@ const layer = Layer.effect(
           })
         }
 
-        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID: input.workspaceID })
+        yield* session.setWorkspace({ sessionID: input.sessionID, workspaceID })
       })
     })
 

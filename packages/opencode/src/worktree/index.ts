@@ -11,7 +11,7 @@ import { Slug } from "@opencode-ai/core/util/slug"
 import { errorMessage } from "../util/error"
 import { GlobalBus } from "@/bus/global"
 import { Git } from "@/git"
-import { Effect, Layer, Path, Schema, Scope, Context } from "effect"
+import { Effect, Layer, Option, Path, Schema, Scope, Context } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -180,18 +180,18 @@ const layer: Layer.Layer<
       const ctx = yield* InstanceState.context
       for (const attempt of Array.from({ length: MAX_NAME_ATTEMPTS }, (_, i) => i)) {
         const name = input.name ? (attempt === 0 ? input.name : `${input.name}-${yield* Slug.make}`) : yield* Slug.make
-        const branch = input.detached ? undefined : `opencode/${name}`
+        const branch = input.detached ? Option.none() : Option.some(`opencode/${name}`)
         const directory = pathSvc.join(input.root, name)
 
         if (yield* fs.exists(directory).pipe(Effect.orDie)) continue
 
-        if (branch) {
-          const ref = `refs/heads/${branch}`
+        if (Option.isSome(branch)) {
+          const ref = `refs/heads/${branch.value}`
           const branchCheck = yield* git(["show-ref", "--verify", "--quiet", ref], { cwd: ctx.worktree })
           if (branchCheck.code === 0) continue
         }
 
-        return { name, directory, ...(branch ? { branch } : {}) }
+        return { name, directory, ...(Option.isSome(branch) ? { branch: branch.value } : {}) }
       }
       return yield* new NameGenerationFailedError({ message: "Failed to generate a unique worktree name" })
     })
@@ -488,8 +488,7 @@ const layer: Layer.Layer<
         .where(eq(ProjectTable.id, input.projectID))
         .get()
         .pipe(Effect.orDie)
-      const project = row ? Project.fromRow(row) : undefined
-      const startup = project?.commands?.start?.trim() ?? ""
+      const startup = row ? (Project.fromRow(row).commands?.start?.trim() ?? "") : ""
       const ok = yield* runStartScript(directory, startup, "project")
       if (!ok) return false
       yield* runStartScript(directory, input.extra ?? "", "worktree")

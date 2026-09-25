@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer, Context, Schema, Scope } from "effect"
+import { Effect, Layer, Context, Option, Schema, Scope } from "effect"
 import { formatPatch, structuredPatch } from "diff"
 import { InstanceState } from "@/effect/instance-state"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -30,11 +30,12 @@ const merge = (...lists: Git.Item[][]) => {
 
 const emptyBatch = () => ({ patches: new Map<string, string>(), capped: false })
 
-const parseQuotedPath = (value: string) => {
+// A quoted path without its closing quote is None.
+const parseQuotedPath = (value: string): Option.Option<{ value: string; end: number }> => {
   let out = ""
   for (let idx = 1; idx < value.length; idx++) {
     const char = value[idx]
-    if (char === '"') return { value: out, end: idx + 1 }
+    if (char === '"') return Option.some({ value: out, end: idx + 1 })
     if (char !== "\\") {
       out += char
       continue
@@ -47,39 +48,45 @@ const parseQuotedPath = (value: string) => {
     else if (next === '"' || next === "\\") out += next
     else out += next ?? ""
   }
+  return Option.none()
 }
 
 const parsePathToken = (value: string) => {
   if (!value.startsWith('"')) return value.split("\t")[0]
-  return parseQuotedPath(value)?.value ?? value
+  return Option.match(parseQuotedPath(value), { onNone: () => value, onSome: (parsed) => parsed.value })
 }
 
-const fileFromDiffPath = (value: string | undefined) => {
-  if (!value || value === "/dev/null") return
-  const file = parsePathToken(value)
-  if (file.startsWith("a/") || file.startsWith("b/")) return file.slice(2)
-  return file
-}
+const fileFromDiffPath = (value: Option.Option<string>) =>
+  value.pipe(
+    Option.filter((path) => path !== "" && path !== "/dev/null"),
+    Option.map(parsePathToken),
+    Option.map((file) => (file.startsWith("a/") || file.startsWith("b/") ? file.slice(2) : file)),
+  )
 
-const fileFromGitHeader = (header: string) => {
+const fileFromGitHeader = (header: string): Option.Option<string> => {
   if (header.startsWith('"')) {
-    const first = parseQuotedPath(header)
-    const second = first ? header.slice(first.end).trimStart() : undefined
-    if (!second) return
-    if (!second.startsWith('"')) return fileFromDiffPath(second)
-    return fileFromDiffPath(parseQuotedPath(second)?.value)
+    return parseQuotedPath(header).pipe(
+      Option.map((first) => header.slice(first.end).trimStart()),
+      Option.filter((second) => second !== ""),
+      Option.flatMap((second) =>
+        fileFromDiffPath(
+          second.startsWith('"') ? Option.map(parseQuotedPath(second), (parsed) => parsed.value) : Option.some(second),
+        ),
+      ),
+    )
   }
 
   const separator = header.indexOf(" b/")
-  if (separator === -1) return
-  return fileFromDiffPath(header.slice(separator + 1))
+  if (separator === -1) return Option.none()
+  return fileFromDiffPath(Option.some(header.slice(separator + 1)))
 }
 
 const fileFromPatchChunk = (chunk: string) => {
-  const next = /^\+\+\+ (.+)$/m.exec(chunk)?.[1]
-  const before = /^--- (.+)$/m.exec(chunk)?.[1]
-  const file = fileFromDiffPath(next) ?? fileFromDiffPath(before)
-  if (file) return file
+  const next = Option.fromNullishOr(/^\+\+\+ (.+)$/m.exec(chunk)?.[1])
+  const before = Option.fromNullishOr(/^--- (.+)$/m.exec(chunk)?.[1])
+  const file = Option.orElse(fileFromDiffPath(next), () => fileFromDiffPath(before))
+  // An empty name from the +++ or --- line falls through to the diff --git header.
+  if (Option.exists(file, (name) => name !== "")) return file
 
   const header = /^diff --git (.+)$/m.exec(chunk)?.[1]
   return fileFromGitHeader(header ?? "")
@@ -110,9 +117,9 @@ const batchPatches = Effect.fnUntraced(function* (
 
   return {
     patches: splitGitPatch(result).reduce((acc, patch, index) => {
-      const file = fileFromPatchChunk(patch) ?? list[index]?.file
-      if (!file) return acc
-      acc.set(file, (acc.get(file) ?? "") + patch)
+      const file = Option.orElse(fileFromPatchChunk(patch), () => Option.fromNullishOr(list[index]?.file))
+      if (Option.isNone(file) || !file.value) return acc
+      acc.set(file.value, (acc.get(file.value) ?? "") + patch)
       return acc
     }, new Map<string, string>()),
     capped: result.truncated,
@@ -122,17 +129,17 @@ const batchPatches = Effect.fnUntraced(function* (
 const nativePatch = Effect.fnUntraced(function* (
   git: Git.Interface,
   cwd: string,
-  ref: string | undefined,
+  ref: Option.Option<string>,
   item: Git.Item,
   options?: DiffOptions,
 ) {
   const result =
-    item.code === "??" || !ref
+    item.code === "??" || Option.isNone(ref)
       ? yield* git.patchUntracked(cwd, item.file, {
           context: options?.context ?? PATCH_CONTEXT_LINES,
           maxOutputBytes: MAX_PATCH_BYTES,
         })
-      : yield* git.patch(cwd, ref, item.file, {
+      : yield* git.patch(cwd, ref.value, item.file, {
           context: options?.context ?? PATCH_CONTEXT_LINES,
           maxOutputBytes: MAX_PATCH_BYTES,
         })
@@ -149,7 +156,7 @@ const totalPatch = (file: string, patch: string, total: number) => {
 const patchForItem = Effect.fnUntraced(function* (
   git: Git.Interface,
   cwd: string,
-  ref: string | undefined,
+  ref: Option.Option<string>,
   item: Git.Item,
   batch: { patches: Map<string, string>; capped: boolean },
   capped: boolean,
@@ -163,10 +170,25 @@ const patchForItem = Effect.fnUntraced(function* (
   return yield* nativePatch(git, cwd, ref, item, options)
 })
 
+// The numstat counts for a file. An added file that the numstat left out is read as untracked;
+// any other missing file counts as zero lines.
+const lineCounts = Effect.fnUntraced(function* (
+  git: Git.Interface,
+  cwd: string,
+  map: Map<string, { additions: number; deletions: number }>,
+  item: Git.Item,
+) {
+  const known = map.get(item.file)
+  if (known) return known
+  if (item.status !== "added") return { additions: 0, deletions: 0 }
+  const untracked = yield* git.statUntracked(cwd, item.file)
+  return { additions: untracked?.additions ?? 0, deletions: untracked?.deletions ?? 0 }
+})
+
 const files = Effect.fnUntraced(function* (
   git: Git.Interface,
   cwd: string,
-  ref: string | undefined,
+  ref: Option.Option<string>,
   list: Git.Item[],
   map: Map<string, { additions: number; deletions: number }>,
   batch: { patches: Map<string, string>; capped: boolean },
@@ -177,7 +199,7 @@ const files = Effect.fnUntraced(function* (
   let capped = false
 
   for (const item of list.toSorted((a, b) => a.file.localeCompare(b.file))) {
-    const stat = map.get(item.file) ?? (item.status === "added" ? yield* git.statUntracked(cwd, item.file) : undefined)
+    const stat = yield* lineCounts(git, cwd, map, item)
     const patch = yield* patchForItem(git, cwd, ref, item, batch, capped, options)
     const result: { patch: string; capped: boolean } = capped
       ? { patch, capped: true }
@@ -190,8 +212,8 @@ const files = Effect.fnUntraced(function* (
     next.push({
       file: item.file,
       patch: result.patch,
-      additions: stat?.additions ?? 0,
-      deletions: stat?.deletions ?? 0,
+      additions: stat.additions,
+      deletions: stat.deletions,
       status: item.status,
     })
   }
@@ -211,7 +233,7 @@ const diffAgainstRef = Effect.fnUntraced(function* (
   return yield* files(
     git,
     cwd,
-    ref,
+    Option.some(ref),
     merge(
       list,
       extra.filter((item) => item.code === "??"),
@@ -225,11 +247,11 @@ const diffAgainstRef = Effect.fnUntraced(function* (
 const track = Effect.fnUntraced(function* (
   git: Git.Interface,
   cwd: string,
-  ref: string | undefined,
+  ref: Option.Option<string>,
   options?: DiffOptions,
 ) {
-  if (!ref) return yield* files(git, cwd, ref, yield* git.status(cwd), new Map(), emptyBatch(), options)
-  return yield* diffAgainstRef(git, cwd, ref, options)
+  if (Option.isNone(ref)) return yield* files(git, cwd, ref, yield* git.status(cwd), new Map(), emptyBatch(), options)
+  return yield* diffAgainstRef(git, cwd, ref.value, options)
 })
 
 export const Mode = Schema.Literals(["git", "branch"])
@@ -289,8 +311,8 @@ export interface Interface {
 }
 
 interface State {
-  current: string | undefined
-  root: Git.Base | undefined
+  current: Option.Option<string>
+  readonly root: Option.Option<Git.Base>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Vcs") {}
@@ -305,7 +327,7 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Vcs.state")(function* (ctx) {
         if (ctx.project.vcs !== "git") {
-          return { current: undefined, root: undefined }
+          return { current: Option.none(), root: Option.none() }
         }
 
         const get = Effect.fnUntraced(function* () {
@@ -314,7 +336,7 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
         const [current, root] = yield* Effect.all([git.branch(ctx.directory), git.defaultBranch(ctx.directory)], {
           concurrency: 2,
         })
-        const value = { current, root }
+        const value: State = { current: Option.fromUndefinedOr(current), root: Option.fromUndefinedOr(root) }
 
         const unsubscribe = yield* events.listen((event) => {
           if (event.type !== Watcher.Event.Updated.type || event.location?.directory !== ctx.directory)
@@ -323,8 +345,8 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
           if (!data.file.endsWith("HEAD")) return Effect.void
           return Effect.gen(function* () {
             const next = yield* get()
-            if (next !== value.current) {
-              value.current = next
+            if (next !== Option.getOrUndefined(value.current)) {
+              value.current = Option.fromUndefinedOr(next)
               yield* events.publish(Event.BranchUpdated, { branch: next })
             }
           })
@@ -340,17 +362,17 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
         yield* InstanceState.get(state).pipe(Effect.forkIn(scope))
       }),
       branch: Effect.fn("Vcs.branch")(function* () {
-        return yield* InstanceState.use(state, (x) => x.current)
+        return yield* InstanceState.use(state, (x) => Option.getOrUndefined(x.current))
       }),
       defaultBranch: Effect.fn("Vcs.defaultBranch")(function* () {
-        return yield* InstanceState.use(state, (x) => x.root?.name)
+        return yield* InstanceState.use(state, (x) => Option.getOrUndefined(Option.map(x.root, (root) => root.name)))
       }),
       status: Effect.fn("Vcs.status")(function* () {
         const ctx = yield* InstanceState.context
         if (ctx.project.vcs !== "git") return []
-        const ref = (yield* git.hasHead(ctx.directory)) ? "HEAD" : undefined
+        const hasHead = yield* git.hasHead(ctx.directory)
         const [list, stats] = yield* Effect.all(
-          [git.status(ctx.directory), ref ? git.stats(ctx.directory, ref) : Effect.succeed([])],
+          [git.status(ctx.directory), hasHead ? git.stats(ctx.directory, "HEAD") : Effect.succeed([])],
           { concurrency: 2 },
         )
         const map = nums(stats)
@@ -358,13 +380,11 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
           list.toSorted((a, b) => a.file.localeCompare(b.file)),
           (item) =>
             Effect.gen(function* () {
-              const stat =
-                map.get(item.file) ??
-                (item.status === "added" ? yield* git.statUntracked(ctx.worktree, item.file) : undefined)
+              const stat = yield* lineCounts(git, ctx.worktree, map, item)
               return {
                 file: item.file,
-                additions: stat?.additions ?? 0,
-                deletions: stat?.deletions ?? 0,
+                additions: stat.additions,
+                deletions: stat.deletions,
                 status: item.status,
               } satisfies FileStatus
             }),
@@ -375,12 +395,14 @@ const layer: Layer.Layer<Service, never, Git.Service | EventV2Bridge.Service> = 
         const ctx = yield* InstanceState.context
         if (ctx.project.vcs !== "git") return []
         if (mode === "git") {
-          return yield* track(git, ctx.directory, (yield* git.hasHead(ctx.directory)) ? "HEAD" : undefined, options)
+          const ref = (yield* git.hasHead(ctx.directory)) ? Option.some("HEAD") : Option.none()
+          return yield* track(git, ctx.directory, ref, options)
         }
 
-        if (!value.root) return []
-        if (value.current && value.current === value.root.name) return []
-        const ref = yield* git.mergeBase(ctx.directory, value.root.ref)
+        if (Option.isNone(value.root)) return []
+        const root = value.root.value
+        if (Option.exists(value.current, (current) => current === root.name)) return []
+        const ref = yield* git.mergeBase(ctx.directory, root.ref)
         if (!ref) return []
         return yield* diffAgainstRef(git, ctx.directory, ref, options)
       }),

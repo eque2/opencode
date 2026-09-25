@@ -10,7 +10,7 @@ import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
 import { Command } from "@/command"
 import { InstanceState } from "@/effect/instance-state"
-import { Effect, Layer, Scope, Context, Stream, Types, Schema, Option } from "effect"
+import { Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -32,28 +32,26 @@ export const Event = {
 
 type Row = typeof ProjectTable.$inferSelect
 
+// A NULL column leaves its key out of the Info.
 export function fromRow(row: Row): Info {
-  const icon =
-    row.icon_url || row.icon_url_override || row.icon_color
-      ? {
-          url: row.icon_url ?? undefined,
-          override: row.icon_url_override ?? undefined,
-          color: row.icon_color ?? undefined,
-        }
-      : undefined
+  const icon = {
+    ...(Predicate.isNotNull(row.icon_url) ? { url: row.icon_url } : {}),
+    ...(Predicate.isNotNull(row.icon_url_override) ? { override: row.icon_url_override } : {}),
+    ...(Predicate.isNotNull(row.icon_color) ? { color: row.icon_color } : {}),
+  }
   return {
     id: row.id,
     worktree: row.worktree,
-    vcs: row.vcs ? Schema.decodeUnknownSync(Project.Vcs)(row.vcs) : undefined,
-    name: row.name ?? undefined,
-    icon,
+    ...(row.vcs ? { vcs: Schema.decodeUnknownSync(Project.Vcs)(row.vcs) } : {}),
+    ...(Predicate.isNotNull(row.name) ? { name: row.name } : {}),
+    ...(row.icon_url || row.icon_url_override || row.icon_color ? { icon } : {}),
     time: {
       created: row.time_created,
       updated: row.time_updated,
-      initialized: row.time_initialized ?? undefined,
+      ...(Predicate.isNotNull(row.time_initialized) ? { initialized: row.time_initialized } : {}),
     },
     sandboxes: row.sandboxes,
-    commands: row.commands ?? undefined,
+    ...(Predicate.isNotNull(row.commands) ? { commands: row.commands } : {}),
   }
 }
 
@@ -149,10 +147,11 @@ const layer = Layer.effect(
     const scope = yield* Scope.Scope
 
     const migrateProjectId = Effect.fn("Project.migrateProjectId")(function* (
-      oldID: ProjectV2.ID | undefined,
+      previous: Option.Option<ProjectV2.ID>,
       newID: ProjectV2.ID,
     ) {
-      if (!oldID) return
+      if (Option.isNone(previous)) return
+      const oldID = previous.value
       if (oldID === ProjectV2.ID.global) return
       if (oldID === newID) return
 
@@ -223,7 +222,7 @@ const layer = Layer.effect(
 
       // Phase 2: upsert
       const projectID = ProjectV2.ID.make(data.id)
-      yield* migrateProjectId(data.previous ? ProjectV2.ID.make(data.previous) : undefined, projectID)
+      yield* migrateProjectId(data.previous ? Option.some(ProjectV2.ID.make(data.previous)) : Option.none(), projectID)
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, projectID)).get().pipe(Effect.orDie)
       const existing = row
         ? fromRow(row)
@@ -249,15 +248,9 @@ const layer = Layer.effect(
         !result.sandboxes.includes(data.directory)
       )
         result.sandboxes.push(data.directory)
-      result.sandboxes = yield* Effect.forEach(
-        result.sandboxes,
-        (s) =>
-          fs.exists(s).pipe(
-            Effect.orDie,
-            Effect.map((exists) => (exists ? s : undefined)),
-          ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.map((arr) => arr.filter((x): x is string => x !== undefined)))
+      result.sandboxes = yield* Effect.filter(result.sandboxes, (s) => fs.exists(s).pipe(Effect.orDie), {
+        concurrency: "unbounded",
+      })
 
       yield* db
         .insert(ProjectTable)
@@ -344,7 +337,7 @@ const layer = Layer.effect(
 
     const get = Effect.fn("Project.get")(function* (id: ProjectV2.ID) {
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
-      return row ? fromRow(row) : undefined
+      return Option.getOrUndefined(Option.map(Option.fromUndefinedOr(row), fromRow))
     })
 
     const update = Effect.fn("Project.update")(function* (input: UpdateInput) {
@@ -408,15 +401,9 @@ const layer = Layer.effect(
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, id)).get().pipe(Effect.orDie)
       if (!row) return []
       const data = fromRow(row)
-      return yield* Effect.forEach(
-        data.sandboxes,
-        (dir) =>
-          fs.isDir(dir).pipe(
-            Effect.orDie,
-            Effect.map((ok) => (ok ? dir : undefined)),
-          ),
-        { concurrency: "unbounded" },
-      ).pipe(Effect.map((arr) => arr.filter((x): x is string => x !== undefined)))
+      return yield* Effect.filter(data.sandboxes, (dir) => fs.isDir(dir).pipe(Effect.orDie), {
+        concurrency: "unbounded",
+      })
     })
 
     const addSandbox = Effect.fn("Project.addSandbox")(function* (id: ProjectV2.ID, directory: string) {
