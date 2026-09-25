@@ -3,7 +3,7 @@ import { Credential } from "@opencode-ai/core/credential"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionSaved } from "@opencode-ai/core/permission/saved"
-import { Context, Layer, Option } from "effect"
+import { Console, Context, Layer, Option } from "effect"
 import * as Effect from "effect/Effect"
 import { HttpRouter, HttpServer } from "effect/unstable/http"
 import { createServer } from "node:http"
@@ -20,7 +20,7 @@ export default Runtime.handler(
         const daemon = yield* Daemon.Service
         const address = yield* listen(input.hostname, input.port, yield* daemon.password())
         if (input.register) yield* daemon.register(address)
-        console.log(`server listening on ${HttpServer.formatAddress(address)}`)
+        yield* Console.log(`server listening on ${HttpServer.formatAddress(address)}`)
         return yield* Effect.never
       }),
     )
