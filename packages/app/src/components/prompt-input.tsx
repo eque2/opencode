@@ -1,7 +1,17 @@
-import { DateTime, Effect, HashMap, HashSet, Option } from "effect"
+import { DateTime, Effect, HashMap, HashSet, Option, Predicate } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
-import { createEffect, on, Component, Show, onCleanup, createMemo, createSignal, createResource } from "solid-js"
+import {
+  createEffect,
+  on,
+  Component,
+  Show,
+  onCleanup,
+  createMemo,
+  createSignal,
+  createRenderEffect,
+  createResource,
+} from "solid-js"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import {
   ContentPart,
@@ -114,7 +124,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   let scrollRef!: HTMLDivElement
   let slashPopoverRef!: HTMLDivElement
   let restoreEndOnFocus = true
-  let savedCursor: number | null = null
+  let savedCursor: Option.Option<number> = Option.none()
 
   const mirror = { input: false }
   const inset = 56
@@ -421,7 +431,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const setMode = (mode: "normal" | "shell") => {
     setStore("mode", mode)
-    setStore({ popover: null, slashMenu: false, slashMenuQuery: "" })
+    closePopover()
     requestAnimationFrame(() => editorRef?.focus())
   }
 
@@ -484,15 +494,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
   }
 
-  const currentCursor = () => {
+  const currentCursor = (): Option.Option<number> => {
     const selection = window.getSelection()
-    if (!selection || selection.rangeCount === 0 || !editorRef.contains(selection.anchorNode)) return null
-    return getCursorPosition(editorRef)
+    if (!selection || selection.rangeCount === 0 || !editorRef.contains(selection.anchorNode)) return Option.none()
+    return Option.some(getCursorPosition(editorRef))
   }
 
   const restoreFocus = () => {
     requestAnimationFrame(() => {
-      const cursor = savedCursor ?? prompt.cursor() ?? promptLength(prompt.current())
+      const cursor = Option.getOrElse(savedCursor, () => prompt.cursor() ?? promptLength(prompt.current()))
       editorRef.focus()
       setCursorPosition(editorRef, cursor)
       queueScroll()
@@ -512,7 +522,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const renderEditorWithCursor = (parts: Prompt) => {
     const cursor = currentCursor()
     renderEditor(parts)
-    if (cursor !== null) setCursorPosition(editorRef, cursor)
+    if (Option.isSome(cursor)) setCursorPosition(editorRef, cursor.value)
   }
 
   createEffect(() => {
@@ -531,7 +541,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const handleBlur = () => {
     const cursor = currentCursor()
     savedCursor = cursor
-    if (cursor !== null && cursor !== prompt.cursor()) prompt.set(prompt.current(), cursor)
+    if (Option.isSome(cursor) && cursor.value !== prompt.cursor()) prompt.set(prompt.current(), cursor.value)
     closePopover()
     setComposing(false)
   }
@@ -1076,7 +1086,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           const emptyText = next?.nodeType === Node.TEXT_NODE && (next.textContent ?? "") === ""
           if (isBreak && (!next || emptyText)) {
             const placeholder = next && emptyText ? next : document.createTextNode("\u200B")
-            if (!next) last.parentNode?.insertBefore(placeholder, null)
+            if (!next) last.parentNode?.appendChild(placeholder)
             placeholder.textContent = "\u200B"
             range.setStart(placeholder, 0)
           } else {
@@ -1123,8 +1133,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
         setStore("mode", "normal")
         closePopover()
-        setStore("historyIndex", -1)
-        setStore("savedPrompt", null)
+        resetHistoryNavigation(true)
         prompt.set(edit.prompt, promptLength(edit.prompt))
         requestAnimationFrame(() => {
           editorRef.focus()
@@ -1157,7 +1166,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     prompt,
     editor: () => editorRef,
     isDialogActive: () => !!dialog.active,
-    setDraggingType: (type) => setStore("draggingType", type),
+    setDraggingType: (type) => setStore("draggingType", Option.getOrNull(type)),
     focusEditor: () => {
       editorRef.focus()
       setCursorPosition(editorRef, promptLength(prompt.current()))
@@ -1404,6 +1413,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     () => prompt.ready.promise,
     (p) => p,
   )
+  // A render computation that reads the resource suspends the composer until the prompt store is ready.
+  createRenderEffect(() => promptReady())
 
   const bindEditorRef = (el: HTMLDivElement) => {
     editorRef = el
@@ -1412,7 +1423,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
   return (
     <div class="relative size-full flex flex-col gap-0">
-      {(promptReady(), null)}
       <PromptPopover
         popover={store.popover}
         setSlashPopoverRef={(el) => (slashPopoverRef = el)}
@@ -1442,7 +1452,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         onSubmit={handleSubmit}
         classList={{
           "group/prompt-input": true,
-          "border-icon-info-active border-dashed": store.draggingType !== null,
+          "border-icon-info-active border-dashed": Predicate.isNotNull(store.draggingType),
           [props.class ?? ""]: !!props.class,
         }}
       >

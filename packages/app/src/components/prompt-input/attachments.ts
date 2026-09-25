@@ -29,7 +29,7 @@ export type PromptAttachmentsInput = {
   prompt: ReturnType<typeof usePrompt>
   editor: () => HTMLDivElement | undefined
   isDialogActive: () => boolean
-  setDraggingType: (type: "image" | "@mention" | null) => void
+  setDraggingType: (type: Option.Option<"image" | "@mention">) => void
   focusEditor: () => void
   addPart: (part: ContentPart) => boolean
   readClipboardImage?: () => Promise<File | null>
@@ -170,16 +170,16 @@ export function createPromptAttachments(input: PromptAttachmentsInput) {
     const hasFiles = event.dataTransfer?.types.includes("Files")
     const hasText = event.dataTransfer?.types.includes("text/plain")
     if (hasFiles) {
-      input.setDraggingType("image")
+      input.setDraggingType(Option.some("image"))
     } else if (hasText) {
-      input.setDraggingType("@mention")
+      input.setDraggingType(Option.some("@mention"))
     }
   }
 
   const handleGlobalDragLeave = (event: DragEvent) => {
     if (input.isDialogActive()) return
     if (!event.relatedTarget) {
-      input.setDraggingType(null)
+      input.setDraggingType(Option.none())
     }
   }
 
@@ -188,7 +188,7 @@ export function createPromptAttachments(input: PromptAttachmentsInput) {
     if (input.isDialogActive()) return Effect.void
 
     event.preventDefault()
-    input.setDraggingType(null)
+    input.setDraggingType(Option.none())
 
     const plainText = event.dataTransfer?.getData("text/plain")
     const filePrefix = "file:"
