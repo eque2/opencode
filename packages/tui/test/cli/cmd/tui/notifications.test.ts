@@ -1,8 +1,25 @@
 import { describe, expect, test } from "bun:test"
 import Notifications from "../../../../src/feature-plugins/system/notifications"
 import type { Event, PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2"
-import type { TuiAttentionNotifyInput } from "@opencode-ai/plugin/tui"
+import type { TuiAttentionNotifyInput, TuiPluginMeta } from "@opencode-ai/plugin/tui"
 import { createTuiPluginApi } from "../../../fixture/tui-plugin"
+
+const pluginMeta = {
+  id: "internal:notifications",
+  source: "internal",
+  spec: "internal:notifications",
+  target: "internal:notifications",
+  first_time: 0,
+  last_time: 0,
+  time_changed: 0,
+  load_count: 1,
+  fingerprint: "test",
+  state: "same",
+} satisfies TuiPluginMeta
+
+function isEventType<Type extends Event["type"]>(event: Event, type: Type): event is Extract<Event, { type: Type }> {
+  return event.type === type
+}
 
 async function setup() {
   const notifications: TuiAttentionNotifyInput[] = []
@@ -35,7 +52,9 @@ async function setup() {
       event: {
         on: <Type extends Event["type"]>(type: Type, handler: (event: Extract<Event, { type: Type }>) => void) => {
           const list = handlers.get(type) ?? []
-          const wrapped = handler as (event: Event) => void
+          const wrapped = (event: Event) => {
+            if (isEventType(event, type)) handler(event)
+          }
           list.push(wrapped)
           handlers.set(type, list)
           return () => {
@@ -53,7 +72,7 @@ async function setup() {
       },
     }),
     undefined,
-    {} as never,
+    pluginMeta,
   )
 
   return {
