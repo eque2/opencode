@@ -8,6 +8,7 @@ import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
 import { Icon } from "@opencode-ai/ui/icon"
 import { errorDescriptionKey } from "./error-description"
+import { Option, Schema } from "effect"
 
 export type InitError = {
   name: string
@@ -37,21 +38,26 @@ function isInitError(error: unknown): error is InitError {
   )
 }
 
+/**
+ * Encodes a value as indented JSON text. A bigint becomes its digits, and an object seen before becomes
+ * `circular`. A value with no JSON form (undefined, a function or a symbol) falls back to String(value).
+ */
 function safeJson(value: unknown, circular: string): string {
   const seen = new WeakSet<object>()
-  const json = JSON.stringify(
-    value,
-    (_key, val) => {
-      if (typeof val === "bigint") return val.toString()
-      if (typeof val === "object" && val) {
-        if (seen.has(val)) return circular
-        seen.add(val)
-      }
-      return val
-    },
-    2,
+  const encode = Schema.encodeOption(
+    Schema.fromJsonString(Schema.Unknown, {
+      space: 2,
+      replacer: (_key: string, val: unknown) => {
+        if (typeof val === "bigint") return val.toString()
+        if (typeof val === "object" && val) {
+          if (seen.has(val)) return circular
+          seen.add(val)
+        }
+        return val
+      },
+    }),
   )
-  return json ?? String(value)
+  return Option.getOrElse(encode(value), () => String(value))
 }
 
 function formatInitError(error: InitError, t: Translator): string {
