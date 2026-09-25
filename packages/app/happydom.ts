@@ -2,8 +2,12 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
 GlobalRegistrator.register()
 
-// oxlint-disable-next-line unbound-method -- the HTMLCanvasElement.prototype.getContext mock below keeps happy-dom's method detached and calls it with call(this, ...) for other context types
-const originalGetContext = HTMLCanvasElement.prototype.getContext
+// The mock below keeps happy-dom's method detached and calls it with call(this, ...) for other context types, so its
+// type names the HTMLCanvasElement receiver.
+const nativeCanvas: {
+  getContext: (this: HTMLCanvasElement, contextId: string, options?: unknown) => RenderingContext | null
+} = HTMLCanvasElement.prototype
+const originalGetContext = nativeCanvas.getContext
 // happy-dom has no canvas backend, so tests get a simplified 2D context. The mock covers only the members that
 // tests use and is not a full CanvasRenderingContext2D, so it is installed as a property value, not typed as one.
 Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {

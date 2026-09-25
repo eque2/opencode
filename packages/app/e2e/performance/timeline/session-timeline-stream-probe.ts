@@ -122,8 +122,12 @@ export async function installTimelineStreamProbe(
         start: () => {},
       }
       ;(window as Window & { __timelineStreamBenchmark?: TimelineProbeState }).__timelineStreamBenchmark = state
-      // oxlint-disable-next-line unbound-method -- the Element.prototype.scrollTo wrapper below keeps the native DOM method detached and calls it with apply(this, args); cleanup restores it
-      const scrollTo = Element.prototype.scrollTo
+      // The wrapper keeps the native method detached, so its type names the Element receiver that apply(this, args)
+      // supplies. Cleanup restores it.
+      const native: {
+        scrollTo: { (this: Element, options?: ScrollToOptions): void; (this: Element, x: number, y: number): void }
+      } = Element.prototype
+      const scrollTo = native.scrollTo
       const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!
       if (profileVisual) {
         Element.prototype.scrollTo = function (...args) {
