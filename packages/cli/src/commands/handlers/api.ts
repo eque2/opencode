@@ -1,5 +1,5 @@
 import { EOL } from "node:os"
-import { Effect, HashSet, Option, Schema } from "effect"
+import { Effect, HashSet, Option, Result, Schema } from "effect"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { Daemon } from "../../services/daemon"
@@ -81,14 +81,18 @@ export default Runtime.handler(
   }),
 )
 
-export function resolveOperation(spec: OpenApi, operationID: string, params: Record<string, string>) {
+export function resolveOperation(
+  spec: OpenApi,
+  operationID: string,
+  params: Record<string, string>,
+): Result.Result<{ method: string; path: string }, OperationNotFoundError | MissingPathParameterError> {
   for (const [path, operations] of Object.entries(spec.paths ?? {})) {
     for (const [method, operation] of Object.entries(operations)) {
       if (!HashSet.has(methods, method) || operation?.operationId !== operationID) continue
-      return { method: method.toUpperCase(), path: interpolate(path, params) }
+      return Result.map(interpolate(path, params), (resolved) => ({ method: method.toUpperCase(), path: resolved }))
     }
   }
-  throw new OperationNotFoundError({ message: `Operation not found: ${operationID}` })
+  return Result.fail(new OperationNotFoundError({ message: `Operation not found: ${operationID}` }))
 }
 
 export function rawRequest(input: readonly string[]) {
@@ -118,16 +122,16 @@ const resolveRequest = Effect.fnUntraced(function* (
       }),
     )
   const spec = yield* Effect.tryPromise(() => response.text()).pipe(Effect.flatMap(decodeOpenApi))
-  return yield* Effect.try(() => resolveOperation(spec, input[0], params))
+  return yield* Effect.fromResult(resolveOperation(spec, input[0], params))
 })
 
-function interpolate(path: string, params: Record<string, string>) {
-  const used = HashSet.fromIterable(Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]))
-  const pathname = path.replaceAll(/\{([^}]+)\}/g, (_, name: string) => {
-    const value = params[name]
-    if (value === undefined) throw new MissingPathParameterError({ message: `Missing path parameter: ${name}` })
-    return encodeURIComponent(value)
-  })
+function interpolate(path: string, params: Record<string, string>): Result.Result<string, MissingPathParameterError> {
+  const names = Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1])
+  const missing = names.find((name) => params[name] === undefined)
+  if (missing !== undefined)
+    return Result.fail(new MissingPathParameterError({ message: `Missing path parameter: ${missing}` }))
+  const used = HashSet.fromIterable(names)
+  const pathname = path.replaceAll(/\{([^}]+)\}/g, (_, name: string) => encodeURIComponent(params[name]))
   const query = new URLSearchParams(Object.entries(params).filter(([name]) => !HashSet.has(used, name))).toString()
-  return query ? `${pathname}?${query}` : pathname
+  return Result.succeed(query ? `${pathname}?${query}` : pathname)
 }
