@@ -5,7 +5,7 @@ import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useSync } from "../context/sync"
 import { useProject } from "../context/project"
 import { useRoute } from "../context/route"
-import { createMemo, createSignal, onMount } from "solid-js"
+import { createMemo, createSignal, onMount, type JSX } from "solid-js"
 import { errorMessage } from "../util/error"
 import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
@@ -221,7 +221,7 @@ export function confirmWorkspaceFileChanges(input: {
 export function DialogWorkspaceSelect(props: {
   adapters?: Adapter[]
   onSelect: (selection: WorkspaceSelection) => Promise<void> | void
-}) {
+}): JSX.Element {
   const dialog = useDialog()
   const project = useProject()
   const route = useRoute()
@@ -294,7 +294,8 @@ export function DialogWorkspaceSelect(props: {
     ]
   })
 
-  if (Option.isNone(adapters())) return null
+  // Renders nothing: Solid renders an undefined JSX.Element as no output.
+  if (Option.isNone(adapters())) return undefined
   return (
     <DialogSelect<WorkspaceSelectValue>
       title="Warp"

@@ -131,7 +131,12 @@ export function DialogSessionList() {
     const createWorkspace = (workspaceType: string) =>
       Effect.gen(function* () {
         const result = yield* Effect.tryPromise({
-          try: () => sdk.client.experimental.workspace.create({ type: workspaceType, branch: null }),
+          try: () =>
+            sdk.client.experimental.workspace.create({
+              type: workspaceType,
+              // eslint-disable-next-line effect/no-null-use-option -- (b) SDK experimental.workspace.create body.branch reaches the plugin WorkspaceAdapter configure, whose WorkspaceInfo.branch is string | null; an omitted key would reach adapters as undefined
+              branch: null,
+            }),
           catch: (cause) => new WorkspaceCreateError({ cause }),
         })
         const workspace = result.data
