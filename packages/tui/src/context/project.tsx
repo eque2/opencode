@@ -1,11 +1,27 @@
 import { batch } from "solid-js"
 import type { Path, Workspace } from "@opencode-ai/sdk/v2"
-import { createStore, reconcile } from "solid-js/store"
+import { createStore, produce, reconcile } from "solid-js/store"
 import { Effect, Option, Predicate } from "effect"
 import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
 
 type WorkspaceStatus = "connected" | "connecting" | "disconnected" | "error"
+
+type ProjectStore = {
+  project: {
+    id?: string
+    worktree?: string
+    mainDir?: string
+  }
+  instance: {
+    path: Path
+  }
+  workspace: {
+    current?: string
+    list: Workspace[]
+    status: Record<string, WorkspaceStatus>
+  }
+}
 
 export const { use: useProject, provider: ProjectProvider } = createSimpleContext({
   name: "Project",
@@ -20,19 +36,14 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
       directory: sdk.directory ?? "",
     } satisfies Path
 
-    const [store, setStore] = createStore({
-      project: {
-        id: undefined as string | undefined,
-        worktree: undefined as string | undefined,
-        mainDir: undefined as string | undefined,
-      },
+    const [store, setStore] = createStore<ProjectStore>({
+      project: {},
       instance: {
         path: defaultPath,
       },
       workspace: {
-        current: undefined as string | undefined,
-        list: [] as Workspace[],
-        status: {} as Record<string, WorkspaceStatus>,
+        list: [],
+        status: {},
       },
     })
 
@@ -84,7 +95,12 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
         setStore("workspace", "list", reconcile(workspaces.value))
         setStore("workspace", "status", reconcile(next))
         if (!workspaces.value.some((item) => item.id === store.workspace.current)) {
-          setStore("workspace", "current", undefined)
+          setStore(
+            "workspace",
+            produce((workspace) => {
+              delete workspace.current
+            }),
+          )
         }
       })
     })
@@ -105,7 +121,7 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
       workspace: {
         current: () => store.workspace.current,
         set: (next?: string | null) => {
-          const workspace = next ?? undefined
+          const workspace = Option.getOrUndefined(Option.fromNullishOr(next))
           if (store.workspace.current === workspace) return
           setStore("workspace", "current", workspace)
         },
