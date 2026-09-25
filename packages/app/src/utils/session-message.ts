@@ -11,6 +11,7 @@ import { Option, Schema } from "effect"
 const emptyTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
 const emptyModel: { id: string; providerID: string; variant?: string } = { id: "", providerID: "" }
 const decodeToolInput = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const noMessages: readonly Message[] = []
 
 export function compareMessages(a: Pick<Message, "id" | "time">, b: Pick<Message, "id" | "time">) {
   const left = messageKey(a)
@@ -46,75 +47,70 @@ function normalizeToolMetadata(name: string, metadata: Record<string, unknown>) 
 }
 
 export function normalizeSessionMessages(sessionID: string, source: readonly SessionMessageInfo[]) {
-  const messages: Message[] = []
   const parts = new Map<string, Part[]>()
   let agent = ""
   let model = emptyModel
-  let parentID: string | undefined
+  // The latest user or synthetic message. A later assistant reply sets its agent and model.
+  let parent: UserMessage | undefined
 
-  source.forEach((message) => {
+  // A single message returns unwrapped and a skipped entry returns the shared empty array, so flatMap allocates no wrapper.
+  const messages = source.flatMap((message): Message | readonly Message[] => {
     if (message.type === "agent-switched") {
       agent = message.agent
-      return
+      return noMessages
     }
     if (message.type === "model-switched") {
       model = message.model
-      return
+      return noMessages
     }
     if (message.type === "user") {
-      parentID = message.id
-      messages.push(userMessage(sessionID, message, agent, model))
+      parent = userMessage(sessionID, message, agent, model)
       parts.set(message.id, userParts(sessionID, message))
-      return
+      return parent
     }
     if (message.type === "synthetic" && message.description?.trim()) {
-      parentID = message.id
-      messages.push({
+      parent = {
         id: message.id,
         sessionID,
         role: "user",
         time: message.time,
         agent,
         model: { providerID: model.providerID, modelID: model.id, variant: model.variant },
-      })
+      }
       parts.set(message.id, [textPart(sessionID, message.id, 0, message.description, true)])
-      return
+      return parent
     }
     if (message.type === "shell") {
-      messages.push(...shellMessages(sessionID, message, agent, model))
       parts.set(message.id, [textPart(sessionID, message.id, 0, message.command)])
       parts.set(`${message.id}:assistant`, [shellPart(sessionID, message)])
-      parentID = undefined
-      return
+      parent = undefined
+      return shellMessages(sessionID, message, agent, model)
     }
     if (message.type === "assistant") {
       agent = message.agent
       model = message.model
-      if (!parentID) return
-      const parent = messages.findLast((item) => item.id === parentID)
-      if (parent?.role === "user") {
-        parent.agent = message.agent
-        parent.model = {
-          providerID: message.model.providerID,
-          modelID: message.model.id,
-          variant: message.model.variant,
-        }
+      if (!parent) return noMessages
+      parent.agent = message.agent
+      parent.model = {
+        providerID: message.model.providerID,
+        modelID: message.model.id,
+        variant: message.model.variant,
       }
-      messages.push(assistantMessage(sessionID, parentID, message))
       parts.set(message.id, assistantParts(sessionID, message))
-      return
+      return assistantMessage(sessionID, parent.id, message)
     }
-    if (message.type !== "compaction" || !parentID) return
-    parts.set(parentID, [
-      ...(parts.get(parentID) ?? []),
+    if (message.type !== "compaction" || !parent) return noMessages
+    parts.set(parent.id, [
+      ...(parts.get(parent.id) ?? []),
       {
         id: `${message.id}:compaction`,
         sessionID,
-        messageID: parentID,
+        messageID: parent.id,
         type: "compaction",
         auto: message.reason === "auto",
       },
     ])
+    return noMessages
   })
 
   return { messages, parts }

@@ -34,6 +34,11 @@ export type TimelineRowMap = {
 }
 
 export namespace Timeline {
+  type Turn = { user: UserMessage; assistants: AssistantMessage[] }
+
+  const noTurns: readonly Turn[] = []
+  const noRows: readonly TimelineRow.TimelineRow[] = []
+
   export function constructSessionMessageRows(
     messages: SessionMessageInfo[],
     getMessage: (messageID: string) => UserMessage | AssistantMessage | undefined,
@@ -43,44 +48,41 @@ export namespace Timeline {
     inlineComments: boolean,
     projectedUserMessages: UserMessage[],
   ) {
-    const turns: { user: UserMessage; assistants: AssistantMessage[] }[] = []
-    const turnByUserID = new Map<string, (typeof turns)[number]>()
-    messages.forEach((message) => {
+    const turnByUserID = new Map<string, Turn>()
+    // A new turn returns unwrapped and a skipped message returns the shared empty array, so flatMap allocates no wrapper.
+    const sourceTurns = messages.flatMap((message): Turn | readonly Turn[] => {
       const projected = getMessage(message.id)
       if (message.type === "shell" && projected?.role === "user") {
         const assistant = getMessage(`${message.id}:assistant`)
-        const turn = { user: projected, assistants: assistant?.role === "assistant" ? [assistant] : [] }
-        turns.push(turn)
+        const turn: Turn = { user: projected, assistants: assistant?.role === "assistant" ? [assistant] : [] }
         turnByUserID.set(projected.id, turn)
-        return
+        return turn
       }
       if (projected?.role === "user") {
-        if (turnByUserID.has(projected.id)) return
-        const turn = { user: projected, assistants: [] }
-        turns.push(turn)
+        if (turnByUserID.has(projected.id)) return noTurns
+        const turn: Turn = { user: projected, assistants: [] }
         turnByUserID.set(projected.id, turn)
-        return
+        return turn
       }
-      if (projected?.role !== "assistant") return
+      if (projected?.role !== "assistant") return noTurns
       const existing = turnByUserID.get(projected.parentID)
       if (existing) {
         existing.assistants.push(projected)
-        return
+        return noTurns
       }
       const user = getMessage(projected.parentID)
-      if (user?.role !== "user") return
-      const turn = { user, assistants: [projected] }
-      turns.push(turn)
+      if (user?.role !== "user") return noTurns
+      const turn: Turn = { user, assistants: [projected] }
       turnByUserID.set(user.id, turn)
+      return turn
     })
-    projectedUserMessages.forEach((user) => {
-      if (turnByUserID.has(user.id)) return
-      const turn = { user, assistants: [] }
-      const index = turns.findIndex((item) => compareMessages(user, item.user) < 0)
-      if (index < 0) turns.push(turn)
-      if (index >= 0) turns.splice(index, 0, turn)
+    const turns = projectedUserMessages.reduce<readonly Turn[]>((current, user) => {
+      if (turnByUserID.has(user.id)) return current
+      const turn: Turn = { user, assistants: [] }
       turnByUserID.set(user.id, turn)
-    })
+      const index = current.findIndex((item) => compareMessages(user, item.user) < 0)
+      return index < 0 ? [...current, turn] : current.toSpliced(index, 0, turn)
+    }, sourceTurns)
     const activeMessageID = turns.at(-1)?.user.id
     return {
       activeMessageID,
@@ -110,8 +112,6 @@ export namespace Timeline {
     // v2 renders comments inside the user message attachments row instead of a strip row
     inlineComments: boolean,
   ) {
-    const rows: TimelineRow.TimelineRow[] = []
-
     const previousUserMessage = index > 0
     const userParts = getMessageParts(userMessage.id)
     const comments = userParts.flatMap((p) => MessageComment.fromPart(p) ?? [])
@@ -144,89 +144,66 @@ export namespace Timeline {
             ),
           ]
         : groupParts(assistantPartRefs).map((group) => ({ type: "part" as const, group }))
-    if (previousUserMessage) rows.push(new TimelineRow.TurnGap({ userMessageID: userMessage.id }))
+    // A part row follows another part row when an earlier item is a part; an interrupted divider does not count.
+    const firstPartIndex = assistantItems.findIndex((item) => item.type === "part")
+    const assistantRows = assistantItems.map((item, itemIndex) =>
+      item.type === "interrupted"
+        ? new TimelineRow.TurnDivider({
+            userMessageID: userMessage.id,
+            label: "interrupted",
+          })
+        : new TimelineRow.AssistantPart({
+            userMessageID: userMessage.id,
+            group: item.group,
+            previousAssistantPart: itemIndex > firstPartIndex,
+          }),
+    )
+    const thinking =
+      isActive && status === "busy" && !error && (showReasoning ? assistantPartRefs.length === 0 : true)
+    const diffs = uniqueSummaryDiffs(userMessage.summary?.diffs)
 
-    if (comments.length > 0 && !inlineComments)
-      rows.push(
-        new TimelineRow.CommentStrip({
-          userMessageID: userMessage.id,
-        }),
-      )
-
-    rows.push(
+    // concat appends a row or an array of rows. The shared noRows adds nothing and allocates nothing.
+    return noRows.concat(
+      previousUserMessage ? new TimelineRow.TurnGap({ userMessageID: userMessage.id }) : noRows,
+      comments.length > 0 && !inlineComments
+        ? new TimelineRow.CommentStrip({
+            userMessageID: userMessage.id,
+          })
+        : noRows,
       new TimelineRow.UserMessage({
         userMessageID: userMessage.id,
         anchor: inlineComments || comments.length === 0,
       }),
-    )
-
-    if (compaction) {
-      rows.push(
-        new TimelineRow.TurnDivider({
-          userMessageID: userMessage.id,
-          label: "compaction",
-        }),
-      )
-    }
-
-    let assistantGroupIndex = 0
-    assistantItems.forEach((item) => {
-      if (item.type === "interrupted") {
-        rows.push(
-          new TimelineRow.TurnDivider({
+      compaction
+        ? new TimelineRow.TurnDivider({
             userMessageID: userMessage.id,
-            label: "interrupted",
-          }),
-        )
-        return
-      }
-
-      rows.push(
-        new TimelineRow.AssistantPart({
-          userMessageID: userMessage.id,
-          group: item.group,
-          previousAssistantPart: assistantGroupIndex > 0,
-        }),
-      )
-      assistantGroupIndex += 1
-    })
-
-    if (isActive && status === "busy" && !error && (showReasoning ? assistantPartRefs.length === 0 : true)) {
-      const heading = assistantMessages
-        .flatMap((message) => getMessageParts(message.id))
-        .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
-        .find((value): value is string => !!value)
-
-      rows.push(
-        new TimelineRow.Thinking({
-          userMessageID: userMessage.id,
-          reasoningHeading: heading,
-        }),
-      )
-    }
-
-    if (isActive && status === "retry") rows.push(new TimelineRow.Retry({ userMessageID: userMessage.id }))
-
-    const diffs = uniqueSummaryDiffs(userMessage.summary?.diffs)
-    if (diffs.length > 0 && (status === "idle" || !isActive)) {
-      rows.push(
-        new TimelineRow.DiffSummary({
-          userMessageID: userMessage.id,
-          diffs,
-        }),
-      )
-    }
-
-    if (error) {
-      rows.push(
-        new TimelineRow.Error({
-          userMessageID: userMessage.id,
-          text: unwrapErrorMessage(errorDataMessage(error.data)),
-        }),
-      )
-    }
-
-    return rows
+            label: "compaction",
+          })
+        : noRows,
+      assistantRows,
+      thinking
+        ? new TimelineRow.Thinking({
+            userMessageID: userMessage.id,
+            reasoningHeading: assistantMessages
+              .flatMap((message) => getMessageParts(message.id))
+              .map((part) => (part.type === "reasoning" && part.text ? reasoningHeading(part.text) : undefined))
+              .find((value): value is string => !!value),
+          })
+        : noRows,
+      isActive && status === "retry" ? new TimelineRow.Retry({ userMessageID: userMessage.id }) : noRows,
+      diffs.length > 0 && (status === "idle" || !isActive)
+        ? new TimelineRow.DiffSummary({
+            userMessageID: userMessage.id,
+            diffs,
+          })
+        : noRows,
+      error
+        ? new TimelineRow.Error({
+            userMessageID: userMessage.id,
+            text: unwrapErrorMessage(errorDataMessage(error.data)),
+          })
+        : noRows,
+    )
   }
 
   function reasoningHeading(text: string) {
