@@ -198,9 +198,9 @@ export function analyzeVisualTraceByMarker<RegionName extends string>(
   return [...new Set([...required, ...aggregateMotion, ...windows])]
 }
 
-function regions<RegionName extends string, Type extends VisualInvariant<RegionName>["type"]>(
+function regions<RegionName extends string>(
   invariants: readonly VisualInvariant<RegionName>[],
-  type: Type,
+  type: VisualInvariant<RegionName>["type"],
 ) {
   return invariants.flatMap((invariant) =>
     invariant.type === type && "regions" in invariant && invariant.regions !== "all" ? [...invariant.regions] : [],
