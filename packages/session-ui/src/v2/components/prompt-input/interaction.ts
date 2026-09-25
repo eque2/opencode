@@ -1,3 +1,4 @@
+import { HashSet } from "effect"
 import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
@@ -111,8 +112,8 @@ export function createPromptInputV2Controller(input: {
       const fixed = input.context().filter((item) => item.kind !== "file")
       const recent = input.context().filter((item) => item.kind === "file" && item.recent)
       if (!query.trim()) return [...fixed, ...recent]
-      const seen = new Set(recent.map((item) => item.id))
-      const files = (await input.searchContextFiles(query)).filter((item) => !seen.has(item.id))
+      const seen = HashSet.fromIterable(recent.map((item) => item.id))
+      const files = (await input.searchContextFiles(query)).filter((item) => !HashSet.has(seen, item.id))
       return [...fixed, ...recent, ...files]
     },
     key: (item) => item.id,

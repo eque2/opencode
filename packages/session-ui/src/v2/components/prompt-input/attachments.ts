@@ -1,3 +1,4 @@
+import { HashSet } from "effect"
 import { onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { PromptInputV2Attachment, PromptInputV2Prompt } from "./types"
@@ -219,7 +220,7 @@ export function createPromptInputV2Attachments(
   }
 }
 
-const imageMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
+const imageMimes = HashSet.fromIterable(["image/png", "image/jpeg", "image/gif", "image/webp"])
 
 async function blobReference(file: File) {
   const id = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer())))
@@ -234,7 +235,7 @@ const imageExtensions = new Map([
   ["png", "image/png"],
   ["webp", "image/webp"],
 ])
-const textMimes = new Set([
+const textMimes = HashSet.fromIterable([
   "application/json",
   "application/ld+json",
   "application/toml",
@@ -246,12 +247,12 @@ const textMimes = new Set([
 
 async function attachmentMime(file: File) {
   const type = file.type.split(";", 1)[0]?.trim().toLowerCase() ?? ""
-  if (imageMimes.has(type) || type === "application/pdf") return type
+  if (HashSet.has(imageMimes, type) || type === "application/pdf") return type
   const index = file.name.lastIndexOf(".")
   const suffix = index === -1 ? "" : file.name.slice(index + 1).toLowerCase()
   const fallback = imageExtensions.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
   if ((!type || type === "application/octet-stream") && fallback) return fallback
-  if (type.startsWith("text/") || textMimes.has(type) || type.endsWith("+json") || type.endsWith("+xml")) {
+  if (type.startsWith("text/") || HashSet.has(textMimes, type) || type.endsWith("+json") || type.endsWith("+xml")) {
     return "text/plain"
   }
   const bytes = new Uint8Array(await file.slice(0, 4096).arrayBuffer())
