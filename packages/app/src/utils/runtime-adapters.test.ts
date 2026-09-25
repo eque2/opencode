@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk } from "effect"
 import {
   disposeIfDisposable,
   getHoveredLinkText,
@@ -27,15 +28,15 @@ describe("runtime adapters", () => {
   })
 
   test("sets options only when setter exists", () => {
-    const calls: Array<[string, unknown]> = []
+    let calls = Chunk.empty<[string, unknown]>()
     const value = {
       setOption: (key: string, next: unknown) => {
-        calls.push([key, next])
+        calls = Chunk.append(calls, [key, next])
       },
     }
     expect(hasSetOption(value)).toBe(true)
     setOptionIfSupported(value, "fontFamily", "Berkeley Mono")
-    expect(calls).toEqual([["fontFamily", "Berkeley Mono"]])
+    expect(Chunk.toArray(calls)).toEqual([["fontFamily", "Berkeley Mono"]])
     expect(() => setOptionIfSupported({}, "fontFamily", "Berkeley Mono")).not.toThrow()
   })
 
