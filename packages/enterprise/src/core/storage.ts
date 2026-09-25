@@ -48,12 +48,7 @@ export namespace Storage {
         const response = await client.fetch(`${base}?${params}`)
         if (!response.ok) throw new Error(`Failed to list ${prefix}: ${response.status}`)
         const xml = await response.text()
-        const keys: string[] = []
-        const regex = /<Key>([^<]+)<\/Key>/g
-        let match
-        while ((match = regex.exec(xml)) !== null) {
-          keys.push(match[1])
-        }
+        const keys = Array.from(xml.matchAll(/<Key>([^<]+)<\/Key>/g), (match) => match[1])
         if (options?.before) {
           const beforePath = prefix + options.before + ".json"
           return keys.filter((key) => key < beforePath)
