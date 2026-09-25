@@ -222,62 +222,70 @@ function lineCommentDraftElement(view: Accessor<DraftProps>) {
 export function createLineCommentState<T>(props: LineCommentStateProps<T>) {
   const [state, setState] = createStore({
     draft: "",
-    editing: null as T | null,
+    editing: Option.none<T>(),
   })
   const draft = () => state.draft
   const setDraft = (value: string) => setState("draft", value)
   const editing = () => state.editing
-  const setEditing = (value: T | null) => setState("editing", typeof value === "function" ? () => value : value)
+  const setEditing = (value: Option.Option<T>) => setState("editing", () => value)
 
-  const toRange = (range: SelectedLineRange | null) => (range ? cloneSelectedLineRange(range) : null)
-  const setSelected = (range: SelectedLineRange | null) => {
-    const next = toRange(range)
-    props.setSelected(next)
-    props.syncSelected?.(toRange(next))
+  // The state lives with the caller, behind the nullable LineCommentStateProps
+  // contract. These are the only places that convert between that contract
+  // and the Option values used here.
+  const opened = () => Option.fromNullOr(props.opened())
+  const writeOpened = (id: Option.Option<T>) => props.setOpened(Option.getOrNull(id))
+  const writeSelected = (range: Option.Option<SelectedLineRange>) => props.setSelected(Option.getOrNull(range))
+  const writeCommenting = (range: Option.Option<SelectedLineRange>) => props.setCommenting(Option.getOrNull(range))
+
+  const setSelected = (range: Option.Option<SelectedLineRange>) => {
+    const next = Option.map(range, cloneSelectedLineRange)
+    writeSelected(next)
+    props.syncSelected?.(Option.getOrNull(Option.map(next, cloneSelectedLineRange)))
     return next
   }
 
-  const setCommenting = (range: SelectedLineRange | null) => {
-    const next = toRange(range)
-    props.setCommenting(next)
+  const setCommenting = (range: Option.Option<SelectedLineRange>) => {
+    const next = Option.map(range, cloneSelectedLineRange)
+    writeCommenting(next)
     return next
   }
 
   const closeComment = () => {
-    props.setOpened(null)
+    writeOpened(Option.none())
   }
 
   const cancelDraft = () => {
     setDraft("")
-    setEditing(null)
-    setCommenting(null)
+    setEditing(Option.none())
+    setCommenting(Option.none())
   }
 
   const reset = () => {
     setDraft("")
-    setEditing(null)
-    props.setOpened(null)
-    props.setSelected(null)
-    props.setCommenting(null)
+    setEditing(Option.none())
+    writeOpened(Option.none())
+    writeSelected(Option.none())
+    writeCommenting(Option.none())
   }
+
+  const isOpen = (id: T) => Option.exists(opened(), (current) => current === id)
 
   const openComment = (id: T, range: SelectedLineRange, options?: { cancelDraft?: boolean }) => {
     if (options?.cancelDraft) cancelDraft()
-    props.setOpened(id)
-    setSelected(range)
+    writeOpened(Option.some(id))
+    setSelected(Option.some(range))
   }
 
   const toggleComment = (id: T, range: SelectedLineRange, options?: { cancelDraft?: boolean }) => {
     if (options?.cancelDraft) cancelDraft()
-    const next = props.opened() === id ? null : id
-    props.setOpened(next)
-    setSelected(range)
+    writeOpened(isOpen(id) ? Option.none() : Option.some(id))
+    setSelected(Option.some(range))
   }
 
   const openDraft = (range: SelectedLineRange) => {
-    const next = toRange(range)
+    const next = Option.some(cloneSelectedLineRange(range))
     setDraft("")
-    setEditing(null)
+    setEditing(Option.none())
     closeComment()
     setSelected(next)
     setCommenting(next)
@@ -285,21 +293,20 @@ export function createLineCommentState<T>(props: LineCommentStateProps<T>) {
 
   const openEditor = (id: T, range: SelectedLineRange, value: string) => {
     closeComment()
-    setSelected(range)
-    props.setCommenting(null)
-    setEditing(id)
+    setSelected(Option.some(range))
+    writeCommenting(Option.none())
+    setEditing(Option.some(id))
     setDraft(value)
   }
 
   const hoverComment = (range: SelectedLineRange) => {
-    const next = toRange(range)
-    if (!next) return
+    const next = cloneSelectedLineRange(range)
     if (props.hoverSelected) {
       props.hoverSelected(next)
       return
     }
 
-    setSelected(next)
+    setSelected(Option.some(next))
   }
 
   return {
@@ -309,8 +316,8 @@ export function createLineCommentState<T>(props: LineCommentStateProps<T>) {
     opened: props.opened,
     selected: props.selected,
     commenting: props.commenting,
-    isOpen: (id: T) => props.opened() === id,
-    isEditing: (id: T) => editing() === id,
+    isOpen,
+    isEditing: (id: T) => Option.exists(editing(), (current) => current === id),
     closeComment,
     openComment,
     toggleComment,
@@ -318,7 +325,9 @@ export function createLineCommentState<T>(props: LineCommentStateProps<T>) {
     openEditor,
     hoverComment,
     cancelDraft,
-    select: setSelected,
+    // Nullable form for callers that hold pierre's `SelectedLineRange | null`.
+    select: (range: SelectedLineRange | null) => Option.getOrNull(setSelected(Option.fromNullOr(range))),
+    selectRange: setSelected,
     reset,
   }
 }
@@ -430,7 +439,7 @@ export function createLineCommentController<T extends LineCommentShape>(
       onInput: note.setDraft,
       onCancel: () => {
         note.cancelDraft()
-        note.select(null)
+        note.selectRange(Option.none())
       },
       onSubmit: (comment) => {
         props.onSubmit({ comment, selection: cloneSelectedLineRange(range) })
@@ -443,25 +452,21 @@ export function createLineCommentController<T extends LineCommentShape>(
   const renderGutterUtility = createLineCommentGutterRenderer({
     label: props.label,
     getSelectedRange: () => {
-      if (note.opened()) return null
-      return props.getHoverSelectedRange?.() ?? note.selected()
+      if (note.opened()) return Option.none()
+      return Option.fromNullishOr(props.getHoverSelectedRange?.() ?? note.selected())
     },
     onOpenDraft: note.openDraft,
   })
 
   const onLineSelected = (range: SelectedLineRange | null) => {
-    if (!range) {
-      note.select(null)
-      note.cancelDraft()
-      return
-    }
-
-    note.select(range)
+    const selected = Option.fromNullOr(range)
+    note.selectRange(selected)
+    if (Option.isNone(selected)) note.cancelDraft()
   }
 
   const onLineSelectionEnd = (range: SelectedLineRange | null) => {
     if (!range) {
-      if (props.clearSelectionOnSelectionEndNull) note.select(null)
+      if (props.clearSelectionOnSelectionEndNull) note.selectRange(Option.none())
       note.cancelDraft()
       return
     }
@@ -613,7 +618,7 @@ export function createManagedLineCommentAnnotationRenderer<T, C, D>(props: {
 
 export function createLineCommentGutterRenderer(props: {
   label: string
-  getSelectedRange: Accessor<SelectedLineRange | null>
+  getSelectedRange: Accessor<Option.Option<SelectedLineRange>>
   onOpenDraft: (range: SelectedLineRange) => void
 }) {
   // Pierre's renderGutterUtility API takes `HTMLElement | null | undefined`.
@@ -624,8 +629,8 @@ export function createLineCommentGutterRenderer(props: {
         getHoveredLine,
         onSelect: (hovered) => {
           const current = props.getSelectedRange()
-          if (current && lineInSelectedRange(current, hovered.lineNumber, hovered.side)) {
-            props.onOpenDraft(cloneSelectedLineRange(current))
+          if (Option.isSome(current) && lineInSelectedRange(current.value, hovered.lineNumber, hovered.side)) {
+            props.onOpenDraft(cloneSelectedLineRange(current.value))
             return
           }
 

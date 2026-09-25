@@ -11,7 +11,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { normalize, text, type ViewDiff } from "../../components/session-diff"
 import type {
   SessionReviewComment,
@@ -103,9 +103,9 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   let focusToken = 0
 
   const [store, setStore] = createStore({
-    selection: null as SelectedLineRange | null,
-    commenting: null as SelectedLineRange | null,
-    opened: null as string | null,
+    selection: Option.none<SelectedLineRange>(),
+    commenting: Option.none<SelectedLineRange>(),
+    opened: Option.none<string>(),
   })
 
   const view = createMemo(() => ({
@@ -116,19 +116,21 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const mediaKind = createMemo(() => mediaKindFromPath(props.file))
   const comments = createMemo(() => (props.comments ?? []).filter((comment) => comment.file === props.file))
   const commentedLines = createMemo(() => comments().map((comment) => comment.selection))
-  const lineCommentsEnabled = () => props.onLineComment != null
+  const lineCommentsEnabled = () => Predicate.isNotNullish(props.onLineComment)
 
   const commentsUi = createLineCommentControllerV2<SessionReviewComment>({
     comments,
     label: i18n.t("ui.lineComment.submit"),
     draftKey: () => props.file,
+    // LineCommentStateProps is a nullable contract (packages/app implements it
+    // too); convert at this boundary only.
     state: {
-      opened: () => store.opened,
-      setOpened: (id) => setStore("opened", id),
-      selected: () => store.selection,
-      setSelected: (range) => setStore("selection", range),
-      commenting: () => store.commenting,
-      setCommenting: (range) => setStore("commenting", range),
+      opened: () => Option.getOrNull(store.opened),
+      setOpened: (id) => setStore("opened", Option.fromNullOr(id)),
+      selected: () => Option.getOrNull(store.selection),
+      setSelected: (range) => setStore("selection", Option.fromNullOr(range)),
+      commenting: () => Option.getOrNull(store.commenting),
+      setCommenting: (range) => setStore("commenting", Option.fromNullOr(range)),
     },
     getSide: selectionSide,
     onSubmit: ({ comment, selection }) => {
@@ -184,10 +186,10 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
     }
 
     untrack(() => {
-      setStore("opened", focus.id)
+      setStore("opened", Option.some(focus.id))
 
       const comment = (props.comments ?? []).find((item) => item.file === focus.file && item.id === focus.id)
-      if (comment) setStore("selection", cloneSelectedLineRange(comment.selection))
+      if (comment) setStore("selection", Option.some(cloneSelectedLineRange(comment.selection)))
 
       // The diff renders asynchronously, so poll for the comment anchor before
       // scrolling; clear the focus once handled so revisiting the file does not
@@ -241,7 +243,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       annotations={commentsUi.annotations()}
       renderAnnotation={commentsUi.renderAnnotation}
       renderGutterUtility={lineCommentsEnabled() ? commentsUi.renderGutterUtility : undefined}
-      selectedLines={store.selection}
+      selectedLines={Option.getOrNull(store.selection)}
       commentedLines={commentedLines()}
       media={{
         mode: "auto",
