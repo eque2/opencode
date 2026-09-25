@@ -1,7 +1,7 @@
 import { render, TimeToFirstDraw, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { registerOpencodeSpinner } from "./component/register-spinner"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { Config, Deferred, Effect, Predicate, Schema } from "effect"
+import { Config, Deferred, Effect, Option, Predicate, Schema } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -190,7 +190,7 @@ function isVersionGreater(left: string, right: string) {
   if (a.prerelease === b.prerelease) return false
   if (!a.prerelease) return true
   if (!b.prerelease) return false
-  return a.prerelease.localeCompare(b.prerelease, undefined, { numeric: true }) > 0
+  return a.prerelease.localeCompare(b.prerelease, [], { numeric: true }) > 0
 }
 
 export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
@@ -203,7 +203,10 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
     OPENCODE_EXPERIMENTAL_WORKSPACES: FlagConfig.OPENCODE_EXPERIMENTAL_WORKSPACES,
     OPENCODE_SHOW_TTFD: FlagConfig.OPENCODE_SHOW_TTFD,
   }).pipe(Effect.orDie)
-  const exit = { epilogue: undefined as string | undefined, reason: undefined as unknown }
+  const exit: { epilogue: Option.Option<string>; reason: Option.Option<unknown> } = {
+    epilogue: Option.none(),
+    reason: Option.none(),
+  }
   const result = yield* Effect.scoped(
     Effect.gen(function* () {
       const renderer = yield* Effect.acquireRelease(
@@ -265,11 +268,15 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
             <ExitProvider
               exit={(reason) => {
                 if (renderer.isDestroyed) return
-                exit.reason = reason
+                exit.reason = Option.liftPredicate(reason, Predicate.isNotUndefined)
                 destroyRenderer(renderer)
               }}
             >
-              <EpilogueProvider set={(value) => (exit.epilogue = value)}>
+              <EpilogueProvider
+                set={(value) => {
+                  exit.epilogue = Option.fromNullishOr(value)
+                }}
+              >
                 <ErrorBoundary fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}>
                   <TuiPathsProvider
                     value={{
@@ -303,14 +310,9 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                                 <KVProvider>
                                   <ToastProvider>
                                     <RouteProvider
-                                      initialRoute={
-                                        input.args.continue
-                                          ? {
-                                              type: "session",
-                                              sessionID: "dummy",
-                                            }
-                                          : undefined
-                                      }
+                                      {...(input.args.continue
+                                        ? { initialRoute: { type: "session", sessionID: "dummy" } as const }
+                                        : {})}
                                     >
                                       <TuiConfigProvider config={input.config}>
                                         <PluginRuntimeProvider value={pluginRuntime}>
@@ -376,11 +378,12 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
   )
   yield* Effect.sync(() => {
     win32FlushInputBuffer()
-    if (result.reason !== undefined) {
-      process.stderr.write((cliErrorMessage(result.reason) ?? errorFormat(result.reason)) + "\n")
+    if (Option.isSome(result.reason)) {
+      const reason = result.reason.value
+      process.stderr.write((cliErrorMessage(reason) ?? errorFormat(reason)) + "\n")
       process.exitCode = 1
     }
-    if (result.epilogue) process.stdout.write(result.epilogue + "\n")
+    if (Option.isSome(result.epilogue) && result.epilogue.value) process.stdout.write(result.epilogue.value + "\n")
   })
 })
 
@@ -1121,11 +1124,9 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         evt.preventDefault()
         evt.stopPropagation()
       }}
-      onMouseUp={
-        !flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
-          ? () => Selection.copy(renderer, toast, clipboard)
-          : undefined
-      }
+      {...(flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT
+        ? {}
+        : { onMouseUp: () => Selection.copy(renderer, toast, clipboard) })}
     >
       <Show when={flags.OPENCODE_SHOW_TTFD}>
         <TimeToFirstDraw />
@@ -1137,7 +1138,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
               <Home />
             </Match>
             <Match when={route.data.type === "session"}>
-              <Show when={route.data.type === "session" ? route.data.sessionID : undefined} keyed>
+              <Show when={route.data.type === "session" && route.data.sessionID} keyed>
                 {(_) => <Session />}
               </Show>
             </Match>
