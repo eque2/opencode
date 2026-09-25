@@ -19,7 +19,17 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
-import { DateTime, Effect, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Data, DateTime, Effect, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
+
+/**
+ * Raised when ensureChild cannot build a directory store: a persisted cache or
+ * the store root failed to initialize under the manager owner. The store
+ * accessors are synchronous Solid APIs, so the error is thrown to the nearest
+ * error boundary. The `message` is the translated text that the user sees.
+ */
+class ChildStoreError extends Data.TaggedError("ChildStoreError")<{
+  readonly message: string
+}> {}
 
 const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
   get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
@@ -163,36 +173,48 @@ export function createChildStoreManager(input: {
     }
   }
 
+  const required = <A>(value: A, messageKey: string) =>
+    Option.getOrThrowWith(
+      Option.fromNullishOr(value),
+      () => new ChildStoreError({ message: input.translate(messageKey) }),
+    )
+
   function ensureChild(directory: string) {
     const key = directoryKey(directory)
     if (!key) Effect.runFork(Effect.logError("No directory provided"))
     if (!children[key]) {
-      const vcs = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
-          createStore({ value: undefined as VcsInfo | undefined }),
+      const vcs = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "vcs", ["vcs.v1"]),
+            createStore({ value: undefined as VcsInfo | undefined }),
+          ),
         ),
+        "error.childStore.persistedCacheCreateFailed",
       )
-      if (!vcs) throw new Error(input.translate("error.childStore.persistedCacheCreateFailed"))
       const vcsStore = vcs[0]
       MutableHashMap.set(vcsCache, key, { store: vcsStore, setStore: vcs[1], ready: vcs[3] })
 
-      const meta = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
-          createStore({ value: undefined as ProjectMeta | undefined }),
+      const meta = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "project", ["project.v1"]),
+            createStore({ value: undefined as ProjectMeta | undefined }),
+          ),
         ),
+        "error.childStore.persistedProjectMetadataCreateFailed",
       )
-      if (!meta) throw new Error(input.translate("error.childStore.persistedProjectMetadataCreateFailed"))
       MutableHashMap.set(metaCache, key, { store: meta[0], setStore: meta[1], ready: meta[3] })
 
-      const icon = runWithOwner(input.owner, () =>
-        input.persist(
-          Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
-          createStore({ value: undefined as string | undefined }),
+      const icon = required(
+        runWithOwner(input.owner, () =>
+          input.persist(
+            Persist.serverWorkspace(input.scope, directory, "icon", ["icon.v1"]),
+            createStore({ value: undefined as string | undefined }),
+          ),
         ),
+        "error.childStore.persistedProjectIconCreateFailed",
       )
-      if (!icon) throw new Error(input.translate("error.childStore.persistedProjectIconCreateFailed"))
       MutableHashMap.set(iconCache, key, { store: icon[0], setStore: icon[1], ready: icon[3] })
 
       const init = () =>
@@ -308,9 +330,7 @@ export function createChildStoreManager(input: {
       runWithOwner(input.owner, init)
     }
     markKey(key)
-    const childStore = children[key]
-    if (!childStore) throw new Error(input.translate("error.childStore.storeCreateFailed"))
-    return childStore
+    return required(children[key], "error.childStore.storeCreateFailed")
   }
 
   function child(directory: string, options: ChildOptions = {}) {
