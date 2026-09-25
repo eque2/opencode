@@ -16,10 +16,11 @@ import {
   createSignal,
   on,
   onMount,
+  type JSX,
   type ParentProps,
   untrack,
 } from "solid-js"
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -173,9 +174,9 @@ export function TargetSessionRouteContent() {
   )
 }
 
-function TargetSessionSettingsCommand() {
+function TargetSessionSettingsCommand(): JSX.Element {
   useSettingsCommand()
-  return null
+  return undefined
 }
 
 export function SessionRouteErrorBoundary(
@@ -304,7 +305,7 @@ function TargetServerScopedProviders(
   )
 }
 
-function MarkSessionNotificationsViewed(props: { sessionID?: () => string | undefined }) {
+function MarkSessionNotificationsViewed(props: { sessionID?: () => string | undefined }): JSX.Element {
   const notification = useNotification()
   createEffect(() => {
     const sessionID = props.sessionID?.()
@@ -312,7 +313,7 @@ function MarkSessionNotificationsViewed(props: { sessionID?: () => string | unde
     if (notification.session.unseenCount(sessionID) === 0) return
     notification.session.markViewed(sessionID)
   })
-  return null
+  return undefined
 }
 
 function SessionProviders(props: ParentProps) {
@@ -1046,13 +1047,13 @@ export default function Page() {
 
   const handleKeyDown = (event: KeyboardEvent) => {
     const path = event.composedPath()
-    const target = path.find((item): item is HTMLElement => item instanceof HTMLElement)
+    const target = Option.fromNullishOr(path.find((item): item is HTMLElement => item instanceof HTMLElement))
     const activeElement = deepActiveElement()
 
     const protectedTarget = path.some(
-      (item) => item instanceof HTMLElement && item.closest("[data-prevent-autofocus]") !== null,
+      (item) => item instanceof HTMLElement && Predicate.isNotNull(item.closest("[data-prevent-autofocus]")),
     )
-    if (protectedTarget || isEditableTarget(target)) return
+    if (protectedTarget || isEditableTarget(Option.getOrUndefined(target))) return
 
     if (activeElement) {
       const isProtected = activeElement.closest("[data-prevent-autofocus]")
@@ -1068,8 +1069,8 @@ export default function Page() {
 
     const key = scrollKey(event)
     if (key) {
-      if (!scroller || !isScrollKeyTarget(target ?? null, key)) return
-      if (scrollKeyOwner(scroller, target ?? null, key) !== scroller) return
+      if (!scroller || !isScrollKeyTarget(Option.getOrNull(target), key)) return
+      if (scrollKeyOwner(scroller, Option.getOrNull(target), key) !== scroller) return
       markScrollGesture(scroller)
       return
     }
@@ -1168,9 +1169,9 @@ export default function Page() {
     return language.t("ui.sessionReview.title.lastTurn")
   }
 
-  const changesTitle = () => {
+  const changesTitle = (): JSX.Element => {
     if (!canReview()) {
-      return null
+      return undefined
     }
 
     return (
@@ -1186,9 +1187,9 @@ export default function Page() {
     )
   }
 
-  const changesTitleV2 = () => {
+  const changesTitleV2 = (): JSX.Element => {
     if (!canReview()) {
-      return null
+      return undefined
     }
 
     return (

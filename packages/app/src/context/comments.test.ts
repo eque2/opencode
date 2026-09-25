@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { createRoot } from "solid-js"
+import { Option } from "effect"
 import type { LineComment } from "./comments"
 
 let createCommentSessionForTest: typeof import("./comments").createCommentSessionForTest
@@ -143,7 +144,7 @@ describe("comments session indexing", () => {
       comments.setActive({ file: "c.ts", id: "c1" })
       comments.setActive((current) => {
         expect(current).toEqual({ file: "c.ts", id: "c1" })
-        return null
+        return Option.getOrNull(Option.none())
       })
 
       expect(comments.focus()).toEqual({ file: "b.ts", id: "b1" })
