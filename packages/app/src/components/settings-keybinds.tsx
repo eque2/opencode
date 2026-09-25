@@ -385,8 +385,10 @@ export function createKeybindSettingsController(
     stop()
   }
 
-  const target = input.target ?? (typeof document === "object" ? document : undefined)
-  if (target) makeEventListener(target, "keydown", handle, { capture: true })
+  const target = Option.orElse(Option.fromNullishOr(input.target), () =>
+    typeof document === "object" ? Option.some(document) : Option.none(),
+  )
+  if (Option.isSome(target)) makeEventListener(target.value, "keydown", handle, { capture: true })
 
   onCleanup(() => {
     if (Option.isSome(store.active)) input.command.keybinds(true)
