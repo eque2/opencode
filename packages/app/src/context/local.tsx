@@ -9,7 +9,12 @@ import { useProviders } from "@/hooks/use-providers"
 import { resolveDefaultModel } from "@/hooks/provider-catalog"
 import { Persist, persisted } from "@/utils/persist"
 import { hasCustomAgent, resolveAgent } from "./local-agent"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
+import {
+  cycleModelVariant,
+  decodeVariantSelection,
+  getConfiguredAgentVariant,
+  resolveModelVariant,
+} from "./model-variant"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
@@ -355,7 +360,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         current() {
           const resolved = resolveModelVariant({
             variants: this.list(),
-            selected: this.selected(),
+            selected: decodeVariantSelection(this.selected()),
             configured: this.configured(),
           })
           if (resolved) return resolved
@@ -394,7 +399,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           this.set(
             cycleModelVariant({
               variants: items,
-              selected: this.selected(),
+              selected: decodeVariantSelection(this.selected()),
               configured: this.configured(),
             }),
           )

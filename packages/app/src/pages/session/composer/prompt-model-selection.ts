@@ -1,7 +1,12 @@
 import { batch, createMemo, startTransition } from "solid-js"
 import { useModels } from "@/context/models"
 import type { ModelKey, ModelSelection } from "@/context/local"
-import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "@/context/model-variant"
+import {
+  cycleModelVariant,
+  decodeVariantSelection,
+  getConfiguredAgentVariant,
+  resolveModelVariant,
+} from "@/context/model-variant"
 import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
@@ -97,7 +102,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       current() {
         const resolved = resolveModelVariant({
           variants: this.list(),
-          selected: this.selected(),
+          selected: decodeVariantSelection(this.selected()),
           configured: this.configured(),
         })
         if (resolved) return resolved
@@ -130,7 +135,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
         this.set(
           cycleModelVariant({
             variants,
-            selected: this.selected(),
+            selected: decodeVariantSelection(this.selected()),
             configured: this.configured(),
           }),
         )
