@@ -24,7 +24,7 @@ import type {
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { retry } from "@opencode-ai/core/util/retry"
-import { Array as Arr, MutableHashMap, Option } from "effect"
+import { Array as Arr, HashSet, MutableHashMap, Option } from "effect"
 import { batch } from "solid-js"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type { State, VcsCache } from "./types"
@@ -180,8 +180,8 @@ function warmSessions(input: {
   setStore: SetStoreFunction<State>
   api: SessionApi
 }) {
-  const known = new Set(input.store.session.map((item) => item.id))
-  const ids = [...new Set(input.ids)].filter((id) => !!id && !known.has(id))
+  const known = HashSet.fromIterable(input.store.session.map((item) => item.id))
+  const ids = Arr.dedupe(input.ids).filter((id) => !!id && !HashSet.has(known, id))
   if (ids.length === 0) return Promise.resolve()
   return Promise.all(
     ids.map((sessionID) =>
