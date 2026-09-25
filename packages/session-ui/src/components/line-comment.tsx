@@ -6,7 +6,7 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
 import { installLineCommentStyles } from "./line-comment-styles"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { Option } from "effect"
+import { Effect, Option, Predicate } from "effect"
 
 installLineCommentStyles()
 
@@ -238,12 +238,19 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
   }
 
   const mention = useFilteredList<{ path: string }>({
-    items: async (query) => {
-      if (!split.mention) return []
-      if (!query.trim()) return []
-      const paths = await split.mention.items(query)
-      return paths.map((path) => ({ path }))
-    },
+    // useFilteredList takes a Promise-returning source; the mention source may
+    // answer synchronously or with a Promise.
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const source = split.mention
+          if (!source) return []
+          if (!query.trim()) return []
+          const found = source.items(query)
+          const paths = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          return paths.map((path) => ({ path }))
+        }),
+      ),
     key: (item) => item.path,
     filterKeys: ["path"],
     skipFilter: () => true,
