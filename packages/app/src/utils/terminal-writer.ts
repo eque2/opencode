@@ -1,17 +1,19 @@
+import { Chunk } from "effect"
+
 export function terminalWriter(
   write: (data: string, done?: VoidFunction) => void,
   schedule: (flush: VoidFunction) => void = queueMicrotask,
 ) {
-  let chunks: string[] | undefined
-  let waits: VoidFunction[] | undefined
+  let chunks = Chunk.empty<string>()
+  let waits = Chunk.empty<VoidFunction>()
   let scheduled = false
   let writing = false
 
   const settle = () => {
-    if (scheduled || writing || chunks?.length) return
+    if (scheduled || writing || Chunk.isNonEmpty(chunks)) return
     const list = waits
-    if (!list?.length) return
-    waits = undefined
+    if (Chunk.isEmpty(list)) return
+    waits = Chunk.empty()
     for (const fn of list) {
       fn()
     }
@@ -21,15 +23,15 @@ export function terminalWriter(
     if (writing) return
     scheduled = false
     const items = chunks
-    if (!items?.length) {
+    if (Chunk.isEmpty(items)) {
       settle()
       return
     }
-    chunks = undefined
+    chunks = Chunk.empty()
     writing = true
-    write(items.join(""), () => {
+    write(Chunk.join(items, ""), () => {
       writing = false
-      if (chunks?.length) {
+      if (Chunk.isNonEmpty(chunks)) {
         if (scheduled) return
         scheduled = true
         schedule(run)
@@ -41,8 +43,7 @@ export function terminalWriter(
 
   const push = (data: string) => {
     if (!data) return
-    if (chunks) chunks.push(data)
-    else chunks = [data]
+    chunks = Chunk.append(chunks, data)
 
     if (scheduled || writing) return
     scheduled = true
@@ -50,14 +51,11 @@ export function terminalWriter(
   }
 
   const flush = (done?: VoidFunction) => {
-    if (!scheduled && !writing && !chunks?.length) {
+    if (!scheduled && !writing && Chunk.isEmpty(chunks)) {
       done?.()
       return
     }
-    if (done) {
-      if (waits) waits.push(done)
-      else waits = [done]
-    }
+    if (done) waits = Chunk.append(waits, done)
     run()
   }
 
