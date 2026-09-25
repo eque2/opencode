@@ -317,13 +317,13 @@ function createWorkspaceTerminalSession(
     ready,
     all: createMemo(() => store.all),
     active: createMemo(() => store.active),
-    clear() {
+    clear: () => {
       batch(() => {
         setStore("active", undefined)
         setStore("all", [])
       })
     },
-    new(options?: { focus?: boolean }) {
+    new: (options?: { focus?: boolean }) => {
       const nextNumber = pickNextTerminalNumber()
       const focusRequest = options?.focus ? requestFocus(undefined, true) : undefined
 
@@ -358,67 +358,67 @@ function createWorkspaceTerminalSession(
           console.error("Failed to create terminal", error)
         })
     },
-    update(pty: Partial<LocalPTY> & { id: string }) {
+    update: (pty: Partial<LocalPTY> & { id: string }) => {
       update(pty)
     },
-    trim(id: string) {
+    trim: (id: string) => {
       const index = store.all.findIndex((x) => x.id === id)
       if (index === -1) return
       setStore("all", index, (pty) => trimTerminal(pty))
     },
-    trimAll() {
+    trimAll: () => {
       setStore("all", (all) => {
         const next = all.map(trimTerminal)
         if (next.every((pty, index) => pty === all[index])) return all
         return next
       })
     },
-    async clone(id: string) {
+    clone: async (id: string) => {
       await clone(id)
     },
-    bind() {
+    bind: () => {
       return {
-        trim(id: string) {
+        trim: (id: string) => {
           const index = store.all.findIndex((x) => x.id === id)
           if (index === -1) return
           setStore("all", index, (pty) => trimTerminal(pty))
         },
-        update(pty: Partial<LocalPTY> & { id: string }) {
+        update: (pty: Partial<LocalPTY> & { id: string }) => {
           update(pty)
         },
-        async clone(id: string) {
+        clone: async (id: string) => {
           await clone(id)
         },
       }
     },
-    open(id: string) {
+    open: (id: string) => {
       setStore("active", id)
     },
-    requestFocus(id?: string) {
+    requestFocus: (id?: string) => {
       requestFocus(id)
     },
-    focusRequested(id?: string) {
+    focusRequested: (id?: string) => {
       return focusRequested(id)
     },
-    consumeFocus(id: string) {
+    consumeFocus: (id: string) => {
       consumeFocus(id)
     },
-    cancelFocus() {
+    cancelFocus: () => {
       cancelFocus()
     },
-    next() {
+    next: () => {
       const index = store.all.findIndex((x) => x.id === store.active)
       if (index === -1) return
       const nextIndex = (index + 1) % store.all.length
       setStore("active", store.all[nextIndex]?.id)
     },
-    previous() {
+    previous: () => {
       const index = store.all.findIndex((x) => x.id === store.active)
       if (index === -1) return
       const prevIndex = index === 0 ? store.all.length - 1 : index - 1
       setStore("active", store.all[prevIndex]?.id)
     },
-    async close(id: string) {
+    close: async (id: string) => {
       const index = store.all.findIndex((f) => f.id === id)
       if (index !== -1) {
         batch(() => {
@@ -443,7 +443,7 @@ function createWorkspaceTerminalSession(
         console.error("Failed to close terminal", error)
       })
     },
-    move(id: string, to: number) {
+    move: (id: string, to: number) => {
       const index = store.all.findIndex((f) => f.id === id)
       if (index === -1) return
       setStore(
