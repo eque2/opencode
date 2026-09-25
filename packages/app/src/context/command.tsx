@@ -3,7 +3,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { type Accessor, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Effect, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { dict as en } from "@/i18n/en"
@@ -298,7 +298,9 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
           if (MutableHashSet.has(seen, opt.id)) {
             if (import.meta.env.DEV && !MutableHashSet.has(warnedDuplicates, opt.id)) {
               MutableHashSet.add(warnedDuplicates, opt.id)
-              console.warn(`[command] duplicate command id "${opt.id}" registered; keeping first entry`)
+              Effect.runFork(
+                Effect.logWarning(`[command] duplicate command id "${opt.id}" registered; keeping first entry`),
+              )
             }
             continue
           }
