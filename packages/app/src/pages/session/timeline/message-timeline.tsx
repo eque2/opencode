@@ -416,7 +416,7 @@ export function MessageTimeline(props: {
     get count() {
       return timelineRows().length
     },
-    getScrollElement: () => listRoot() ?? null,
+    getScrollElement: () => Option.getOrNull(Option.fromNullishOr(listRoot())),
     observeElementOffset: observeElementOffsetReconnectAware,
     initialOffset: () => (props.shouldAnchorBottom() ? Number.MAX_SAFE_INTEGER : 0),
     initialMeasurementsCache: initialMeasurements,
@@ -568,7 +568,7 @@ export function MessageTimeline(props: {
 
   const [share, setShare] = createStore({
     open: false,
-    dismiss: null as "escape" | "outside" | null,
+    dismiss: Option.none<"escape" | "outside">(),
   })
   let more: HTMLButtonElement | undefined
 
@@ -964,8 +964,12 @@ export function MessageTimeline(props: {
     return end.value - message.time.created
   }
 
-  const assistantCopyPartID = (userMessageID: string) => {
-    if (workingTurn(userMessageID)) return null
+  /**
+   * The copy target of a turn. None hides the copy action while the turn works.
+   * Otherwise it holds the last non-empty assistant text part, or none to let each part decide.
+   */
+  const assistantCopyTarget = (userMessageID: string): Option.Option<Option.Option<string>> => {
+    if (workingTurn(userMessageID)) return Option.none()
     const messages = assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages
 
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -976,10 +980,15 @@ export function MessageTimeline(props: {
       for (let j = parts.length - 1; j >= 0; j--) {
         const part = parts[j]
         if (!part || part.type !== "text" || !part.text?.trim()) continue
-        return part.id
+        return Option.some(Option.some(part.id))
       }
     }
+    return Option.some(Option.none())
   }
+
+  // MessagePart reads null as "hide the copy action" and undefined as "let the part decide".
+  const assistantCopyPartID = (userMessageID: string) =>
+    Option.getOrNull(Option.map(assistantCopyTarget(userMessageID), Option.getOrUndefined))
 
   const renderAssistantPartGroup = (row: Accessor<TimelineRowMap["AssistantPart"]>, onSizeChange?: () => void) => {
     if (row().group.type === "context") {
@@ -1529,7 +1538,7 @@ export function MessageTimeline(props: {
                                   if (title.pendingShare) {
                                     event.preventDefault()
                                     requestAnimationFrame(() => {
-                                      setShare({ open: true, dismiss: null })
+                                      setShare({ open: true, dismiss: Option.none() })
                                       setTitle("pendingShare", false)
                                     })
                                   }
@@ -1605,7 +1614,7 @@ export function MessageTimeline(props: {
                                 if (title.pendingShare) {
                                   event.preventDefault()
                                   requestAnimationFrame(() => {
-                                    setShare({ open: true, dismiss: null })
+                                    setShare({ open: true, dismiss: Option.none() })
                                     setTitle("pendingShare", false)
                                   })
                                 }
@@ -1650,7 +1659,7 @@ export function MessageTimeline(props: {
                         gutter={settings.general.newLayoutDesigns() ? 6 : 4}
                         modal={false}
                         onOpenChange={(open) => {
-                          if (open) setShare("dismiss", null)
+                          if (open) setShare("dismiss", Option.none())
                           setShare("open", open)
                         }}
                       >
@@ -1663,19 +1672,19 @@ export function MessageTimeline(props: {
                             }}
                             style={{ "min-width": "320px" }}
                             onEscapeKeyDown={(event) => {
-                              setShare({ dismiss: "escape", open: false })
+                              setShare({ dismiss: Option.some("escape"), open: false })
                               event.preventDefault()
                               event.stopPropagation()
                             }}
                             onPointerDownOutside={() => {
-                              setShare({ dismiss: "outside", open: false })
+                              setShare({ dismiss: Option.some("outside"), open: false })
                             }}
                             onFocusOutside={() => {
-                              setShare({ dismiss: "outside", open: false })
+                              setShare({ dismiss: Option.some("outside"), open: false })
                             }}
                             onCloseAutoFocus={(event) => {
-                              if (share.dismiss === "outside") event.preventDefault()
-                              setShare("dismiss", null)
+                              if (Option.contains(share.dismiss, "outside")) event.preventDefault()
+                              setShare("dismiss", Option.none())
                             }}
                           >
                             <Show
