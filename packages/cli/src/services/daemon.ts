@@ -70,6 +70,7 @@ export const layer = Layer.effect(
     const file = path.join(directory, "server.json")
     const passwordFile = path.join(directory, "password")
     const decodeRegistration = Schema.decodeUnknownEffect(Schema.fromJsonString(Registration))
+    const encodeRegistration = Schema.encodeEffect(Schema.fromJsonString(Registration))
 
     const password = Effect.fn("cli.daemon.password")(function* (value?: string) {
       // An empty password file counts as absent, so the password is generated again.
@@ -206,11 +207,13 @@ export const layer = Layer.effect(
       const id = randomUUID()
       const temp = file + "." + id + ".tmp"
       yield* fs.makeDirectory(directory, { recursive: true })
-      yield* fs.writeFileString(
-        temp,
-        JSON.stringify({ id, version: InstallationVersion, url: HttpServer.formatAddress(address), pid: process.pid }),
-        { mode: 0o600 },
-      )
+      const text = yield* encodeRegistration({
+        id,
+        version: InstallationVersion,
+        url: HttpServer.formatAddress(address),
+        pid: process.pid,
+      })
+      yield* fs.writeFileString(temp, text, { mode: 0o600 })
       yield* fs.rename(temp, file)
       yield* registration().pipe(
         Effect.flatMap((info) => (info.id === id ? Effect.void : signal(process.pid, "SIGTERM"))),
