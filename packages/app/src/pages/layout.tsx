@@ -1021,10 +1021,9 @@ export default function LegacyLayout(props: ParentProps) {
       },
     ]
 
-    Array.from({ length: 9 }, (_, i) => {
-      const index = i
+    const projectCommands = Array.from({ length: 9 }, (_, index): CommandOption => {
       const number = index + 1
-      commands.push({
+      return {
         id: `project.${number}`,
         category: language.t("command.category.project"),
         title: `Open Project {number}`,
@@ -1032,11 +1031,11 @@ export default function LegacyLayout(props: ParentProps) {
         disabled: layout.projects.list().length <= index,
         hidden: true,
         onSelect: () => navigateToProjectIndex(index),
-      })
+      }
     })
 
-    for (const [id] of availableThemeEntries()) {
-      commands.push({
+    const themeCommands = availableThemeEntries().map(
+      ([id]): CommandOption => ({
         id: `theme.set.${id}`,
         title: language.t("command.theme.set", { theme: theme.name(id) }),
         category: language.t("command.category.theme"),
@@ -1045,19 +1044,11 @@ export default function LegacyLayout(props: ParentProps) {
           theme.previewTheme(id)
           return () => theme.cancelPreview()
         },
-      })
-    }
+      }),
+    )
 
-    commands.push({
-      id: "theme.scheme.cycle",
-      title: language.t("command.theme.scheme.cycle"),
-      category: language.t("command.category.theme"),
-      keybind: "mod+shift+s",
-      onSelect: () => cycleColorScheme(1),
-    })
-
-    for (const scheme of colorSchemeOrder) {
-      commands.push({
+    const schemeCommands = colorSchemeOrder.map(
+      (scheme): CommandOption => ({
         id: `theme.scheme.${scheme}`,
         title: language.t("command.theme.scheme.set", { scheme: colorSchemeLabel(scheme) }),
         category: language.t("command.category.theme"),
@@ -1066,26 +1057,38 @@ export default function LegacyLayout(props: ParentProps) {
           theme.previewColorScheme(scheme)
           return () => theme.cancelPreview()
         },
-      })
-    }
+      }),
+    )
 
-    commands.push({
-      id: "language.cycle",
-      title: language.t("command.language.cycle"),
-      category: language.t("command.category.language"),
-      onSelect: () => cycleLanguage(1),
-    })
-
-    for (const locale of language.locales) {
-      commands.push({
+    const languageCommands = language.locales.map(
+      (locale): CommandOption => ({
         id: `language.set.${locale}`,
         title: language.t("command.language.set", { language: language.label(locale) }),
         category: language.t("command.category.language"),
         onSelect: () => setLocale(locale),
-      })
-    }
+      }),
+    )
 
-    return commands
+    return [
+      ...commands,
+      ...projectCommands,
+      ...themeCommands,
+      {
+        id: "theme.scheme.cycle",
+        title: language.t("command.theme.scheme.cycle"),
+        category: language.t("command.category.theme"),
+        keybind: "mod+shift+s",
+        onSelect: () => cycleColorScheme(1),
+      },
+      ...schemeCommands,
+      {
+        id: "language.cycle",
+        title: language.t("command.language.cycle"),
+        category: language.t("command.category.language"),
+        onSelect: () => cycleLanguage(1),
+      },
+      ...languageCommands,
+    ]
   })
 
   function connectProvider() {
