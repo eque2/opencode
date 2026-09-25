@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Effect, Option } from "effect"
 import { chmod } from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -106,8 +107,10 @@ async function azureCli(dir: string) {
 describe("plugin.azure", () => {
   test("initializes and runs Azure CLI under Node without Bun or a plugin shell", async () => {
     await using tmp = await tmpdir()
-    const node = which("node")
-    if (!node) throw new Error("Node is required for the Azure runtime compatibility test")
+    const node = Option.getOrThrowWith(
+      await Effect.runPromise(which("node")),
+      () => new Error("Node is required for the Azure runtime compatibility test"),
+    )
     const bundle = await Bun.build({
       entrypoints: [path.join(import.meta.dir, "../../src/plugin/azure.ts")],
       target: "node",

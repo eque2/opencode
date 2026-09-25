@@ -1,7 +1,7 @@
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { which } from "@opencode-ai/core/util/which"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { OAUTH_DUMMY_KEY } from "../auth"
 import { Process } from "../util/process"
 
@@ -18,7 +18,7 @@ const decodeAzureCliToken = Schema.decodeUnknownPromise(AzureCliToken)
 type AzureCommand = (args: string[]) => Promise<unknown>
 
 export async function AzureAuthPlugin(): Promise<Hooks> {
-  const available = Boolean(which("az"))
+  const available = Option.isSome(await Effect.runPromise(which("az")))
   return createAzureAuthHooks(runAzure, fetch, available)
 }
 
@@ -109,7 +109,8 @@ export function createAzureAuthHooks(
 }
 
 async function runAzure(args: string[]): Promise<unknown> {
-  const result = await Process.run([which("az") ?? "az", ...args])
+  const az = Option.getOrElse(await Effect.runPromise(which("az")), () => "az")
+  const result = await Process.run([az, ...args])
   return JSON.parse(result.stdout.toString())
 }
 
