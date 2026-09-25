@@ -38,7 +38,7 @@ import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
-import { HashMap, Option } from "effect"
+import { HashMap, Option, Predicate } from "effect"
 
 const CUSTOM_ID = "_custom"
 type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
@@ -526,16 +526,16 @@ function ProviderConnection(props: {
   }
 
   function formatError(value: unknown, fallback: string): string {
-    if (value && typeof value === "object" && "data" in value) {
-      const data = (value as { data?: { message?: unknown } }).data
-      if (typeof data?.message === "string" && data.message) return data.message
+    if (Predicate.hasProperty(value, "data") && Predicate.hasProperty(value.data, "message")) {
+      const message = value.data.message
+      if (typeof message === "string" && message) return message
     }
-    if (value && typeof value === "object" && "error" in value) {
-      const nested = formatError((value as { error?: unknown }).error, "")
+    if (Predicate.hasProperty(value, "error")) {
+      const nested = formatError(value.error, "")
       if (nested) return nested
     }
-    if (value && typeof value === "object" && "message" in value) {
-      const message = (value as { message?: unknown }).message
+    if (Predicate.hasProperty(value, "message")) {
+      const message = value.message
       if (typeof message === "string" && message) return message
     }
     if (value instanceof Error && value.message) return value.message
@@ -820,14 +820,13 @@ function ProviderConnection(props: {
       apiKey?.focus({ preventScroll: true })
     })
 
-    async function handleSubmit(e: SubmitEvent) {
+    async function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
       e.preventDefault()
 
-      const form = e.currentTarget as HTMLFormElement
-      const formData = new FormData(form)
-      const apiKey = formData.get("apiKey") as string
+      const entry = new FormData(e.currentTarget).get("apiKey")
+      const apiKey = typeof entry === "string" ? entry : ""
 
-      if (!apiKey?.trim()) {
+      if (!apiKey.trim()) {
         setFormStore("error", language.t("provider.connect.apiKey.required"))
         return
       }
@@ -950,14 +949,13 @@ function ProviderConnection(props: {
       codeInput?.focus({ preventScroll: true })
     })
 
-    async function handleSubmit(e: SubmitEvent) {
+    async function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
       e.preventDefault()
 
-      const form = e.currentTarget as HTMLFormElement
-      const formData = new FormData(form)
-      const code = formData.get("code") as string
+      const entry = new FormData(e.currentTarget).get("code")
+      const code = typeof entry === "string" ? entry : ""
 
-      if (!code?.trim()) {
+      if (!code.trim()) {
         setFormStore("error", language.t("provider.connect.oauth.code.required"))
         return
       }
