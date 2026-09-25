@@ -28,7 +28,7 @@ import {
   ToolPart,
   UserMessage,
 } from "@opencode-ai/sdk/v2"
-import { Array, HashMap, HashSet, Option, Predicate } from "effect"
+import { Array, Effect, HashMap, HashSet, Option, Predicate } from "effect"
 import { useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -65,27 +65,47 @@ import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText } from "./message-part-text"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
 
-async function writeClipboard(text: string): Promise<boolean> {
-  const body = typeof document === "undefined" ? undefined : document.body
-  if (body) {
-    const textarea = document.createElement("textarea")
-    textarea.value = text
-    textarea.setAttribute("readonly", "")
-    textarea.style.position = "fixed"
-    textarea.style.opacity = "0"
-    textarea.style.pointerEvents = "none"
-    body.appendChild(textarea)
-    textarea.select()
-    const copied = document.execCommand("copy")
-    body.removeChild(textarea)
-    if (copied) return true
-  }
+function copyWithTextarea(text: string) {
+  if (typeof document === "undefined" || !document.body) return false
+  const body = document.body
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "")
+  textarea.style.position = "fixed"
+  textarea.style.opacity = "0"
+  textarea.style.pointerEvents = "none"
+  body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand("copy")
+  body.removeChild(textarea)
+  return copied
+}
 
-  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard
-  if (!clipboard?.writeText) return false
-  return clipboard.writeText(text).then(
-    () => true,
-    () => false,
+// Succeeds with true when the text reached the clipboard. A rejected Clipboard API write is a
+// normal "not copied" result, not a failure.
+function writeClipboard(text: string): Effect.Effect<boolean> {
+  return Effect.gen(function* () {
+    if (copyWithTextarea(text)) return true
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false
+    const clipboard = navigator.clipboard
+    return yield* Effect.tryPromise(() => clipboard.writeText(text)).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    )
+  })
+}
+
+// Runs from a click handler. The copy starts synchronously inside Effect.runFork, so the browser
+// still sees the user gesture. After a successful copy the copied state shows for two seconds.
+function copyText(text: string, setCopied: (copied: boolean) => void) {
+  if (!text) return
+  Effect.runFork(
+    Effect.gen(function* () {
+      if (!(yield* writeClipboard(text))) return
+      setCopied(true)
+      yield* Effect.sleep("2 seconds")
+      setCopied(false)
+    }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
   )
 }
 
@@ -1239,14 +1259,7 @@ export function UserMessageDisplay(props: {
     void dialog.show(() => <ImagePreview src={url} alt={alt} />)
   }
 
-  const handleCopy = async () => {
-    const content = text()
-    if (!content) return
-    if (await writeClipboard(content)) {
-      setState("copied", true)
-      setTimeout(() => setState("copied", false), 2000)
-    }
-  }
+  const handleCopy = () => copyText(text(), (value) => setState("copied", value))
 
   const revert = () => {
     const act = props.actions?.revert
@@ -1381,7 +1394,7 @@ export function UserMessageDisplay(props: {
               onMouseDown={(event) => event.preventDefault()}
               onClick={(event) => {
                 event.stopPropagation()
-                void handleCopy()
+                handleCopy()
               }}
               aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copyMessage")}
             />
@@ -1735,14 +1748,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   })
   const [copied, setCopied] = createSignal(false)
 
-  const handleCopy = async () => {
-    const content = text()
-    if (!content) return
-    if (await writeClipboard(content)) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
+  const handleCopy = () => copyText(text(), setCopied)
 
   return (
     <Show when={text()}>
@@ -2120,14 +2126,7 @@ ToolRegistry.register({
     })
     const [copied, setCopied] = createSignal(false)
 
-    const handleCopy = async () => {
-      const content = text()
-      if (!content) return
-      if (await writeClipboard(content)) {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      }
-    }
+    const handleCopy = () => copyText(text(), setCopied)
 
     return (
       <BasicTool
