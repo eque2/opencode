@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { Record } from "effect"
+import { DateTime, Record } from "effect"
 import { createSignal, createMemo, createEffect, on, For, Show, batch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import type {
@@ -15,8 +15,11 @@ import { SessionTurn } from "./session-turn"
 // ---------------------------------------------------------------------------
 // ID helpers
 // ---------------------------------------------------------------------------
+/** The current time in epoch milliseconds. The generators run outside a fiber, so they read DateTime.nowUnsafe. */
+const nowMillis = () => DateTime.toEpochMillis(DateTime.nowUnsafe())
+
 let seq = 0
-const uid = () => `pg-${++seq}-${Date.now().toString(36)}`
+const uid = () => `pg-${++seq}-${nowMillis().toString(36)}`
 
 type WithoutIds<P> = P extends unknown ? Omit<P, "id" | "sessionID" | "messageID"> : never
 
@@ -538,26 +541,28 @@ function mkUser(
   sessionID = SESSION_ID,
 ): { message: UserMessage; parts: Part[] } {
   const id = uid()
+  const now = nowMillis()
   return {
     message: {
       id,
       sessionID,
       role: "user",
-      time: { created: Date.now() },
+      time: { created: now },
       agent: "code",
       model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
     },
     // attach copies the extra parts with fresh ids so each user message owns unique part instances
-    parts: attach([{ type: "text", text, time: { start: Date.now() } }, ...extra], id, sessionID),
+    parts: attach([{ type: "text", text, time: { start: now } }, ...extra], id, sessionID),
   }
 }
 
 function mkAssistant(parentID: string, sessionID = SESSION_ID): AssistantMessage {
+  const created = nowMillis()
   return {
     id: uid(),
     sessionID,
     role: "assistant",
-    time: { created: Date.now(), completed: Date.now() + 3000 },
+    time: { created, completed: created + 3000 },
     parentID,
     modelID: "claude-sonnet-4-20250514",
     providerID: "anthropic",
@@ -570,11 +575,12 @@ function mkAssistant(parentID: string, sessionID = SESSION_ID): AssistantMessage
 }
 
 function textPart(text: string): PartDraft {
-  return { type: "text", text, time: { start: Date.now() } }
+  return { type: "text", text, time: { start: nowMillis() } }
 }
 
 function reasoningPart(text: string): PartDraft {
-  return { type: "reasoning", text, time: { start: Date.now(), end: Date.now() + 500 } }
+  const start = nowMillis()
+  return { type: "reasoning", text, time: { start, end: start + 500 } }
 }
 
 function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], status = "completed"): PartDraft {
@@ -583,6 +589,7 @@ function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], stat
     callID: uid(),
     tool: sample.tool,
   }
+  const start = nowMillis()
   if (status === "completed") {
     return {
       ...base,
@@ -592,7 +599,7 @@ function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], stat
         output: sample.output,
         title: sample.title,
         metadata: sample.metadata ?? {},
-        time: { start: Date.now(), end: Date.now() + 1000 },
+        time: { start, end: start + 1000 },
       },
     }
   }
@@ -604,7 +611,7 @@ function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], stat
         input: sample.input,
         title: sample.title,
         metadata: sample.metadata ?? {},
-        time: { start: Date.now() },
+        time: { start },
       },
     }
   }
@@ -1452,7 +1459,7 @@ function Playground() {
   const interrupt = () => {
     const user = userMessages().at(-1)
     if (!user) return
-    const now = Date.now()
+    const now = nowMillis()
 
     setState(
       produce((draft) => {
