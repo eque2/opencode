@@ -1,6 +1,6 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { expect, test, type Page } from "@playwright/test"
-import { mockOpenCodeServer } from "../utils/mock-server"
+import { mockOpenCodeServer, type MockServerConfig } from "../utils/mock-server"
 import { expectSessionTitle } from "../utils/waits"
 
 const directory = "C:/OpenCode/FileBrowserSidebar"
@@ -109,7 +109,7 @@ async function readProbe(page: Page) {
 
 async function setup(
   page: Page,
-  findFiles?: (input: { query: string; dirs?: string; limit?: number }) => unknown | Promise<unknown>,
+  findFiles?: MockServerConfig["findFiles"],
 ) {
   await mockOpenCodeServer(page, {
     directory,

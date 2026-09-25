@@ -3,9 +3,12 @@ import type { Page, Route } from "@playwright/test"
 const emptyList = new Set(["/skill", "/command", "/lsp", "/formatter", "/vcs/status", "/vcs/diff"])
 const emptyObject = new Set(["/global/config", "/config", "/provider/auth", "/mcp", "/experimental/resource"])
 
+/** A provider list response body. The mock serves it as JSON. */
+export type MockProviderList = Record<string, unknown>
+
 export interface MockServerConfig {
   protocol?: "v1" | "v2"
-  provider: unknown | (() => unknown)
+  provider: MockProviderList | (() => MockProviderList)
   integrationMethods?: Record<string, unknown[]>
   onConnectKey?: (input: { integrationID: string; body: unknown }) => void
   onInstanceDispose?: () => void
@@ -24,9 +27,10 @@ export interface MockServerConfig {
   todos?: (sessionID: string) => unknown[]
   permissions?: unknown[] | (() => unknown[])
   questions?: unknown[] | (() => unknown[])
-  fileList?: (path: string) => unknown | Promise<unknown>
-  fileContent?: (path: string) => unknown | Promise<unknown>
-  findFiles?: (input: { query: string; dirs?: string; limit?: number }) => unknown | Promise<unknown>
+  // The mock awaits these results, so each handler can return the body or a Promise of it.
+  fileList?: (path: string) => unknown
+  fileContent?: (path: string) => unknown
+  findFiles?: (input: { query: string; dirs?: string; limit?: number }) => unknown
   sessionStatus?: Record<string, unknown> | (() => Record<string, unknown>)
 }
 
