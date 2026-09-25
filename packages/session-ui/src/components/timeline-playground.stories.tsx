@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { DateTime, Effect, Random, Record } from "effect"
+import { Data, DateTime, Effect, Random, Record, Result, Schema } from "effect"
 import { createSignal, createMemo, createEffect, on, For, Show, batch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import type {
@@ -449,6 +449,20 @@ type Row = Record<string, unknown>
 /** An imported message row with its part rows. load() checks both before it uses them. */
 type ImportedMessage = { info: Row; parts: Row[] }
 
+/** The session row and message rows that normalize() finds in an imported file. */
+type ImportedSession = { info: Row; messages: ImportedMessage[] }
+
+/** Raised when an imported file cannot be read or holds no session. `message` is the text the panel shows. */
+class ImportError extends Data.TaggedError("TimelinePlaygroundImportError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+const errorMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
+
+/** Parses the file text as JSON without asserting a shape; normalize() checks the rows. */
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
 function record(value: unknown): value is Row {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -491,11 +505,11 @@ function isPart(row: Row): row is Part {
   )
 }
 
-function normalize(raw: unknown): { info: Row; messages: ImportedMessage[] } {
+function normalize(raw: unknown): Result.Result<ImportedSession, ImportError> {
   if (Array.isArray(raw)) {
     const info = raw.find((row) => record(row) && row.type === "session" && record(row.data))?.data
     if (!record(info) || typeof info.id !== "string") {
-      throw new Error("No session found in JSON")
+      return Result.fail(new ImportError({ message: "No session found in JSON" }))
     }
 
     const part = new Map<string, Row[]>()
@@ -511,28 +525,28 @@ function normalize(raw: unknown): { info: Row; messages: ImportedMessage[] } {
       return [{ id: row.data.id, info: row.data }]
     })
 
-    return {
+    return Result.succeed({
       info,
       messages: messages.map((msg) => ({
         info: msg.info,
         parts: part.get(msg.id) ?? [],
       })),
-    }
+    })
   }
 
   if (!record(raw) || !record(raw.info) || typeof raw.info.id !== "string" || !Array.isArray(raw.messages)) {
-    throw new Error("Expected an `opencode export` JSON file")
+    return Result.fail(new ImportError({ message: "Expected an `opencode export` JSON file" }))
   }
 
   const rows: ReadonlyArray<unknown> = raw.messages
-  return {
+  return Result.succeed({
     info: raw.info,
     messages: rows.flatMap((row) => {
       if (!record(row) || !record(row.info) || typeof row.info.id !== "string") return []
       const parts: ReadonlyArray<unknown> = Array.isArray(row.parts) ? row.parts : []
       return [{ info: row.info, parts: parts.filter(record) }]
     }),
-  }
+  })
 }
 
 function mkUser(
@@ -1487,8 +1501,7 @@ function Playground() {
     )
   }
 
-  const load = (raw: unknown, name: string) => {
-    const next = normalize(raw)
+  const load = (next: ImportedSession, name: string) => {
     const id = typeof next.info.id === "string" && next.info.id ? next.info.id : SESSION_ID
     const turns = next.messages.flatMap((msg) => {
       const info = {
@@ -1522,20 +1535,34 @@ function Playground() {
     })
   }
 
-  const importFile = async (event: Event & { currentTarget: HTMLInputElement }) => {
+  const importFile = (event: Event & { currentTarget: HTMLInputElement }) => {
     const input = event.currentTarget
     const file = input.files?.[0]
     if (!file) return
 
     setIssue("")
 
-    try {
-      load(JSON.parse(await file.text()), file.name)
-    } catch (err) {
-      setIssue(err instanceof Error ? err.message : String(err))
-    } finally {
-      input.value = ""
-    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        const text = yield* Effect.tryPromise({
+          try: () => file.text(),
+          catch: (cause) => new ImportError({ message: errorMessage(cause), cause }),
+        })
+        const next = yield* Effect.fromResult(normalize(yield* decodeJson(text)))
+        yield* Effect.try({
+          try: () => load(next, file.name),
+          catch: (cause) => new ImportError({ message: errorMessage(cause), cause }),
+        })
+      }).pipe(
+        Effect.catch((error) => Effect.sync(() => setIssue(error.message))),
+        Effect.ensuring(
+          Effect.sync(() => {
+            input.value = ""
+          }),
+        ),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    )
   }
 
   const clearAll = () => {
