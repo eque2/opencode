@@ -11,7 +11,20 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { Clock, Data, DateTime, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
+import {
+  Clock,
+  Data,
+  DateTime,
+  Duration,
+  Effect,
+  HashMap,
+  HashSet,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Schedule,
+  Schema,
+} from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -44,6 +57,7 @@ import { usePermission } from "@/context/permission"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { playSoundById } from "@/utils/sound"
 import { createAim } from "@/utils/aim"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { Worktree as WorktreeState } from "@/utils/worktree"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { SessionRouteKey, SessionStateKey } from "@/utils/server-scope"
@@ -205,16 +219,18 @@ export default function LegacyLayout(props: ParentProps) {
     )
   }
   const isBusy = (directory: string) => !!state.busyWorkspaces[pathKey(directory)]
-  const navLeave = { current: undefined as number | undefined }
+  const navLeave = createFiberSlot()
   const sortNow = () => state.sortNow
-  let sizet: number | undefined
-  let sortNowInterval: ReturnType<typeof setInterval> | undefined
-  const sortNowTimeout = setTimeout(
-    () => {
-      setState("sortNow", Date.now())
-      sortNowInterval = setInterval(() => setState("sortNow", Date.now()), 60_000)
-    },
-    60_000 - (Date.now() % 60_000),
+  const sizingReset = createFiberSlot()
+  const sortNowTicker = createFiberSlot()
+  const updateSortNow = Effect.flatMap(Clock.currentTimeMillis, (now) => Effect.sync(() => setState("sortNow", now)))
+  // Refresh sortNow on each minute boundary, then every minute.
+  sortNowTicker.run(
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      yield* Effect.sleep(Duration.millis(60_000 - (now % 60_000)))
+      yield* Effect.repeat(updateSortNow, Schedule.spaced("60 seconds"))
+    }),
   )
 
   const aim = createAim({
@@ -230,11 +246,6 @@ export default function LegacyLayout(props: ParentProps) {
   onCleanup(() => {
     dialogDead = true
     dialogRun += 1
-    if (navLeave.current !== undefined) clearTimeout(navLeave.current)
-    clearTimeout(sortNowTimeout)
-    if (sortNowInterval) clearInterval(sortNowInterval)
-    if (sizet !== undefined) clearTimeout(sizet)
-    if (peekt !== undefined) clearTimeout(peekt)
     aim.reset()
   })
 
@@ -261,11 +272,7 @@ export default function LegacyLayout(props: ParentProps) {
   }
   const clearHoverProjectSoon = () => queueMicrotask(() => setHoverProject(undefined))
 
-  const disarm = () => {
-    if (navLeave.current === undefined) return
-    clearTimeout(navLeave.current)
-    navLeave.current = undefined
-  }
+  const disarm = () => navLeave.interrupt()
 
   const reset = () => {
     disarm()
@@ -275,14 +282,10 @@ export default function LegacyLayout(props: ParentProps) {
   const arm = () => {
     if (layout.sidebar.opened()) return
     if (state.hoverProject === undefined) return
-    disarm()
-    navLeave.current = window.setTimeout(() => {
-      navLeave.current = undefined
-      setHoverProject(undefined)
-    }, 300)
+    navLeave.run(Effect.sleep("300 millis").pipe(Effect.andThen(Effect.sync(() => setHoverProject(undefined)))))
   }
 
-  let peekt: number | undefined
+  const peekClose = createFiberSlot()
 
   const hoverProjectData = createMemo(() => {
     const id = state.hoverProject
@@ -299,10 +302,7 @@ export default function LegacyLayout(props: ParentProps) {
   createEffect(() => {
     const p = hoverProjectData()
     if (p) {
-      if (peekt !== undefined) {
-        clearTimeout(peekt)
-        peekt = undefined
-      }
+      peekClose.interrupt()
       setState("peek", p.worktree)
       setState("peeked", true)
       return
@@ -310,11 +310,7 @@ export default function LegacyLayout(props: ParentProps) {
 
     setState("peeked", false)
     if (state.peek === undefined) return
-    if (peekt !== undefined) clearTimeout(peekt)
-    peekt = window.setTimeout(() => {
-      peekt = undefined
-      setState("peek", undefined)
-    }, 180)
+    peekClose.run(Effect.sleep("180 millis").pipe(Effect.andThen(Effect.sync(() => setState("peek", undefined)))))
   })
 
   createEffect(() => {
@@ -2401,8 +2397,9 @@ export default function LegacyLayout(props: ParentProps) {
                   max={typeof window === "undefined" ? 1000 : window.innerWidth * 0.3 + 64}
                   onResize={(w) => {
                     setState("sizing", true)
-                    if (sizet !== undefined) clearTimeout(sizet)
-                    sizet = window.setTimeout(() => setState("sizing", false), 120)
+                    sizingReset.run(
+                      Effect.sleep("120 millis").pipe(Effect.andThen(Effect.sync(() => setState("sizing", false)))),
+                    )
                     layout.sidebar.resize(w)
                   }}
                 />
