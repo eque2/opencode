@@ -1,4 +1,5 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
+import { absurd } from "effect"
 import { type Accessor, batch, createMemo } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
@@ -21,7 +22,7 @@ export const RECENTLY_CLOSED_DISPLAY_LIMIT = 5
 
 export function normalizeServerUrl(input: string) {
   const trimmed = input.trim()
-  if (!trimmed) return
+  if (!trimmed) return undefined
   const withProtocol = /^https?:\/\//.test(trimmed) ? trimmed : `http://${trimmed}`
   return withProtocol.replace(/\/+$/, "")
 }
@@ -35,6 +36,7 @@ export function serverName(conn?: ServerConnection.Any, ignoreDisplayName = fals
 function isLocalHost(url: string) {
   const host = url.replace(/^https?:\/\//, "").split(":")[0]
   if (host === "localhost" || host === "127.0.0.1") return "local"
+  return undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -231,6 +233,7 @@ export namespace ServerConnection {
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
     }
+    return absurd(conn)
   }
 
   export type Key = string & { _brand: "Key" }
@@ -288,7 +291,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
-      if (!url_) return
+      if (!url_) return undefined
       const conn: ServerConnection.Http = { ...input, authToken: undefined, http: { ...input.http, url: url_ } }
       return batch(() => {
         const existing = store.list.findIndex((x) => url(x) === url_)
