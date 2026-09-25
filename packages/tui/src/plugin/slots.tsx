@@ -23,8 +23,12 @@ function isHostSlotPlugin(value: unknown): value is HostSlotPlugin<Record<string
   return isRecord(value.slots)
 }
 
+// Renders nothing until setup() installs a slot registry: Solid renders an undefined JSX.Element as no output.
+function empty(): JSX.Element {
+  return undefined
+}
+
 export function createSlots() {
-  const empty: SlotView = () => null
   const [view, setView] = createSignal<SlotView>(empty)
   const Slot: SlotView = (props) => view()(props)
 

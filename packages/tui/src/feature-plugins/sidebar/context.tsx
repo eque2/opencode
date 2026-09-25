@@ -2,7 +2,7 @@ import type { AssistantMessage } from "@opencode-ai/sdk/v2"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo } from "solid-js"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
 const id = "internal:sidebar-context"
 
@@ -22,7 +22,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     if (!last) {
       return {
         tokens: 0,
-        percent: null,
+        percent: Option.none<number>(),
       }
     }
 
@@ -31,7 +31,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
     const model = props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
     return {
       tokens,
-      percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : null,
+      percent: model?.limit.context ? Option.some(Math.round((tokens / model.limit.context) * 100)) : Option.none(),
     }
   })
 
@@ -41,7 +41,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
         <b>Context</b>
       </text>
       <text fg={theme().textMuted}>{state().tokens.toLocaleString()} tokens</text>
-      <text fg={theme().textMuted}>{state().percent ?? 0}% used</text>
+      <text fg={theme().textMuted}>{Option.getOrElse(state().percent, () => 0)}% used</text>
       <text fg={theme().textMuted}>{money.format(cost())} spent</text>
     </box>
   )
