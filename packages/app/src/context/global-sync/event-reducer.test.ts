@@ -350,7 +350,7 @@ describe("applyDirectoryEvent", () => {
     const dropped = rootSession({ id: "ses_b" })
     const kept = rootSession({ id: "ses_a" })
     const message = userMessage("msg_1", dropped.id)
-    const todos: string[] = []
+    let todos: string[] = []
     const [store, setStore] = createStore(
       baseState({
         limit: 1,
@@ -374,7 +374,7 @@ describe("applyDirectoryEvent", () => {
       loadLsp() {},
       setSessionTodo(sessionID, value) {
         if (Option.isSome(value)) return
-        todos.push(sessionID)
+        todos = [...todos, sessionID]
       },
     })
 
@@ -612,7 +612,7 @@ describe("applyDirectoryEvent", () => {
 
   test("routes disposal and lsp events to side-effect handlers", () => {
     const [store, setStore] = createStore(baseState())
-    const pushes: string[] = []
+    let pushes: string[] = []
     let lspLoads = 0
 
     applyDirectoryEvent({
@@ -620,7 +620,7 @@ describe("applyDirectoryEvent", () => {
       store,
       setStore,
       push(directory) {
-        pushes.push(directory)
+        pushes = [...pushes, directory]
       },
       directory: "/tmp",
       loadLsp() {
@@ -633,7 +633,7 @@ describe("applyDirectoryEvent", () => {
       store,
       setStore,
       push(directory) {
-        pushes.push(directory)
+        pushes = [...pushes, directory]
       },
       directory: "/tmp",
       loadLsp() {

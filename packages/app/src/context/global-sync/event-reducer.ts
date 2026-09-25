@@ -355,7 +355,7 @@ export function applyDirectoryEvent(input: {
           const messages = draft.message[props.sessionID]
           if (messages) {
             const index = messages.findIndex((message) => message.id === props.messageID)
-            if (index >= 0) messages.splice(index, 1)
+            if (index >= 0) draft.message[props.sessionID] = messages.toSpliced(index, 1)
           }
           const parts = draft.part[props.messageID]
           if (parts) {
@@ -412,8 +412,9 @@ export function applyDirectoryEvent(input: {
             if (!list) return
             const next = Binary.search(list, props.partID, (part) => part.id)
             if (!next.found) return
-            list.splice(next.index, 1)
-            if (list.length === 0) delete draft.part[props.messageID]
+            const rest = list.toSpliced(next.index, 1)
+            if (rest.length === 0) delete draft.part[props.messageID]
+            else draft.part[props.messageID] = rest
           }),
         )
       }
