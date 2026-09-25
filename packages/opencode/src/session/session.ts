@@ -867,20 +867,20 @@ const layer: Layer.Layer<
       return [] as Snapshot.FileDiff[]
     })
 
+    // MessageV2.page reads the database from context; bind this service's database once.
+    const messagePage = (input: Parameters<typeof MessageV2.page>[0]) =>
+      MessageV2.page(input).pipe(Effect.provideService(Database.Service, database))
+
     const messages: Interface["messages"] = Effect.fn("Session.messages")(function* (input) {
       if (input.limit) {
-        return (yield* MessageV2.page({ sessionID: input.sessionID, limit: input.limit }).pipe(
-          Effect.provideService(Database.Service, database),
-        )).items
+        return (yield* messagePage({ sessionID: input.sessionID, limit: input.limit })).items
       }
 
       const size = 50
       const result = [] as SessionV1.WithParts[]
       let before: string | undefined
       while (true) {
-        const page = yield* MessageV2.page({ sessionID: input.sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
+        const page = yield* messagePage({ sessionID: input.sessionID, limit: size, before })
         if (page.items.length === 0) break
         for (let i = page.items.length - 1; i >= 0; i--) {
           const item = page.items[i]
@@ -931,9 +931,7 @@ const layer: Layer.Layer<
       const size = 50
       let before: string | undefined
       while (true) {
-        const page = yield* MessageV2.page({ sessionID, limit: size, before }).pipe(
-          Effect.provideService(Database.Service, database),
-        )
+        const page = yield* messagePage({ sessionID, limit: size, before })
         if (page.items.length === 0) break
         for (let i = page.items.length - 1; i >= 0; i--) {
           const item = page.items[i]
