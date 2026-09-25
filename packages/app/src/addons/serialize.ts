@@ -13,6 +13,7 @@
  * ```
  */
 
+import { Option } from "effect"
 import type { ITerminalAddon, ITerminalCore, IBufferRange } from "ghostty-web"
 
 // ============================================================================
@@ -57,9 +58,9 @@ interface IBufferCell {
 }
 
 type TerminalBuffers = {
-  active?: IBuffer
-  normal?: IBuffer
-  alternate?: IBuffer
+  readonly active: Option.Option<IBuffer>
+  readonly normal: Option.Option<IBuffer>
+  readonly alternate: Option.Option<IBuffer>
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -78,15 +79,15 @@ const isBuffer = (value: unknown): value is IBuffer => {
   return true
 }
 
-const getTerminalBuffers = (value: ITerminalCore): TerminalBuffers | undefined => {
-  if (!isRecord(value)) return
+/** The buffers of the terminal core. None when the core has neither an active nor a normal buffer. */
+const getTerminalBuffers = (value: ITerminalCore): Option.Option<TerminalBuffers> => {
+  if (!isRecord(value)) return Option.none()
   const raw = value.buffer
-  if (!isRecord(raw)) return
-  const active = isBuffer(raw.active) ? raw.active : undefined
-  const normal = isBuffer(raw.normal) ? raw.normal : undefined
-  const alternate = isBuffer(raw.alternate) ? raw.alternate : undefined
-  if (!active && !normal) return
-  return { active, normal, alternate }
+  if (!isRecord(raw)) return Option.none()
+  const active = Option.liftPredicate(raw.active, isBuffer)
+  const normal = Option.liftPredicate(raw.normal, isBuffer)
+  if (Option.isNone(active) && Option.isNone(normal)) return Option.none()
+  return Option.some({ active, normal, alternate: Option.liftPredicate(raw.alternate, isBuffer) })
 }
 
 const getTerminalMode = (value: ITerminalCore, mode: number) => {
@@ -167,6 +168,14 @@ export interface IHTMLSerializeOptions {
 
 function constrain(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(value, high))
+}
+
+/** The number of rows to serialize: every row, or the scrollback rows plus the visible rows. */
+function rowCount(maxRows: number, visibleRows: number, scrollback: Option.Option<number>): number {
+  return Option.match(scrollback, {
+    onNone: () => maxRows,
+    onSome: (value) => constrain(value + visibleRows, 0, maxRows),
+  })
 }
 
 function equalFg(cell1: IBufferCell, cell2: IBufferCell): boolean {
@@ -281,8 +290,7 @@ class StringSerializeHandler extends BaseSerializeHandler {
   protected _rowEnd(row: number, isLastRow: boolean): void {
     let rowSeparator = ""
 
-    const nextLine = isLastRow ? undefined : this._buffer.getLine(row + 1)
-    const wrapped = !!nextLine?.isWrapped
+    const wrapped = !isLastRow && this._buffer.getLine(row + 1)?.isWrapped === true
 
     if (this._nullCellCount > 0 && wrapped) {
       this._currentRow += " ".repeat(this._nullCellCount)
@@ -506,24 +514,62 @@ class StringSerializeHandler extends BaseSerializeHandler {
 }
 
 // ============================================================================
+// Buffer Serialization
+// ============================================================================
+
+function serializeBufferByRange(
+  terminal: ITerminalCore,
+  buffer: IBuffer,
+  range: ISerializeRange,
+  excludeFinalCursorPosition: boolean,
+): string {
+  const handler = new StringSerializeHandler(buffer, terminal)
+  return handler.serialize(
+    {
+      start: { x: 0, y: range.start },
+      end: { x: terminal.cols, y: range.end },
+    },
+    excludeFinalCursorPosition,
+  )
+}
+
+function serializeBufferByScrollback(
+  terminal: ITerminalCore,
+  buffer: IBuffer,
+  scrollback: Option.Option<number>,
+): string {
+  const maxRows = buffer.length
+  const correctRows = rowCount(maxRows, terminal.rows, scrollback)
+  return serializeBufferByRange(
+    terminal,
+    buffer,
+    {
+      start: maxRows - correctRows,
+      end: maxRows - 1,
+    },
+    false,
+  )
+}
+
+// ============================================================================
 // SerializeAddon Class
 // ============================================================================
 
 export class SerializeAddon implements ITerminalAddon {
-  private _terminal?: ITerminalCore
+  private _terminal: Option.Option<ITerminalCore> = Option.none()
 
   /**
    * Activate the addon (called by Terminal.loadAddon)
    */
   public activate(terminal: ITerminalCore): void {
-    this._terminal = terminal
+    this._terminal = Option.some(terminal)
   }
 
   /**
    * Dispose the addon and clean up resources
    */
   public dispose(): void {
-    this._terminal = undefined
+    this._terminal = Option.none()
   }
 
   /**
@@ -534,30 +580,35 @@ export class SerializeAddon implements ITerminalAddon {
    * @param options Custom options to allow control over what gets serialized.
    */
   public serialize(options?: ISerializeOptions): string {
-    if (!this._terminal) {
+    if (Option.isNone(this._terminal)) {
       throw new Error("Cannot use addon until it has been loaded")
     }
+    const terminal = this._terminal.value
 
-    const buffer = getTerminalBuffers(this._terminal)
+    const buffer = getTerminalBuffers(terminal)
 
-    if (!buffer) {
+    if (Option.isNone(buffer)) {
       return ""
     }
 
-    const normalBuffer = buffer.normal ?? buffer.active
-    const altBuffer = buffer.alternate
+    const normalBuffer = Option.orElse(buffer.value.normal, () => buffer.value.active)
+    const altBuffer = buffer.value.alternate
 
-    if (!normalBuffer) {
+    if (Option.isNone(normalBuffer)) {
       return ""
     }
 
-    let content = !options?.excludeModes && getTerminalMode(this._terminal, 2031) ? "\u001b[?2031h" : ""
+    let content = !options?.excludeModes && getTerminalMode(terminal, 2031) ? "\u001b[?2031h" : ""
     content += options?.range
-      ? this._serializeBufferByRange(normalBuffer, options.range, true)
-      : this._serializeBufferByScrollback(normalBuffer, options?.scrollback)
+      ? serializeBufferByRange(terminal, normalBuffer.value, options.range, true)
+      : serializeBufferByScrollback(terminal, normalBuffer.value, Option.fromNullishOr(options?.scrollback))
 
-    if (!options?.excludeAltBuffer && buffer.active?.type === "alternate" && altBuffer) {
-      const alternateContent = this._serializeBufferByScrollback(altBuffer, undefined)
+    if (
+      !options?.excludeAltBuffer &&
+      Option.exists(buffer.value.active, (active) => active.type === "alternate") &&
+      Option.isSome(altBuffer)
+    ) {
+      const alternateContent = serializeBufferByScrollback(terminal, altBuffer.value, Option.none())
       content += `\u001b[?1049h\u001b[H${alternateContent}`
     }
 
@@ -569,31 +620,31 @@ export class SerializeAddon implements ITerminalAddon {
    * @param options Custom options to allow control over what gets serialized.
    */
   public serializeAsText(options?: { scrollback?: number; trimWhitespace?: boolean }): string {
-    if (!this._terminal) {
+    if (Option.isNone(this._terminal)) {
       throw new Error("Cannot use addon until it has been loaded")
     }
+    const terminal = this._terminal.value
 
-    const buffer = getTerminalBuffers(this._terminal)
+    const buffer = getTerminalBuffers(terminal)
 
-    if (!buffer) {
+    if (Option.isNone(buffer)) {
       return ""
     }
 
-    const activeBuffer = buffer.active ?? buffer.normal
-    if (!activeBuffer) {
+    const activeBuffer = Option.orElse(buffer.value.active, () => buffer.value.normal)
+    if (Option.isNone(activeBuffer)) {
       return ""
     }
 
-    const maxRows = activeBuffer.length
-    const scrollback = options?.scrollback
-    const correctRows = scrollback === undefined ? maxRows : constrain(scrollback + this._terminal.rows, 0, maxRows)
+    const maxRows = activeBuffer.value.length
+    const correctRows = rowCount(maxRows, terminal.rows, Option.fromNullishOr(options?.scrollback))
 
     const startRow = maxRows - correctRows
     const endRow = maxRows - 1
     const lines: string[] = []
 
     for (let row = startRow; row <= endRow; row++) {
-      const line = activeBuffer.getLine(row)
+      const line = activeBuffer.value.getLine(row)
       if (line) {
         const text = line.translateToString(options?.trimWhitespace ?? true)
         lines.push(text)
@@ -608,35 +659,5 @@ export class SerializeAddon implements ITerminalAddon {
     }
 
     return lines.join("\n")
-  }
-
-  private _serializeBufferByScrollback(buffer: IBuffer, scrollback?: number): string {
-    const maxRows = buffer.length
-    const rows = this._terminal?.rows ?? 24
-    const correctRows = scrollback === undefined ? maxRows : constrain(scrollback + rows, 0, maxRows)
-    return this._serializeBufferByRange(
-      buffer,
-      {
-        start: maxRows - correctRows,
-        end: maxRows - 1,
-      },
-      false,
-    )
-  }
-
-  private _serializeBufferByRange(
-    buffer: IBuffer,
-    range: ISerializeRange,
-    excludeFinalCursorPosition: boolean,
-  ): string {
-    const handler = new StringSerializeHandler(buffer, this._terminal!)
-    const cols = this._terminal?.cols ?? 80
-    return handler.serialize(
-      {
-        start: { x: 0, y: range.start },
-        end: { x: cols, y: range.end },
-      },
-      excludeFinalCursorPosition,
-    )
   }
 }
