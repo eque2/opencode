@@ -45,27 +45,20 @@ type Shortcuts = {
 type Tip = string | ((shortcuts: Shortcuts) => string | undefined)
 
 function parse(tip: string): TipPart[] {
-  const parts: TipPart[] = []
   const regex = /\{highlight\}(.*?)\{\/highlight\}/g
   const found = Array.from(tip.matchAll(regex))
-  const state = found.reduce(
-    (acc, match) => {
-      const start = match.index ?? 0
-      if (start > acc.index) {
-        acc.parts.push({ text: tip.slice(acc.index, start), highlight: false })
-      }
-      acc.parts.push({ text: match[1], highlight: true })
-      acc.index = start + match[0].length
-      return acc
-    },
-    { parts, index: 0 },
-  )
+  const initial: { parts: TipPart[]; index: number } = { parts: [], index: 0 }
+  const state = found.reduce((acc, match) => {
+    const start = match.index ?? 0
+    const plain = start > acc.index ? [{ text: tip.slice(acc.index, start), highlight: false }] : []
+    return {
+      parts: [...acc.parts, ...plain, { text: match[1], highlight: true }],
+      index: start + match[0].length,
+    }
+  }, initial)
 
-  if (state.index < tip.length) {
-    parts.push({ text: tip.slice(state.index), highlight: false })
-  }
-
-  return parts
+  if (state.index < tip.length) return [...state.parts, { text: tip.slice(state.index), highlight: false }]
+  return state.parts
 }
 
 const NO_MODELS_TIP = "Run {highlight}/connect{/highlight} to add an AI provider and start coding"

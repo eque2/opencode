@@ -231,19 +231,8 @@ function WhichKeyPanel(props: {
     return groups().flatMap((group) => [{ type: "group", label: group.label } satisfies GroupHeader, ...group.entries])
   })
   const maxOffset = createMemo(() => Math.max(0, items().length - pageSize()))
-  const shown = createMemo(() => {
-    const columnsItems: Item[][] = []
-    let index = offset()
-    for (let column = 0; column < columns() && index < items().length; column++) {
-      const list: Item[] = []
-      while (list.length < rows() && index < items().length) {
-        list.push(items()[index]!)
-        index += 1
-      }
-      columnsItems.push(list)
-    }
-    return columnsItems
-  })
+  // Fill up to columns() columns of rows() items each, starting at the scroll offset.
+  const shown = createMemo(() => Array.chunksOf(items().slice(offset(), offset() + columns() * rows()), rows()))
   const rowIndexes = createMemo(() => Array.makeBy(rows(), (index) => index))
   const trigger = commandShortcut(props.api, command.toggle)
   const modeTrigger = commandShortcut(props.api, command.toggleLayout)
