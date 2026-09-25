@@ -240,7 +240,10 @@ export const Definitions = {
 } satisfies Record<string, Definition>
 
 type KeybindName = keyof typeof Definitions
-const KeybindNames = new Set<string>(Object.keys(Definitions))
+
+function isKeybindName(name: string): name is KeybindName {
+  return Object.hasOwn(Definitions, name)
+}
 
 export const KeybindOverrides = Schema.Struct(
   Object.fromEntries(
@@ -460,7 +463,7 @@ export function parse(keybinds: KeybindOverrides): Keybinds {
 export const Keybinds = { parse }
 
 export function unknownKeys(input: object) {
-  return Object.keys(input).filter((key) => !KeybindNames.has(key))
+  return Object.keys(input).filter((key) => !isKeybindName(key))
 }
 
 export function bindingDefaults(): BindingDefaults<Renderable, KeyEvent> {

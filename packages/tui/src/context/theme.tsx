@@ -19,6 +19,7 @@ import {
   upsertTheme,
   type ThemeJson,
 } from "../theme"
+import { MutableHashSet } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -305,16 +306,17 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
 
 export function createSyntaxStyleMemo(factory: () => SyntaxStyle) {
   const renderer = useRenderer()
-  const retained = new Set<SyntaxStyle>()
+  const retained = MutableHashSet.empty<SyntaxStyle>()
   let current: SyntaxStyle | undefined
 
   const release = (style: SyntaxStyle) => {
-    retained.add(style)
+    MutableHashSet.add(retained, style)
     void renderer
       .idle()
       .catch(() => {})
       .finally(() => {
-        if (!retained.delete(style)) return
+        if (!MutableHashSet.has(retained, style)) return
+        MutableHashSet.remove(retained, style)
         style.destroy()
       })
   }
