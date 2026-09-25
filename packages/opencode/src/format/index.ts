@@ -84,7 +84,7 @@ const layer = Layer.effect(
               yield* Effect.logInfo("running", { command: cmd })
               const replaced = cmd.map((x) => x.replace("$FILE", filepath))
               const dir = yield* InstanceState.directory
-              const result = yield* appProcess
+              yield* appProcess
                 .run(
                   ChildProcess.make(replaced[0], replaced.slice(1), {
                     cwd: dir,
@@ -96,6 +96,14 @@ const layer = Layer.effect(
                   }),
                 )
                 .pipe(
+                  Effect.flatMap((result) =>
+                    result.exitCode === 0
+                      ? Effect.void
+                      : Effect.logError("failed", {
+                          command: cmd,
+                          ...item.environment,
+                        }),
+                  ),
                   Effect.catch((error) =>
                     Effect.logError("failed to format file", {
                       error: "spawn failed",
@@ -103,15 +111,9 @@ const layer = Layer.effect(
                       ...item.environment,
                       file: filepath,
                       cause: errorMessage(error.cause ?? error),
-                    }).pipe(Effect.as(undefined)),
+                    }),
                   ),
                 )
-              if (result && result.exitCode !== 0) {
-                yield* Effect.logError("failed", {
-                  command: cmd,
-                  ...item.environment,
-                })
-              }
             }
 
             return true
