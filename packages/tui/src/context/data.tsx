@@ -24,7 +24,8 @@ import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
 import { useEvent } from "./event"
 import { batch, createSignal, onCleanup, onMount } from "solid-js"
-import { Schema } from "effect"
+import { Data, Effect, Schema } from "effect"
+import { errorMessage } from "../util/error"
 
 type LocationData = {
   agent?: AgentV2Info[]
@@ -36,7 +37,7 @@ type LocationData = {
   skill?: SkillV2Info[]
 }
 
-type Data = {
+type DataStore = {
   session: {
     info: Record<string, SessionV2Info>
     message: Record<string, SessionMessage[]>
@@ -59,6 +60,19 @@ function locationKey(location: LocationRef) {
   return encodeLocationKey([location.directory, location.workspaceID])
 }
 
+/** A failed data request. `message` is the text that Promise consumers see. */
+class DataRequestError extends Data.TaggedError("TuiData.RequestError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+function request<A>(evaluate: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: evaluate,
+    catch: (cause) => new DataRequestError({ message: errorMessage(cause), cause }),
+  })
+}
+
 // Request parameters for a location read; no ref means the server default.
 function locationQuery(ref?: LocationRef) {
   return ref ? { location: { directory: ref.directory, workspace: ref.workspaceID } } : {}
@@ -67,7 +81,7 @@ function locationQuery(ref?: LocationRef) {
 export const { use: useData, provider: DataProvider } = createSimpleContext({
   name: "Data",
   init: () => {
-    const [store, setStore] = createStore<Data>({
+    const [store, setStore] = createStore<DataStore>({
       session: {
         info: {},
         message: {},
@@ -132,10 +146,94 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       },
     }
 
+    const load = {
+      session: (sessionID: string) =>
+        request(() => sdk.client.v2.session.get({ sessionID }, { throwOnError: true })).pipe(
+          Effect.map((response) => setStore("session", "info", sessionID, response.data.data)),
+        ),
+      sessionMessages: (sessionID: string) =>
+        request(() => sdk.client.v2.session.messages({ sessionID }, { throwOnError: true })).pipe(
+          Effect.map((response) => setStore("session", "message", sessionID, response.data.data)),
+        ),
+      sessionPermissions: (sessionID: string) =>
+        request(() => sdk.client.v2.session.permission.list({ sessionID }, { throwOnError: true })).pipe(
+          Effect.map((response) => setStore("session", "permission", sessionID, response.data.data)),
+        ),
+      sessionQuestions: (sessionID: string) =>
+        request(() => sdk.client.v2.session.question.list({ sessionID }, { throwOnError: true })).pipe(
+          Effect.map((response) => setStore("session", "question", sessionID, response.data.data)),
+        ),
+      projectPermissions: (projectID: string) =>
+        request(() => sdk.client.v2.permission.saved.list({ projectID }, { throwOnError: true })).pipe(
+          Effect.map((response) => setStore("project", "permission", projectID, response.data.data)),
+        ),
+      location: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.location.get(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) => {
+            const location = response.data
+            const key = locationKey(location)
+            if (!store.location[key]) setStore("location", key, {})
+            if (!ref) setDefaultLocation({ directory: location.directory, workspaceID: location.workspaceID })
+          }),
+        ),
+      agent: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.agent.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "agent", response.data.data),
+          ),
+        ),
+      command: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.command.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "command", response.data.data),
+          ),
+        ),
+      integration: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.integration.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "integration", response.data.data),
+          ),
+        ),
+      model: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.model.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "model", response.data.data),
+          ),
+        ),
+      provider: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.provider.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "provider", response.data.data),
+          ),
+        ),
+      reference: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.reference.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "reference", response.data.data),
+          ),
+        ),
+      skill: (ref?: LocationRef) =>
+        request(() => sdk.client.v2.skill.list(locationQuery(ref), { throwOnError: true })).pipe(
+          Effect.map((response) =>
+            setStore("location", locationKey(response.data.location), "skill", response.data.data),
+          ),
+        ),
+    }
+
+    // Runs refreshes side by side; each failure is logged and does not stop the others.
+    function refreshAll(message: string, tasks: ReadonlyArray<Effect.Effect<void, DataRequestError>>) {
+      Effect.runFork(
+        Effect.forEach(tasks, (task) => task.pipe(Effect.catch((error) => Effect.logError(message, error.cause))), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      )
+    }
+
     function handleEvent(event: Event, location: LocationRef) {
       switch (event.type) {
         case "catalog.updated":
-          void Promise.all([result.location.model.refresh(location), result.location.provider.refresh(location)])
+          refreshAll("Failed to refresh location data", [load.model(location), load.provider(location)])
           break
         case "session.next.agent.switched":
           message.prepend(event.properties.sessionID, {
@@ -411,13 +509,13 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
           })
           break
         case "reference.updated":
-          void result.location.reference.refresh()
+          refreshAll("Failed to refresh location data", [load.reference()])
           break
         case "integration.updated":
-          void Promise.all([
-            result.location.integration.refresh(location),
-            result.location.model.refresh(location),
-            result.location.provider.refresh(location),
+          refreshAll("Failed to refresh location data", [
+            load.integration(location),
+            load.model(location),
+            load.provider(location),
           ])
           break
       }
@@ -435,35 +533,31 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
         get(sessionID: string) {
           return store.session.info[sessionID]
         },
-        async refresh(sessionID: string) {
-          const result = await sdk.client.v2.session.get({ sessionID }, { throwOnError: true })
-          setStore("session", "info", sessionID, result.data.data)
+        refresh(sessionID: string) {
+          return Effect.runPromise(load.session(sessionID))
         },
         message: {
           list(sessionID: string) {
             return store.session.message[sessionID]
           },
-          async refresh(sessionID: string) {
-            const result = await sdk.client.v2.session.messages({ sessionID }, { throwOnError: true })
-            setStore("session", "message", sessionID, result.data.data)
+          refresh(sessionID: string) {
+            return Effect.runPromise(load.sessionMessages(sessionID))
           },
         },
         permission: {
           list(sessionID: string) {
             return store.session.permission[sessionID]
           },
-          async refresh(sessionID: string) {
-            const result = await sdk.client.v2.session.permission.list({ sessionID }, { throwOnError: true })
-            setStore("session", "permission", sessionID, result.data.data)
+          refresh(sessionID: string) {
+            return Effect.runPromise(load.sessionPermissions(sessionID))
           },
         },
         question: {
           list(sessionID: string) {
             return store.session.question[sessionID]
           },
-          async refresh(sessionID: string) {
-            const result = await sdk.client.v2.session.question.list({ sessionID }, { throwOnError: true })
-            setStore("session", "question", sessionID, result.data.data)
+          refresh(sessionID: string) {
+            return Effect.runPromise(load.sessionQuestions(sessionID))
           },
         },
       },
@@ -472,9 +566,8 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
           list(projectID: string) {
             return store.project.permission[projectID]
           },
-          async refresh(projectID: string) {
-            const result = await sdk.client.v2.permission.saved.list({ projectID }, { throwOnError: true })
-            setStore("project", "permission", projectID, result.data.data)
+          refresh(projectID: string) {
+            return Effect.runPromise(load.projectPermissions(projectID))
           },
         },
       },
@@ -482,100 +575,79 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
         default() {
           return defaultLocation()
         },
-        async refresh(ref?: LocationRef) {
-          const response = await sdk.client.v2.location.get(locationQuery(ref), { throwOnError: true })
-          const location = response.data
-          const key = locationKey(location)
-          if (!store.location[key]) setStore("location", key, {})
-          if (!ref) setDefaultLocation({ directory: location.directory, workspaceID: location.workspaceID })
+        refresh(ref?: LocationRef) {
+          return Effect.runPromise(load.location(ref))
         },
         agent: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.agent
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.agent.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "agent", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.agent(ref))
           },
         },
         command: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.command
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.command.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "command", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.command(ref))
           },
         },
         integration: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.integration
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.integration.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "integration", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.integration(ref))
           },
         },
         model: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.model
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.model.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "model", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.model(ref))
           },
         },
         provider: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.provider
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.provider.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "provider", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.provider(ref))
           },
         },
         reference: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.reference
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.reference.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "reference", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.reference(ref))
           },
         },
         skill: {
           list(location?: LocationRef) {
             return store.location[locationKey(location ?? defaultLocation())]?.skill
           },
-          async refresh(ref?: LocationRef) {
-            const result = await sdk.client.v2.skill.list(locationQuery(ref), { throwOnError: true })
-            const key = locationKey(result.data.location)
-            setStore("location", key, "skill", result.data.data)
+          refresh(ref?: LocationRef) {
+            return Effect.runPromise(load.skill(ref))
           },
         },
       },
     }
 
     onMount(() => {
-      void Promise.allSettled([
-        result.location.refresh(),
-        result.location.agent.refresh(),
-        result.location.integration.refresh(),
-        result.location.model.refresh(),
-        result.location.provider.refresh(),
-        result.location.reference.refresh(),
-        result.location.command.refresh(),
-        result.location.skill.refresh(),
-      ]).then((settled) => {
-        for (const failure of settled.filter((item) => item.status === "rejected"))
-          console.error("Failed to refresh default location data", failure.reason)
-      })
+      refreshAll("Failed to refresh default location data", [
+        load.location(),
+        load.agent(),
+        load.integration(),
+        load.model(),
+        load.provider(),
+        load.reference(),
+        load.command(),
+        load.skill(),
+      ])
     })
 
     return result
