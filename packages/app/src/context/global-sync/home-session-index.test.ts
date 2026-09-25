@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { QueryClient } from "@tanstack/solid-query"
-import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import type { Session } from "@opencode-ai/sdk/v2/client"
 import { Effect, Option } from "effect"
 import {
   applyHomeSessionEvent,
   appendHomeSessionEvent,
   createHomeSessionIndexCache,
   HOME_V2_SESSION_PAGE_LIMIT,
+  type HomeSessionWire,
   loadHomeSessionIndex,
   homeSessionIndexSessions,
   homeSessionIndexRefresh,
@@ -103,10 +104,10 @@ describe("Home V2 session index", () => {
     ))
 
   test("maps visible roots to Home session summaries", () => {
-    const activeNull = {
+    const activeNull: HomeSessionWire = {
       ...session({ id: "active-null", updated: 20 }),
       time: { created: 1, updated: 20, archived: null },
-    } as unknown as SessionV2Info
+    }
     const result = parseHomeSessionIndex([
       session({ id: "root", updated: 30 }),
       activeNull,
@@ -126,7 +127,7 @@ describe("Home V2 session index", () => {
       }),
       expect.objectContaining({
         id: "active-null",
-        time: { created: 1, updated: 20, archived: null },
+        time: { created: 1, updated: 20 },
       }),
     ])
   })

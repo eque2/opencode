@@ -22,6 +22,11 @@ export type HomeSessionIndex = {
 export const homeSessionIndexKey = (server: string) => ["home", "session-index", server] as const
 export const homeSessionEventsKey = (server: string) => ["home", "session-events", server] as const
 
+/** A V2 session as the server sends it: an active session can carry `time.archived: null`. */
+export type HomeSessionWire = Omit<SessionV2Info, "time"> & {
+  time: Omit<SessionV2Info["time"], "archived"> & { archived?: number | null }
+}
+
 type HomeSessionPage = { data?: V2SessionListResponse }
 
 export function loadHomeSessionIndex(
@@ -156,7 +161,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
 // multiple directories. A bounded page could omit an old session updated today.
 // Once released, use client.v2.project.list() and client.v2.session.list({
 // parentID: null, order: "desc" }), then remove this adapter and its V1 fields.
-export function parseHomeSessionIndex(sessions: ReadonlyArray<SessionV2Info>): Session[] {
+export function parseHomeSessionIndex(sessions: ReadonlyArray<HomeSessionWire>): Session[] {
   return sessions.flatMap((item) => {
     if (item.parentID || typeof item.time.archived === "number") return []
     return [toLegacySummary(item)]
@@ -180,7 +185,9 @@ export function applyHomeSessionEvent(sessions: Session[], event: HomeSessionEve
   return sessions.with(index, info)
 }
 
-function toLegacySummary(session: SessionV2Info): Session {
+// The V1 Session has no null archive time, so a wire null decodes to an absent key.
+function toLegacySummary(session: HomeSessionWire): Session {
+  const { archived, ...time } = session.time
   return {
     id: session.id,
     slug: session.id,
@@ -195,6 +202,9 @@ function toLegacySummary(session: SessionV2Info): Session {
     agent: session.agent,
     model: session.model,
     version: "",
-    time: session.time,
+    time: Option.match(Option.fromNullishOr(archived), {
+      onNone: () => time,
+      onSome: (value) => ({ ...time, archived: value }),
+    }),
   }
 }
