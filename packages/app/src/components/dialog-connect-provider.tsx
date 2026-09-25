@@ -22,7 +22,6 @@ import {
   createUniqueId,
   For,
   Match,
-  onCleanup,
   onMount,
   Show,
   Switch,
@@ -38,10 +37,21 @@ import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
-import { HashMap, Option, Predicate } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
+import { Data, Effect, HashMap, Option, Predicate, Schedule } from "effect"
 
 const CUSTOM_ID = "_custom"
 type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
+
+/** An integration request that rejected. `cause` holds the rejection, which formatError reads. */
+class IntegrationRequestError extends Data.TaggedError("IntegrationRequestError")<{
+  readonly cause: unknown
+}> {}
+
+/** Runs one integration SDK request. The failure keeps the rejection as its cause. */
+function request<A>(run: () => PromiseLike<A>) {
+  return Effect.tryPromise({ try: run, catch: (cause) => new IntegrationRequestError({ cause }) })
+}
 
 export function useProviderConnectController(options: { onBack?: () => void } = {}) {
   const [store, setStore] = createStore({ selected: undefined as string | undefined })
@@ -398,15 +408,8 @@ function ProviderConnection(props: {
     return value ? { directory: value } : undefined
   }
 
-  const alive = { value: true }
-  const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
-
-  onCleanup(() => {
-    alive.value = false
-    if (timer.current === undefined) return
-    clearTimeout(timer.current)
-    timer.current = undefined
-  })
+  // The OAuth connect request of the selected method. A new selection or the cleanup of this view interrupts it.
+  const connecting = createFiberSlot()
 
   const provider = createMemo(() =>
     HashMap.get(providers.all(), props.provider).pipe(
@@ -543,42 +546,39 @@ function ProviderConnection(props: {
     return fallback
   }
 
-  async function selectMethod(index: number, inputs?: Record<string, string>) {
-    if (timer.current !== undefined) {
-      clearTimeout(timer.current)
-      timer.current = undefined
-    }
-
+  function selectMethod(index: number, inputs?: Record<string, string>) {
     const method = methods()[index]
     dispatch({ type: "method.select", index })
 
-    if (method.type === "oauth") {
-      if (method.prompts?.length && !inputs) {
-        dispatch({ type: "auth.prompt" })
-        return
-      }
-      dispatch({ type: "auth.pending" })
-      await serverSDK()
-        .api.integration.oauth.connect({
+    if (method.type !== "oauth") return
+    if (method.prompts?.length && !inputs) {
+      dispatch({ type: "auth.prompt" })
+      return
+    }
+    dispatch({ type: "auth.pending" })
+    connecting.run(
+      request(() =>
+        serverSDK().api.integration.oauth.connect({
           integrationID: props.provider,
           methodID: method.id,
           inputs: inputs ?? {},
           location: location(),
-        })
-        .then((x) => {
-          if (!alive.value) return
-          if (props.provider === "opencode" && platform.platform === "desktop") {
-            const url = new URL(x.data.url)
-            url.searchParams.set("client_id", "opencode-desktop")
-            x.data.url = url.href
-          }
-          dispatch({ type: "auth.complete", authorization: x.data })
-        })
-        .catch((e) => {
-          if (!alive.value) return
-          dispatch({ type: "auth.error", error: formatError(e, language.t("common.requestFailed")) })
-        })
-    }
+        }),
+      ).pipe(
+        Effect.match({
+          onSuccess: (x) => {
+            if (props.provider === "opencode" && platform.platform === "desktop") {
+              const url = new URL(x.data.url)
+              url.searchParams.set("client_id", "opencode-desktop")
+              x.data.url = url.href
+            }
+            dispatch({ type: "auth.complete", authorization: x.data })
+          },
+          onFailure: (error) =>
+            dispatch({ type: "auth.error", error: formatError(error.cause, language.t("common.requestFailed")) }),
+        }),
+      ),
+    )
   }
 
   function AuthPromptsView() {
@@ -613,22 +613,22 @@ function ProviderConnection(props: {
       return value.trim().length > 0
     })
 
-    async function next(index: number, value: Record<string, string>) {
+    function next(index: number, value: Record<string, string>) {
       if (store.methodIndex === undefined) return
       const next = prompts().findIndex((prompt, i) => i > index && matches(prompt, value))
       if (next !== -1) {
         setFormStore("index", next)
         return
       }
-      await selectMethod(store.methodIndex, value)
+      selectMethod(store.methodIndex, value)
     }
 
-    async function handleSubmit(e: SubmitEvent) {
+    function handleSubmit(e: SubmitEvent) {
       e.preventDefault()
       const item = current()
       if (!item || item.prompt.type !== "text") return
       if (!valid()) return
-      await next(item.index, formStore.value)
+      next(item.index, formStore.value)
     }
 
     const item = () => current()
@@ -680,7 +680,7 @@ function ProviderConnection(props: {
                       [prompt.key]: value.value,
                     }
                     setFormStore("value", prompt.key, value.value)
-                    void next(item()!.index, nextValue)
+                    next(item()!.index, nextValue)
                   }}
                 >
                   {(option) => (
@@ -716,14 +716,13 @@ function ProviderConnection(props: {
     if (loading()) return
     if (methods().length === 1) {
       auto = true
-      void selectMethod(0)
+      selectMethod(0)
     }
   })
 
-  async function complete() {
-    await serverSync()
-      .refreshProviders()
-      .catch(() => undefined)
+  // Refreshes the provider list, then closes the dialog. A failed refresh still closes it.
+  const complete = Effect.gen(function* () {
+    yield* request(() => serverSync().refreshProviders()).pipe(Effect.ignore)
     dialog.close()
     showToast({
       variant: "success",
@@ -731,7 +730,7 @@ function ProviderConnection(props: {
       title: language.t("provider.connect.toast.connected.title", { provider: providerName() }),
       description: language.t("provider.connect.toast.connected.description", { provider: providerName() }),
     })
-  }
+  })
 
   function goBack() {
     if (methods().length > 1 && store.methodIndex !== undefined) {
@@ -758,7 +757,7 @@ function ProviderConnection(props: {
                   <button
                     type="button"
                     class="group flex h-9 w-full items-center gap-2 rounded-md px-3 text-left text-[13px] leading-5 tracking-[-0.04px] hover:bg-v2-overlay-simple-overlay-hover focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none"
-                    onClick={() => void selectMethod(index())}
+                    onClick={() => selectMethod(index())}
                   >
                     <span class="flex h-2 w-4 shrink-0 items-center justify-center rounded-[1px] bg-v2-background-bg-base shadow-[var(--v2-elevation-button-neutral)]">
                       <span class="hidden h-0.5 w-2.5 bg-v2-icon-icon-base group-hover:block group-focus-visible:block" />
@@ -788,9 +787,9 @@ function ProviderConnection(props: {
             }}
             items={methods}
             key={(m) => m?.label ?? m?.type}
-            onSelect={async (selected, index) => {
+            onSelect={(selected, index) => {
               if (!selected) return
-              void selectMethod(index)
+              selectMethod(index)
             }}
           >
             {(i) => (
@@ -820,7 +819,7 @@ function ProviderConnection(props: {
       apiKey?.focus({ preventScroll: true })
     })
 
-    async function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
+    function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
       e.preventDefault()
 
       const entry = new FormData(e.currentTarget).get("apiKey")
@@ -832,12 +831,19 @@ function ProviderConnection(props: {
       }
 
       setFormStore("error", undefined)
-      await serverSDK().api.integration.connect.key({
-        integrationID: props.provider,
-        location: location(),
-        key: apiKey,
-      })
-      await complete()
+      Effect.runFork(
+        request(() =>
+          serverSDK().api.integration.connect.key({
+            integrationID: props.provider,
+            location: location(),
+            key: apiKey,
+          }),
+        ).pipe(
+          Effect.andThen(complete),
+          // The form shows no error for a failed key request, so it goes to the log.
+          Effect.catch((error) => Effect.logError("Provider API key connect failed", error.cause)),
+        ),
+      )
     }
 
     if (newLayout())
@@ -949,7 +955,7 @@ function ProviderConnection(props: {
       codeInput?.focus({ preventScroll: true })
     })
 
-    async function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
+    function handleSubmit(e: SubmitEvent & { currentTarget: HTMLFormElement }) {
       e.preventDefault()
 
       const entry = new FormData(e.currentTarget).get("code")
@@ -961,20 +967,24 @@ function ProviderConnection(props: {
       }
 
       setFormStore("error", undefined)
-      const result = await serverSDK()
-        .api.integration.oauth.complete({
-          integrationID: props.provider,
-          attemptID: store.authorization!.attemptID,
-          location: location(),
-          code,
-        })
-        .then(() => ({ ok: true as const }))
-        .catch((error) => ({ ok: false as const, error }))
-      if (result.ok) {
-        await complete()
-        return
-      }
-      setFormStore("error", formatError(result.error, language.t("provider.connect.oauth.code.invalid")))
+      Effect.runFork(
+        request(() =>
+          serverSDK().api.integration.oauth.complete({
+            integrationID: props.provider,
+            attemptID: store.authorization!.attemptID,
+            location: location(),
+            code,
+          }),
+        ).pipe(
+          Effect.matchEffect({
+            onSuccess: () => complete,
+            onFailure: (error) =>
+              Effect.sync(() =>
+                setFormStore("error", formatError(error.cause, language.t("provider.connect.oauth.code.invalid"))),
+              ),
+          }),
+        ),
+      )
     }
 
     if (newLayout())
@@ -1056,39 +1066,49 @@ function ProviderConnection(props: {
       return instructions
     })
 
-    onMount(() => {
-      const poll = async () => {
-        const authorization = store.authorization
-        if (!authorization || !alive.value) return
-        const result = await serverSDK()
-          .api.integration.oauth.status({
-            integrationID: props.provider,
-            attemptID: authorization.attemptID,
-            location: location(),
-          })
-          .then((value) => ({ ok: true as const, status: value.data }))
-          .catch((error) => ({ ok: false as const, error }))
-        if (!alive.value) return
-        if (!result.ok) {
-          dispatch({ type: "auth.error", error: formatError(result.error, language.t("common.requestFailed")) })
-          return
-        }
-        if (result.status.status === "complete") {
-          await complete()
-          return
-        }
-        if (result.status.status === "failed") {
-          dispatch({ type: "auth.error", error: result.status.message })
-          return
-        }
-        if (result.status.status === "expired") {
-          dispatch({ type: "auth.error", error: language.t("common.requestFailed") })
-          return
-        }
-        timer.current = setTimeout(poll, 1_000)
+    // The status poll lives as long as this view. Leaving the view, a new method selection
+    // or the cleanup of the connection view interrupts it.
+    const polling = createFiberSlot()
+
+    // Checks the attempt once. It succeeds with true while the attempt still waits for the user.
+    const check = Effect.gen(function* () {
+      const authorization = store.authorization
+      if (!authorization) return false
+      const result = yield* request(() =>
+        serverSDK().api.integration.oauth.status({
+          integrationID: props.provider,
+          attemptID: authorization.attemptID,
+          location: location(),
+        }),
+      )
+      const status = result.data
+      if (status.status === "complete") {
+        yield* complete
+        return false
       }
-      void poll()
+      if (status.status === "failed") {
+        dispatch({ type: "auth.error", error: status.message })
+        return false
+      }
+      if (status.status === "expired") {
+        dispatch({ type: "auth.error", error: language.t("common.requestFailed") })
+        return false
+      }
+      return true
     })
+
+    onMount(() =>
+      polling.run(
+        check.pipe(
+          Effect.repeat({ schedule: Schedule.spaced("1 second"), while: (pending) => pending }),
+          Effect.catch((error) =>
+            Effect.sync(() =>
+              dispatch({ type: "auth.error", error: formatError(error.cause, language.t("common.requestFailed")) }),
+            ),
+          ),
+        ),
+      ),
+    )
 
     return (
       <div class="flex flex-col gap-6">
