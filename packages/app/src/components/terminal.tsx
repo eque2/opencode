@@ -3,6 +3,7 @@ import { useTheme } from "@opencode-ai/ui/theme/context"
 import { resolveThemeVariant } from "@opencode-ai/ui/theme/resolve"
 import { resolveThemeVariantV2 } from "@opencode-ai/ui/theme/v2/resolve"
 import type { HexColor, ResolvedV2Theme } from "@opencode-ai/ui/theme/types"
+import { isHexColor } from "@opencode-ai/ui/theme/validate"
 import { showToast } from "@/utils/toast"
 import type { FitAddon, Ghostty, Terminal as Term } from "ghostty-web"
 import { type ComponentProps, createEffect, createMemo, onCleanup, onMount, splitProps } from "solid-js"
@@ -50,7 +51,7 @@ type TerminalColors = {
   selectionBackground: string
 }
 
-const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
+const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors & { foreground: HexColor }> = {
   light: {
     background: "#fcfcfc",
     foreground: "#211e1e",
@@ -277,7 +278,7 @@ export const Terminal = (props: TerminalProps) => {
         fallback.background)
       : (resolved["background-stronger"] ?? fallback.background)
     const alpha = mode === "dark" ? 0.25 : 0.2
-    const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
+    const base = isHexColor(text) ? text : fallback.foreground
     const selectionBackground = withAlpha(base, alpha)
     return {
       background,
