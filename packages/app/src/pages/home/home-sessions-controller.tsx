@@ -40,6 +40,7 @@ const homeRequest = <A,>(run: () => Promise<A>) =>
 const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
   Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 }
+
 export type HomeSessionRecord = {
   session: Session
   project: LocalProject
