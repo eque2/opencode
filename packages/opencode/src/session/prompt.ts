@@ -62,6 +62,7 @@ globalThis.AI_SDK_LOG_WARNINGS = false
 
 const decodeMessageInfo = Schema.decodeUnknownExit(SessionV1.Info)
 const decodeMessagePart = Schema.decodeUnknownExit(SessionV1.Part)
+const decodeStructuredOutput = Schema.decodeUnknownEffect(Schema.MutableJson)
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
 const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
   "application/pdf",
@@ -1286,7 +1287,7 @@ const layer = Layer.effect(
             })
 
             if (structured !== undefined) {
-              handle.message.structured = structured
+              handle.message.structured = yield* decodeStructuredOutput(structured).pipe(Effect.orDie)
               handle.message.finish = handle.message.finish ?? "stop"
               yield* sessions.updateMessage(handle.message)
               return "break" as const
