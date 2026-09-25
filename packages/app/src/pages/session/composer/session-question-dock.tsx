@@ -275,17 +275,19 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
   const sending = createMemo(() => replyMutation.isPending || rejectMutation.isPending)
 
-  const reply = async (answers: QuestionAnswer[]) => {
+  // `mutate` reports a failure through the mutation's onError toast and does
+  // not reject, so the handlers do not wait on a promise.
+  const reply = (answers: QuestionAnswer[]) => {
     if (sending()) return
-    await replyMutation.mutateAsync(answers)
+    replyMutation.mutate(answers)
   }
 
-  const reject = async () => {
+  const reject = () => {
     if (sending()) return
-    await rejectMutation.mutateAsync()
+    rejectMutation.mutate()
   }
 
-  const submit = () => void reply(questions().map((_, i) => store.answers[i] ?? []))
+  const submit = () => reply(questions().map((_, i) => store.answers[i] ?? []))
 
   const answered = (i: number) => {
     if ((store.answers[i]?.length ?? 0) > 0) return true
@@ -351,7 +353,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
     if (event.key === "Escape") {
       event.preventDefault()
-      void reject()
+      reject()
       return
     }
 

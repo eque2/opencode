@@ -1,5 +1,5 @@
 import { useNavigate } from "@solidjs/router"
-import { Option, Predicate } from "effect"
+import { Data, Effect, Option, Predicate } from "effect"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
@@ -31,6 +31,16 @@ export type SessionCommandContext = {
   fileBrowser?: () => boolean
 }
 
+class SessionCommandError extends Data.TaggedError("SessionCommandError")<{ readonly cause: unknown }> {}
+
+class SessionExportError extends Data.TaggedError("SessionExportError")<{ readonly cause: unknown }> {}
+
+// Runs a command program from a command handler. The handler does not wait
+// for it, so a failure is logged, as the unhandled rejection was before.
+const runDetached = <A, E>(program: Effect.Effect<A, E>) => {
+  Effect.runFork(program.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 const withCategory = (category: string) => {
   return (option: Omit<CommandOption, "category">): CommandOption => ({
     ...option,
@@ -55,22 +65,23 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const { params, sessionKey, tabs, view } = useSessionLayout()
   const sessionOwnership = createSessionOwnership(sessionKey)
   const sessionArchive = useSessionArchive()
-  const openDialog = async <T,>(load: () => Promise<T>, show: (value: T) => void) => {
+  const openDialog = <T,>(load: () => Promise<T>, show: (value: T) => void) => {
     const owner = sessionOwnership.capture()
-    const value = await load()
-    owner.run(() => show(value))
+    runDetached(Effect.map(Effect.promise(load), (value) => owner.run(() => show(value))))
   }
-  const runCommand = async <T,>(input: {
+  const runCommand = <T,>(input: {
     owner: ReturnType<ReturnType<typeof createSessionOwnership>["capture"]>
     prompt: T
     request: () => Promise<unknown>
     updatePrompt: (prompt: T) => void
     updateViewport: () => void
-  }) => {
-    await input.request()
-    input.updatePrompt(input.prompt)
-    input.owner.run(input.updateViewport)
-  }
+  }) =>
+    Effect.tryPromise({ try: input.request, catch: (cause) => new SessionCommandError({ cause }) }).pipe(
+      Effect.map(() => {
+        input.updatePrompt(input.prompt)
+        input.owner.run(input.updateViewport)
+      }),
+    )
 
   const info = () => {
     const id = params.id
@@ -148,61 +159,69 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     if (sessionID) return permission.isAutoAccepting(sessionID, sdk().directory)
     return permission.isAutoAcceptingDirectory(sdk().directory)
   }
-  const write = async (value: string) => {
-    const body = typeof document === "undefined" ? undefined : document.body
-    if (body) {
-      const textarea = document.createElement("textarea")
-      textarea.value = value
-      textarea.setAttribute("readonly", "")
-      textarea.style.position = "fixed"
-      textarea.style.opacity = "0"
-      textarea.style.pointerEvents = "none"
-      body.appendChild(textarea)
-      textarea.select()
-      const copied = document.execCommand("copy")
-      body.removeChild(textarea)
-      if (copied) return true
-    }
-
-    const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard
-    if (!clipboard?.writeText) return false
-    return clipboard.writeText(value).then(
-      () => true,
-      () => false,
-    )
+  // Copies through a hidden textarea and execCommand. False when there is no
+  // document or the browser refuses the copy.
+  const copyWithTextarea = (value: string) => {
+    if (typeof document === "undefined") return false
+    const body = document.body
+    if (!body) return false
+    const textarea = document.createElement("textarea")
+    textarea.value = value
+    textarea.setAttribute("readonly", "")
+    textarea.style.position = "fixed"
+    textarea.style.opacity = "0"
+    textarea.style.pointerEvents = "none"
+    body.appendChild(textarea)
+    textarea.select()
+    const copied = document.execCommand("copy")
+    body.removeChild(textarea)
+    return copied
   }
 
-  const copyShare = async (url: string, existing: boolean) => {
-    if (!(await write(url))) {
-      showToast({
-        title: language.t("toast.session.share.copyFailed.title"),
-        variant: "error",
-      })
-      return
-    }
-
-    showToast({
-      title: existing ? language.t("session.share.copy.copied") : language.t("toast.session.share.success.title"),
-      description: language.t("toast.session.share.success.description"),
-      variant: "success",
+  const write = (value: string) =>
+    Effect.gen(function* () {
+      if (copyWithTextarea(value)) return true
+      if (typeof navigator === "undefined") return false
+      const clipboard = navigator.clipboard
+      if (!clipboard?.writeText) return false
+      return yield* Effect.tryPromise(() => clipboard.writeText(value)).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      )
     })
-  }
 
-  const share = async () => {
+  const copyShare = (url: string, existing: boolean) =>
+    Effect.gen(function* () {
+      if (!(yield* write(url))) {
+        showToast({
+          title: language.t("toast.session.share.copyFailed.title"),
+          variant: "error",
+        })
+        return
+      }
+
+      showToast({
+        title: existing ? language.t("session.share.copy.copied") : language.t("toast.session.share.success.title"),
+        description: language.t("toast.session.share.success.description"),
+        variant: "success",
+      })
+    })
+
+  const share = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
 
     const existing = info()?.share?.url
     if (existing) {
-      await copyShare(existing, true)
+      yield* copyShare(existing, true)
       return
     }
 
-    const url = await sdk()
-      .client.session.share({ sessionID })
-      .then((res) => res.data?.share?.url)
-      .catch(() => undefined)
-    if (!url) {
+    const url = yield* Effect.tryPromise(() => sdk().client.session.share({ sessionID })).pipe(
+      Effect.map((res) => Option.filter(Option.fromNullishOr(res.data?.share?.url), (value) => value !== "")),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    )
+    if (Option.isNone(url)) {
       showToast({
         title: language.t("toast.session.share.failed.title"),
         description: language.t("toast.session.share.failed.description"),
@@ -211,58 +230,70 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await copyShare(url, false)
-  }
+    yield* copyShare(url.value, false)
+  })
 
-  const unshare = async () => {
+  const unshare = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
 
-    await sdk()
-      .client.session.unshare({ sessionID })
-      .then(() =>
+    yield* Effect.tryPromise(() => sdk().client.session.unshare({ sessionID })).pipe(
+      Effect.match({
+        onSuccess: () =>
+          showToast({
+            title: language.t("toast.session.unshare.success.title"),
+            description: language.t("toast.session.unshare.success.description"),
+            variant: "success",
+          }),
+        onFailure: () =>
+          showToast({
+            title: language.t("toast.session.unshare.failed.title"),
+            description: language.t("toast.session.unshare.failed.description"),
+            variant: "error",
+          }),
+      }),
+    )
+  })
+
+  const exportSession = Effect.gen(function* () {
+    const sessionID = params.id
+    if (!sessionID) return
+    const data = yield* Effect.tryPromise({
+      try: () =>
+        fetchSessionExport({
+          sessionID,
+          client: sdk().client,
+        }),
+      catch: (cause) => new SessionExportError({ cause }),
+    })
+    yield* Effect.try({
+      try: () => {
+        const filename = sessionExportFilename(data.info)
+        downloadSessionExport(filename, data)
         showToast({
-          title: language.t("toast.session.unshare.success.title"),
-          description: language.t("toast.session.unshare.success.description"),
           variant: "success",
-        }),
-      )
-      .catch(() =>
+          icon: "circle-check",
+          title: language.t("toast.session.export.success.title"),
+          description: language.t("toast.session.export.success.description", { filename }),
+        })
+      },
+      catch: (cause) => new SessionExportError({ cause }),
+    })
+  }).pipe(
+    Effect.catchTag("SessionExportError", (error) =>
+      Effect.sync(() =>
         showToast({
-          title: language.t("toast.session.unshare.failed.title"),
-          description: language.t("toast.session.unshare.failed.description"),
           variant: "error",
+          title: language.t("toast.session.export.failed.title"),
+          description:
+            error.cause instanceof Error ? error.cause.message : language.t("toast.session.export.failed.description"),
         }),
-      )
-  }
-
-  const exportSession = async () => {
-    const sessionID = params.id
-    if (!sessionID) return
-    try {
-      const data = await fetchSessionExport({
-        sessionID,
-        client: sdk().client,
-      })
-      const filename = sessionExportFilename(data.info)
-      downloadSessionExport(filename, data)
-      showToast({
-        variant: "success",
-        icon: "circle-check",
-        title: language.t("toast.session.export.success.title"),
-        description: language.t("toast.session.export.success.description", { filename }),
-      })
-    } catch (err) {
-      showToast({
-        variant: "error",
-        title: language.t("toast.session.export.failed.title"),
-        description: err instanceof Error ? err.message : language.t("toast.session.export.failed.description"),
-      })
-    }
-  }
+      ),
+    ),
+  )
 
   const openFile = () => {
-    void openDialog(
+    openDialog(
       () => import("@/components/dialog-select-file"),
       (x) => dialog.show(() => <x.DialogSelectFile onOpenFile={showAllFiles} />),
     )
@@ -308,7 +339,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   }
 
   const chooseMcp = () => {
-    void openDialog(
+    openDialog(
       () => import("@/components/dialog-select-mcp"),
       (x) => dialog.show(() => <x.DialogSelectMcp />),
     )
@@ -332,7 +363,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     })
   }
 
-  const undo = async () => {
+  const undo = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
     const owner = sessionOwnership.capture()
@@ -348,10 +379,10 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const parts = sync().data.part[message.id]
 
     if (sync().data.session_working(sessionID)) {
-      await session.interrupt({ sessionID }).catch(() => {})
+      yield* Effect.ignore(Effect.tryPromise(() => session.interrupt({ sessionID })))
     }
 
-    await runCommand({
+    yield* runCommand({
       owner,
       prompt: promptSession,
       request: () => session.revert.stage({ sessionID, messageID: message.id }),
@@ -360,9 +391,9 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       },
       updateViewport: () => setActiveMessage(messages[boundary - 2]),
     })
-  }
+  })
 
-  const redo = async () => {
+  const redo = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
     const owner = sessionOwnership.capture()
@@ -377,7 +408,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     if (boundary < 0) return
     const next = messages[boundary + 1]
     if (!next) {
-      await runCommand({
+      yield* runCommand({
         owner,
         prompt: promptSession,
         request: () => session.revert.clear({ sessionID }),
@@ -387,16 +418,17 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await runCommand({
+    yield* runCommand({
       owner,
       prompt: promptSession,
       request: () => session.revert.stage({ sessionID, messageID: next.id }),
-      updatePrompt: () => undefined,
+      // Redo keeps the prompt that the user has now.
+      updatePrompt: () => {},
       updateViewport: () => setActiveMessage(messages[boundary]),
     })
-  }
+  })
 
-  const compact = async () => {
+  const compact = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
 
@@ -409,14 +441,18 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    await sdk().api.session.compact({
-      sessionID,
-      model: { providerID: model.provider.id, modelID: model.id },
+    yield* Effect.tryPromise({
+      try: () =>
+        sdk().api.session.compact({
+          sessionID,
+          model: { providerID: model.provider.id, modelID: model.id },
+        }),
+      catch: (cause) => new SessionCommandError({ cause }),
     })
-  }
+  })
 
   const fork = () => {
-    void openDialog(
+    openDialog(
       () => import("@/components/dialog-fork"),
       (x) => dialog.show(() => <x.DialogFork />),
     )
@@ -433,7 +469,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
           : language.t("command.session.share.description"),
         slash: "share",
         disabled: !params.id,
-        onSelect: share,
+        onSelect: () => runDetached(share),
       }),
       sessionCommand({
         id: "session.unshare",
@@ -441,7 +477,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         description: language.t("command.session.unshare.description"),
         slash: "unshare",
         disabled: !params.id || !info()?.share?.url,
-        onSelect: unshare,
+        onSelect: () => runDetached(unshare),
       }),
     ]
   }
@@ -466,7 +502,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       description: language.t("command.session.undo.description"),
       slash: "undo",
       disabled: !params.id || visibleUserMessages().length === 0,
-      onSelect: undo,
+      onSelect: () => runDetached(undo),
     }),
     sessionCommand({
       id: "session.redo",
@@ -474,7 +510,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       description: language.t("command.session.redo.description"),
       slash: "redo",
       disabled: !params.id || !info()?.revert?.messageID,
-      onSelect: redo,
+      onSelect: () => runDetached(redo),
     }),
     sessionCommand({
       id: "session.compact",
@@ -482,7 +518,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       description: language.t("command.session.compact.description"),
       slash: "compact",
       disabled: !params.id || visibleUserMessages().length === 0,
-      onSelect: compact,
+      onSelect: () => runDetached(compact),
     }),
     sessionCommand({
       id: "session.fork",
@@ -498,7 +534,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       description: language.t("command.session.export.description"),
       slash: "export",
       disabled: !params.id,
-      onSelect: exportSession,
+      onSelect: () => runDetached(exportSession),
     }),
     sessionCommand({
       id: "session.archive",
