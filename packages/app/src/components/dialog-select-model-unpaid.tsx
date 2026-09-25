@@ -11,6 +11,7 @@ import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { ModelTooltip } from "./model-tooltip"
 import { useLanguage } from "@/context/language"
 import { decode64 } from "@/utils/base64"
+import { Option } from "effect"
 
 type ModelState = ReturnType<typeof useLocal>["model"]
 
@@ -69,7 +70,12 @@ export const DialogSelectModelUnpaid: Component<{ model?: ModelState }> = (props
             </Tooltip>
           )}
           onSelect={(x) => {
-            model.set(x ? { modelID: x.id, providerID: x.provider.id } : undefined, {
+            // List passes no item when nothing is active; model.set reads undefined as "clear the model".
+            const selected = Option.map(Option.fromNullishOr(x), (item) => ({
+              modelID: item.id,
+              providerID: item.provider.id,
+            }))
+            model.set(Option.getOrUndefined(selected), {
               recent: true,
             })
             dialog.close()

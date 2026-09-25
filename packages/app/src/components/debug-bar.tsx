@@ -6,6 +6,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { Option } from "effect"
 
 type Mem = Performance & {
   memory?: {
@@ -28,28 +29,32 @@ type Obs = PerformanceObserverInit & {
   durationThreshold?: number
 }
 
+/** A measured value. None means that the bar has no sample yet. */
+type Metric = Option.Option<number>
+
 const span = 5000
 
-const ms = (n?: number, d = 0) => {
-  if (n === undefined || Number.isNaN(n)) return
-  return `${n.toFixed(d)}ms`
-}
+/** Keeps a measured value only when it is a number. */
+const known = (n: Metric) => Option.filter(n, (value) => !Number.isNaN(value))
 
-const time = (n?: number) => {
-  if (n === undefined || Number.isNaN(n)) return
-  return `${Math.round(n)}`
-}
+const ms = (n: Metric, d = 0) => Option.map(known(n), (value) => `${value.toFixed(d)}ms`)
 
-const mb = (n?: number) => {
-  if (n === undefined || Number.isNaN(n)) return
-  const v = n / 1024 / 1024
-  return `${v >= 1024 ? v.toFixed(0) : v.toFixed(1)}MB`
-}
+const time = (n: Metric) => Option.map(known(n), (value) => `${Math.round(value)}`)
 
-const bad = (n: number | undefined, limit: number, low = false) => {
-  if (n === undefined || Number.isNaN(n)) return false
-  return low ? n < limit : n > limit
-}
+const mb = (n: Metric) =>
+  Option.map(known(n), (value) => {
+    const v = value / 1024 / 1024
+    return `${v >= 1024 ? v.toFixed(0) : v.toFixed(1)}MB`
+  })
+
+const bad = (n: Metric, limit: number, low = false) =>
+  Option.match(known(n), {
+    onNone: () => false,
+    onSome: (value) => (low ? value < limit : value > limit),
+  })
+
+/** The long-task totals after the observer starts and before the first long task. */
+const noLongTasks = () => ({ block: Option.some(0), count: Option.some(0), max: Option.some(0) })
 
 const session = (path: string) => path.includes("/session")
 
@@ -172,37 +177,41 @@ export function DebugBar(props: { inline?: boolean } = {}) {
   const location = useLocation()
   const routing = useIsRouting()
   const [state, setState] = createStore({
-    cls: undefined as number | undefined,
-    delay: undefined as number | undefined,
-    fps: undefined as number | undefined,
-    gap: undefined as number | undefined,
+    cls: Option.none<number>(),
+    delay: Option.none<number>(),
+    fps: Option.none<number>(),
+    gap: Option.none<number>(),
     focus: false,
     heap: {
-      limit: undefined as number | undefined,
-      used: undefined as number | undefined,
+      limit: Option.none<number>(),
+      used: Option.none<number>(),
     },
-    inp: undefined as number | undefined,
-    jank: undefined as number | undefined,
+    inp: Option.none<number>(),
+    jank: Option.none<number>(),
     long: {
-      block: undefined as number | undefined,
-      count: undefined as number | undefined,
-      max: undefined as number | undefined,
+      block: Option.none<number>(),
+      count: Option.none<number>(),
+      max: Option.none<number>(),
     },
     nav: {
-      dur: undefined as number | undefined,
+      dur: Option.none<number>(),
       pending: false,
     },
   })
 
   const na = () => language.t("debugBar.na").toUpperCase()
-  const heap = () => (state.heap.limit ? (state.heap.used ?? 0) / state.heap.limit : undefined)
-  const heapv = () => {
-    const value = heap()
-    if (value === undefined) return na()
-    return `${Math.round(value * 100)}%`
-  }
-  const longv = () => (state.long.count === undefined ? na() : `${time(state.long.block) ?? na()}/${state.long.count}`)
-  const navv = () => (state.nav.pending ? "..." : (time(state.nav.dur) ?? na()))
+  const heap = () =>
+    Option.map(
+      Option.filter(state.heap.limit, (limit) => limit !== 0 && !Number.isNaN(limit)),
+      (limit) => Option.getOrElse(state.heap.used, () => 0) / limit,
+    )
+  const heapv = () => Option.match(heap(), { onNone: na, onSome: (value) => `${Math.round(value * 100)}%` })
+  const longv = () =>
+    Option.match(state.long.count, {
+      onNone: na,
+      onSome: (count) => `${Option.getOrElse(time(state.long.block), na)}/${count}`,
+    })
+  const navv = () => (state.nav.pending ? "..." : Option.getOrElse(time(state.nav.dur), na))
   const toggleFocus = async () => {
     if (!platform.setForceFocus) return
     const enabled = !state.focus
@@ -237,7 +246,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       two = 0
       if (start !== 0) return
       start = performance.now()
-      if (session(prev)) setState("nav", { dur: undefined, pending: true })
+      if (session(prev)) setState("nav", { dur: Option.none(), pending: true })
       return
     }
 
@@ -259,7 +268,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       one = 0
       two = requestAnimationFrame(() => {
         two = 0
-        setState("nav", { dur: performance.now() - at, pending: false })
+        setState("nav", { dur: Option.some(performance.now() - at), pending: false })
       })
     })
   })
@@ -285,9 +294,9 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       const gap = fps.reduce((max, entry) => Math.max(max, entry.dur), 0)
       const jank = fps.filter((entry) => entry.dur > 32).length
       batch(() => {
-        setState("fps", total > 0 ? (fps.length * 1000) / total : undefined)
-        setState("gap", gap > 0 ? gap : undefined)
-        setState("jank", jank)
+        setState("fps", total > 0 ? Option.some((fps.length * 1000) / total) : Option.none())
+        setState("gap", gap > 0 ? Option.some(gap) : Option.none())
+        setState("jank", Option.some(jank))
       })
     }
 
@@ -296,7 +305,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       trim(long, span, at)
       const block = long.reduce((sum, entry) => sum + Math.max(0, entry.dur - 50), 0)
       const max = long.reduce((hi, entry) => Math.max(hi, entry.dur), 0)
-      setState("long", { block, count: long.length, max })
+      setState("long", { block: Option.some(block), count: Option.some(long.length), max: Option.some(max) })
     }
 
     const syncInp = (at = performance.now()) => {
@@ -310,15 +319,15 @@ export function DebugBar(props: { inline?: boolean } = {}) {
         inp = Math.max(inp, entry.dur)
       }
       batch(() => {
-        setState("delay", delay > 0 ? delay : undefined)
-        setState("inp", inp > 0 ? inp : undefined)
+        setState("delay", delay > 0 ? Option.some(delay) : Option.none())
+        setState("inp", inp > 0 ? Option.some(inp) : Option.none())
       })
     }
 
     const syncHeap = () => {
       const mem = (performance as Mem).memory
       if (!mem) return
-      setState("heap", { limit: mem.jsHeapSizeLimit, used: mem.usedJSHeapSize })
+      setState("heap", { limit: Option.some(mem.jsHeapSizeLimit), used: Option.some(mem.usedJSHeapSize) })
     }
 
     const reset = () => {
@@ -328,12 +337,12 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       last = 0
       snap = 0
       batch(() => {
-        setState("fps", undefined)
-        setState("gap", undefined)
-        setState("jank", undefined)
-        setState("delay", undefined)
-        setState("inp", undefined)
-        if (hasLong) setState("long", { block: 0, count: 0, max: 0 })
+        setState("fps", Option.none())
+        setState("gap", Option.none())
+        setState("jank", Option.none())
+        setState("delay", Option.none())
+        setState("inp", Option.none())
+        if (hasLong) setState("long", noLongTasks())
       })
     }
 
@@ -359,10 +368,10 @@ export function DebugBar(props: { inline?: boolean } = {}) {
           return sum + item.value
         }, 0)
         if (add === 0) return
-        setState("cls", (value) => (value ?? 0) + add)
+        setState("cls", (value) => Option.some(Option.getOrElse(value, () => 0) + add))
       })
     ) {
-      setState("cls", 0)
+      setState("cls", Option.some(0))
     }
 
     if (
@@ -373,7 +382,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       })
     ) {
       hasLong = true
-      setState("long", { block: 0, count: 0, max: 0 })
+      setState("long", noLongTasks())
     }
 
     watch("event", { buffered: true, durationThreshold: 16, type: "event" }, (entries) => {
@@ -488,78 +497,78 @@ export function DebugBar(props: { inline?: boolean } = {}) {
           tip={language.t("debugBar.nav.tip")}
           value={navv()}
           bad={bad(state.nav.dur, 400)}
-          dim={state.nav.dur === undefined && !state.nav.pending}
+          dim={Option.isNone(state.nav.dur) && !state.nav.pending}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.fps.label")}
           tip={language.t("debugBar.fps.tip")}
-          value={state.fps === undefined ? na() : `${Math.round(state.fps)}`}
+          value={Option.match(state.fps, { onNone: na, onSome: (fps) => `${Math.round(fps)}` })}
           bad={bad(state.fps, 50, true)}
-          dim={state.fps === undefined}
+          dim={Option.isNone(state.fps)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.frame.label")}
           tip={language.t("debugBar.frame.tip")}
-          value={time(state.gap) ?? na()}
+          value={Option.getOrElse(time(state.gap), na)}
           bad={bad(state.gap, 50)}
-          dim={state.gap === undefined}
+          dim={Option.isNone(state.gap)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.jank.label")}
           tip={language.t("debugBar.jank.tip")}
-          value={state.jank === undefined ? na() : `${state.jank}`}
+          value={Option.match(state.jank, { onNone: na, onSome: (jank) => `${jank}` })}
           bad={bad(state.jank, 8)}
-          dim={state.jank === undefined}
+          dim={Option.isNone(state.jank)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.long.label")}
-          tip={language.t("debugBar.long.tip", { max: ms(state.long.max) ?? na() })}
+          tip={language.t("debugBar.long.tip", { max: Option.getOrElse(ms(state.long.max), na) })}
           value={longv()}
           bad={bad(state.long.block, 200)}
-          dim={state.long.count === undefined}
+          dim={Option.isNone(state.long.count)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.delay.label")}
           tip={language.t("debugBar.delay.tip")}
-          value={time(state.delay) ?? na()}
+          value={Option.getOrElse(time(state.delay), na)}
           bad={bad(state.delay, 100)}
-          dim={state.delay === undefined}
+          dim={Option.isNone(state.delay)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.inp.label")}
           tip={language.t("debugBar.inp.tip")}
-          value={time(state.inp) ?? na()}
+          value={Option.getOrElse(time(state.inp), na)}
           bad={bad(state.inp, 200)}
-          dim={state.inp === undefined}
+          dim={Option.isNone(state.inp)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.cls.label")}
           tip={language.t("debugBar.cls.tip")}
-          value={state.cls === undefined ? na() : state.cls.toFixed(2)}
+          value={Option.match(state.cls, { onNone: na, onSome: (cls) => cls.toFixed(2) })}
           bad={bad(state.cls, 0.1)}
-          dim={state.cls === undefined}
+          dim={Option.isNone(state.cls)}
           inline={props.inline}
         />
         <Cell
           label={language.t("debugBar.mem.label")}
           tip={
-            state.heap.used === undefined
+            Option.isNone(state.heap.used)
               ? language.t("debugBar.mem.tipUnavailable")
               : language.t("debugBar.mem.tip", {
-                  used: mb(state.heap.used) ?? na(),
-                  limit: mb(state.heap.limit) ?? na(),
+                  used: Option.getOrElse(mb(state.heap.used), na),
+                  limit: Option.getOrElse(mb(state.heap.limit), na),
                 })
           }
           value={heapv()}
           bad={bad(heap(), 0.8)}
-          dim={state.heap.used === undefined}
+          dim={Option.isNone(state.heap.used)}
           inline={props.inline}
           span={platform.setForceFocus ? 2 : 3}
         />

@@ -231,9 +231,8 @@ export function SessionHeader() {
       ({ id: "finder", label: fileManager().label, icon: fileManager().icon } as const),
   )
   const opening = createMemo(() => openRequest.app !== undefined)
-  const tint = createMemo(() =>
-    messageAgentColor(params.id ? sync().data.message[params.id] : undefined, sync().data.agent),
-  )
+  // Without a session there are no messages, so the spinner keeps the default color.
+  const tint = createMemo(() => messageAgentColor(params.id ? sync().data.message[params.id] : [], sync().data.agent))
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
     statusVisible: status(),
     statusLabel: language.t("status.popover.trigger"),
@@ -552,7 +551,7 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
             variant="ghost-muted"
             size="large"
             class="!w-9 shrink-0"
-            state={props.state.reviewOpened ? "pressed" : undefined}
+            {...(props.state.reviewOpened ? { state: "pressed" as const } : {})}
             onClick={props.state.onReviewToggle}
             aria-label={props.state.reviewLabel}
             aria-expanded={props.state.reviewOpened}

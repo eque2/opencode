@@ -22,6 +22,7 @@ import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { matchesModelSearch } from "./dialog-select-model-search"
+import { Option } from "effect"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -91,7 +92,9 @@ const ModelList: Component<{
         </Tooltip>
       )}
       onSelect={(x) => {
-        model.set(x ? { modelID: x.id, providerID: x.provider.id } : undefined, {
+        // List passes no item when nothing is active; model.set reads undefined as "clear the model".
+        const selected = Option.map(Option.fromNullishOr(x), (item) => ({ modelID: item.id, providerID: item.provider.id }))
+        model.set(Option.getOrUndefined(selected), {
           recent: true,
         })
         props.onSelect()
@@ -280,10 +283,7 @@ function createModelSelectorController(input: {
       }
       return Array.from(byProvider, ([category, items]) => ({ category, items })).sort(sortModelGroups)
     },
-    current: () => {
-      const value = model.current()
-      return value ? modelKey(value) : undefined
-    },
+    current: () => Option.map(Option.fromNullishOr(model.current()), modelKey),
     select: (item: ModelItem) => {
       model.set({ modelID: item.id, providerID: item.provider.id }, { recent: true })
       input.onSelect()
@@ -295,7 +295,7 @@ function ModelSelectorPopoverV2View(props: {
   trigger: ModelSelectorTrigger
   models: (search: string) => ModelItem[]
   groups: (models: ModelItem[]) => { category: string; items: ModelItem[] }[]
-  current: () => string | undefined
+  current: () => Option.Option<string>
   select: (item: ModelItem) => void
   onManage: () => void
   onClose: () => void
@@ -310,13 +310,22 @@ function ModelSelectorPopoverV2View(props: {
   const groups = createMemo(() => props.groups(models()))
   const keys = () => [...models().map(modelKey), manageKey]
   const initialActive = () => {
-    const selected = props.current()
     const options = keys()
-    if (selected && options.includes(selected)) return selected
-    return options[0] ?? ""
+    return Option.getOrElse(
+      Option.filter(props.current(), (selected) => selected !== "" && options.includes(selected)),
+      () => options[0] ?? "",
+    )
   }
-  const activeItem = () =>
-    store.active ? contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(store.active)}"]`) : undefined
+  const activeItem = (): Option.Option<HTMLElement> => {
+    if (!store.active) return Option.none()
+    return Option.fromNullishOr(
+      contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(store.active)}"]`),
+    )
+  }
+  const revealActive = () => {
+    const item = activeItem()
+    if (Option.isSome(item)) item.value.scrollIntoView({ block: "nearest" })
+  }
   const setOpen = (open: boolean) => {
     if (open) {
       dismiss.allowTriggerRestore()
@@ -324,7 +333,7 @@ function ModelSelectorPopoverV2View(props: {
       setTimeout(() =>
         requestAnimationFrame(() => {
           searchRef?.focus()
-          activeItem()?.scrollIntoView({ block: "nearest" })
+          revealActive()
         }),
       )
       return
@@ -355,7 +364,7 @@ function ModelSelectorPopoverV2View(props: {
     const index = options.indexOf(store.active)
     const start = index === -1 ? 0 : index
     setStore("active", options[(start + delta + options.length) % options.length])
-    queueMicrotask(() => activeItem()?.scrollIntoView({ block: "nearest" }))
+    queueMicrotask(revealActive)
   }
   const setSearch = (value: string) => {
     const first = props.models(value)[0]
@@ -453,7 +462,7 @@ function ModelSelectorPopoverV2View(props: {
                       <MenuV2.GroupLabel class="sticky top-0 z-10 gap-2 bg-v2-background-bg-layer-01 px-3">
                         <span class="min-w-0 truncate">{group.items[0].provider.name}</span>
                       </MenuV2.GroupLabel>
-                      <MenuV2.RadioGroup value={props.current()}>
+                      <MenuV2.RadioGroup value={Option.getOrUndefined(props.current())}>
                         <For each={group.items}>
                           {(item) => (
                             <TooltipV2
@@ -473,7 +482,7 @@ function ModelSelectorPopoverV2View(props: {
                               <MenuV2.RadioItem
                                 value={modelKey(item)}
                                 data-option-key={modelKey(item)}
-                                data-selected-model={props.current() === modelKey(item) ? true : undefined}
+                                {...(Option.contains(props.current(), modelKey(item)) ? { "data-selected-model": true } : {})}
                                 class="scroll-my-6 w-full"
                                 classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === modelKey(item) }}
                                 onMouseEnter={() => {
