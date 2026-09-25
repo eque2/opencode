@@ -177,7 +177,7 @@ function ServerForm(props: ServerFormProps) {
 
 export function DialogSelectServer() {
   const dialog = useDialog()
-  const controller = useServerManagementController({ onSelect: dialog.close })
+  const controller = useServerManagementController({ onSelect: () => dialog.close() })
 
   return (
     <Dialog title={controller.formTitle()}>
