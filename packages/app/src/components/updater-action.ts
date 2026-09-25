@@ -1,12 +1,14 @@
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import { createMemo } from "solid-js"
 import type { UpdaterState } from "@/updater"
 import { usePlatform } from "@/context/platform"
 import { useLanguage } from "@/context/language"
 import { showToast } from "@/utils/toast"
 
-export function updaterAction(state: UpdaterState | undefined) {
-  if (!state) return { label: "settings.updates.action.checkNow" as const }
+/** The settings action for the updater state. `current` is none when the platform has no updater. */
+export function updaterAction(current: Option.Option<UpdaterState>) {
+  if (Option.isNone(current)) return { label: "settings.updates.action.checkNow" as const }
+  const state = current.value
   switch (state.status) {
     case "checking":
       return { label: "settings.updates.action.checking" as const }
@@ -32,7 +34,7 @@ const updaterRequest = <A>(request: () => Promise<A>) =>
 export function useUpdaterAction() {
   const platform = usePlatform()
   const language = useLanguage()
-  const action = createMemo(() => updaterAction(platform.updater?.state()))
+  const action = createMemo(() => updaterAction(Option.fromUndefinedOr(platform.updater?.state())))
 
   return {
     action,

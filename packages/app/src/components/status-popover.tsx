@@ -4,6 +4,7 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { Popover } from "@opencode-ai/ui/popover"
 import { Suspense, createMemo, createSignal, lazy, Show, type JSX } from "solid-js"
+import { Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { ServerConnection, useServer } from "@/context/server"
 import { useServerSDK } from "@/context/server-sdk"
@@ -24,8 +25,10 @@ export function StatusPopover() {
   const global = useGlobal()
   const sync = useSync()
   const [shown, setShown] = createSignal(false)
-  const serverHealth = () => global.servers.health[server.key]?.healthy
-  const ready = createMemo(() => serverHealth() === false || (sync().data.mcp_ready && sync().data.lsp_ready))
+  const serverHealth = () => Option.fromUndefinedOr(global.servers.health[server.key]?.healthy)
+  const ready = createMemo(
+    () => Option.contains(serverHealth(), false) || (sync().data.mcp_ready && sync().data.lsp_ready),
+  )
   const attention = createMemo(() =>
     hasServiceNeedingAttention({
       mcp: Object.values(sync().data.mcp ?? {}).map((item) => item.status),
@@ -93,8 +96,11 @@ function DirectoryStatusPopover() {
   const global = useGlobal()
   const sync = useSync()
   const [shown, setShown] = createSignal(false)
-  const serverHealth = () => global.servers.health[ServerConnection.key(server().server)]?.healthy
-  const ready = createMemo(() => serverHealth() === false || (sync().data.mcp_ready && sync().data.lsp_ready))
+  const serverHealth = () =>
+    Option.fromUndefinedOr(global.servers.health[ServerConnection.key(server().server)]?.healthy)
+  const ready = createMemo(
+    () => Option.contains(serverHealth(), false) || (sync().data.mcp_ready && sync().data.lsp_ready),
+  )
   const attention = createMemo(() =>
     hasServiceNeedingAttention({
       mcp: Object.values(sync().data.mcp ?? {}).map((item) => item.status),
@@ -129,10 +135,10 @@ function ServerStatusPopover() {
   const server = useServer()
   const global = useGlobal()
   const [shown, setShown] = createSignal(false)
-  const serverHealth = () => global.servers.health[server.key]?.healthy
+  const serverHealth = () => Option.fromUndefinedOr(global.servers.health[server.key]?.healthy)
   const state = createMemo<StatusPopoverState>(() => ({
     shown: shown(),
-    ready: serverHealth() !== undefined,
+    ready: Option.isSome(serverHealth()),
     serverHealth: serverHealth(),
     attention: false,
     issue: false,
@@ -151,7 +157,8 @@ function ServerStatusPopover() {
 type StatusPopoverState = {
   shown: boolean
   ready: boolean
-  serverHealth: boolean | undefined
+  /** None until the first health check answers. */
+  serverHealth: Option.Option<boolean>
   attention: boolean
   issue: boolean
   label: string
@@ -189,7 +196,7 @@ function StatusPopoverView(props: { state: StatusPopoverState }) {
         variant: "ghost-muted",
         size: "large",
         class: "!w-9 shrink-0",
-        state: props.state.shown ? "pressed" : undefined,
+        ...(props.state.shown ? { state: "pressed" as const } : {}),
         "aria-label": props.state.label,
       }}
       trigger={

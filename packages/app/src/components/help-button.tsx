@@ -84,7 +84,7 @@ export function TabsInfoPopup() {
                 "max-width": "100vw",
                 "border-radius": "0",
               }
-            : undefined
+            : {}
         }
       >
         <Show when={windows()}>

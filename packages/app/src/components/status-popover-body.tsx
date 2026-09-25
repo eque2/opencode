@@ -6,6 +6,7 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useNavigate } from "@solidjs/router"
 import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
@@ -56,7 +57,7 @@ const listServersByHealth = (
 
 const useDefaultServerKey = (get: () => string | Promise<string | null | undefined> | null | undefined) => {
   const [state, setState] = createStore({
-    key: undefined as ServerConnection.Key | undefined,
+    key: Option.none<ServerConnection.Key>(),
     tick: 0,
   })
 
@@ -65,7 +66,7 @@ const useDefaultServerKey = (get: () => string | Promise<string | null | undefin
     let dead = false
     const result = get()
     if (!result) {
-      setState("key", undefined)
+      setState("key", Option.none())
       onCleanup(() => {
         dead = true
       })
@@ -75,7 +76,7 @@ const useDefaultServerKey = (get: () => string | Promise<string | null | undefin
     if (result instanceof Promise) {
       void result.then((next) => {
         if (dead) return
-        setState("key", next ?? undefined)
+        setState("key", Option.map(Option.fromNullishOr(next), ServerConnection.Key.make))
       })
       onCleanup(() => {
         dead = true
@@ -83,7 +84,7 @@ const useDefaultServerKey = (get: () => string | Promise<string | null | undefin
       return
     }
 
-    setState("key", ServerConnection.Key.make(result))
+    setState("key", Option.some(ServerConnection.Key.make(result)))
     onCleanup(() => {
       dead = true
     })
@@ -99,7 +100,7 @@ const useDefaultServerKey = (get: () => string | Promise<string | null | undefin
 
 type ServerStatusState = {
   servers: () => ServerStatusItem[]
-  defaultKey: () => ServerConnection.Key | undefined
+  defaultKey: () => Option.Option<ServerConnection.Key>
   ariaLabel: string
   serversLabel: string
   defaultLabel: string
@@ -224,7 +225,7 @@ function ServerStatusList(props: { state: ServerStatusState }) {
                   nameClass="text-14-regular text-text-base truncate"
                   versionClass="text-12-regular text-text-weak truncate"
                   badge={
-                    <Show when={item.key === props.state.defaultKey()}>
+                    <Show when={Option.contains(props.state.defaultKey(), item.key)}>
                       <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                         {props.state.defaultLabel}
                       </span>
@@ -354,7 +355,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                           nameClass="text-14-regular text-text-base truncate"
                           versionClass="text-12-regular text-text-weak truncate"
                           badge={
-                            <Show when={key === defaultServer.key()}>
+                            <Show when={Option.contains(defaultServer.key(), key)}>
                               <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                                 {language.t("common.default")}
                               </span>

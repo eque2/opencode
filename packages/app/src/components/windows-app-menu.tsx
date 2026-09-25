@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { Show, type JSX } from "solid-js"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -15,12 +16,13 @@ export function WindowsAppMenu(props: {
   platform: ReturnType<typeof usePlatform>
   variant?: "legacy" | "v2"
 }) {
-  let lastFocused: HTMLElement | undefined
+  // The element that had focus before the menu opened. Edit actions give focus back to it.
+  let lastFocused = Option.none<HTMLElement>()
   const language = useLanguage()
 
   const rememberFocus = () => {
     const active = document.activeElement
-    lastFocused = active instanceof HTMLElement ? active : undefined
+    lastFocused = active instanceof HTMLElement ? Option.some(active) : Option.none()
   }
   const commandDisabled = (id: string) => {
     const option = props.command.options.find((option) => option.id === id)
@@ -32,7 +34,9 @@ export function WindowsAppMenu(props: {
     props.command.trigger(id)
   }
   const runAction = (action: DesktopMenuAction) => {
-    if (action.startsWith("edit.") && lastFocused?.isConnected) lastFocused.focus({ preventScroll: true })
+    if (action.startsWith("edit.") && Option.isSome(lastFocused) && lastFocused.value.isConnected) {
+      lastFocused.value.focus({ preventScroll: true })
+    }
     void props.platform.runDesktopMenuAction?.(action)
   }
   const runEntry = (entry: DesktopMenuEntry) => {
