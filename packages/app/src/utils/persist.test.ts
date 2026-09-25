@@ -126,7 +126,7 @@ describe("persist localStorage resilience", () => {
   })
 
   test("normalizer rejects malformed JSON payloads", () => {
-    const result = persistTesting.normalize({ value: "ok" }, '{"value":"\\x"}')
+    const result = Option.getOrUndefined(persistTesting.normalize({ value: "ok" }, '{"value":"\\x"}'))
     expect(result).toBeUndefined()
   })
 
@@ -158,14 +158,16 @@ describe("persist localStorage resilience", () => {
     const current = persistTesting.localStorageWithPrefix(target.storage!)
     const legacyStore = persistTesting.localStorageDirect()
 
-    const result = persistTesting.migrateLegacy({
-      current,
-      legacyStore,
-      stores: [],
-      keys: target.legacy!,
-      key: target.key,
-      defaults: { value: 1 },
-    })
+    const result = Option.getOrNull(
+      persistTesting.migrateLegacy({
+        current,
+        legacyStore,
+        stores: [],
+        keys: target.legacy!,
+        key: target.key,
+        defaults: { value: 1 },
+      }),
+    )
 
     expect(result).toBe('{"value":2}')
     expect(storage.getItem(`${target.storage}:${target.key}`)).toBe('{"value":2}')

@@ -1,7 +1,17 @@
 import { Platform, usePlatform } from "@/context/platform"
 import { makePersisted, type AsyncStorage, type SyncStorage } from "@solid-primitives/storage"
 import { checksum } from "@opencode-ai/core/util/encode"
-import { Array as Arr, Iterable, MutableHashMap, MutableHashSet, Option, Order, Predicate, Result } from "effect"
+import {
+  Array as Arr,
+  Iterable,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Order,
+  Predicate,
+  Result,
+  Schema,
+} from "effect"
 import { createResource, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import { pathKey } from "@/utils/path-key"
@@ -168,32 +178,32 @@ function write(storage: Storage, key: string, value: string): Result.Result<bool
   )
 }
 
-function snapshot(value: unknown) {
-  return JSON.parse(JSON.stringify(value)) as unknown
-}
+const JsonText = Schema.fromJsonString(Schema.Unknown)
+const decodeJson = Schema.decodeUnknownOption(JsonText)
+const encodeJson = Schema.encodeUnknownOption(JsonText)
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+function snapshot(value: unknown): Option.Option<unknown> {
+  return Option.flatMap(encodeJson(value), (text) => decodeJson(text))
 }
 
 function merge(defaults: unknown, value: unknown): unknown {
   if (value === undefined) return defaults
-  if (value === null) return value
+  if (Predicate.isNull(value)) return value
 
   if (Array.isArray(defaults)) {
     if (Array.isArray(value)) return value
     return defaults
   }
 
-  if (isRecord(defaults)) {
-    if (!isRecord(value)) return defaults
+  if (Predicate.isObject(defaults)) {
+    if (!Predicate.isObject(value)) return defaults
 
     const result: Record<string, unknown> = { ...defaults }
     for (const key of Object.keys(value)) {
       if (key in defaults) {
-        result[key] = merge((defaults as Record<string, unknown>)[key], (value as Record<string, unknown>)[key])
+        result[key] = merge(defaults[key], value[key])
       } else {
-        result[key] = (value as Record<string, unknown>)[key]
+        result[key] = value[key]
       }
     }
     return result
@@ -202,79 +212,61 @@ function merge(defaults: unknown, value: unknown): unknown {
   return value
 }
 
-function parse(value: string) {
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return undefined
-  }
+function normalize(defaults: unknown, raw: string, migrate?: (value: unknown) => unknown): Option.Option<string> {
+  return decodeJson(raw).pipe(
+    Option.map((parsed) => (migrate ? migrate(parsed) : parsed)),
+    Option.flatMap((migrated) => encodeJson(merge(defaults, migrated))),
+  )
 }
 
-function normalize(defaults: unknown, raw: string, migrate?: (value: unknown) => unknown) {
-  const parsed = parse(raw)
-  if (parsed === undefined) return
-  const migrated = migrate ? migrate(parsed) : parsed
-  const merged = merge(defaults, migrated)
-  return JSON.stringify(merged)
-}
-
-function readCurrent(input: {
-  storage: SyncStorage
+type ReadInput<S> = {
+  storage: S
   key: string
   defaults: unknown
   migrate?: (value: unknown) => unknown
-}) {
-  const raw = input.storage.getItem(input.key)
-  if (raw === null) return
-  const next = normalize(input.defaults, raw, input.migrate)
-  if (next === undefined) {
-    input.storage.removeItem(input.key)
-    return null
-  }
-  if (raw !== next) input.storage.setItem(input.key, next)
-  return next
 }
 
-function migrateLegacy(input: {
-  current: SyncStorage
-  legacyStore?: SyncStorage
-  stores: SyncStorage[]
-  keys: string[]
+type MigrateInput<S> = {
+  current: S
+  legacyStore: S
+  stores: ReadonlyArray<S>
+  keys: ReadonlyArray<string>
   key: string
   defaults: unknown
   migrate?: (value: unknown) => unknown
-}) {
-  for (const store of input.stores) {
-    const raw = store.getItem(input.key)
-    if (raw === null) continue
+}
 
+// None: nothing is stored. Some(None): the stored value was invalid and is removed. Some(Some): the normalized value.
+function readCurrent(input: ReadInput<SyncStorage>): Option.Option<Option.Option<string>> {
+  return Option.map(Option.fromNullOr(input.storage.getItem(input.key)), (raw) => {
     const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      store.removeItem(input.key)
-      continue
-    }
-    input.current.setItem(input.key, next)
-    store.removeItem(input.key)
+    if (Option.isNone(next)) input.storage.removeItem(input.key)
+    else if (raw !== next.value) input.storage.setItem(input.key, next.value)
     return next
-  }
+  })
+}
 
-  if (!input.legacyStore) return null
+function moveLegacy(from: SyncStorage, fromKey: string, input: MigrateInput<SyncStorage>): Option.Option<string> {
+  return Option.flatMap(Option.fromNullOr(from.getItem(fromKey)), (raw) => {
+    const next = normalize(input.defaults, raw, input.migrate)
+    if (Option.isSome(next)) input.current.setItem(input.key, next.value)
+    from.removeItem(fromKey)
+    return next
+  })
+}
+
+function migrateLegacy(input: MigrateInput<SyncStorage>): Option.Option<string> {
+  for (const store of input.stores) {
+    const moved = moveLegacy(store, input.key, input)
+    if (Option.isSome(moved)) return moved
+  }
 
   for (const key of input.keys) {
-    const raw = input.legacyStore.getItem(key)
-    if (raw === null) continue
-
-    const next = normalize(input.defaults, raw, input.migrate)
-    if (next === undefined) {
-      input.legacyStore.removeItem(key)
-      continue
-    }
-    input.current.setItem(input.key, next)
-    input.legacyStore.removeItem(key)
-    return next
+    const moved = moveLegacy(input.legacyStore, key, input)
+    if (Option.isSome(moved)) return moved
   }
 
-  return null
+  return Option.none()
 }
 
 async function readCurrentAsync(input: {
@@ -285,7 +277,7 @@ async function readCurrentAsync(input: {
 }) {
   const raw = await input.storage.getItem(input.key)
   if (raw === null) return
-  const next = normalize(input.defaults, raw, input.migrate)
+  const next = Option.getOrUndefined(normalize(input.defaults, raw, input.migrate))
   if (next === undefined) {
     await input.storage.removeItem(input.key).catch(() => undefined)
     return null
@@ -321,7 +313,7 @@ async function migrateLegacyAsync(input: {
     const raw = await store.getItem(input.key)
     if (raw === null) continue
 
-    const next = normalize(input.defaults, raw, input.migrate)
+    const next = Option.getOrUndefined(normalize(input.defaults, raw, input.migrate))
     if (next === undefined) {
       await removeAsync(store, input.key)
       continue
@@ -337,7 +329,7 @@ async function migrateLegacyAsync(input: {
     const raw = await input.legacyStore.getItem(key)
     if (raw === null) continue
 
-    const next = normalize(input.defaults, raw, input.migrate)
+    const next = Option.getOrUndefined(normalize(input.defaults, raw, input.migrate))
     if (next === undefined) {
       await removeAsync(input.legacyStore, key)
       continue
@@ -534,7 +526,7 @@ export function persisted<T>(
   const platform = platformOverride ?? usePlatform()
   const config = resolveTarget(typeof target === "string" ? { key: target } : target, platform)
 
-  const defaults = snapshot(store[0])
+  const defaults = Option.getOrUndefined(snapshot(store[0]))
   const legacy = config.legacy ?? []
 
   const isDesktop = platform.platform === "desktop" && !!platform.storage
@@ -571,16 +563,18 @@ export function persisted<T>(
       const api: SyncStorage = {
         getItem: (key) => {
           const value = readCurrent({ storage: current, key, defaults, migrate: config.migrate })
-          if (value !== undefined) return value
-          return migrateLegacy({
-            current,
-            legacyStore,
-            stores: legacyStores,
-            keys: legacy,
-            key,
-            defaults,
-            migrate: config.migrate,
-          })
+          const migrated = Option.getOrElse(value, () =>
+            migrateLegacy({
+              current,
+              legacyStore,
+              stores: legacyStores,
+              keys: legacy,
+              key,
+              defaults,
+              migrate: config.migrate,
+            }),
+          )
+          return Option.getOrNull(migrated)
         },
         setItem: (key, value) => {
           current.setItem(key, value)
