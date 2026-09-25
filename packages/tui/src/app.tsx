@@ -1,7 +1,7 @@
 import { render, TimeToFirstDraw, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { registerOpencodeSpinner } from "./component/register-spinner"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { Config, Deferred, Effect, Schema } from "effect"
+import { Config, Deferred, Effect, Predicate, Schema } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -164,10 +164,10 @@ export type TuiInput = {
 function errorMessage(error: unknown) {
   if (
     typeof error === "object" &&
-    error !== null &&
+    Predicate.isNotNull(error) &&
     "data" in error &&
     typeof error.data === "object" &&
-    error.data !== null &&
+    Predicate.isNotNull(error.data) &&
     "message" in error.data &&
     typeof error.data.message === "string"
   ) {
