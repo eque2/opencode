@@ -5,9 +5,10 @@ import type {
   PermissionV2Request,
   ProviderListOutput,
 } from "@opencode-ai/client/promise"
-import type { Agent, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
+import type { Agent, Model, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import { HashMap } from "effect"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -50,6 +51,56 @@ export function normalizePermissionRequest(input: PermissionV2Request | Permissi
   }
 }
 
+function toProviderModel(model: ModelListOutput["data"][number], providerID: string): Model {
+  const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
+  return {
+    id: model.id,
+    providerID: model.providerID,
+    api: {
+      id: model.modelID,
+      url: "",
+      npm: model.package ?? providerID,
+    },
+    name: model.name,
+    family: model.family,
+    capabilities: {
+      temperature: false,
+      reasoning: false,
+      attachment: model.capabilities.input.some((item) => item !== "text"),
+      toolcall: model.capabilities.tools,
+      input: {
+        text: model.capabilities.input.includes("text"),
+        audio: model.capabilities.input.includes("audio"),
+        image: model.capabilities.input.includes("image"),
+        video: model.capabilities.input.includes("video"),
+        pdf: model.capabilities.input.includes("pdf"),
+      },
+      output: {
+        text: model.capabilities.output.includes("text"),
+        audio: model.capabilities.output.includes("audio"),
+        image: model.capabilities.output.includes("image"),
+        video: model.capabilities.output.includes("video"),
+        pdf: model.capabilities.output.includes("pdf"),
+      },
+      interleaved: false,
+    },
+    cost: {
+      input: cost?.input ?? 0,
+      output: cost?.output ?? 0,
+      cache: {
+        read: cost?.cache.read ?? 0,
+        write: cost?.cache.write ?? 0,
+      },
+    },
+    limit: model.limit,
+    status: model.status,
+    options: model.settings ?? {},
+    headers: model.headers ?? {},
+    release_date: new Date(model.time.released).toISOString().slice(0, 10),
+    variants: Object.fromEntries(model.variants.map((variant) => [variant.id, variant.settings ?? {}])),
+  }
+}
+
 export function normalizeProviderList(
   providers: ProviderListOutput["data"] | ProviderListResponse,
   models?: ModelListOutput["data"],
@@ -58,7 +109,7 @@ export function normalizeProviderList(
   if (!Array.isArray(providers)) {
     return {
       ...providers,
-      all: new Map(
+      all: HashMap.fromIterable<string, Provider>(
         providers.all.map((provider) => [
           provider.id,
           {
@@ -71,70 +122,24 @@ export function normalizeProviderList(
       ),
     }
   }
-  const all = new Map<string, Provider>()
-
-  for (const provider of providers) {
-    all.set(provider.id, {
-      id: provider.id,
-      name: provider.name,
-      source: "custom",
-      env: [],
-      options: provider.settings ?? {},
-      models: {},
-    })
-  }
-
-  for (const model of models ?? []) {
-    const provider = all.get(model.providerID)
-    if (!provider || model.status === "deprecated") continue
-    const cost = model.cost.find((item) => item.tier === undefined) ?? model.cost[0]
-    provider.models[model.id] = {
-      id: model.id,
-      providerID: model.providerID,
-      api: {
-        id: model.modelID,
-        url: "",
-        npm: model.package ?? provider.id,
+  const catalogModels = (models ?? []).filter((model) => model.status !== "deprecated")
+  const all = HashMap.fromIterable<string, Provider>(
+    providers.map((provider) => [
+      provider.id,
+      {
+        id: provider.id,
+        name: provider.name,
+        source: "custom",
+        env: [],
+        options: provider.settings ?? {},
+        models: Object.fromEntries(
+          catalogModels
+            .filter((model) => model.providerID === provider.id)
+            .map((model) => [model.id, toProviderModel(model, provider.id)]),
+        ),
       },
-      name: model.name,
-      family: model.family,
-      capabilities: {
-        temperature: false,
-        reasoning: false,
-        attachment: model.capabilities.input.some((item) => item !== "text"),
-        toolcall: model.capabilities.tools,
-        input: {
-          text: model.capabilities.input.includes("text"),
-          audio: model.capabilities.input.includes("audio"),
-          image: model.capabilities.input.includes("image"),
-          video: model.capabilities.input.includes("video"),
-          pdf: model.capabilities.input.includes("pdf"),
-        },
-        output: {
-          text: model.capabilities.output.includes("text"),
-          audio: model.capabilities.output.includes("audio"),
-          image: model.capabilities.output.includes("image"),
-          video: model.capabilities.output.includes("video"),
-          pdf: model.capabilities.output.includes("pdf"),
-        },
-        interleaved: false,
-      },
-      cost: {
-        input: cost?.input ?? 0,
-        output: cost?.output ?? 0,
-        cache: {
-          read: cost?.cache.read ?? 0,
-          write: cost?.cache.write ?? 0,
-        },
-      },
-      limit: model.limit,
-      status: model.status,
-      options: model.settings ?? {},
-      headers: model.headers ?? {},
-      release_date: new Date(model.time.released).toISOString().slice(0, 10),
-      variants: Object.fromEntries(model.variants.map((variant) => [variant.id, variant.settings ?? {}])),
-    }
-  }
+    ]),
+  )
 
   return {
     all,

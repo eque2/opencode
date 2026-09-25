@@ -5,6 +5,7 @@ import type {
   ModelListOutput,
   ProviderListOutput,
 } from "@opencode-ai/client/promise"
+import { HashMap, Option } from "effect"
 import { directoryKey, normalizeAgentList, normalizePermissionRequest, normalizeProviderList } from "./utils"
 
 describe("normalizeAgentList", () => {
@@ -105,8 +106,9 @@ describe("normalizeProviderList", () => {
     expect(result.connected).toEqual(["openai"])
     expect(result.defaultModel).toEqual({ providerID: "openai", modelID: "gpt-5" })
     expect(result.default).toEqual({ openai: "gpt-5" })
-    expect(result.all.get("openai")?.models["gpt-old"]).toBeUndefined()
-    expect(result.all.get("openai")?.models["gpt-5"]).toMatchObject({
+    const openai = Option.getOrUndefined(HashMap.get(result.all, "openai"))
+    expect(openai?.models["gpt-old"]).toBeUndefined()
+    expect(openai?.models["gpt-5"]).toMatchObject({
       id: "gpt-5",
       providerID: "openai",
       capabilities: { toolcall: true, attachment: true },

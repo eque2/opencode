@@ -63,9 +63,8 @@ export function useProviders(directory: Accessor<string | undefined>) {
       const paid = [
         ...Iterable.filter(
           providers().all,
-          ([id]) =>
-            connected.has(id) &&
-            (id !== "opencode" || Object.values(providers().all.get(id)?.models ?? {}).some((m) => m.cost?.input)),
+          ([id, provider]) =>
+            connected.has(id) && (id !== "opencode" || Object.values(provider.models).some((m) => m.cost?.input)),
         ),
       ]
       return paid

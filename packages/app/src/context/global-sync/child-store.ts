@@ -19,6 +19,7 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
+import { HashMap } from "effect"
 
 export function createChildStoreManager(input: {
   owner: Owner
@@ -208,11 +209,13 @@ export function createChildStoreManager(input: {
             get provider_ready() {
               return instanceQueriesEnabled() && !providerQuery.isLoading
             },
-            get provider() {
-              const EMPTY = { all: new Map(), connected: [], default: {} }
+            get provider(): NormalizedProviderListResponse {
+              const EMPTY: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
               if (providerQuery.isLoading) return EMPTY
-              if (providerQuery.data?.all.size === 0 && input.global.provider.all.size > 0) return input.global.provider
-              return providerQuery.data ?? EMPTY
+              const data = providerQuery.data
+              if (data && HashMap.isEmpty(data.all) && !HashMap.isEmpty(input.global.provider.all))
+                return input.global.provider
+              return data ?? EMPTY
             },
             config: {},
             get path() {

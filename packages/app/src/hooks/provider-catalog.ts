@@ -1,6 +1,7 @@
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import { HashMap } from "effect"
 
-const emptyProviderCatalog: NormalizedProviderListResponse = { all: new Map(), connected: [], default: {} }
+const emptyProviderCatalog: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
 
 type DirectoryCatalog = {
   ready: boolean
