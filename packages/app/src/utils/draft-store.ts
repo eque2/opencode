@@ -176,8 +176,13 @@ export function createDraftStore(driver: Driver): DraftStore {
 /** The blob ids that a stored draft references at any depth, as the old JSON reviver collected them. */
 const blobReferences = (value: unknown): ReadonlyArray<string> => {
   const nested = Predicate.isObjectOrArray(value) ? Object.values(value).flatMap(blobReferences) : []
-  if (Predicate.hasProperty(value, "blob") && Predicate.hasProperty(value.blob, "id") && Predicate.isString(value.blob.id))
+  if (
+    Predicate.hasProperty(value, "blob") &&
+    Predicate.hasProperty(value.blob, "id") &&
+    Predicate.isString(value.blob.id)
+  ) {
     return [...nested, value.blob.id]
+  }
   return nested
 }
 
@@ -255,7 +260,9 @@ const readDataUrl = (data: Blob) =>
   Effect.callback<string, DraftStoreError>((resume) => {
     const reader = new FileReader()
     reader.addEventListener("error", () => resume(Effect.fail(new DraftStoreError({ cause: reader.error }))))
-    reader.addEventListener("load", () => resume(Effect.succeed(Predicate.isString(reader.result) ? reader.result : "")))
+    reader.addEventListener("load", () =>
+      resume(Effect.succeed(Predicate.isString(reader.result) ? reader.result : "")),
+    )
     reader.readAsDataURL(data)
   })
 
