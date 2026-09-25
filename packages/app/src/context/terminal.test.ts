@@ -1,28 +1,36 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
+import { Effect, Option } from "effect"
 import { ServerScope } from "@/utils/server-scope"
 
 let getWorkspaceTerminalCacheKey: typeof import("./terminal").getWorkspaceTerminalCacheKey
 let getLegacyTerminalStorageKeys: (dir: string, legacySessionID?: string) => string[]
 let migrateTerminalState: (value: unknown) => unknown
+let sshScope: ServerScope
 
-beforeAll(async () => {
-  mock.module("@solidjs/router", () => ({
-    useNavigate: () => () => undefined,
-    useParams: () => ({}),
-    useLocation: () => ({}),
-    useSearchParams: () => [{}, () => undefined],
-  }))
-  mock.module("@opencode-ai/ui/context", () => ({
-    createSimpleContext: () => ({
-      use: () => undefined,
-      provider: () => undefined,
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      mock.module("@solidjs/router", () => ({
+        useNavigate: () => () => {},
+        useParams: () => ({}),
+        useLocation: () => ({}),
+        useSearchParams: () => [{}, () => {}],
+      }))
+      mock.module("@opencode-ai/ui/context", () => ({
+        createSimpleContext: () => ({
+          use: () => {},
+          provider: () => {},
+        }),
+      }))
+      const mod = yield* Effect.promise(() => import("./terminal"))
+      const server = yield* Effect.promise(() => import("@/context/server"))
+      getWorkspaceTerminalCacheKey = mod.getWorkspaceTerminalCacheKey
+      getLegacyTerminalStorageKeys = mod.getLegacyTerminalStorageKeys
+      migrateTerminalState = mod.migrateTerminalState
+      sshScope = ServerScope.fromServerKey(server.ServerConnection.Key.make("ssh:debian"))
     }),
-  }))
-  const mod = await import("./terminal")
-  getWorkspaceTerminalCacheKey = mod.getWorkspaceTerminalCacheKey
-  getLegacyTerminalStorageKeys = mod.getLegacyTerminalStorageKeys
-  migrateTerminalState = mod.migrateTerminalState
-})
+  ),
+)
 
 describe("getWorkspaceTerminalCacheKey", () => {
   test("uses workspace-only directory cache key", () => {
@@ -30,9 +38,7 @@ describe("getWorkspaceTerminalCacheKey", () => {
   })
 
   test("can include a server scope", () => {
-    expect(String(getWorkspaceTerminalCacheKey("/repo", "ssh:debian" as ServerScope))).toBe(
-      "ssh:debian\u0000/repo\u0000__workspace__",
-    )
+    expect(String(getWorkspaceTerminalCacheKey("/repo", sshScope))).toBe("ssh:debian\u0000/repo\u0000__workspace__")
   })
 })
 
@@ -55,7 +61,8 @@ describe("migrateTerminalState", () => {
       migrateTerminalState({
         active: "missing",
         all: [
-          null,
+          // A null entry in the persisted list.
+          Option.getOrNull(Option.none()),
           { id: "one", title: "Terminal 2" },
           { id: "one", title: "duplicate", titleNumber: 9 },
           { id: "two", title: "logs", titleNumber: 4, rows: 24, cols: 80 },
