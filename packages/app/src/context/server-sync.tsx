@@ -784,39 +784,28 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         if (!status) return Effect.runPromise(Effect.void)
         const api = serverSDK.api.mcp
         return runRequest(
-          request(() =>
-            toggleMcp({
-              status,
-              connect: () =>
-                runRequest(
-                  Effect.gen(function* () {
-                    if (yield* isLegacyProtocol(serverSDK.protocol)) {
-                      yield* request(() => sdk.mcp.connect({ name }))
-                      return
-                    }
-                    yield* request(() => api.connect({ server: name, location: { directory: key } }))
-                  }),
-                ),
-              disconnect: () =>
-                runRequest(
-                  Effect.gen(function* () {
-                    if (yield* isLegacyProtocol(serverSDK.protocol)) {
-                      yield* request(() => sdk.mcp.disconnect({ name }))
-                      return
-                    }
-                    yield* request(() => api.disconnect({ server: name, location: { directory: key } }))
-                  }),
-                ),
-              authenticate: () => runRequest(request(() => sdk.mcp.auth.authenticate({ name })).pipe(Effect.asVoid)),
-              refresh: () =>
-                runRequest(
-                  Effect.gen(function* () {
-                    yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcp(key)))
-                    yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcpResources(key)))
-                  }),
-                ),
+          toggleMcp({
+            status,
+            connect: Effect.gen(function* () {
+              if (yield* isLegacyProtocol(serverSDK.protocol)) {
+                yield* request(() => sdk.mcp.connect({ name }))
+                return
+              }
+              yield* request(() => api.connect({ server: name, location: { directory: key } }))
             }),
-          ),
+            disconnect: Effect.gen(function* () {
+              if (yield* isLegacyProtocol(serverSDK.protocol)) {
+                yield* request(() => sdk.mcp.disconnect({ name }))
+                return
+              }
+              yield* request(() => api.disconnect({ server: name, location: { directory: key } }))
+            }),
+            authenticate: request(() => sdk.mcp.auth.authenticate({ name })).pipe(Effect.asVoid),
+            refresh: Effect.gen(function* () {
+              yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcp(key)))
+              yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcpResources(key)))
+            }),
+          }),
         )
       },
     },

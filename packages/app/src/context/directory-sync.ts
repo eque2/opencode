@@ -6,7 +6,20 @@ import type { createServerSdkContext } from "./server-sdk"
 import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
 import { normalizeSessionInfo } from "@/utils/session"
-import { DateTime, HashSet } from "effect"
+import { Data, DateTime, Effect, HashSet } from "effect"
+
+/** A directory sync request that failed; `cause` is the value the request rejected with. */
+class DirectorySyncRequestError extends Data.TaggedError("App.DirectorySyncRequestError")<{
+  readonly cause: unknown
+}> {}
+
+/** Runs one Promise-returning request and maps its rejection to a DirectorySyncRequestError. */
+const request = <A>(run: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: () => run(), catch: (cause) => new DirectorySyncRequestError({ cause }) })
+
+/** Gives a request program back to a Promise API. The Promise rejects with the raw request error, as before. */
+const runRequest = <A>(program: Effect.Effect<A, DirectorySyncRequestError>): Promise<A> =>
+  Effect.runPromise(program.pipe(Effect.mapError((error) => error.cause)))
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const sessionFields: HashSet.HashSet<string> = HashSet.make(
@@ -113,42 +126,59 @@ export const createDirSyncContext = (
           parts: input.parts,
         })
       },
-      async sync(sessionID: string, options?: { force?: boolean }) {
-        await serverSync.session.sync(sessionID, options)
-        index(sessionID)
+      sync(sessionID: string, options?: { force?: boolean }): Promise<void> {
+        return runRequest(
+          request(() => serverSync.session.sync(sessionID, options)).pipe(
+            Effect.andThen(Effect.sync(() => index(sessionID))),
+          ),
+        )
       },
       todo: serverSync.session.todo,
       history: serverSync.session.history,
       evict(sessionID: string) {
         serverSync.session.evict(sessionID)
       },
-      fetch: async (count = 10) => {
-        const [store, setStore] = current()
-        setStore("limit", (value) => value + count)
-        const response = await serverSDK.api.session.list({ directory, limit: store.limit, order: "desc" })
-        const sessions = response.data
-          .map(normalizeSessionInfo)
-          .sort((a, b) => cmp(a.id, b.id))
-          .slice(0, store.limit)
-        sessions.forEach(serverSync.session.remember)
-        setStore("session", reconcile(sessions, { key: "id" }))
-      },
-      more: createMemo(() => current()[0].session.length >= current()[0].limit),
-      archive: async (sessionID: string) => {
-        if ((await serverSDK.protocol) !== "v1") return
-        await serverSDK.client.session.update({
-          sessionID,
-          directory,
-          time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
-        })
-        current()[1](
-          "session",
-          produce((draft) => {
-            const match = Binary.search(draft, sessionID, (session) => session.id)
-            if (match.found) draft.splice(match.index, 1)
+      // The store updates run synchronously on the call, before the list request starts, as they did before.
+      fetch: (count = 10): Promise<void> =>
+        runRequest(
+          Effect.suspend(() => {
+            const [store, setStore] = current()
+            setStore("limit", (value) => value + count)
+            return request(() => serverSDK.api.session.list({ directory, limit: store.limit, order: "desc" })).pipe(
+              Effect.flatMap((response) =>
+                Effect.sync(() => {
+                  const sessions = response.data
+                    .map(normalizeSessionInfo)
+                    .sort((a, b) => cmp(a.id, b.id))
+                    .slice(0, store.limit)
+                  sessions.forEach(serverSync.session.remember)
+                  setStore("session", reconcile(sessions, { key: "id" }))
+                }),
+              ),
+            )
           }),
-        )
-      },
+        ),
+      more: createMemo(() => current()[0].session.length >= current()[0].limit),
+      archive: (sessionID: string): Promise<void> =>
+        runRequest(
+          Effect.gen(function* () {
+            if ((yield* request(() => serverSDK.protocol)) !== "v1") return
+            yield* request(() =>
+              serverSDK.client.session.update({
+                sessionID,
+                directory,
+                time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
+              }),
+            )
+            current()[1](
+              "session",
+              produce((draft) => {
+                const match = Binary.search(draft, sessionID, (session) => session.id)
+                if (match.found) draft.splice(match.index, 1)
+              }),
+            )
+          }),
+        ),
     },
     mcp: {
       toggle: (name: string) => serverSync.mcp.toggle(directory, name),
