@@ -28,7 +28,7 @@ function Mark(props: { multi: boolean; picked: boolean; onClick?: (event: MouseE
   )
 }
 
-function Option(props: {
+function QuestionOption(props: {
   multi: boolean
   picked: boolean
   label: string
@@ -547,7 +547,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         >
           <For each={options()}>
             {(opt, i) => (
-              <Option
+              <QuestionOption
                 multi={multi()}
                 picked={picked(opt.label)}
                 label={opt.label}
