@@ -79,8 +79,8 @@ export function SessionReviewV2Sidebar(props: SessionReviewV2SidebarProps) {
       <Show when={props.open}>
         <aside
           data-slot="session-review-v2-sidebar"
-          data-transition={props.transition ? "" : undefined}
-          data-resizing={resizing() ? "" : undefined}
+          bool:data-transition={props.transition}
+          bool:data-resizing={resizing()}
           style={{ width: `${width()}px` }}
         >
           <div data-slot="session-review-v2-sidebar-header">
@@ -95,11 +95,11 @@ export function SessionReviewV2Sidebar(props: SessionReviewV2SidebarProps) {
               onKeyDown={props.onFilterKeyDown}
               autofocus={props.filterAutofocus}
               ref={props.filterRef}
-              role={props.filterControls ? "combobox" : undefined}
-              aria-autocomplete={props.filterControls ? "list" : undefined}
+              {...(props.filterControls
+                ? { role: "combobox", "aria-autocomplete": "list", "aria-expanded": props.filterExpanded }
+                : {})}
               aria-controls={props.filterControls}
               aria-activedescendant={props.filterActiveDescendant}
-              aria-expanded={props.filterControls ? props.filterExpanded : undefined}
               showClearButton={props.filter.length > 0}
               clearLabel={i18n.t("ui.list.clearFilter")}
               onClearClick={() => props.onFilterChange("")}
@@ -341,7 +341,7 @@ export function SessionReviewV2SidebarToggle(props: { opened: boolean; disabled?
         class="session-review-v2-sidebar-toggle"
         aria-label={i18n.t("ui.sessionReviewV2.toggleSidebar")}
         aria-expanded={props.opened}
-        data-expanded={props.opened ? "" : undefined}
+        {...(props.opened ? { "data-expanded": "" } : {})}
         disabled={props.disabled}
         onClick={props.onToggle}
         icon={<Icon name="filetree" />}

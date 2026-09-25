@@ -64,20 +64,20 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
       data-prevent-autofocus=""
       data-variant={variant()}
       data-comment-id={props.id}
-      data-open={props.open ? "" : undefined}
-      data-inline={props.inline ? "" : undefined}
+      bool:data-open={props.open}
+      bool:data-inline={props.inline}
       classList={{
         [props.class ?? ""]: !!props.class,
       }}
-      style={
-        props.inline
-          ? undefined
-          : {
+      {...(props.inline
+        ? {}
+        : {
+            style: {
               top: `${props.top ?? 0}px`,
               opacity: hidden() ? 0 : 1,
               "pointer-events": hidden() ? "none" : "auto",
-            }
-      }
+            },
+          })}
     >
       <Show
         when={inlineBody()}
@@ -212,28 +212,26 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     "mention",
   ])
 
-  const refs = {
-    textarea: undefined as HTMLTextAreaElement | undefined,
-  }
+  let textarea = Option.none<HTMLTextAreaElement>()
   const [open, setOpen] = createSignal(false)
 
   function selectMention(item: { path: string } | undefined) {
     if (!item) return
 
-    const textarea = refs.textarea
     const found = currentMention()
-    if (!textarea || Option.isNone(found)) return
+    if (Option.isNone(textarea) || Option.isNone(found)) return
+    const el = textarea.value
     const query = found.value
 
-    const value = `${textarea.value.slice(0, query.start)}@${item.path} ${textarea.value.slice(query.end)}`
+    const value = `${el.value.slice(0, query.start)}@${item.path} ${el.value.slice(query.end)}`
     const cursor = query.start + item.path.length + 2
 
     split.onInput(value)
     closeMention()
 
     requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(cursor, cursor)
+      el.focus()
+      el.setSelectionRange(cursor, cursor)
     })
   }
 
@@ -257,7 +255,9 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     onSelect: selectMention,
   })
 
-  const focus = () => refs.textarea?.focus()
+  const focus = () => {
+    if (Option.isSome(textarea)) textarea.value.focus()
+  }
   const hold: JSX.EventHandler<HTMLButtonElement, MouseEvent> = (e) => {
     e.preventDefault()
     e.stopPropagation()
@@ -275,13 +275,13 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
   }
 
   const currentMention = (): Option.Option<{ query: string; start: number; end: number }> => {
-    const textarea = refs.textarea
-    if (!textarea) return Option.none()
+    if (Option.isNone(textarea)) return Option.none()
+    const el = textarea.value
     if (!split.mention) return Option.none()
-    if (textarea.selectionStart !== textarea.selectionEnd) return Option.none()
+    if (el.selectionStart !== el.selectionEnd) return Option.none()
 
-    const end = textarea.selectionStart
-    const match = textarea.value.slice(0, end).match(/@(\S*)$/)
+    const end = el.selectionStart
+    const match = el.value.slice(0, end).match(/@(\S*)$/)
     if (!match) return Option.none()
 
     return Option.some({
@@ -325,7 +325,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
       <div data-slot="line-comment-editor">
         <textarea
           ref={(el) => {
-            refs.textarea = el
+            textarea = Option.some(el)
           }}
           data-slot="line-comment-textarea"
           rows={split.rows ?? 3}
@@ -388,7 +388,7 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   <button
                     type="button"
                     data-slot="line-comment-mention-item"
-                    data-active={mention.active() === item.path ? "" : undefined}
+                    bool:data-active={mention.active() === item.path}
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseEnter={() => mention.setActive(item.path)}
                     onClick={() => selectMention(item)}

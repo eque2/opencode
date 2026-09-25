@@ -171,7 +171,7 @@ const disabledItemValue = (file: string) => `\u0000disabled:${file}`
 export const SessionReview = (props: SessionReviewProps) => {
   let scroll: HTMLDivElement | undefined
   let focusToken = 0
-  let frame: number | undefined
+  let frame = Option.none<number>()
   const i18n = useI18n()
   const fileComponent = useFileComponent()
   const anchors = MutableHashMap.empty<string, HTMLElement>()
@@ -199,7 +199,7 @@ export const SessionReview = (props: SessionReviewProps) => {
   const hasDiffs = () => files().length > 0
 
   const syncVisible = () => {
-    frame = undefined
+    frame = Option.none()
     if (!scroll) return
 
     const root = scroll.getBoundingClientRect()
@@ -223,8 +223,8 @@ export const SessionReview = (props: SessionReviewProps) => {
   }
 
   const queue = () => {
-    if (frame !== undefined) return
-    frame = requestAnimationFrame(syncVisible)
+    if (Option.isSome(frame)) return
+    frame = Option.some(requestAnimationFrame(syncVisible))
   }
 
   const pinned = (file: string) =>
@@ -247,8 +247,8 @@ export const SessionReview = (props: SessionReviewProps) => {
   }
 
   onCleanup(() => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
+    if (Option.isNone(frame)) return
+    cancelAnimationFrame(frame.value)
   })
 
   createEffect(() => {
@@ -491,15 +491,17 @@ export const SessionReview = (props: SessionReviewProps) => {
                         })
                       },
                       editSubmitLabel: props.lineCommentActions?.saveLabel,
-                      renderCommentActions: props.lineCommentActions
-                        ? (comment, controls) => (
-                            <ReviewCommentMenu
-                              labels={props.lineCommentActions!}
-                              onEdit={controls.edit}
-                              onDelete={controls.remove}
-                            />
-                          )
-                        : undefined,
+                      ...(props.lineCommentActions
+                        ? {
+                            renderCommentActions: (comment, controls) => (
+                              <ReviewCommentMenu
+                                labels={props.lineCommentActions!}
+                                onEdit={controls.edit}
+                                onDelete={controls.remove}
+                              />
+                            ),
+                          }
+                        : {}),
                     })
 
                     onCleanup(() => {
@@ -524,7 +526,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                         id={Option.getOrUndefined(diffId(file))}
                         data-file={file}
                         data-slot="session-review-accordion-item"
-                        data-selected={props.focusedFile === file ? "" : undefined}
+                        {...(props.focusedFile === file ? { "data-selected": "" } : {})}
                       >
                         <StickyAccordionHeader>
                           <Accordion.Trigger disabled={!diffCanRender()} class="cursor-default">
@@ -642,16 +644,16 @@ export const SessionReview = (props: SessionReviewProps) => {
                                     onLineSelectionEnd={handleLineSelectionEnd}
                                     annotations={commentsUi.annotations()}
                                     renderAnnotation={commentsUi.renderAnnotation}
-                                    renderGutterUtility={
-                                      props.onLineComment ? commentsUi.renderGutterUtility : undefined
-                                    }
+                                    {...(props.onLineComment
+                                      ? { renderGutterUtility: commentsUi.renderGutterUtility }
+                                      : {})}
                                     selectedLines={Option.getOrNull(selectedLines())}
                                     commentedLines={commentedLines()}
                                     media={{
                                       mode: "auto",
                                       path: file,
                                       deleted: diff().status === "deleted",
-                                      readFile: diff().status === "deleted" ? undefined : props.readFile,
+                                      ...(diff().status === "deleted" ? {} : { readFile: props.readFile }),
                                     }}
                                   />
                                 </Match>

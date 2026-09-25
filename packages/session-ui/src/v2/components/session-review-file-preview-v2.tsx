@@ -110,7 +110,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
 
   const view = createMemo(() => ({
     ...normalize(props.diff),
-    preloaded: "preloaded" in props.diff ? props.diff.preloaded : undefined,
+    ...("preloaded" in props.diff ? { preloaded: props.diff.preloaded } : {}),
   }))
   const diffCanRender = createMemo(() => view().additions !== 0 || view().deletions !== 0)
   const mediaKind = createMemo(() => mediaKindFromPath(props.file))
@@ -157,11 +157,13 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       })
     },
     editSubmitLabel: props.lineCommentActions?.saveLabel,
-    renderCommentActions: props.lineCommentActions
-      ? (comment, controls) => (
-          <ReviewCommentMenuV2 labels={props.lineCommentActions!} onEdit={controls.edit} onDelete={controls.remove} />
-        )
-      : undefined,
+    ...(props.lineCommentActions
+      ? {
+          renderCommentActions: (comment, controls) => (
+            <ReviewCommentMenuV2 labels={props.lineCommentActions!} onEdit={controls.edit} onDelete={controls.remove} />
+          ),
+        }
+      : {}),
   })
 
   onCleanup(() => {
@@ -242,14 +244,14 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       onLineNumberSelectionEnd={commentsUi.onLineNumberSelectionEnd}
       annotations={commentsUi.annotations()}
       renderAnnotation={commentsUi.renderAnnotation}
-      renderGutterUtility={lineCommentsEnabled() ? commentsUi.renderGutterUtility : undefined}
+      {...(lineCommentsEnabled() ? { renderGutterUtility: commentsUi.renderGutterUtility } : {})}
       selectedLines={Option.getOrNull(store.selection)}
       commentedLines={commentedLines()}
       media={{
         mode: "auto",
         path: props.file,
         deleted: view().status === "deleted",
-        readFile: view().status === "deleted" ? undefined : props.readFile,
+        ...(view().status === "deleted" ? {} : { readFile: props.readFile }),
       }}
     />
   )

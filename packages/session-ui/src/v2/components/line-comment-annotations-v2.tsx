@@ -33,7 +33,7 @@ type CommentProps = {
   comment: JSX.Element
   selection: JSX.Element
   actions?: JSX.Element
-  editor?: DraftProps
+  editor: Option.Option<DraftProps>
   onClick?: JSX.EventHandlerUnion<HTMLDivElement, MouseEvent>
   onMouseEnter?: JSX.EventHandlerUnion<HTMLDivElement, MouseEvent>
 }
@@ -52,7 +52,7 @@ type DraftProps = {
 function lineCommentElementV2(view: Accessor<CommentProps>) {
   return (
     <Show
-      when={view().editor}
+      when={Option.getOrUndefined(view().editor)}
       fallback={
         <div
           data-prevent-autofocus=""
@@ -65,18 +65,20 @@ function lineCommentElementV2(view: Accessor<CommentProps>) {
         </div>
       }
     >
-      <div data-prevent-autofocus="" data-comment-id={view().id} onMouseDown={(event) => event.stopPropagation()}>
-        <LineCommentEditorV2
-          value={view().editor!.value}
-          selection={view().editor!.selection}
-          onInput={view().editor!.onInput}
-          onCancel={view().editor!.onCancel}
-          onSubmit={view().editor!.onSubmit}
-          cancelLabel={view().editor!.cancelLabel}
-          submitLabel={view().editor!.submitLabel}
-          mention={view().editor!.mention}
-        />
-      </div>
+      {(editor) => (
+        <div data-prevent-autofocus="" data-comment-id={view().id} onMouseDown={(event) => event.stopPropagation()}>
+          <LineCommentEditorV2
+            value={editor().value}
+            selection={editor().selection}
+            onInput={editor().onInput}
+            onCancel={editor().onCancel}
+            onSubmit={editor().onSubmit}
+            cancelLabel={editor().cancelLabel}
+            submitLabel={editor().submitLabel}
+            mention={editor().mention}
+          />
+        </div>
+      )}
     </Show>
   )
 }
@@ -130,27 +132,26 @@ export function createLineCommentControllerV2<T extends LineCommentShape>(props:
           return props.renderCommentActions?.(comment, { edit, remove })
         },
         get editor() {
-          return note.isEditing(comment.id)
-            ? {
-                get value() {
-                  return note.draft()
-                },
-                selection: formatSelectedLineLabel(comment.selection, i18n.t),
-                onInput: note.setDraft,
-                onCancel: note.cancelDraft,
-                onSubmit: (value: string) => {
-                  props.onUpdate?.({
-                    id: comment.id,
-                    comment: value,
-                    selection: cloneSelectedLineRange(comment.selection),
-                  })
-                  note.cancelDraft()
-                },
-                cancelLabel: i18n.t("ui.lineComment.cancel"),
-                submitLabel: props.editSubmitLabel,
-                mention: props.mention,
-              }
-            : undefined
+          if (!note.isEditing(comment.id)) return Option.none()
+          return Option.some({
+            get value() {
+              return note.draft()
+            },
+            selection: formatSelectedLineLabel(comment.selection, i18n.t),
+            onInput: note.setDraft,
+            onCancel: note.cancelDraft,
+            onSubmit: (value: string) => {
+              props.onUpdate?.({
+                id: comment.id,
+                comment: value,
+                selection: cloneSelectedLineRange(comment.selection),
+              })
+              note.cancelDraft()
+            },
+            cancelLabel: i18n.t("ui.lineComment.cancel"),
+            submitLabel: props.editSubmitLabel,
+            mention: props.mention,
+          })
         },
         onMouseEnter: () => {
           if (note.commenting()) return

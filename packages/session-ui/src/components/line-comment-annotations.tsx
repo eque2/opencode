@@ -79,7 +79,7 @@ type CommentProps = {
   comment: JSX.Element
   selection: JSX.Element
   actions?: JSX.Element
-  editor?: DraftProps
+  editor: Option.Option<DraftProps>
   onClick?: JSX.EventHandler<HTMLElement, MouseEvent>
   onMouseEnter?: JSX.EventHandler<HTMLElement, MouseEvent>
 }
@@ -173,7 +173,7 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
 function lineCommentElement(view: Accessor<CommentProps>) {
   return (
     <Show
-      when={view().editor}
+      when={Option.getOrUndefined(view().editor)}
       fallback={
         <LineComment
           inline
@@ -187,19 +187,21 @@ function lineCommentElement(view: Accessor<CommentProps>) {
         />
       }
     >
-      <LineCommentEditor
-        inline
-        id={view().id}
-        value={view().editor!.value}
-        selection={view().editor!.selection}
-        onInput={view().editor!.onInput}
-        onCancel={view().editor!.onCancel}
-        onSubmit={view().editor!.onSubmit}
-        onPopoverFocusOut={view().editor!.onPopoverFocusOut}
-        cancelLabel={view().editor!.cancelLabel}
-        submitLabel={view().editor!.submitLabel}
-        mention={view().editor!.mention}
-      />
+      {(editor) => (
+        <LineCommentEditor
+          inline
+          id={view().id}
+          value={editor().value}
+          selection={editor().selection}
+          onInput={editor().onInput}
+          onCancel={editor().onCancel}
+          onSubmit={editor().onSubmit}
+          onPopoverFocusOut={editor().onPopoverFocusOut}
+          cancelLabel={editor().cancelLabel}
+          submitLabel={editor().submitLabel}
+          mention={editor().mention}
+        />
+      )}
     </Show>
   )
 }
@@ -402,26 +404,25 @@ export function createLineCommentController<T extends LineCommentShape>(
           return props.renderCommentActions?.(comment, { edit, remove })
         },
         get editor() {
-          return note.isEditing(comment.id)
-            ? {
-                get value() {
-                  return note.draft()
-                },
-                selection: formatSelectedLineLabel(comment.selection, i18n.t),
-                mention: props.mention,
-                onInput: note.setDraft,
-                onCancel: note.cancelDraft,
-                onSubmit: (value: string) => {
-                  props.onUpdate?.({
-                    id: comment.id,
-                    comment: value,
-                    selection: cloneSelectedLineRange(comment.selection),
-                  })
-                  note.cancelDraft()
-                },
-                submitLabel: props.editSubmitLabel,
-              }
-            : undefined
+          if (!note.isEditing(comment.id)) return Option.none()
+          return Option.some({
+            get value() {
+              return note.draft()
+            },
+            selection: formatSelectedLineLabel(comment.selection, i18n.t),
+            mention: props.mention,
+            onInput: note.setDraft,
+            onCancel: note.cancelDraft,
+            onSubmit: (value: string) => {
+              props.onUpdate?.({
+                id: comment.id,
+                comment: value,
+                selection: cloneSelectedLineRange(comment.selection),
+              })
+              note.cancelDraft()
+            },
+            submitLabel: props.editSubmitLabel,
+          })
         },
         onMouseEnter: () => note.hoverComment(comment.selection),
         onClick: () => {
