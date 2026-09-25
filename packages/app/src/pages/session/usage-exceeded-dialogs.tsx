@@ -7,13 +7,14 @@ import { useSessionLayout } from "./session-layout"
 import { useDialog } from "@opencode-ai/ui/context"
 import { DialogUsageExceeded } from "@/components/dialog-usage-exceeded"
 import { useI18n } from "@opencode-ai/ui/context"
+import { HashSet } from "effect"
 
 const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
-const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+const GO_UPSELL_PROVIDERS = HashSet.make("opencode", "opencode-go")
 
 type GoUpsellKey =
   | typeof GO_UPSELL_FREE_TIER_LAST_SEEN_AT
@@ -28,7 +29,7 @@ type GoUpsellState = { [K in GoUpsellKey]?: number | null }
 function goUpsellKeys(status: SessionStatus) {
   if (status.type !== "retry" || !status.action) return undefined
   const { action } = status
-  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return undefined
+  if (!HashSet.has(GO_UPSELL_PROVIDERS, action.provider)) return undefined
   if (action.reason === "free_tier_limit") {
     return {
       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,

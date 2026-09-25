@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component, type JSX } from "solid-js"
-import { Duration, Effect, Option } from "effect"
+import { Duration, Effect, MutableHashMap, Option } from "effect"
 import { createStore } from "solid-js/store"
 import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
@@ -24,7 +24,10 @@ const minimizedQuestionText = {
   overflow: "hidden",
 } satisfies JSX.CSSProperties
 
-const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
+type CachedAnswers = { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }
+
+// Unsent answers per question request, kept while the dock is closed.
+const cache = MutableHashMap.empty<ScopedKey, CachedAnswers>()
 
 function Mark(props: { multi: boolean; picked: boolean; onClick?: (event: MouseEvent) => void }) {
   return (
@@ -80,12 +83,15 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const questions = createMemo(() => props.request.questions)
   const total = createMemo(() => questions().length)
 
-  const cached = cache.get(cacheKey)
+  const cached = Option.getOrElse(
+    MutableHashMap.get(cache, cacheKey),
+    (): CachedAnswers => ({ tab: 0, answers: [], custom: [], customOn: [] }),
+  )
   const [store, setStore] = createStore({
-    tab: cached?.tab ?? 0,
-    answers: cached?.answers ?? ([] as QuestionAnswer[]),
-    custom: cached?.custom ?? ([] as string[]),
-    customOn: cached?.customOn ?? ([] as boolean[]),
+    tab: cached.tab,
+    answers: cached.answers,
+    custom: cached.custom,
+    customOn: cached.customOn,
     editing: false,
     focus: 0,
     minimized: false,
@@ -229,7 +235,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   onCleanup(() => {
     if (Option.isSome(focusFrame)) cancelAnimationFrame(focusFrame.value)
     if (replied) return
-    cache.set(cacheKey, {
+    MutableHashMap.set(cache, cacheKey, {
       tab: store.tab,
       answers: store.answers.map((a) => (a ? [...a] : [])),
       custom: store.custom.map((s) => s ?? ""),
@@ -250,7 +256,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     },
     onSuccess: () => {
       replied = true
-      cache.delete(cacheKey)
+      MutableHashMap.remove(cache, cacheKey)
     },
     onError: fail,
   }))
@@ -262,7 +268,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     },
     onSuccess: () => {
       replied = true
-      cache.delete(cacheKey)
+      MutableHashMap.remove(cache, cacheKey)
     },
     onError: fail,
   }))

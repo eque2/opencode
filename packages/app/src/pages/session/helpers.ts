@@ -1,7 +1,7 @@
 import { batch, createMemo, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Schema } from "effect"
 import { same } from "@/utils/same"
 import { createFiberSlot } from "@/utils/fiber-slot"
 import { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
@@ -64,20 +64,17 @@ export const createSessionTabs = (input: TabsInput) => {
       (input.tabs().active() === SESSION_OPEN_FILE_TAB || input.tabs().all().includes(SESSION_OPEN_FILE_TAB)),
   )
   const panelTabs = createMemo(
-    () => {
-      const seen = new Set<string>()
-      return input
-        .tabs()
-        .all()
-        .flatMap((tab) => {
-          if (tab === "context" || tab === "review") return []
-          if (tab === SESSION_OPEN_FILE_TAB && !fileBrowser()) return []
-          const value = input.pathFromTab(tab) ? input.normalizeTab(tab) : tab
-          if (seen.has(value)) return []
-          seen.add(value)
-          return [value]
-        })
-    },
+    () =>
+      Arr.dedupe(
+        input
+          .tabs()
+          .all()
+          .flatMap((tab) => {
+            if (tab === "context" || tab === "review") return []
+            if (tab === SESSION_OPEN_FILE_TAB && !fileBrowser()) return []
+            return [input.pathFromTab(tab) ? input.normalizeTab(tab) : tab]
+          }),
+      ),
     emptyTabs,
     { equals: same },
   )
