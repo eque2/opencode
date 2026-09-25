@@ -158,15 +158,38 @@ export const SettingsGeneral: Component = () => {
     { initialValue: [] as ShellOption[] },
   )
 
+  // The platform may answer with a value or a Promise. A failed read shows the default backend.
+  const readDisplayBackend: Effect.Effect<Option.Option<DisplayBackend>> = Effect.suspend(
+    (): Effect.Effect<DisplayBackend | null | undefined, SettingsGeneralRequestError> => {
+      const backend = platform.getDisplayBackend?.()
+      return backend instanceof Promise
+        ? Effect.tryPromise({ try: () => backend, catch: (cause) => new SettingsGeneralRequestError({ cause }) })
+        : Effect.succeed(backend)
+    },
+  ).pipe(
+    Effect.map(Option.fromNullishOr),
+    Effect.orElseSucceed(() => Option.none<DisplayBackend>()),
+  )
+
   const [displayBackend, { refetch: refetchDisplayBackend }] = createResource(
     () => (linux() && platform.getDisplayBackend ? true : false),
-    () => Promise.resolve(platform.getDisplayBackend?.() ?? null).catch(() => null as DisplayBackend | null),
-    { initialValue: null as DisplayBackend | null },
+    () => Effect.runPromise(readDisplayBackend),
+    { initialValue: Option.none<DisplayBackend>() },
   )
+
+  // The platform may answer with a value or a Promise. A failed read shows pinch zoom as off.
+  const readPinchZoom: Effect.Effect<boolean> = Effect.suspend(
+    (): Effect.Effect<boolean, SettingsGeneralRequestError> => {
+      const enabled = platform.getPinchZoomEnabled?.() ?? false
+      return enabled instanceof Promise
+        ? Effect.tryPromise({ try: () => enabled, catch: (cause) => new SettingsGeneralRequestError({ cause }) })
+        : Effect.succeed(enabled)
+    },
+  ).pipe(Effect.orElseSucceed(() => false))
 
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
     () => (desktop() && platform.getPinchZoomEnabled ? true : false),
-    () => Promise.resolve(platform.getPinchZoomEnabled?.() ?? false).catch(() => false),
+    () => Effect.runPromise(readPinchZoom),
     { initialValue: false },
   )
 
@@ -750,7 +773,7 @@ export const SettingsGeneral: Component = () => {
               description={language.t("settings.general.row.wayland.description")}
             >
               <div data-action="settings-wayland">
-                <Switch checked={displayBackend.latest === "wayland"} onChange={onDisplayBackendChange} />
+                <Switch checked={Option.contains(displayBackend.latest, "wayland")} onChange={onDisplayBackendChange} />
               </div>
             </SettingsRow>
           </Show>
