@@ -430,12 +430,12 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     function register(cb: () => CommandOption[]): void
     function register(key: string, cb: () => CommandOption[]): void
     function register(key: string | (() => CommandOption[]), cb?: () => CommandOption[]) {
-      const id = typeof key === "string" ? key : undefined
       const next = typeof key === "function" ? key : cb
       if (!next) return
       const options = createMemo(next)
+      // An unkeyed registration leaves out `key`, so activeCommandRegistrations never dedupes it.
       const entry: CommandRegistration = {
-        key: id,
+        ...(typeof key === "string" ? { key } : {}),
         options,
       }
       setStore("registrations", (arr) => addCommandRegistration(arr, entry))
