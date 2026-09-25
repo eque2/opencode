@@ -46,7 +46,7 @@ export const SapAICorePlugin = define({
           Option.filter(Str.isNonEmpty),
         )
         if (Option.isNone(envKey) && Option.isSome(serviceKey)) {
-          // eslint-disable-next-line effect/no-process-env-use-config -- the SAP AI SDK reads AICORE_SERVICE_KEY only from process.env, and Effect Config cannot write env.
+          // eslint-disable-next-line effect/no-process-env-use-config -- (a) env write, not a read: the SAP AI SDK reads AICORE_SERVICE_KEY only from process.env, and Effect Config cannot write env
           process.env.AICORE_SERVICE_KEY = serviceKey.value
         }
 

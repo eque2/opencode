@@ -103,7 +103,7 @@ export const AmazonBedrockPlugin = define({
           Option.filter(Str.isNonEmpty),
         )
         if (Option.isNone(envToken) && Option.isSome(bearerToken)) {
-          // eslint-disable-next-line effect/no-process-env-use-config -- Effect Config only reads env; this exports the configured token to process.env for other AWS clients, as the plugin contract and its test require.
+          // eslint-disable-next-line effect/no-process-env-use-config -- (a) env write, not a read: AWS clients read AWS_BEARER_TOKEN_BEDROCK from process.env, and Effect Config cannot write env
           process.env.AWS_BEARER_TOKEN_BEDROCK = bearerToken.value
         }
 
