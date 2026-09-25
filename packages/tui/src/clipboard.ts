@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises"
 import { platform, release, tmpdir } from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
+import { Effect, Option } from "effect"
 
 const exec = promisify(execFile)
 
@@ -95,12 +96,18 @@ export function copyCommand(
   return undefined
 }
 
+// Every command that copyCommand can ask about, so one lookup pass answers all of its checks.
+const COPY_COMMANDS = ["osascript", "wl-copy", "xclip", "xsel", "powershell.exe"]
+
 let copyMethod: Promise<(text: string) => Promise<void>> | undefined
 
 function getCopyMethod() {
   return (copyMethod ??= (async () => {
     const { which } = await import("@opencode-ai/core/util/which")
-    const native = copyCommand(platform(), Boolean(process.env.WAYLAND_DISPLAY), (name) => Boolean(which(name)))
+    const installed = await Effect.runPromise(
+      Effect.filter(COPY_COMMANDS, (name) => which(name).pipe(Effect.map(Option.isSome))),
+    )
+    const native = copyCommand(platform(), Boolean(process.env.WAYLAND_DISPLAY), (name) => installed.includes(name))
     if (native?.[0] === "osascript") {
       return async (text: string) => {
         const escaped = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
