@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { ShikiStreamTokenizer } from "@shikijs/stream"
-import { Option } from "effect"
+import { MutableHashMap, Option } from "effect"
 import { createMarkdownParser } from "@opencode-ai/ui/context/marked-parser"
 import { OpenCodeTheme } from "@opencode-ai/ui/context/marked-theme"
 import {
@@ -22,18 +22,22 @@ type Stream = {
   tokenizer: ShikiStreamTokenizer
 }
 
-const streams = new Map<string, Stream>()
-const projections = new Map<string, Projection>()
+const streams = MutableHashMap.empty<string, Stream>()
+const projections = MutableHashMap.empty<string, Projection>()
 let highlighter: ReturnType<typeof createHighlighter> | undefined
 const highlightQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
   run: highlight,
   supersede: (request) => post({ type: "superseded", id: request.id, key: request.key }),
-  dispose: (key) => void streams.delete(key),
+  dispose: (key) => {
+    MutableHashMap.remove(streams, key)
+  },
 })
 const projectQueue = createLatestWorkerQueue<Extract<MarkdownWorkerRequest, { type: "project" }>>({
   run: runProject,
   supersede: (request) => post({ type: "superseded", id: request.id, key: request.key }),
-  dispose: (key) => void projections.delete(key),
+  dispose: (key) => {
+    MutableHashMap.remove(projections, key)
+  },
 })
 const parser = createMarkdownParser(async (code, language) => {
   const instance = await getHighlighter()
@@ -71,8 +75,8 @@ async function parse(request: Extract<MarkdownWorkerRequest, { type: "parse" }>)
 
 async function runProject(request: Extract<MarkdownWorkerRequest, { type: "project" }>) {
   try {
-    const projection = project(Option.fromNullishOr(projections.get(request.key)), request.text, request.live)
-    projections.set(request.key, projection)
+    const projection = project(MutableHashMap.get(projections, request.key), request.text, request.live)
+    MutableHashMap.set(projections, request.key, projection)
     post({ type: "project", id: request.id, key: request.key, projection })
   } catch (error) {
     post({
@@ -93,7 +97,7 @@ async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highli
 
     if (request.complete) {
       const result = instance.codeToTokens(request.text, { lang: language as BundledLanguage, theme: "OpenCode" })
-      streams.delete(request.key)
+      MutableHashMap.remove(streams, request.key)
       post({
         type: "highlight",
         id: request.id,
@@ -110,18 +114,23 @@ async function highlight(request: Extract<MarkdownWorkerRequest, { type: "highli
       return
     }
 
-    const previous = streams.get(request.key)
-    const reset = !previous || previous.language !== language || !request.text.startsWith(previous.source)
-    const stream = reset
-      ? {
-          language,
-          source: "",
-          tokenizer: new ShikiStreamTokenizer({ highlighter: instance, lang: language, theme: "OpenCode" }),
-        }
-      : previous
+    // Reuse the stream only while the language matches and the text extends the streamed source.
+    const reusable = Option.filter(
+      MutableHashMap.get(streams, request.key),
+      (previous) => previous.language === language && request.text.startsWith(previous.source),
+    )
+    const reset = Option.isNone(reusable)
+    const stream = Option.getOrElse(
+      reusable,
+      (): Stream => ({
+        language,
+        source: "",
+        tokenizer: new ShikiStreamTokenizer({ highlighter: instance, lang: language, theme: "OpenCode" }),
+      }),
+    )
     const result = await stream.tokenizer.enqueue(request.text.slice(stream.source.length))
     stream.source = request.text
-    streams.set(request.key, stream)
+    MutableHashMap.set(streams, request.key, stream)
     post({
       type: "highlight",
       id: request.id,

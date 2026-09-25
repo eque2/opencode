@@ -1,5 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { HashSet, MutableHashSet, Option } from "effect"
+import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -339,8 +339,8 @@ function initialResult(text: string, key: string | undefined, projection: Projec
       if (block.mode === "code") return []
       const cacheKey = `${base}:${index}:${block.mode}`
       const cached = getCachedMarkdown(cacheKey)
-      if (cached?.raw !== block.raw) return []
-      return [{ key: `${owner}:${cacheKey}`, mode: block.mode, ...cached }]
+      if (Option.isNone(cached) || cached.value.raw !== block.raw) return []
+      return [{ key: `${owner}:${cacheKey}`, mode: block.mode, ...cached.value }]
     })
     if (blocks.length === projection.blocks.length) return { text, blocks }
   }
@@ -376,7 +376,7 @@ export function Markdown(
   const [root, setRoot] = createSignal<HTMLDivElement>()
   const owner = createUniqueId()
   const activeCodeKeys = MutableHashSet.empty<string>()
-  const completedCode = new Map<string, Extract<RenderedBlock, { mode: "code" }>>()
+  const completedCode = MutableHashMap.empty<string, Extract<RenderedBlock, { mode: "code" }>>()
   let streamed = false
   const [projection] = createResource(
     () => {
@@ -435,8 +435,8 @@ export function Markdown(
           const blockKey = markdownBlockKey(owner, Option.fromNullishOr(src.key), index, block.mode)
 
           if (block.mode === "code") {
-            const cached = completedCode.get(blockKey)
-            if (block.complete && cached?.raw === block.raw) return cached
+            const cached = MutableHashMap.get(completedCode, blockKey)
+            if (block.complete && Option.isSome(cached) && cached.value.raw === block.raw) return cached.value
             const result = await code(block.src, block.language, blockKey, block.complete)
             const rendered = {
               key: blockKey,
@@ -446,15 +446,15 @@ export function Markdown(
               complete: !!block.complete,
               ...result,
             }
-            if (block.complete) completedCode.set(blockKey, rendered)
+            if (block.complete) MutableHashMap.set(completedCode, blockKey, rendered)
             return rendered
           }
 
           if (Option.isSome(key)) {
             const cached = getCachedMarkdown(key.value)
-            if (cached?.raw === block.raw) {
-              touchCachedMarkdown(key.value, cached)
-              return { key: blockKey, mode: block.mode, ...cached }
+            if (Option.isSome(cached) && cached.value.raw === block.raw) {
+              touchCachedMarkdown(key.value, cached.value)
+              return { key: blockKey, mode: block.mode, ...cached.value }
             }
           }
 
@@ -539,7 +539,7 @@ export function Markdown(
     if (copyCleanup) copyCleanup()
     disposeMarkdownProjection(owner)
     for (const key of activeCodeKeys) disposeCode(key)
-    completedCode.clear()
+    MutableHashMap.clear(completedCode)
   })
 
   return (

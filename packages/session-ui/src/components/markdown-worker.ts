@@ -1,4 +1,4 @@
-import { Iterable, MutableHashSet, Option } from "effect"
+import { Iterable, MutableHashMap, MutableHashSet, Option } from "effect"
 import MarkdownWorkerUrl from "./markdown.worker.ts?worker&url"
 import {
   applyMarkdownWorkerResponse,
@@ -31,28 +31,24 @@ type ParsePending = {
 let worker: Option.Option<Worker> = Option.none()
 let disabled: Error | undefined
 let nextID = 0
-const pending = new Map<number, HighlightPending>()
-const projects = new Map<number, ProjectPending>()
-const parses = new Map<number, ParsePending>()
-const states = new Map<string, MarkdownWorkerState>()
+const pending = MutableHashMap.empty<number, HighlightPending>()
+const projects = MutableHashMap.empty<number, ProjectPending>()
+const parses = MutableHashMap.empty<number, ParsePending>()
+const states = MutableHashMap.empty<string, MarkdownWorkerState>()
 const keys = MutableHashSet.empty<string>()
-const latest = new Map<string, number>()
+const latest = MutableHashMap.empty<string, number>()
 const transport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
   post: (request) => post(request),
   supersede: (request) => {
-    const result = pending.get(request.id)
-    if (!result) return
-    pending.delete(request.id)
-    result.reject(new MarkdownWorkerSupersededError())
+    const result = take(pending, request.id)
+    if (Option.isSome(result)) result.value.reject(new MarkdownWorkerSupersededError())
   },
 })
 const projectTransport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "project" }>>({
   post: (request) => post(request),
   supersede: (request) => {
-    const result = projects.get(request.id)
-    if (!result) return
-    projects.delete(request.id)
-    result.reject(new MarkdownWorkerSupersededError())
+    const result = take(projects, request.id)
+    if (Option.isSome(result)) result.value.reject(new MarkdownWorkerSupersededError())
   },
 })
 
@@ -60,7 +56,7 @@ export function parseMarkdown(text: string) {
   const instance = getWorker()
   const id = ++nextID
   return new Promise<string>((resolve, reject) => {
-    parses.set(id, { resolve, reject })
+    MutableHashMap.set(parses, id, { resolve, reject })
     instance.postMessage({ type: "parse", id, text } satisfies MarkdownWorkerRequest)
   })
 }
@@ -69,46 +65,46 @@ export function projectMarkdown(key: string, text: string, live: boolean) {
   getWorker()
   const id = ++nextID
   return new Promise<Projection>((resolve, reject) => {
-    projects.set(id, { key, resolve, reject })
+    MutableHashMap.set(projects, id, { key, resolve, reject })
     projectTransport.send({ type: "project", id, key, text, live })
   })
 }
 
 export function disposeMarkdownProjection(key: string) {
   projectTransport.dispose(key)
-  projects.forEach((request, id) => {
-    if (request.key !== key) return
-    projects.delete(id)
+  for (const [id, request] of Array.from(projects)) {
+    if (request.key !== key) continue
+    MutableHashMap.remove(projects, id)
     request.reject(new MarkdownWorkerDisposedError())
-  })
+  }
   post({ type: "dispose", key })
 }
 
 export function highlightStreamingCode(key: string, text: string, language: string, complete = false) {
   const instance = getWorker()
   const id = ++nextID
-  latest.set(key, id)
+  MutableHashMap.set(latest, key, id)
   MutableHashSet.remove(keys, key)
   MutableHashSet.add(keys, key)
   // Evict the oldest key. MutableHashSet keeps insertion order for string keys.
   const oldest = MutableHashSet.size(keys) > 200 ? Iterable.head(keys) : Option.none()
   if (Option.isSome(oldest)) disposeStreamingCode(oldest.value)
   return new Promise<MarkdownWorkerState>((resolve, reject) => {
-    pending.set(id, { key, complete, resolve, reject })
+    MutableHashMap.set(pending, id, { key, complete, resolve, reject })
     transport.send({ type: "highlight", id, key, text, language, complete })
   })
 }
 
 export function disposeStreamingCode(key: string) {
   MutableHashSet.remove(keys, key)
-  latest.delete(key)
-  states.delete(key)
+  MutableHashMap.remove(latest, key)
+  MutableHashMap.remove(states, key)
   transport.dispose(key)
-  pending.forEach((request, id) => {
-    if (request.key !== key) return
-    pending.delete(id)
+  for (const [id, request] of Array.from(pending)) {
+    if (request.key !== key) continue
+    MutableHashMap.remove(pending, id)
     request.reject(new MarkdownWorkerDisposedError())
-  })
+  }
   post({ type: "dispose", key })
 }
 
@@ -132,98 +128,95 @@ function getWorker() {
   }
   worker = Option.some(instance)
   instance.onmessage = (event: MessageEvent<MarkdownWorkerResponse>) => {
-    if (event.data.type === "parse") {
-      const result = parses.get(event.data.id)
-      if (!result) return
-      parses.delete(event.data.id)
-      result.resolve(event.data.html)
+    const response = event.data
+    if (response.type === "parse") {
+      const result = take(parses, response.id)
+      if (Option.isSome(result)) result.value.resolve(response.html)
       return
     }
-    if (event.data.type === "project") {
-      const result = projects.get(event.data.id)
-      if (!result) {
-        projectTransport.complete(event.data.key, event.data.id)
-        return
-      }
-      projects.delete(event.data.id)
-      result.resolve(event.data.projection)
-      projectTransport.complete(event.data.key, event.data.id)
+    if (response.type === "project") {
+      const result = take(projects, response.id)
+      if (Option.isSome(result)) result.value.resolve(response.projection)
+      projectTransport.complete(response.key, response.id)
       return
     }
-    if (event.data.type === "error") {
-      const parsed = parses.get(event.data.id)
-      if (parsed) {
-        parses.delete(event.data.id)
-        parsed.reject(new Error(event.data.message))
+    if (response.type === "error") {
+      const parsed = take(parses, response.id)
+      if (Option.isSome(parsed)) {
+        parsed.value.reject(new Error(response.message))
         return
       }
-      const projected = projects.get(event.data.id)
-      if (projected) {
-        projects.delete(event.data.id)
-        projected.reject(new Error(event.data.message))
-        projectTransport.complete(projected.key, event.data.id)
-        return
-      }
-    }
-    if (event.data.type === "superseded") {
-      const projected = projects.get(event.data.id)
-      if (projected) {
-        projects.delete(event.data.id)
-        projected.reject(new MarkdownWorkerSupersededError())
-        projectTransport.complete(projected.key, event.data.id)
+      const projected = take(projects, response.id)
+      if (Option.isSome(projected)) {
+        projected.value.reject(new Error(response.message))
+        projectTransport.complete(projected.value.key, response.id)
         return
       }
     }
-    const key = event.data.key
+    if (response.type === "superseded") {
+      const projected = take(projects, response.id)
+      if (Option.isSome(projected)) {
+        projected.value.reject(new MarkdownWorkerSupersededError())
+        projectTransport.complete(projected.value.key, response.id)
+        return
+      }
+    }
+    const key = response.key
     if (!key) return
-    const result = pending.get(event.data.id)
-    if (!result) {
-      transport.complete(key, event.data.id)
+    const result = take(pending, response.id)
+    if (Option.isNone(result)) {
+      transport.complete(key, response.id)
       return
     }
-    pending.delete(event.data.id)
     if (!MutableHashSet.has(keys, key)) {
-      result.reject(new MarkdownWorkerDisposedError())
-      transport.complete(key, event.data.id)
+      result.value.reject(new MarkdownWorkerDisposedError())
+      transport.complete(key, response.id)
       return
     }
-    if (event.data.type === "superseded") {
-      result.reject(new MarkdownWorkerSupersededError())
-      transport.complete(key, event.data.id)
+    if (response.type === "superseded") {
+      result.value.reject(new MarkdownWorkerSupersededError())
+      transport.complete(key, response.id)
       return
     }
-    if (event.data.type === "error") {
-      result.reject(new Error(event.data.message))
-      transport.complete(key, event.data.id)
+    if (response.type === "error") {
+      result.value.reject(new Error(response.message))
+      transport.complete(key, response.id)
       return
     }
-    const state = applyMarkdownWorkerResponse(Option.fromNullishOr(states.get(key)), event.data)
-    if (shouldReleaseMarkdownWorkerState(result.complete, Option.fromNullishOr(latest.get(key)), event.data.id)) {
-      states.delete(key)
+    const state = applyMarkdownWorkerResponse(MutableHashMap.get(states, key), response)
+    if (shouldReleaseMarkdownWorkerState(result.value.complete, MutableHashMap.get(latest, key), response.id)) {
+      MutableHashMap.remove(states, key)
       MutableHashSet.remove(keys, key)
-      latest.delete(key)
-    } else states.set(key, state)
-    result.resolve(state)
-    transport.complete(key, event.data.id)
+      MutableHashMap.remove(latest, key)
+    } else MutableHashMap.set(states, key, state)
+    result.value.resolve(state)
+    transport.complete(key, response.id)
   }
   const fail = (message: string) => {
     const error = new Error(message)
     disabled = error
     transport.reset()
     projectTransport.reset()
-    pending.forEach((request) => request.reject(error))
-    projects.forEach((request) => request.reject(error))
-    parses.forEach((request) => request.reject(error))
-    pending.clear()
-    projects.clear()
-    parses.clear()
-    states.clear()
+    for (const request of MutableHashMap.values(pending)) request.reject(error)
+    for (const request of MutableHashMap.values(projects)) request.reject(error)
+    for (const request of MutableHashMap.values(parses)) request.reject(error)
+    MutableHashMap.clear(pending)
+    MutableHashMap.clear(projects)
+    MutableHashMap.clear(parses)
+    MutableHashMap.clear(states)
     MutableHashSet.clear(keys)
-    latest.clear()
+    MutableHashMap.clear(latest)
     if (Option.isSome(worker)) worker.value.terminate()
     worker = Option.none()
   }
   instance.onerror = (event) => fail(event.message || "Markdown highlighting worker failed")
   instance.onmessageerror = () => fail("Markdown worker response failed")
   return instance
+}
+
+// Reads and removes one entry, as the old get-then-delete did.
+function take<K, V>(map: MutableHashMap.MutableHashMap<K, V>, key: K): Option.Option<V> {
+  const value = MutableHashMap.get(map, key)
+  MutableHashMap.remove(map, key)
+  return value
 }

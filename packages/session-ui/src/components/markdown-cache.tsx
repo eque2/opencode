@@ -1,6 +1,6 @@
 import { checksum } from "@opencode-ai/core/util/encode"
 import DOMPurify from "dompurify"
-import { Array } from "effect"
+import { Array, Iterable, MutableHashMap, Option } from "effect"
 import { parseMarkdown } from "./markdown-worker"
 
 export type MarkdownCacheEntry = {
@@ -10,7 +10,7 @@ export type MarkdownCacheEntry = {
 }
 
 const max = 200
-const cache = new Map<string, MarkdownCacheEntry>()
+const cache = MutableHashMap.empty<string, MarkdownCacheEntry>()
 const config = {
   USE_PROFILES: { html: true, mathMl: true },
   SANITIZE_NAMED_PROPS: true,
@@ -36,26 +36,27 @@ export function sanitizeMarkdown(html: string) {
   return DOMPurify.sanitize(html, config)
 }
 
-export function getCachedMarkdown(key: string) {
-  return cache.get(key)
+export function getCachedMarkdown(key: string): Option.Option<MarkdownCacheEntry> {
+  return MutableHashMap.get(cache, key)
 }
 
 export function touchCachedMarkdown(key: string, value: MarkdownCacheEntry) {
-  cache.delete(key)
-  cache.set(key, value)
+  // Remove, then set, moves the key to the end: MutableHashMap keeps insertion order for string keys.
+  MutableHashMap.remove(cache, key)
+  MutableHashMap.set(cache, key, value)
 
-  if (cache.size <= max) return
+  if (MutableHashMap.size(cache) <= max) return
 
-  const first = cache.keys().next().value
-  if (!first) return
-  cache.delete(first)
+  const first = Iterable.head(MutableHashMap.keys(cache))
+  if (Option.isNone(first) || !first.value) return
+  MutableHashMap.remove(cache, first.value)
 }
 
 export async function preloadMarkdown(text: string, cacheKey: string) {
   const key = `${cacheKey}:0:full`
   const cached = getCachedMarkdown(key)
-  if (cached?.raw === text) {
-    touchCachedMarkdown(key, cached)
+  if (Option.isSome(cached) && cached.value.raw === text) {
+    touchCachedMarkdown(key, cached.value)
     return
   }
   const hash = checksum(text)
