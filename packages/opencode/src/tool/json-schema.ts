@@ -1,5 +1,5 @@
 import type { JSONSchema7 } from "@ai-sdk/provider"
-import { JsonSchema, Schema } from "effect"
+import { JsonSchema, Option, Schema } from "effect"
 import type * as Tool from "./tool"
 
 type JsonObject = Record<string, unknown>
@@ -118,18 +118,23 @@ function canFlattenAllOf(allOf: JsonObject[], parent: JsonObject) {
   )
 }
 
-function inlineLocalReferences(value: unknown, definitions?: JsonObject, seen = new Set<string>()): unknown {
+function inlineLocalReferences(value: unknown, definitions: Option.Option<JsonObject>, seen: Set<string>): unknown {
   if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, definitions, seen))
   if (!isRecord(value)) return value
   return inlineObjectReferences(value, definitions, seen)
 }
 
-function inlineObjectReferences(value: JsonObject, definitions?: JsonObject, seen = new Set<string>()): JsonObject {
-  const localDefinitions = definitions ?? (isRecord(value.$defs) ? value.$defs : undefined)
-  if (typeof value.$ref === "string" && localDefinitions) {
+function inlineObjectReferences(
+  value: JsonObject,
+  definitions: Option.Option<JsonObject> = Option.none(),
+  seen = new Set<string>(),
+): JsonObject {
+  // The root object's $defs apply to every nested reference.
+  const localDefinitions = Option.orElse(definitions, () => Option.liftPredicate(isRecord)(value.$defs))
+  if (typeof value.$ref === "string" && Option.isSome(localDefinitions)) {
     const name = value.$ref.match(/^#\/\$defs\/(.+)$/)?.[1] ?? value.$ref.match(/^#\/definitions\/(.+)$/)?.[1]
     if (name && !seen.has(name)) {
-      const target = localDefinitions[name]
+      const target = localDefinitions.value[name]
       if (target) {
         const { $ref: _, ...rest } = value
         return inlineObjectReferences(

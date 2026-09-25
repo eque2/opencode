@@ -40,7 +40,7 @@ export const PlanExitTool = Tool.define(
                 ],
               },
             ],
-            tool: ctx.callID ? { messageID: ctx.messageID, callID: ctx.callID } : undefined,
+            ...(ctx.callID ? { tool: { messageID: ctx.messageID, callID: ctx.callID } } : {}),
           })
 
           if (answers[0]?.[0] === "No") yield* new Question.RejectedError()

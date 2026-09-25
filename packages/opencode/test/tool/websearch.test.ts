@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { parseResponse } from "../../src/tool/mcp-websearch"
 import { selectWebSearchProvider, webSearchModelName, webSearchProviderLabel } from "../../src/tool/websearch"
 
@@ -59,7 +59,7 @@ describe("websearch provider", () => {
           api: { id: "claude-opus-4.7" },
         },
       }),
-    ).toBe("claude-opus-4.7")
+    ).toEqual(Option.some("claude-opus-4.7"))
   })
 })
 
@@ -80,21 +80,21 @@ describe("websearch MCP response parser", () => {
   it.effect("parses plain JSON-RPC responses", () =>
     Effect.gen(function* () {
       const result = yield* parseResponse(payload)
-      expect(result).toBe("search results")
+      expect(result).toEqual(Option.some("search results"))
     }),
   )
 
   it.effect("parses SSE JSON-RPC responses", () =>
     Effect.gen(function* () {
       const result = yield* parseResponse(`event: message\ndata: ${payload}\n\n`)
-      expect(result).toBe("search results")
+      expect(result).toEqual(Option.some("search results"))
     }),
   )
 
   it.effect("ignores non-JSON SSE data frames", () =>
     Effect.gen(function* () {
       const result = yield* parseResponse(`data: [DONE]\ndata: ${payload}\n\n`)
-      expect(result).toBe("search results")
+      expect(result).toEqual(Option.some("search results"))
     }),
   )
 })

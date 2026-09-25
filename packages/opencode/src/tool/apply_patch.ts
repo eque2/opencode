@@ -1,5 +1,5 @@
 import * as path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import * as Tool from "./tool"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -64,7 +64,7 @@ export const ApplyPatchTool = Tool.define(
         oldContent: string
         newContent: string
         type: "add" | "update" | "delete" | "move"
-        movePath?: string
+        movePath: Option.Option<string>
         diff: string
         additions: number
         deletions: number
@@ -97,6 +97,7 @@ export const ApplyPatchTool = Tool.define(
               oldContent,
               newContent: next.text,
               type: "add",
+              movePath: Option.none(),
               diff,
               additions,
               deletions,
@@ -109,8 +110,8 @@ export const ApplyPatchTool = Tool.define(
 
           case "update": {
             // Check if file exists for update
-            const stats = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-            if (!stats || stats.type === "Directory") {
+            const stats = yield* afs.stat(filePath).pipe(Effect.option)
+            if (Option.isNone(stats) || stats.value.type === "Directory") {
               return yield* new ApplyPatchError({
                 message: `apply_patch verification failed: Failed to read file to update: ${filePath}`,
               })
@@ -137,8 +138,10 @@ export const ApplyPatchTool = Tool.define(
               if (change.removed) deletions += change.count || 0
             }
 
-            const movePath = hunk.move_path ? path.resolve(instance.directory, hunk.move_path) : undefined
-            yield* assertExternalDirectoryEffect(ctx, movePath)
+            const movePath = hunk.move_path
+              ? Option.some(path.resolve(instance.directory, hunk.move_path))
+              : Option.none<string>()
+            if (Option.isSome(movePath)) yield* assertExternalDirectoryEffect(ctx, movePath.value)
 
             fileChanges.push({
               filePath,
@@ -173,6 +176,7 @@ export const ApplyPatchTool = Tool.define(
               oldContent: contentToDelete,
               newContent: "",
               type: "delete",
+              movePath: Option.none(),
               diff: deleteDiff,
               additions: 0,
               deletions,
@@ -188,12 +192,14 @@ export const ApplyPatchTool = Tool.define(
       // Build per-file metadata for UI rendering (used for both permission and result)
       const files = fileChanges.map((change) => ({
         filePath: change.filePath,
-        relativePath: path.relative(instance.worktree, change.movePath ?? change.filePath).replaceAll("\\", "/"),
+        relativePath: path
+          .relative(instance.worktree, Option.getOrElse(change.movePath, () => change.filePath))
+          .replaceAll("\\", "/"),
         type: change.type,
         patch: change.diff,
         additions: change.additions,
         deletions: change.deletions,
-        ...(change.movePath ? { movePath: change.movePath } : {}),
+        ...(Option.isSome(change.movePath) ? { movePath: change.movePath.value } : {}),
       }))
 
       // Check permissions if needed
@@ -213,7 +219,6 @@ export const ApplyPatchTool = Tool.define(
       const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
 
       for (const change of fileChanges) {
-        const edited = change.type === "delete" ? undefined : (change.movePath ?? change.filePath)
         switch (change.type) {
           case "add":
             // Create parent directories (recursive: true is safe on existing/root dirs)
@@ -228,13 +233,13 @@ export const ApplyPatchTool = Tool.define(
             break
 
           case "move":
-            if (change.movePath) {
+            if (Option.isSome(change.movePath)) {
               // Create parent directories (recursive: true is safe on existing/root dirs)
 
-              yield* afs.writeWithDirs(change.movePath!, Bom.join(change.newContent, change.bom))
+              yield* afs.writeWithDirs(change.movePath.value, Bom.join(change.newContent, change.bom))
               yield* afs.remove(change.filePath)
               updates.push({ file: change.filePath, event: "unlink" })
-              updates.push({ file: change.movePath, event: "add" })
+              updates.push({ file: change.movePath.value, event: "add" })
             }
             break
 
@@ -244,7 +249,8 @@ export const ApplyPatchTool = Tool.define(
             break
         }
 
-        if (edited) {
+        if (change.type !== "delete") {
+          const edited = Option.getOrElse(change.movePath, () => change.filePath)
           if (yield* format.file(edited)) {
             yield* Bom.syncFile(afs, edited, change.bom)
           }
@@ -260,7 +266,7 @@ export const ApplyPatchTool = Tool.define(
       // Notify LSP of file changes and collect diagnostics
       for (const change of fileChanges) {
         if (change.type === "delete") continue
-        const target = change.movePath ?? change.filePath
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
         yield* lsp.touchFile(target, "document")
       }
       const diagnostics = yield* lsp.diagnostics()
@@ -273,14 +279,14 @@ export const ApplyPatchTool = Tool.define(
         if (change.type === "delete") {
           return `D ${path.relative(instance.worktree, change.filePath).replaceAll("\\", "/")}`
         }
-        const target = change.movePath ?? change.filePath
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
         return `M ${path.relative(instance.worktree, target).replaceAll("\\", "/")}`
       })
       let output = `Success. Updated the following files:\n${summaryLines.join("\n")}`
 
       for (const change of fileChanges) {
         if (change.type === "delete") continue
-        const target = change.movePath ?? change.filePath
+        const target = Option.getOrElse(change.movePath, () => change.filePath)
         const block = LSP.Diagnostic.report(target, diagnostics[yield* afs.normalizePath(target)] ?? [])
         if (!block) continue
         const rel = path.relative(instance.worktree, target).replaceAll("\\", "/")

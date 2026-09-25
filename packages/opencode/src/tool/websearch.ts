@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Predicate, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
@@ -42,13 +42,16 @@ export function webSearchProviderLabel(provider: unknown) {
   return "Web Search"
 }
 
-export function webSearchModelName(extra: Tool.Context["extra"]) {
+/** The model name for Parallel analytics: the provider API model id, else the model id, cut to 100 characters. */
+export function webSearchModelName(extra: Tool.Context["extra"]): Option.Option<string> {
   const model = extra?.model
-  if (!model || typeof model !== "object") return undefined
-  const api = "api" in model && model.api && typeof model.api === "object" ? model.api : undefined
-  const apiID = api && "id" in api && typeof api.id === "string" ? api.id : undefined
-  const id = "id" in model && typeof model.id === "string" ? model.id : undefined
-  return (apiID ?? id)?.slice(0, 100)
+  if (!model || typeof model !== "object") return Option.none()
+  const apiID =
+    "api" in model && Predicate.hasProperty(model.api, "id") && typeof model.api.id === "string"
+      ? Option.some(model.api.id)
+      : Option.none<string>()
+  const id = "id" in model && typeof model.id === "string" ? Option.some(model.id) : Option.none<string>()
+  return Option.orElse(apiID, () => id).pipe(Option.map((name) => name.slice(0, 100)))
 }
 
 function parallelAuthHeaders() {
@@ -73,7 +76,10 @@ function callProvider(
         objective: params.query,
         search_queries: [params.query],
         session_id: ctx.sessionID,
-        model_name: webSearchModelName(ctx.extra),
+        ...Option.match(webSearchModelName(ctx.extra), {
+          onNone: () => ({}),
+          onSome: (model_name) => ({ model_name }),
+        }),
       },
       "25 seconds",
       parallelAuthHeaders(),
@@ -133,7 +139,7 @@ export const WebSearchTool = Tool.define(
           const result = yield* callProvider(http, provider, params, ctx)
 
           return {
-            output: result ?? "No search results found. Please try a different query.",
+            output: Option.getOrElse(result, () => "No search results found. Please try a different query."),
             title: `${title}: ${params.query}`,
             metadata: { provider },
           }

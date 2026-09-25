@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
@@ -56,15 +56,16 @@ export const GrepTool = Tool.define(
           const requested = path.isAbsolute(params.path ?? ins.directory)
             ? (params.path ?? ins.directory)
             : path.join(ins.directory, params.path ?? ".")
-          const requestedInfo = yield* fs.stat(requested).pipe(Effect.catch(() => Effect.succeed(undefined)))
+          const requestedInfo = yield* fs.stat(requested).pipe(Effect.option)
+          const requestedIsDirectory = Option.exists(requestedInfo, (stat) => stat.type === "Directory")
           yield* assertExternalDirectoryEffect(ctx, requested, {
             bypass: false,
-            kind: requestedInfo?.type === "Directory" ? "directory" : "file",
+            kind: requestedIsDirectory ? "directory" : "file",
           })
 
           const search = yield* fs.resolve(requested).pipe(Effect.flatMap(fs.normalizePath))
-          const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
-          const cwd = info?.type === "Directory" ? search : path.dirname(search)
+          const info = yield* fs.stat(search).pipe(Effect.option)
+          const cwd = Option.exists(info, (stat) => stat.type === "Directory") ? search : path.dirname(search)
           const result = yield* ripgrep.grep({
             cwd,
             pattern: params.pattern,
@@ -74,10 +75,7 @@ export const GrepTool = Tool.define(
           if (result.length === 0) return empty
 
           const rows = result.map((item) => ({
-            path: path.resolve(
-              requestedInfo?.type === "Directory" ? requested : path.dirname(requested),
-              item.entry.path,
-            ),
+            path: path.resolve(requestedIsDirectory ? requested : path.dirname(requested), item.entry.path),
             line: item.line,
             text: item.text,
           }))

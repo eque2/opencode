@@ -4,7 +4,7 @@
 // https://github.com/cline/cline/blob/main/evals/diff-edits/diff-apply/diff-06-26-25.ts
 
 import * as path from "path"
-import { Effect, Result, Schema, Semaphore } from "effect"
+import { Effect, Option, Result, Schema, Semaphore } from "effect"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -122,9 +122,9 @@ export const EditTool = Tool.define(
                 return { diff, contentOld: "", contentNew }
               }
 
-              const info = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
-              if (!info) return yield* new EditError({ message: `File ${filePath} not found` })
-              if (info.type === "Directory") {
+              const info = yield* afs.stat(filePath).pipe(Effect.option)
+              if (Option.isNone(info)) return yield* new EditError({ message: `File ${filePath} not found` })
+              if (info.value.type === "Directory") {
                 return yield* new EditError({ message: `Path is a directory, not a file: ${filePath}` })
               }
               const source = yield* Bom.readFile(afs, filePath)

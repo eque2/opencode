@@ -58,9 +58,12 @@ const layer = Layer.effect(
       )
       for (const entry of entries) {
         const file = path.join(TRUNCATION_DIR, entry)
-        const info = yield* fs.stat(file).pipe(Effect.catch(() => Effect.succeed(undefined)))
-        const mtime = info && Option.getOrUndefined(info.mtime)
-        if (!mtime || mtime.getTime() >= cutoff) continue
+        const info = yield* fs.stat(file).pipe(Effect.option)
+        const expired = Option.exists(
+          Option.flatMap(info, (stat) => stat.mtime),
+          (mtime) => mtime.getTime() < cutoff,
+        )
+        if (!expired) continue
         yield* fs.remove(file).pipe(Effect.catch(() => Effect.void))
       }
     })
@@ -75,10 +78,18 @@ const layer = Layer.effect(
     const limits = Effect.fn("Truncate.limits")(function* () {
       const configSvc = yield* Effect.serviceOption(Config.Service)
       if (Option.isNone(configSvc)) return { maxLines: MAX_LINES, maxBytes: MAX_BYTES }
-      const cfg = yield* configSvc.value.get().pipe(Effect.catch(() => Effect.succeed(undefined)))
+      const toolOutput = (yield* configSvc.value.get().pipe(Effect.option)).pipe(
+        Option.flatMapNullishOr((cfg) => cfg.tool_output),
+      )
       return {
-        maxLines: cfg?.tool_output?.max_lines ?? MAX_LINES,
-        maxBytes: cfg?.tool_output?.max_bytes ?? MAX_BYTES,
+        maxLines: toolOutput.pipe(
+          Option.flatMapNullishOr((output) => output.max_lines),
+          Option.getOrElse(() => MAX_LINES),
+        ),
+        maxBytes: toolOutput.pipe(
+          Option.flatMapNullishOr((output) => output.max_bytes),
+          Option.getOrElse(() => MAX_BYTES),
+        ),
       }
     })
 

@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
@@ -42,8 +42,8 @@ export const GlobTool = Tool.define(
 
           let search = params.path ?? ins.directory
           search = path.isAbsolute(search) ? search : path.resolve(ins.directory, search)
-          const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
-          if (info?.type === "File") {
+          const info = yield* fs.stat(search).pipe(Effect.option)
+          if (Option.exists(info, (stat) => stat.type === "File")) {
             return yield* new GlobError({ message: `glob path must be a directory: ${search}` })
           }
           yield* assertExternalDirectoryEffect(ctx, search, {

@@ -242,16 +242,14 @@ export const ReadTool = Tool.define<
       )
       const title = path.relative(instance.worktree, filepath)
 
-      const stat = yield* fs.stat(filepath).pipe(
-        Effect.catchIf(
-          (err) => "reason" in err && err.reason._tag === "NotFound",
-          () => Effect.succeed(undefined),
-        ),
+      const found = yield* fs.stat(filepath).pipe(
+        Effect.map(Option.some),
+        Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
       )
 
       yield* assertExternalDirectoryEffect(ctx, filepath, {
         bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
-        kind: stat?.type === "Directory" ? "directory" : "file",
+        kind: Option.exists(found, (info) => info.type === "Directory") ? "directory" : "file",
       })
 
       yield* ctx.ask({
@@ -261,7 +259,8 @@ export const ReadTool = Tool.define<
         metadata: {},
       })
 
-      if (!stat) return yield* miss(filepath)
+      if (Option.isNone(found)) return yield* miss(filepath)
+      const stat = found.value
 
       if (stat.type === "Directory") {
         const items = yield* list(filepath)
