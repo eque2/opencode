@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Data, Effect } from "effect"
 import {
   collectNewSessionDeepLinks,
   collectOpenProjectDeepLinks,
@@ -27,6 +27,9 @@ import { pathKey } from "@/utils/path-key"
 import { ServerConnection } from "@/context/server"
 
 const serverKey = ServerConnection.Key.make
+
+/** An Error subclass without API error data, for the errorMessage fallback to Error.message. */
+class BrokenError extends Data.TaggedError("BrokenError")<{ readonly message: string }> {}
 
 const session = (input: Partial<Session> & Pick<Session, "id" | "directory">): Session => ({
   slug: input.id,
@@ -347,7 +350,7 @@ describe("layout workspace helpers", () => {
 
   test("extracts api error message and fallback", () => {
     expect(errorMessage({ data: { message: "boom" } }, "fallback")).toBe("boom")
-    expect(errorMessage(new Error("broken"), "fallback")).toBe("broken")
+    expect(errorMessage(new BrokenError({ message: "broken" }), "fallback")).toBe("broken")
     expect(errorMessage("unknown", "fallback")).toBe("fallback")
   })
 })
