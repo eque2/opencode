@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import { createEffect, createMemo, on } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { PermissionRequest, QuestionRequest, Todo } from "@opencode-ai/sdk/v2"
@@ -11,6 +11,14 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { createFiberSlot } from "@/utils/fiber-slot"
 import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
+
+/** The permission reply request rejected. `cause` holds the original rejection. */
+class PermissionReplyError extends Data.TaggedError("App.PermissionReplyError")<{ readonly cause: unknown }> {}
+
+// Runs a program from a UI handler that does not wait for it; a defect is logged.
+const runDetached = <A, E>(program: Effect.Effect<A, E>) => {
+  Effect.runFork(program.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 /** Completes on the next animation frame. Interrupting it cancels the frame request. */
 const nextFrame = Effect.callback<void>((resume) => {
@@ -89,15 +97,22 @@ export function createSessionComposerController(options?: { closeMs?: number | (
     if (Option.contains(store.responding, perm.id)) return
 
     setStore("responding", Option.some(perm.id))
-    sdk()
-      .api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response })
-      .catch((err: unknown) => {
-        const description = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description })
-      })
-      .finally(() => {
-        setStore("responding", (id) => (Option.contains(id, perm.id) ? Option.none() : id))
-      })
+    runDetached(
+      Effect.tryPromise({
+        try: () => sdk().api.permission.reply({ sessionID: perm.sessionID, requestID: perm.id, reply: response }),
+        catch: (cause) => new PermissionReplyError({ cause }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            const description = error.cause instanceof Error ? error.cause.message : String(error.cause)
+            showToast({ title: language.t("common.requestFailed"), description })
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => setStore("responding", (id) => (Option.contains(id, perm.id) ? Option.none() : id))),
+        ),
+      ),
+    )
   }
 
   // The close delay and the frame that ends the opening state. The owner cleanup interrupts both.
