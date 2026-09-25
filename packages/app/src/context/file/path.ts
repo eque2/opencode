@@ -63,12 +63,11 @@ export function unquoteGitPath(input: string) {
   return new TextDecoder().decode(Uint8Array.from(Chunk.toReadonlyArray(bytes)))
 }
 
+// decodeURIComponent throws a URIError for a malformed escape such as "%E0%A4%A".
+const decodeUriComponent = Option.liftThrowable(decodeURIComponent)
+
 export function decodeFilePath(input: string) {
-  try {
-    return decodeURIComponent(input)
-  } catch {
-    return input
-  }
+  return Option.getOrElse(decodeUriComponent(input), () => input)
 }
 
 export function encodeFilePath(filepath: string): string {
