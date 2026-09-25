@@ -2177,6 +2177,10 @@ ToolRegistry.register({
   },
 })
 
+// A malformed tool diff must not break the timeline: a diff that fails to parse falls back to the
+// before and after text.
+const resolveFileDiffOption = Option.liftThrowable(resolveFileDiff)
+
 function sameDiffSource(a: DiffSource, b: DiffSource) {
   return a.file === b.file && a.patch === b.patch && a.before === b.before && a.after === b.after
 }
@@ -2205,26 +2209,21 @@ ToolRegistry.register({
       { equals: Option.makeEquivalence(sameDiffSource) },
     )
 
-    const fileCompProps = createMemo(() => {
-      try {
-        const source = diffSource()
-        if (Option.isSome(source)) {
-          const fileDiff = resolveFileDiff(source.value)
-          if (fileDiff) return { fileDiff, hunkSeparators: fileDiff.isPartial ? "simple" : "line-info-basic" }
-        }
-      } catch {}
-
-      return {
-        before: {
-          name: props.metadata?.filediff?.file || props.input.filePath,
-          contents: props.metadata?.filediff?.before || props.input.oldString || "",
-        },
-        after: {
-          name: props.metadata?.filediff?.file || props.input.filePath,
-          contents: props.metadata?.filediff?.after || props.input.newString || "",
-        },
-      }
-    })
+    const fileCompProps = createMemo(() =>
+      Option.match(Option.flatMap(diffSource(), resolveFileDiffOption), {
+        onSome: (fileDiff) => ({ fileDiff, hunkSeparators: fileDiff.isPartial ? "simple" : "line-info-basic" }),
+        onNone: () => ({
+          before: {
+            name: props.metadata?.filediff?.file || props.input.filePath,
+            contents: props.metadata?.filediff?.before || props.input.oldString || "",
+          },
+          after: {
+            name: props.metadata?.filediff?.file || props.input.filePath,
+            contents: props.metadata?.filediff?.after || props.input.newString || "",
+          },
+        }),
+      }),
+    )
 
     return (
       <div data-component="edit-tool">
