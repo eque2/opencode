@@ -1896,7 +1896,7 @@ export function inlineCodeKind(text: string): Option.Option<"path" | "url"> {
   if (text === "/") return Option.none()
   if (/^\/[a-z][a-z0-9-]*$/i.test(text)) return Option.none()
   if (/\s/.test(text)) return Option.none()
-  if (/[()\[\]{}*+=<>|&^"';]/.test(text)) return Option.none()
+  if (/[()[\]{}*+=<>|&^"';]/.test(text)) return Option.none()
   if (/[/\\]/.test(text) || /^\.\.?[/\\]/.test(text) || hasPathExtension(text) || hasPathFileName(text))
     return Option.some("path")
   return Option.none()
