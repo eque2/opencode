@@ -12,7 +12,7 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { Data, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Data, Deferred, Effect, Exit, Fiber, HashSet, MutableHashMap, MutableHashSet, Option, Predicate } from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -31,6 +31,31 @@ class MessageNotFoundError extends Data.TaggedError("App.MessageNotFoundError")<
 class AssistantParentError extends Data.TaggedError("App.AssistantParentError")<{ readonly message: string }> {}
 
 class SessionParentCycleError extends Data.TaggedError("App.SessionParentCycleError")<{ readonly message: string }> {}
+
+// Wraps the value a server call or a Promise helper rejected with, so the public Promise API can reject with it again.
+class ServerSessionRequestError extends Data.TaggedError("App.ServerSessionRequestError")<{
+  readonly cause: unknown
+}> {}
+
+type ServerSessionError = ServerSessionRequestError | MessageNotFoundError | AssistantParentError
+
+const attempt = <A>(evaluate: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: evaluate, catch: (cause) => new ServerSessionRequestError({ cause }) })
+
+// Callers of the Promise API see the original rejection, as they did before the loaders ran as Effects.
+const rejection = (error: ServerSessionError): unknown =>
+  error._tag === "App.ServerSessionRequestError" ? error.cause : error
+
+const run = <A>(effect: Effect.Effect<A, ServerSessionError>): Promise<A> =>
+  Effect.runPromise(effect.pipe(Effect.mapError(rejection)))
+
+// A server 404 (the SDK error carries the response status in its cause) means the message was deleted.
+const isMissingMessage = (error: ServerSessionError) =>
+  error._tag === "App.ServerSessionRequestError" &&
+  error.cause instanceof Error &&
+  typeof error.cause.cause === "object" &&
+  Predicate.hasProperty(error.cause.cause, "status") &&
+  error.cause.cause.status === 404
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const SKIP_PARTS: HashSet.HashSet<string> = HashSet.make("patch", "step-start", "step-finish")
@@ -175,18 +200,32 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   }
 }
 
-function runInflight(
-  map: MutableHashMap.MutableHashMap<string, Promise<void>>,
+// Runs `task` once per key: later callers wait on the same result. The task runs in a detached fiber, so an
+// interrupted caller never cancels it. `settled` runs after the key is released and before the waiters resume.
+function share<A, E>(
+  map: MutableHashMap.MutableHashMap<string, Deferred.Deferred<A, E>>,
   key: string,
-  task: () => Promise<void>,
-) {
-  const pending = MutableHashMap.get(map, key)
-  if (Option.isSome(pending)) return pending.value
-  const promise = task().finally(() => {
-    if (Option.exists(MutableHashMap.get(map, key), (value) => value === promise)) MutableHashMap.remove(map, key)
+  task: Effect.Effect<A, E>,
+  settled?: () => void,
+): Effect.Effect<A, E> {
+  return Effect.suspend(() => {
+    const pending = MutableHashMap.get(map, key)
+    if (Option.isSome(pending)) return Deferred.await(pending.value)
+    const deferred = Deferred.makeUnsafe<A, E>()
+    MutableHashMap.set(map, key, deferred)
+    return task.pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => {
+          if (Option.exists(MutableHashMap.get(map, key), (value) => value === deferred))
+            MutableHashMap.remove(map, key)
+          settled?.()
+          Deferred.doneUnsafe(deferred, exit)
+        }),
+      ),
+      Effect.forkDetach({ startImmediately: true }),
+      Effect.andThen(Deferred.await(deferred)),
+    )
   })
-  MutableHashMap.set(map, key, promise)
-  return promise
 }
 
 function merge<T extends { id: string }>(a: readonly T[], b: readonly T[]) {
@@ -258,9 +297,21 @@ export function createServerSession(
       return (this.session_status[id]?.type ?? "idle") !== "idle"
     },
   })
-  const requests = MutableHashMap.empty<string, Promise<Session>>()
-  const inflight = MutableHashMap.empty<string, Promise<void>>()
-  const inflightTodo = MutableHashMap.empty<string, Promise<void>>()
+  const retryRequest = options?.retry ?? retry
+  const protocol = Option.fromNullishOr(options?.protocol)
+  // A client without a protocol promise speaks the current protocol.
+  const protocolIs = (expected: "v1" | "v2") =>
+    Option.match(protocol, {
+      onNone: () => Effect.succeed(false),
+      onSome: (value) =>
+        Effect.map(
+          Effect.promise(() => value),
+          (current) => current === expected,
+        ),
+    })
+  const requests = MutableHashMap.empty<string, Deferred.Deferred<Session, ServerSessionError>>()
+  const inflight = MutableHashMap.empty<string, Deferred.Deferred<void, ServerSessionError>>()
+  const inflightTodo = MutableHashMap.empty<string, Deferred.Deferred<void, ServerSessionError>>()
   const optimistic = MutableHashMap.empty<string, MutableHashMap.MutableHashMap<string, OptimisticItem>>()
   const v2 = createV2SessionReducer()
   const messageLoads = MutableHashMap.empty<string, MessageLoadState>()
@@ -355,39 +406,41 @@ export function createServerSession(
     return session
   }
 
-  const resolve = (sessionID: string, options?: { force?: boolean }) => {
-    const cached = data.info[sessionID]
-    if (cached && !options?.force) return Promise.resolve(cached)
-    const pending = MutableHashMap.get(requests, sessionID)
-    if (Option.isSome(pending)) return pending.value
-    const active = generation(sessionID)
-    const request = sessionApi
-      ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
-      : client.session.get({ sessionID }).then((result) => {
-          if (!result.data) throw sessionNotFoundError(sessionID)
-          return result.data
-        })
-    const resolved = request.then((result) => {
-      if (!isGeneration(sessionID, active)) return result
-      return remember(result)
-    })
-    MutableHashMap.set(requests, sessionID, resolved)
-    const cleanup = () => {
-      if (Option.exists(MutableHashMap.get(requests, sessionID), (value) => value === resolved))
-        MutableHashMap.remove(requests, sessionID)
-      if (
-        isGeneration(sessionID, active) &&
-        !data.info[sessionID] &&
-        !MutableHashMap.has(requests, sessionID) &&
-        !MutableHashMap.has(messageLoads, sessionID) &&
-        !MutableHashMap.has(inflight, sessionID) &&
-        !MutableHashMap.has(inflightTodo, sessionID)
-      )
-        MutableHashMap.remove(generations, sessionID)
-    }
-    void resolved.then(cleanup, cleanup)
-    return resolved
+  const fetchSession = (sessionID: string): Effect.Effect<Session, ServerSessionError> => {
+    if (sessionApi) return attempt(() => sessionApi.get({ sessionID })).pipe(Effect.map(normalizeSessionInfo))
+    return attempt(() => client.session.get({ sessionID })).pipe(
+      Effect.flatMap((result) =>
+        result.data
+          ? Effect.succeed(result.data)
+          : Effect.fail(new ServerSessionRequestError({ cause: sessionNotFoundError(sessionID) })),
+      ),
+    )
   }
+
+  const resolveSession = (sessionID: string, options?: { force?: boolean }) =>
+    Effect.suspend(() => {
+      const cached = data.info[sessionID]
+      if (cached && !options?.force) return Effect.succeed(cached)
+      const pending = MutableHashMap.get(requests, sessionID)
+      if (Option.isSome(pending)) return Deferred.await(pending.value)
+      const active = generation(sessionID)
+      const task = fetchSession(sessionID).pipe(
+        Effect.map((result) => (isGeneration(sessionID, active) ? remember(result) : result)),
+      )
+      return share(requests, sessionID, task, () => {
+        if (
+          isGeneration(sessionID, active) &&
+          !data.info[sessionID] &&
+          !MutableHashMap.has(requests, sessionID) &&
+          !MutableHashMap.has(messageLoads, sessionID) &&
+          !MutableHashMap.has(inflight, sessionID) &&
+          !MutableHashMap.has(inflightTodo, sessionID)
+        )
+          MutableHashMap.remove(generations, sessionID)
+      })
+    })
+
+  const resolve = (sessionID: string, options?: { force?: boolean }) => run(resolveSession(sessionID, options))
 
   const peekLineage = (sessionID: string) => {
     const session = data.info[sessionID]
@@ -590,21 +643,28 @@ export function createServerSession(
       pickSessionCacheEvictions({ seen, keep: sessionID, limit: SESSION_CACHE_LIMIT, preserve: protectedSessions() }),
     )
 
-  const fetchMessages = async (sessionID: string, limit: number, before?: string, onAttempt?: () => void) => {
-    if (messageApi && (await options?.protocol) !== "v1") {
+  const fetchMessages = Effect.fnUntraced(function* (
+    sessionID: string,
+    limit: number,
+    before: string | undefined,
+    onAttempt: () => void,
+  ) {
+    if (messageApi && !(yield* protocolIs("v1"))) {
       const request = (cursor?: string) =>
-        (options?.retry ?? retry)(() => {
-          onAttempt?.()
-          return messageApi.list(cursor ? { sessionID, limit, cursor } : { sessionID, limit, order: "desc" })
-        })
-      const first = await request(before)
-      const pages = [first]
-      while (pages.at(-1)?.cursor.next && needsOlderTurnRoot(pages.flatMap((page) => page.data).toReversed())) {
-        const response = await request(pages.at(-1)!.cursor.next ?? undefined)
-        pages.push(response)
+        attempt(() =>
+          retryRequest(() => {
+            onAttempt()
+            return messageApi.list(cursor ? { sessionID, limit, cursor } : { sessionID, limit, order: "desc" })
+          }),
+        )
+      const first = yield* request(before)
+      let response = first
+      let pages = [first]
+      while (response.cursor.next && needsOlderTurnRoot(pages.flatMap((page) => page.data).toReversed())) {
+        response = yield* request(response.cursor.next)
+        pages = [...pages, response]
         if (!response.data.length) break
       }
-      const response = pages.at(-1)!
       const source = pages.flatMap((page) => page.data).toReversed()
       const normalized = normalizeSessionMessages(sessionID, source)
       return {
@@ -619,10 +679,12 @@ export function createServerSession(
         complete: response.data.length === 0,
       }
     }
-    const response = await (options?.retry ?? retry)(() => {
-      onAttempt?.()
-      return client.session.messages({ sessionID, limit, before })
-    })
+    const response = yield* attempt(() =>
+      retryRequest(() => {
+        onAttempt()
+        return client.session.messages({ sessionID, limit, before })
+      }),
+    )
     const items = (response.data ?? []).filter((item) => !!item?.info?.id)
     return {
       session: items.map((item) => cleanMessage(item.info)).sort(compareMessages),
@@ -635,29 +697,33 @@ export function createServerSession(
       cursor: response.response.headers.get("x-next-cursor") ?? undefined,
       complete: !response.response.headers.get("x-next-cursor"),
     }
-  }
+  })
 
-  const fetchMessage = async (sessionID: string, messageID: string, onAttempt?: () => void) => {
-    if (sessionApi && (await options?.protocol) !== "v1") {
-      const response = await (options?.retry ?? retry)(() => {
-        onAttempt?.()
-        return sessionApi.message({ sessionID, messageID })
-      })
+  const fetchMessage = Effect.fnUntraced(function* (sessionID: string, messageID: string, onAttempt: () => void) {
+    if (sessionApi && !(yield* protocolIs("v1"))) {
+      const response = yield* attempt(() =>
+        retryRequest(() => {
+          onAttempt()
+          return sessionApi.message({ sessionID, messageID })
+        }),
+      )
       const normalized = normalizeSessionMessages(sessionID, [response])
       const message = normalized.messages[0]
-      if (!message) throw new MessageNotFoundError({ message: `Message not found: ${messageID}` })
+      if (!message) return yield* new MessageNotFoundError({ message: `Message not found: ${messageID}` })
       return { message, parts: normalized.parts.get(messageID) ?? [] }
     }
-    const response = await (options?.retry ?? retry)(() => {
-      onAttempt?.()
-      return client.session.message({ sessionID, messageID })
-    })
-    if (!response.data?.info?.id) throw new MessageNotFoundError({ message: `Message not found: ${messageID}` })
+    const response = yield* attempt(() =>
+      retryRequest(() => {
+        onAttempt()
+        return client.session.message({ sessionID, messageID })
+      }),
+    )
+    if (!response.data?.info?.id) return yield* new MessageNotFoundError({ message: `Message not found: ${messageID}` })
     return {
       message: cleanMessage(response.data.info),
       parts: response.data.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
     }
-  }
+  })
 
   const replaceMessages = (sessionID: string, messages: Message[]) => {
     const messageIDs = MutableHashSet.fromIterable(messages.map((message) => message.id))
@@ -802,7 +868,111 @@ export function createServerSession(
     })
   }
 
-  const loadMessages = async (sessionID: string, limit: number, before?: string, mode?: "replace" | "prepend") => {
+  // Fetches one page and its missing user parents, then applies it. Succeeds with whether the page was applied.
+  const loadPage = Effect.fnUntraced(function* (
+    sessionID: string,
+    limit: number,
+    before: string | undefined,
+    mode: "replace" | "prepend" | undefined,
+    active: object,
+    load: MessageLoadState,
+  ) {
+    const page = yield* fetchMessages(sessionID, limit, before, () => resetMessageLoad(sessionID, load))
+    const first = page.session.reduce<Message | undefined>(
+      (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
+      undefined,
+    )
+    if (!isGeneration(sessionID, active)) return false
+
+    let parents: ReadonlyArray<{ message: Message; parts: Part[] }> = []
+    if (mode !== "prepend") {
+      const users = MutableHashSet.fromIterable([
+        ...page.session.filter((message) => message.role === "user").map((message) => message.id),
+        ...(data.message[sessionID] ?? [])
+          .filter((message) => {
+            if (message.role !== "user") return false
+            const item = optimisticItem(sessionID, message.id)
+            return (
+              MutableHashSet.has(load.touchedMessages, message.id) &&
+              (Option.isNone(item) || item.value.confirmedMessage === true)
+            )
+          })
+          .map((message) => message.id),
+      ])
+      const parentIDs = MutableHashSet.fromIterable(
+        page.session.flatMap((message) =>
+          message.role === "assistant" && !MutableHashSet.has(users, message.parentID) ? [message.parentID] : [],
+        ),
+      )
+      for (const parentID of parentIDs) {
+        if (!isGeneration(sessionID, active)) break
+        const parent = yield* fetchMessage(sessionID, parentID, () =>
+          resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
+        ).pipe(
+          Effect.map(Option.some),
+          Effect.catchIf(isMissingMessage, () =>
+            Effect.sync(() => {
+              MutableHashSet.add(load.removedMessages, parentID)
+              return Option.none()
+            }),
+          ),
+        )
+        if (Option.isNone(parent)) continue
+        if (parent.value.message.role !== "user")
+          return yield* new AssistantParentError({ message: `Assistant parent is not a user message: ${parentID}` })
+        parents = [...parents, parent.value]
+      }
+    }
+    if (!isGeneration(sessionID, active)) return false
+    const result =
+      mode === "prepend"
+        ? page
+        : {
+            ...page,
+            session: merge(
+              page.session,
+              parents.map((parent) => parent.message),
+            ).sort(compareMessages),
+            part: merge(
+              page.part,
+              parents.map((parent) => ({ id: parent.message.id, part: parent.parts })),
+            ),
+          }
+    const preserveUnfetched =
+      mode === "prepend" ||
+      (!result.complete && (!first || ((message: Message) => compareMessages(message, first) < 0)))
+    applyMessagePage(
+      sessionID,
+      result,
+      isLoad(sessionID, load) ? Option.some(load) : Option.none(),
+      preserveUnfetched,
+      mode !== "prepend",
+    )
+    return true
+  })
+
+  // Runs after every load: a failed or superseded load drops the orphan parts it accepted.
+  const finishLoad = (sessionID: string, active: object, load: MessageLoadState, applied: boolean) => {
+    if (!applied && isGeneration(sessionID, active) && isLoad(sessionID, load)) {
+      for (const messageID of load.orphanParents) {
+        if (!hasID(MutableHashMap.get(orphanParts, sessionID), messageID)) continue
+        setData(produce((draft) => deleteMessageParts(draft, messageID)))
+        removeID(MutableHashMap.get(orphanParts, sessionID), messageID)
+      }
+      const orphans = MutableHashMap.get(orphanParts, sessionID)
+      if (Option.isSome(orphans) && MutableHashSet.size(orphans.value) === 0)
+        MutableHashMap.remove(orphanParts, sessionID)
+    }
+    if (isLoad(sessionID, load)) MutableHashMap.remove(messageLoads, sessionID)
+    if (isGeneration(sessionID, active)) setMeta("loading", sessionID, false)
+  }
+
+  const loadMessages = Effect.fnUntraced(function* (
+    sessionID: string,
+    limit: number,
+    before?: string,
+    mode?: "replace" | "prepend",
+  ) {
     if (meta.loading[sessionID]) return
     const active = generation(sessionID)
     const load: MessageLoadState = {
@@ -820,119 +990,51 @@ export function createServerSession(
     }
     MutableHashMap.set(messageLoads, sessionID, load)
     setMeta("loading", sessionID, true)
-    let applied = false
-    try {
-      const page = await fetchMessages(sessionID, limit, before, () => resetMessageLoad(sessionID, load))
-      const first = page.session.reduce<Message | undefined>(
-        (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
-        undefined,
-      )
-      if (!isGeneration(sessionID, active)) return
+    yield* loadPage(sessionID, limit, before, mode, active, load).pipe(
+      Effect.onExit((exit) =>
+        Effect.sync(() => finishLoad(sessionID, active, load, Exit.isSuccess(exit) && exit.value)),
+      ),
+    )
+  })
 
-      const parents = [] as Awaited<ReturnType<typeof fetchMessage>>[]
-      if (mode !== "prepend") {
-        const users = MutableHashSet.fromIterable([
-          ...page.session.filter((message) => message.role === "user").map((message) => message.id),
-          ...(data.message[sessionID] ?? [])
-            .filter((message) => {
-              if (message.role !== "user") return false
-              const item = optimisticItem(sessionID, message.id)
-              return (
-                MutableHashSet.has(load.touchedMessages, message.id) &&
-                (Option.isNone(item) || item.value.confirmedMessage === true)
-              )
-            })
-            .map((message) => message.id),
-        ])
-        const parentIDs = MutableHashSet.fromIterable(
-          page.session.flatMap((message) =>
-            message.role === "assistant" && !MutableHashSet.has(users, message.parentID) ? [message.parentID] : [],
-          ),
+  const syncSession = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) =>
+    share(
+      inflight,
+      sessionID,
+      Effect.gen(function* () {
+        const cached = data.message[sessionID] !== undefined && meta.limit[sessionID] !== undefined
+        if (cached && data.info[sessionID] && !options?.force) return
+        // Both requests run to completion even when the other one fails, as Promise.all did.
+        const resolving = yield* Effect.forkDetach(resolveSession(sessionID, options), { startImmediately: true })
+        const loading = yield* Effect.forkDetach(
+          cached && !options?.force
+            ? Effect.void
+            : loadMessages(sessionID, options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize),
+          { startImmediately: true },
         )
-        for (const parentID of parentIDs) {
-          if (!isGeneration(sessionID, active)) break
-          const parent = await fetchMessage(sessionID, parentID, () =>
-            resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
-          ).catch((error) => {
-            const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
-            if (cause && "status" in cause && cause.status === 404) {
-              MutableHashSet.add(load.removedMessages, parentID)
-              return
-            }
-            throw error
-          })
-          if (!parent) continue
-          if (parent.message.role !== "user")
-            throw new AssistantParentError({ message: `Assistant parent is not a user message: ${parentID}` })
-          parents.push(parent)
-        }
-      }
-      if (!isGeneration(sessionID, active)) return
-      const result =
-        mode === "prepend"
-          ? page
-          : {
-              ...page,
-              session: merge(
-                page.session,
-                parents.map((parent) => parent.message),
-              ).sort(compareMessages),
-              part: merge(
-                page.part,
-                parents.map((parent) => ({ id: parent.message.id, part: parent.parts })),
-              ),
-            }
-      const preserveUnfetched =
-        mode === "prepend" ||
-        (!result.complete && (!first || ((message: Message) => compareMessages(message, first) < 0)))
-      applyMessagePage(
-        sessionID,
-        result,
-        isLoad(sessionID, load) ? Option.some(load) : Option.none(),
-        preserveUnfetched,
-        mode !== "prepend",
-      )
-      applied = true
-    } finally {
-      if (!applied && isGeneration(sessionID, active) && isLoad(sessionID, load)) {
-        for (const messageID of load.orphanParents) {
-          if (!hasID(MutableHashMap.get(orphanParts, sessionID), messageID)) continue
-          setData(produce((draft) => deleteMessageParts(draft, messageID)))
-          removeID(MutableHashMap.get(orphanParts, sessionID), messageID)
-        }
-        const orphans = MutableHashMap.get(orphanParts, sessionID)
-        if (Option.isSome(orphans) && MutableHashSet.size(orphans.value) === 0)
-          MutableHashMap.remove(orphanParts, sessionID)
-      }
-      if (isLoad(sessionID, load)) MutableHashMap.remove(messageLoads, sessionID)
-      if (isGeneration(sessionID, active)) setMeta("loading", sessionID, false)
-    }
-  }
+        yield* Effect.all([Fiber.join(resolving), Fiber.join(loading)], { concurrency: "unbounded", discard: true })
+      }),
+    )
 
   const sync = (sessionID: string, options?: { force?: boolean; messageLimit?: number }) => {
     touch(sessionID)
-    return runInflight(inflight, sessionID, async () => {
-      const cached = data.message[sessionID] !== undefined && meta.limit[sessionID] !== undefined
-      if (cached && data.info[sessionID] && !options?.force) return
-      await Promise.all([
-        resolve(sessionID, options),
-        cached && !options?.force
-          ? Promise.resolve()
-          : loadMessages(sessionID, options?.messageLimit ?? meta.limit[sessionID] ?? initialMessagePageSize),
-      ])
-    })
+    return run(syncSession(sessionID, options))
   }
 
-  const prefetch = async (sessionID: string, limit: number) => {
-    touch(sessionID)
+  const prefetchSession = Effect.fnUntraced(function* (sessionID: string, limit: number) {
     const pending = MutableHashMap.get(inflight, sessionID)
-    if (Option.isSome(pending)) await pending.value
+    if (Option.isSome(pending)) yield* Deferred.await(pending.value)
     if (
       Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
       (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
     )
       return
-    await runInflight(inflight, sessionID, () => loadMessages(sessionID, limit))
+    yield* share(inflight, sessionID, loadMessages(sessionID, limit))
+  })
+
+  const prefetch = (sessionID: string, limit: number) => {
+    touch(sessionID)
+    return run(prefetchSession(sessionID, limit))
   }
 
   const eventSessionID = (event: { type: string; properties?: unknown }) => {
@@ -1004,15 +1106,22 @@ export function createServerSession(
 
   const hydrateV2Message = (sessionID: string, messageID: string) => {
     if (!sessionApi) return
-    void sessionApi
-      .message({ sessionID, messageID })
-      .then((message) => {
-        const current = data.session_message[sessionID] ?? []
-        const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
-        projectV2({ sessionID, messages, touched: [message.id] })
-      })
-      .catch(() => {})
+    // Hydration is best effort: a failed request or projection leaves the reduced state as it is.
+    Effect.runFork(
+      attempt(() => sessionApi.message({ sessionID, messageID })).pipe(
+        Effect.map((message) => {
+          const current = data.session_message[sessionID] ?? []
+          const messages = [...current.filter((item) => item.id !== message.id), message].sort(compareMessages)
+          projectV2({ sessionID, messages, touched: [message.id] })
+        }),
+        Effect.ignoreCause,
+      ),
+    )
   }
+
+  // Refreshes session info in the background; a failed refresh keeps the cached info.
+  const refreshSession = (sessionID: string, options?: { force?: boolean }) =>
+    Effect.runFork(resolveSession(sessionID, options).pipe(Effect.ignoreCause))
 
   const applyV2 = (event: OpenCodeEvent) => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return
@@ -1055,13 +1164,13 @@ export function createServerSession(
         message: event.data.error.message,
         next: event.data.at,
       })
-    if (event.type === "session.forked") void resolve(sessionID, { force: true }).catch(() => {})
+    if (event.type === "session.forked") refreshSession(sessionID, { force: true })
     if (
       event.type === "session.revert.staged" ||
       event.type === "session.revert.cleared" ||
       event.type === "session.revert.committed"
     )
-      void resolve(sessionID, { force: true }).catch(() => {})
+      refreshSession(sessionID, { force: true })
   }
 
   const apply = (event: { type: string; properties?: unknown }) => {
@@ -1074,7 +1183,7 @@ export function createServerSession(
         event.type !== "session.updated" &&
         event.type !== "session.deleted"
       )
-        void resolve(eventID).catch(() => {})
+        refreshSession(eventID)
     }
     switch (event.type) {
       case "session.created":
@@ -1366,10 +1475,14 @@ export function createServerSession(
     resolve,
     lineage: {
       peek: peekLineage,
-      async resolve(sessionID: string) {
-        const session = await resolve(sessionID)
-        return { session, root: await rootSession(session, resolve) }
-      },
+      resolve: (sessionID: string) =>
+        run(
+          Effect.gen(function* () {
+            const session = yield* resolveSession(sessionID)
+            const root = yield* attempt(() => rootSession(session, resolve))
+            return { session, root }
+          }),
+        ),
     },
     sync,
     prefetch,
@@ -1447,20 +1560,30 @@ export function createServerSession(
         setData(produce((draft) => deleteMessageParts(draft, input.messageID)))
       },
     },
-    async todo(sessionID: string, request?: { force?: boolean }) {
+    todo(sessionID: string, request?: { force?: boolean }) {
       touch(sessionID)
-      if (data.todo[sessionID] !== undefined && !request?.force) return
-      if ((await options?.protocol) === "v2") {
-        setData("todo", sessionID, [])
-        return
-      }
-      return runInflight(inflightTodo, sessionID, () => {
-        const active = generation(sessionID)
-        return (options?.retry ?? retry)(() => client.session.todo({ sessionID })).then((result) => {
-          if (!isGeneration(sessionID, active)) return
-          setData("todo", sessionID, reconcile(result.data ?? [], { key: "id" }))
-        })
-      })
+      return run(
+        Effect.gen(function* () {
+          if (data.todo[sessionID] !== undefined && !request?.force) return
+          if (yield* protocolIs("v2")) {
+            setData("todo", sessionID, [])
+            return
+          }
+          yield* share(
+            inflightTodo,
+            sessionID,
+            Effect.suspend(() => {
+              const active = generation(sessionID)
+              return attempt(() => retryRequest(() => client.session.todo({ sessionID }))).pipe(
+                Effect.map((result) => {
+                  if (!isGeneration(sessionID, active)) return
+                  setData("todo", sessionID, reconcile(result.data ?? [], { key: "id" }))
+                }),
+              )
+            }),
+          )
+        }),
+      )
     },
     history: {
       more: (sessionID: string) =>
@@ -1469,10 +1592,15 @@ export function createServerSession(
         !meta.complete[sessionID] &&
         !!meta.cursor[sessionID],
       loading: (sessionID: string) => meta.loading[sessionID] ?? false,
-      async loadMore(sessionID: string, count = historyMessagePageSize) {
+      loadMore(sessionID: string, count = historyMessagePageSize) {
         touch(sessionID)
-        if (meta.loading[sessionID] || meta.complete[sessionID] || !meta.cursor[sessionID]) return
-        await loadMessages(sessionID, count, meta.cursor[sessionID], "prepend")
+        return run(
+          Effect.suspend(() =>
+            meta.loading[sessionID] || meta.complete[sessionID] || !meta.cursor[sessionID]
+              ? Effect.void
+              : loadMessages(sessionID, count, meta.cursor[sessionID], "prepend"),
+          ),
+        )
       },
     },
     evict(sessionID: string) {
