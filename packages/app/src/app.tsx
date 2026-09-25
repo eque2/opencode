@@ -23,7 +23,6 @@ import {
   For,
   type JSX,
   lazy,
-  onCleanup,
   type ParentProps,
   Show,
 } from "solid-js"
@@ -52,6 +51,7 @@ import LegacyLayout from "@/pages/layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
+import { createFiberSlot } from "./utils/fiber-slot"
 import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { createSessionLineage } from "@/pages/session/session-lineage"
 
@@ -480,8 +480,16 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
 
-  const timer = setInterval(() => props.onRetry?.(), 1000)
-  onCleanup(() => clearInterval(timer))
+  // Like setInterval, the first retry runs one second after mount, and a throwing onRetry is logged
+  // without stopping the loop. The slot interrupts the loop when the component unmounts.
+  const retry = createFiberSlot()
+  retry.run(
+    Effect.sync(() => props.onRetry?.()).pipe(
+      Effect.catchDefect((defect) => Effect.logError(defect)),
+      Effect.delay("1 second"),
+      Effect.forever,
+    ),
+  )
 
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
