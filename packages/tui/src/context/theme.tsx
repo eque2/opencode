@@ -20,7 +20,7 @@ import {
   type Theme,
   type ThemeJson,
 } from "../theme"
-import { Duration, Effect, Fiber, MutableHashSet, Option, Result } from "effect"
+import { Duration, Effect, Fiber, MutableHashSet, Option, Result, Schema } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -82,6 +82,10 @@ export {
 } from "../theme"
 
 const THEME_REFRESH_DELAYS = [250, 1000] as const
+
+// The JSON text of the terminal colors. An unchanged signature skips regenerating the system theme; the colors are
+// untyped JSON here, so the text matches JSON.stringify.
+const encodePaletteSignature = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
 type Mode = "dark" | "light"
 
@@ -174,7 +178,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
           }
           const next = Option.getOrElse(store.lock, () => terminalMode(colors) ?? mode)
           if (store.mode !== next) setStore("mode", next)
-          const signature = JSON.stringify(colors)
+          const signature = encodePaletteSignature(colors)
           hasResolvedSystemTheme = true
           if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
           systemThemeSignature = signature
