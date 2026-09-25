@@ -5,8 +5,10 @@ import os from "os"
 import { Effect, Option } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { ProjectID } from "@opencode-ai/schema/project-id"
 import * as LSPServer from "@/lsp/server"
 import type { InstanceContext } from "@/project/instance-context"
+import type { Project } from "@/project/project"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -14,8 +16,16 @@ import type { InstanceContext } from "@/project/instance-context"
 
 const tmpBase = path.join(os.tmpdir(), "opencode-jdtls-test")
 
+// JDTLS.root reads only the directory and worktree.
+const project: Project.Info = {
+  id: ProjectID.global,
+  worktree: "/",
+  time: { created: 0, updated: 0 },
+  sandboxes: [],
+}
+
 function makeCtx(directory: string): InstanceContext {
-  return { directory, worktree: "/", project: {} as any }
+  return { directory, worktree: "/", project }
 }
 
 const fsLayer = LayerNode.compile(FSUtil.node)
