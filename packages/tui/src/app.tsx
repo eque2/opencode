@@ -98,6 +98,11 @@ import { cliErrorMessage, errorFormat } from "./util/error"
 
 registerOpencodeSpinner()
 
+// Run a UI handler program. A defect is logged, as an unhandled rejection reached the console before.
+function runHandler(effect: Effect.Effect<void>) {
+  Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError(defect))))
+}
+
 // OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
 const isMouseButton = Schema.is(Schema.Enum(MouseButton))
 
@@ -452,18 +457,29 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     }),
   )
   const [ready, setReady] = createSignal(false)
-  props.pluginHost
-    .start({
-      api,
-      config: tuiConfig,
-      runtime: pluginRuntime,
-      dispose: () => attention.dispose(),
-    })
-    .catch((error) => {
-      console.error("Failed to load TUI plugins", error)
-    })
-    .finally(() => {
-      setReady(true)
+  runHandler(
+    Effect.tryPromise(() =>
+      props.pluginHost.start({
+        api,
+        config: tuiConfig,
+        runtime: pluginRuntime,
+        dispose: () => attention.dispose(),
+      }),
+    ).pipe(
+      Effect.catch((error) => Effect.logError("Failed to load TUI plugins", error.cause)),
+      Effect.ensuring(Effect.sync(() => setReady(true))),
+    ),
+  )
+
+  // Copy text and confirm with a toast; a failed write shows an error toast. Without a clipboard it does nothing.
+  const copyWithToast = (text: string, message: string) =>
+    Effect.gen(function* () {
+      const write = clipboard.write?.bind(clipboard)
+      if (!write) return
+      yield* Effect.tryPromise(() => write(text)).pipe(
+        Effect.andThen(Effect.sync(() => toast.show({ message, variant: "info" }))),
+        Effect.catch((error) => Effect.sync(() => toast.error(error.cause))),
+      )
     })
 
   // Let selection copy/dismiss win ahead of normal bindings when explicit copy is required.
@@ -481,15 +497,11 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   })
 
   // Wire up console copy-to-clipboard via opentui's onCopySelection callback
-  renderer.console.onCopySelection = async (text: string) => {
+  renderer.console.onCopySelection = (text: string) => {
     if (!text || text.length === 0) return
-
-    await clipboard
-      .write?.(text)
-      .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
-      .catch(toast.error)
-
-    renderer.clearSelection()
+    runHandler(
+      copyWithToast(text, "Copied to clipboard").pipe(Effect.andThen(Effect.sync(() => renderer.clearSelection()))),
+    )
   }
   const [terminalTitleEnabled, setTerminalTitleEnabled] = createSignal(kv.get("terminal_title_enabled", true))
   const [pasteSummaryEnabled, setPasteSummaryEnabled] = createSignal(
@@ -644,15 +656,15 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         title: "Copy worktree path",
         category: "Workspace",
         enabled: () => currentWorktreeWorkspace() !== undefined,
-        run: async () => {
-          const workspace = currentWorktreeWorkspace()
-          if (!workspace?.directory) return
-          await clipboard
-            .write?.(workspace.directory)
-            .then(() => toast.show({ message: "Copied worktree path", variant: "info" }))
-            .catch(toast.error)
-          dialog.clear()
-        },
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const workspace = currentWorktreeWorkspace()
+              if (!workspace?.directory) return
+              yield* copyWithToast(workspace.directory, "Copied worktree path")
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "workspace.list",
@@ -901,15 +913,19 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         name: "app.heap_snapshot",
         title: "Write heap snapshot",
         category: "System",
-        run: async () => {
-          const files = await props.onSnapshot?.()
-          toast.show({
-            variant: "info",
-            message: `Heap snapshot written to ${files?.join(", ")}`,
-            duration: 5000,
-          })
-          dialog.clear()
-        },
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const snapshot = props.onSnapshot
+              const files = snapshot ? yield* Effect.promise(() => snapshot()) : []
+              toast.show({
+                variant: "info",
+                message: `Heap snapshot written to ${files.join(", ")}`,
+                duration: 5000,
+              })
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "terminal.suspend",
@@ -984,11 +1000,14 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           ? "Disable session directory filtering"
           : "Enable session directory filtering",
         category: "System",
-        run: async () => {
-          kv.set("session_directory_filter_enabled", !kv.get("session_directory_filter_enabled", true))
-          await sync.session.refresh()
-          dialog.clear()
-        },
+        run: () =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              kv.set("session_directory_filter_enabled", !kv.get("session_directory_filter_enabled", true))
+              yield* Effect.promise(() => sync.session.refresh())
+              dialog.clear()
+            }),
+          ),
       },
       {
         name: "permission.mode",
@@ -1075,53 +1094,62 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     })
   })
 
-  event.on("installation.update-available", async (evt) => {
-    console.log("installation.update-available", evt)
-    const version = evt.properties.version
+  event.on("installation.update-available", (evt) =>
+    runHandler(
+      Effect.gen(function* () {
+        yield* Effect.logInfo("installation.update-available", evt)
+        const version = evt.properties.version
 
-    const skipped = kv.get("skipped_version")
-    if (skipped && !isVersionGreater(version, skipped)) return
+        const skipped = kv.get("skipped_version")
+        if (skipped && !isVersionGreater(version, skipped)) return
 
-    const choice = await DialogConfirm.show(
-      dialog,
-      `Update Available`,
-      `A new release v${version} is available. Would you like to update now?`,
-      "skip",
-    )
+        const choice = yield* Effect.promise(() =>
+          DialogConfirm.show(
+            dialog,
+            `Update Available`,
+            `A new release v${version} is available. Would you like to update now?`,
+            "skip",
+          ),
+        )
 
-    if (choice === false) {
-      kv.set("skipped_version", version)
-      return
-    }
+        if (choice === false) {
+          kv.set("skipped_version", version)
+          return
+        }
 
-    if (choice !== true) return
+        if (choice !== true) return
 
-    toast.show({
-      variant: "info",
-      message: `Updating to v${version}…`,
-      duration: 30000,
-    })
+        toast.show({
+          variant: "info",
+          message: `Updating to v${version}…`,
+          duration: 30000,
+        })
 
-    const result = await sdk.client.global.upgrade({ target: version })
+        const result = yield* Effect.promise(() => sdk.client.global.upgrade({ target: version }))
 
-    if (result.error || !result.data?.success) {
-      toast.show({
-        variant: "error",
-        title: "Update Failed",
-        message: "Update failed",
-        duration: 10000,
-      })
-      return
-    }
+        if (result.error || !result.data?.success) {
+          toast.show({
+            variant: "error",
+            title: "Update Failed",
+            message: "Update failed",
+            duration: 10000,
+          })
+          return
+        }
 
-    await DialogAlert.show(
-      dialog,
-      "Update Complete",
-      `Successfully updated to OpenCode v${result.data.version}. Please restart the application.`,
-    )
+        const upgraded = result.data.version
+        yield* Effect.promise(() =>
+          DialogAlert.show(
+            dialog,
+            "Update Complete",
+            `Successfully updated to OpenCode v${upgraded}. Please restart the application.`,
+          ),
+        )
 
-    void exit()
-  })
+        exit()
+      }),
+    ),
+  )
 
   const plugin = createMemo(() => {
     if (!ready()) return
