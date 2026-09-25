@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import { Data, Effect, HashMap, Option } from "effect"
+import { Array as Arr, Data, Effect, HashMap, Option } from "effect"
 import type { Config } from "@opencode-ai/sdk/v2/client"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
@@ -113,34 +113,34 @@ describe("bootstrapDirectory", () => {
   test("uses legacy MCP endpoints while refreshing a v1 directory", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const legacyConfigReads: string[] = []
-        const mcpReads: string[] = []
+        let legacyConfigReads: string[] = []
+        let mcpReads: string[] = []
         const [store, setStore] = directoryState()
         const { sdk, api } = serve({
           ...currentRoutes,
           "GET /agent": reply([{ name: "build", mode: "primary" }]),
           "GET /config": () =>
             Effect.sync(() => {
-              legacyConfigReads.push("directory")
+              legacyConfigReads = Arr.append(legacyConfigReads, "directory")
               return {}
             }),
           "GET /session/status": reply({}),
           "GET /vcs": reply({}),
           "GET /command": () =>
             Effect.sync(() => {
-              mcpReads.push("command")
+              mcpReads = Arr.append(mcpReads, "command")
               return []
             }),
           "GET /permission": reply([]),
           "GET /question": reply([]),
           "GET /mcp": () =>
             Effect.sync(() => {
-              mcpReads.push("status")
+              mcpReads = Arr.append(mcpReads, "status")
               return {}
             }),
           "GET /experimental/resource": () =>
             Effect.sync(() => {
-              mcpReads.push("resource")
+              mcpReads = Arr.append(mcpReads, "resource")
               return {}
             }),
           "GET /provider": reply({ all: [], connected: [], default: {} }),
@@ -241,12 +241,12 @@ describe("config queries", () => {
   test("loads legacy global config for v1 servers", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: string[] = []
+        let calls: string[] = []
         const config = { shell: "zsh" } satisfies Config
         const { sdk } = serve({
           "GET /global/config": () =>
             Effect.sync(() => {
-              calls.push("global")
+              calls = Arr.append(calls, "global")
               return config
             }),
         })
@@ -274,11 +274,11 @@ describe("query keys", () => {
   test("loads the current provider and model catalog", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const api: Parameters<typeof loadProvidersQuery>[2] = {
           provider: {
             list: (input: unknown) => {
-              calls.push(["provider", input])
+              calls = Arr.append(calls, ["provider", input])
               return resolved({
                 location: location("/repo"),
                 data: [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }],
@@ -287,11 +287,11 @@ describe("query keys", () => {
           },
           model: {
             list: (input: unknown) => {
-              calls.push(["model", input])
+              calls = Arr.append(calls, ["model", input])
               return resolved({ location: location("/repo"), data: [] })
             },
             default: (input: unknown) => {
-              calls.push(["default", input])
+              calls = Arr.append(calls, ["default", input])
               return resolved({ location: location("/repo"), data: null })
             },
           },
@@ -313,10 +313,10 @@ describe("query keys", () => {
   test("loads agents from the current location-scoped endpoint", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const api: Parameters<typeof loadAgentsQuery>[2] = {
           list: (input: unknown) => {
-            calls.push(input)
+            calls = Arr.append(calls, input)
             return resolved({ location: location("/repo"), data: [] })
           },
         }
@@ -333,10 +333,10 @@ describe("query keys", () => {
   test("loads commands from the current location-scoped endpoint", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const api: Parameters<typeof loadCommands>[1] = {
           list: (input: unknown) => {
-            calls.push(input)
+            calls = Arr.append(calls, input)
             return resolved({
               location: location("/repo"),
               data: [{ name: "review", template: "Review files" /* source: "command" as const */ }],
@@ -373,10 +373,10 @@ describe("query keys", () => {
   test("loads references from the current location-scoped endpoint", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const api: Parameters<typeof loadReferencesQuery>[2] = {
           list: (input: unknown) => {
-            calls.push(input)
+            calls = Arr.append(calls, input)
             return resolved({
               location: location("/repo"),
               data: [
