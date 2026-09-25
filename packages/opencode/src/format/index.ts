@@ -28,6 +28,9 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Fo
 
 export const use = serviceUse(Service)
 
+// Every value export of ./formatter is a built-in Info, so config entries look them up by export name.
+const builtIns: Partial<Record<string, Formatter.Info>> = Formatter
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
@@ -133,7 +136,7 @@ const layer = Layer.effect(
 
         if (cfg.formatter !== true) {
           for (const [name, item] of Object.entries(cfg.formatter)) {
-            const builtIn = Formatter[name as keyof typeof Formatter]
+            const builtIn = builtIns[name]
 
             // Ruff and uv are both the same formatter, so disabling either should disable both.
             if (["ruff", "uv"].includes(name) && (cfg.formatter.ruff?.disabled || cfg.formatter.uv?.disabled)) {
