@@ -400,12 +400,9 @@ export function createKeybindSettingsController(
   return {
     catalog: {
       groups: GROUPS,
-      // The matching ids of each group, in GROUPS order. It stays a Map with `get`, because
-      // test-browser/settings-keybinds.test.ts reads the result that way.
-      filtered: (query: string) => {
-        const filtered = filteredFor(query, list(), grouped(), (id) => formatKeybind(effective(id) ?? "", language.t))
-        return new Map(GROUPS.map((group) => [group, idsIn(filtered, group)] as const))
-      },
+      // The matching ids of each group, keyed by group. Every group in GROUPS has an entry.
+      filtered: (query: string): GroupedIds =>
+        filteredFor(query, list(), grouped(), (id) => formatKeybind(effective(id) ?? "", language.t)),
       title,
       keybind: (id: string) => formatKeybind(effective(id) ?? "", language.t),
     },
@@ -452,7 +449,7 @@ function SettingsKeybindsV2() {
 
 function SettingsKeybindsV2View(props: {
   groups: KeybindGroup[]
-  filtered: (query: string) => Map<KeybindGroup, string[]>
+  filtered: (query: string) => GroupedIds
   title: (id: string) => string
   keybind: (id: string) => string
   active: () => string | null
@@ -463,7 +460,7 @@ function SettingsKeybindsV2View(props: {
   const language = useLanguage()
   const [store, setStore] = createStore({ filter: "" })
   const filtered = createMemo(() => props.filtered(store.filter))
-  const hasResults = createMemo(() => props.groups.some((group) => (filtered().get(group)?.length ?? 0) > 0))
+  const hasResults = createMemo(() => props.groups.some((group) => idsIn(filtered(), group).length > 0))
 
   return (
     <>
@@ -503,11 +500,11 @@ function SettingsKeybindsV2View(props: {
         <div class="settings-v2-shortcuts flex flex-col gap-8">
           <For each={props.groups}>
             {(group) => (
-              <Show when={(filtered().get(group) ?? []).length > 0}>
+              <Show when={idsIn(filtered(), group).length > 0}>
                 <div class="settings-v2-section">
                   <h3 class="settings-v2-section-title">{language.t(groupKey[group])}</h3>
                   <SettingsListV2>
-                    <For each={filtered().get(group) ?? []}>
+                    <For each={idsIn(filtered(), group)}>
                       {(id) => (
                         <div class="flex items-center justify-between gap-4 py-3 border-b border-border-weak-base last:border-none">
                           <span>{props.title(id)}</span>
