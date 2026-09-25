@@ -146,9 +146,6 @@ type LayoutUiState = {
 /** The layout reads the global provider catalog, so it names no project directory. */
 const globalCatalog = Option.none<string>()
 
-/** A root session has no parent. The session list API takes that as `parentID: null`. */
-const rootSessionParent = Option.none<string>()
-
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const [store, setStore, , ready] = persisted(
@@ -1328,13 +1325,12 @@ export default function LegacyLayout(props: ParentProps) {
     const listed = yield* Effect.forEach(
       dirs,
       (item) =>
-        layoutRequest(() =>
-          listAllSessions(serverSDK().api.session, {
-            directory: item,
-            parentID: Option.getOrNull(rootSessionParent),
-            order: "desc",
-          }),
-        ).pipe(
+        listAllSessions(serverSDK().api.session, {
+          directory: item,
+          // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+          parentID: null,
+          order: "desc",
+        }).pipe(
           Effect.orElseSucceed(() => []),
           Effect.map((session) => ({ path: { directory: item }, session })),
         ),
@@ -1581,9 +1577,9 @@ export default function LegacyLayout(props: ParentProps) {
     })
     const dismiss = () => dismissToast(progress)
 
-    const sessions = yield* layoutRequest(() =>
-      listAllSessions(serverSDK().api.session, { directory, order: "desc" }),
-    ).pipe(Effect.orElseSucceed(() => []))
+    const sessions = yield* listAllSessions(serverSDK().api.session, { directory, order: "desc" }).pipe(
+      Effect.orElseSucceed(() => []),
+    )
 
     clearWorkspaceTerminals(
       directory,
@@ -1724,12 +1720,10 @@ export default function LegacyLayout(props: ParentProps) {
     })
 
     const refresh = Effect.gen(function* () {
-      const sessions = yield* layoutRequest(() =>
-        listAllSessions(serverSDK().api.session, {
-          directory: props.directory,
-          order: "desc",
-        }),
-      ).pipe(Effect.orElseSucceed(() => []))
+      const sessions = yield* listAllSessions(serverSDK().api.session, {
+        directory: props.directory,
+        order: "desc",
+      }).pipe(Effect.orElseSucceed(() => []))
       const active = sessions.filter((session) => session.time.archived === undefined)
       setState({ sessions: active })
     })
