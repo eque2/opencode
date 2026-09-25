@@ -25,6 +25,18 @@ export class ApplyPatchError extends Schema.TaggedError<ApplyPatchError>()("Appl
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
+type FileChange = {
+  filePath: string
+  oldContent: string
+  newContent: string
+  type: "add" | "update" | "delete" | "move"
+  movePath: Option.Option<string>
+  diff: string
+  additions: number
+  deletions: number
+  bom: boolean
+}
+
 export const ApplyPatchTool = Tool.define(
   "apply_patch",
   Effect.gen(function* () {
@@ -59,26 +71,12 @@ export const ApplyPatchTool = Tool.define(
       const instance = yield* InstanceState.context
 
       // Validate file paths and check permissions
-      const fileChanges: Array<{
-        filePath: string
-        oldContent: string
-        newContent: string
-        type: "add" | "update" | "delete" | "move"
-        movePath: Option.Option<string>
-        diff: string
-        additions: number
-        deletions: number
-        bom: boolean
-      }> = []
+      const fileChanges = yield* Effect.forEach(hunks, (hunk) =>
+        Effect.gen(function* () {
+          const filePath = path.resolve(instance.directory, hunk.path)
+          yield* assertExternalDirectoryEffect(ctx, filePath)
 
-      let totalDiff = ""
-
-      for (const hunk of hunks) {
-        const filePath = path.resolve(instance.directory, hunk.path)
-        yield* assertExternalDirectoryEffect(ctx, filePath)
-
-        switch (hunk.type) {
-          case "add": {
+          if (hunk.type === "add") {
             const oldContent = ""
             const newContent =
               hunk.contents.length === 0 || hunk.contents.endsWith("\n") ? hunk.contents : `${hunk.contents}\n`
@@ -92,7 +90,7 @@ export const ApplyPatchTool = Tool.define(
               if (change.removed) deletions += change.count || 0
             }
 
-            fileChanges.push({
+            return {
               filePath,
               oldContent,
               newContent: next.text,
@@ -102,13 +100,10 @@ export const ApplyPatchTool = Tool.define(
               additions,
               deletions,
               bom: next.bom,
-            })
-
-            totalDiff += diff + "\n"
-            break
+            } satisfies FileChange
           }
 
-          case "update": {
+          if (hunk.type === "update") {
             // Check if file exists for update
             const stats = yield* afs.stat(filePath).pipe(Effect.option)
             if (Option.isNone(stats) || stats.value.type === "Directory") {
@@ -143,7 +138,7 @@ export const ApplyPatchTool = Tool.define(
               : Option.none<string>()
             if (Option.isSome(movePath)) yield* assertExternalDirectoryEffect(ctx, movePath.value)
 
-            fileChanges.push({
+            return {
               filePath,
               oldContent,
               newContent,
@@ -153,41 +148,35 @@ export const ApplyPatchTool = Tool.define(
               additions,
               deletions,
               bom,
-            })
-
-            totalDiff += diff + "\n"
-            break
+            } satisfies FileChange
           }
 
-          case "delete": {
-            const source = yield* Bom.readFile(afs, filePath).pipe(
-              Effect.mapError(
-                (error) =>
-                  new ApplyPatchError({ message: `apply_patch verification failed: ${error.message}`, cause: error }),
-              ),
-            )
-            const contentToDelete = source.text
-            const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
+          const source = yield* Bom.readFile(afs, filePath).pipe(
+            Effect.mapError(
+              (error) =>
+                new ApplyPatchError({ message: `apply_patch verification failed: ${error.message}`, cause: error }),
+            ),
+          )
+          const contentToDelete = source.text
+          const deleteDiff = trimDiff(createTwoFilesPatch(filePath, filePath, contentToDelete, ""))
 
-            const deletions = contentToDelete.split("\n").length
+          const deletions = contentToDelete.split("\n").length
 
-            fileChanges.push({
-              filePath,
-              oldContent: contentToDelete,
-              newContent: "",
-              type: "delete",
-              movePath: Option.none(),
-              diff: deleteDiff,
-              additions: 0,
-              deletions,
-              bom: source.bom,
-            })
+          return {
+            filePath,
+            oldContent: contentToDelete,
+            newContent: "",
+            type: "delete",
+            movePath: Option.none(),
+            diff: deleteDiff,
+            additions: 0,
+            deletions,
+            bom: source.bom,
+          } satisfies FileChange
+        }),
+      )
 
-            totalDiff += deleteDiff + "\n"
-            break
-          }
-        }
-      }
+      const totalDiff = fileChanges.map((change) => change.diff + "\n").join("")
 
       // Build per-file metadata for UI rendering (used for both permission and result)
       const files = fileChanges.map((change) => ({
@@ -216,36 +205,24 @@ export const ApplyPatchTool = Tool.define(
       })
 
       // Apply the changes
-      const updates: Array<{ file: string; event: "add" | "change" | "unlink" }> = []
-
       for (const change of fileChanges) {
         switch (change.type) {
           case "add":
-            // Create parent directories (recursive: true is safe on existing/root dirs)
-
-            yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "add" })
-            break
-
           case "update":
+            // Create parent directories (recursive: true is safe on existing/root dirs)
             yield* afs.writeWithDirs(change.filePath, Bom.join(change.newContent, change.bom))
-            updates.push({ file: change.filePath, event: "change" })
             break
 
           case "move":
             if (Option.isSome(change.movePath)) {
               // Create parent directories (recursive: true is safe on existing/root dirs)
-
               yield* afs.writeWithDirs(change.movePath.value, Bom.join(change.newContent, change.bom))
               yield* afs.remove(change.filePath)
-              updates.push({ file: change.filePath, event: "unlink" })
-              updates.push({ file: change.movePath.value, event: "add" })
             }
             break
 
           case "delete":
             yield* afs.remove(change.filePath)
-            updates.push({ file: change.filePath, event: "unlink" })
             break
         }
 
@@ -258,7 +235,19 @@ export const ApplyPatchTool = Tool.define(
         }
       }
 
-      // Publish file change events
+      // Publish file change events, in change order, after every change is applied
+      const updates = fileChanges.flatMap((change): Array<{ file: string; event: "add" | "change" | "unlink" }> => {
+        if (change.type === "add") return [{ file: change.filePath, event: "add" }]
+        if (change.type === "update") return [{ file: change.filePath, event: "change" }]
+        if (change.type === "delete") return [{ file: change.filePath, event: "unlink" }]
+        return Option.match(change.movePath, {
+          onNone: () => [],
+          onSome: (movePath) => [
+            { file: change.filePath, event: "unlink" },
+            { file: movePath, event: "add" },
+          ],
+        })
+      })
       for (const update of updates) {
         yield* events.publish(Watcher.Event.Updated, update)
       }

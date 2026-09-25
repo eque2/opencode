@@ -245,17 +245,17 @@ function levenshtein(a: string, b: string): number {
   return matrix[a.length][b.length]
 }
 
+function withoutTrailingEmptyLine(lines: string[]) {
+  return lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines
+}
+
 export const SimpleReplacer: Replacer = function* (_content, find) {
   yield find
 }
 
 export const LineTrimmedReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
-
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
+  const searchLines = withoutTrailingEmptyLine(find.split("\n"))
 
   for (let i = 0; i <= originalLines.length - searchLines.length; i++) {
     let matches = true
@@ -291,15 +291,13 @@ export const LineTrimmedReplacer: Replacer = function* (content, find) {
 
 export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const originalLines = content.split("\n")
-  const searchLines = find.split("\n")
+  const findLines = find.split("\n")
 
-  if (searchLines.length < 3) {
+  if (findLines.length < 3) {
     return
   }
 
-  if (searchLines[searchLines.length - 1] === "") {
-    searchLines.pop()
-  }
+  const searchLines = withoutTrailingEmptyLine(findLines)
 
   const firstLineSearch = searchLines[0].trim()
   const lastLineSearch = searchLines[searchLines.length - 1].trim()
@@ -307,23 +305,15 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   const maxLineDelta = Math.max(1, Math.floor(searchBlockSize * 0.25))
 
   // Collect all candidate positions where both anchors match
-  const candidates: Array<{ startLine: number; endLine: number }> = []
-  for (let i = 0; i < originalLines.length; i++) {
-    if (originalLines[i].trim() !== firstLineSearch) {
-      continue
-    }
+  const candidates = originalLines.flatMap((line, i) => {
+    if (line.trim() !== firstLineSearch) return []
 
-    // Look for the matching last line after this first line
-    for (let j = i + 2; j < originalLines.length; j++) {
-      if (originalLines[j].trim() === lastLineSearch) {
-        const actualBlockSize = j - i + 1
-        if (Math.abs(actualBlockSize - searchBlockSize) <= maxLineDelta) {
-          candidates.push({ startLine: i, endLine: j })
-        }
-        break // Only match the first occurrence of the last line
-      }
-    }
-  }
+    // Look for the matching last line after this first line. Only its first occurrence counts.
+    const j = originalLines.findIndex((other, index) => index >= i + 2 && other.trim() === lastLineSearch)
+    if (j === -1) return []
+    const actualBlockSize = j - i + 1
+    return Math.abs(actualBlockSize - searchBlockSize) <= maxLineDelta ? [{ startLine: i, endLine: j }] : []
+  })
 
   // Return immediately if no candidates
   if (candidates.length === 0) {
@@ -589,16 +579,14 @@ export const TrimmedBoundaryReplacer: Replacer = function* (content, find) {
 }
 
 export const ContextAwareReplacer: Replacer = function* (content, find) {
-  const findLines = find.split("\n")
-  if (findLines.length < 3) {
+  const allFindLines = find.split("\n")
+  if (allFindLines.length < 3) {
     // Need at least 3 lines to have meaningful context
     return
   }
 
   // Remove trailing empty line if present
-  if (findLines[findLines.length - 1] === "") {
-    findLines.pop()
-  }
+  const findLines = withoutTrailingEmptyLine(allFindLines)
 
   const contentLines = content.split("\n")
 
