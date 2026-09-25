@@ -659,7 +659,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }
 
   const updateConfigMutation = useMutation(() => ({
-    mutationFn: (config: Config) => serverSDK.client.global.config.update({ config }),
+    mutationFn: (config: Config) => serverSDK.client.global.config.update({ config1: config }),
     onSuccess: () => {
       bootstrap.refetch()
       // Invalidate all provider queries so newly configured custom providers
