@@ -1,4 +1,5 @@
 import type { Provider } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 
 export function parse(value: string) {
   const [providerID, ...modelID] = value.split("/")
@@ -12,11 +13,11 @@ export function index(list: Provider[] | undefined) {
 export function get(list: Provider[] | ReadonlyMap<string, Provider> | undefined, providerID: string, modelID: string) {
   const provider =
     list instanceof Map
-      ? list.get(providerID)
+      ? Option.fromNullishOr(list.get(providerID))
       : Array.isArray(list)
-        ? list.find((item) => item.id === providerID)
-        : undefined
-  return provider?.models[modelID]
+        ? Option.fromNullishOr(list.find((item) => item.id === providerID))
+        : Option.none()
+  return Option.flatMap(provider, (item) => Option.fromNullishOr(item.models[modelID]))
 }
 
 export function name(
@@ -24,5 +25,8 @@ export function name(
   providerID: string,
   modelID: string,
 ) {
-  return get(list, providerID, modelID)?.name ?? modelID
+  return get(list, providerID, modelID).pipe(
+    Option.flatMap((model) => Option.fromNullishOr(model.name)),
+    Option.getOrElse(() => modelID),
+  )
 }
