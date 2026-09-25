@@ -6,17 +6,23 @@ type SessionSwitchProbe = {
   stop: () => void
 }
 
-async function installSessionSwitchProbe(
-  page: Page,
-  input: {
-    destinationIDs: string[]
-    sourceIDs: string[]
-    lastID: string
-    requiredPartID?: string
-    requireBottomAnchor?: boolean
-    href: string
-  },
-) {
+export type SessionSwitchProbeInput = {
+  destinationIDs: string[]
+  sourceIDs: string[]
+  lastID: string
+  requiredPartID?: string
+  requireBottomAnchor?: boolean
+  href: string
+}
+
+/** The page operations that measureSessionSwitch uses. A Playwright Page satisfies this type. */
+export type SessionSwitchPage = {
+  evaluate(pageFunction: (input: SessionSwitchProbeInput) => void, input: SessionSwitchProbeInput): Promise<void>
+  evaluate<R>(pageFunction: () => R): Promise<R>
+  waitForFunction(pageFunction: () => boolean): Promise<unknown>
+}
+
+async function installSessionSwitchProbe(page: SessionSwitchPage, input: SessionSwitchProbeInput) {
   await page.evaluate(({ destinationIDs, sourceIDs, lastID, requiredPartID, requireBottomAnchor, href }) => {
     const destination = new Set(destinationIDs)
     const source = new Set(sourceIDs)
@@ -129,7 +135,7 @@ async function installSessionSwitchProbe(
   }, input)
 }
 
-async function waitForStableSessionSwitch(page: Page) {
+async function waitForStableSessionSwitch(page: SessionSwitchPage) {
   await page.waitForFunction(() => {
     const samples = (window as Window & { __sessionSwitchProbe?: SessionSwitchProbe }).__sessionSwitchProbe?.samples
     if (!samples) return false
@@ -150,7 +156,7 @@ async function waitForStableSessionSwitch(page: Page) {
   })
 }
 
-async function collectSessionSwitchResult(page: Page) {
+async function collectSessionSwitchResult(page: SessionSwitchPage) {
   const samples = await page.evaluate(() => {
     const probe = (window as Window & { __sessionSwitchProbe?: SessionSwitchProbe }).__sessionSwitchProbe!
     probe.stop()
@@ -160,16 +166,8 @@ async function collectSessionSwitchResult(page: Page) {
 }
 
 export async function measureSessionSwitch(
-  page: Page,
-  input: {
-    destinationIDs: string[]
-    sourceIDs: string[]
-    lastID: string
-    requiredPartID?: string
-    requireBottomAnchor?: boolean
-    href: string
-    switch: () => Promise<void>
-  },
+  page: SessionSwitchPage,
+  input: SessionSwitchProbeInput & { switch: () => Promise<void> },
 ) {
   const { switch: run, ...probe } = input
   await installSessionSwitchProbe(page, probe)

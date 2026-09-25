@@ -1,18 +1,27 @@
 import { expect, test } from "bun:test"
-import type { Page } from "@playwright/test"
-import { measureSessionSwitch } from "../timeline/session-tab-switch-probe"
+import {
+  measureSessionSwitch,
+  type SessionSwitchPage,
+  type SessionSwitchProbeInput,
+} from "../timeline/session-tab-switch-probe"
+
+type ProbeInstall = [pageFunction: (input: SessionSwitchProbeInput) => void, input: SessionSwitchProbeInput]
 
 function testPage(waitFailure?: Error) {
   const stops: unknown[] = []
-  const page = {
-    evaluate: async (_callback: unknown, input?: unknown) => {
-      if (input) return
-      stops.push(undefined)
-    },
+  function evaluate(...args: ProbeInstall): Promise<void>
+  function evaluate<R>(pageFunction: () => R): Promise<R>
+  async function evaluate<R>(...args: ProbeInstall | [pageFunction: () => R]) {
+    if (args.length === 2) return
+    stops.push(undefined)
+    return args[0]()
+  }
+  const page: SessionSwitchPage = {
+    evaluate,
     waitForFunction: async () => {
       if (waitFailure) throw waitFailure
     },
-  } as unknown as Page
+  }
   return { page, stops }
 }
 
