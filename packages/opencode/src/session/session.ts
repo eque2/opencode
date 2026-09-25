@@ -511,7 +511,7 @@ const layer: Layer.Layer<
       const ctx = yield* InstanceState.context
       const result: Info = {
         id: SessionID.descending(input.id),
-        slug: Slug.create(),
+        slug: yield* Slug.make,
         version: InstallationVersion,
         projectID: ctx.project.id,
         directory: input.directory,
