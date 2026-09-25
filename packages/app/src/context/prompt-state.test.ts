@@ -16,6 +16,22 @@ describe("prompt state initialization", () => {
     })
   })
 
+  test("keeps the cursor when a prompt is set without a cursor position", () => {
+    createRoot((dispose) => {
+      const prompt = createPromptState({ prompt: "hello" })
+      const [store] = prompt.store
+      const next = [{ type: "text" as const, content: "forked", start: 0, end: 6 }]
+
+      prompt.set(next)
+      expect(store().prompt).toEqual(next)
+      expect(store().cursor).toBe(5)
+
+      prompt.set(next, 6)
+      expect(store().cursor).toBe(6)
+      dispose()
+    })
+  })
+
   test("uses the default prompt without initial values", () => {
     createRoot((dispose) => {
       const prompt = createPromptState()

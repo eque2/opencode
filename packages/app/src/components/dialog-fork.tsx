@@ -94,7 +94,8 @@ export const DialogFork: Component = () => {
           Effect.try({
             try: () => {
               dialog.close()
-              prompt.set(restored, undefined, { dir, id: forked.id })
+              // Set the prompt of the forked session's scope and keep that scope's cursor.
+              prompt.capture({ dir, id: forked.id }).set(restored)
               navigate(`/${dir}/session/${forked.id}`)
             },
             catch: toForkSessionError,
