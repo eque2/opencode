@@ -59,6 +59,7 @@ describe("runtime adapters", () => {
 
   test("returns undefined when no valid speech constructor exists", () => {
     expect(getSpeechRecognitionCtor({ SpeechRecognition: "nope" })).toBeUndefined()
+    // eslint-disable-next-line effect/no-undefined-use-option -- (b) probes the JavaScript undefined runtime value that an absent window can give
     expect(getSpeechRecognitionCtor(undefined)).toBeUndefined()
   })
 })
