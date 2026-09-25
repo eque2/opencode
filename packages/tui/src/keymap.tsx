@@ -13,6 +13,7 @@ import {
   formatKeySequence as formatKeySequenceExtra,
 } from "@opentui/keymap/extras"
 import { KeymapProvider, useKeymap, useKeymapSelector, useBindings } from "@opentui/keymap/solid"
+import { Option } from "effect"
 import { createMemo, type Accessor } from "solid-js"
 import { useTuiConfig } from "./config"
 import { TuiKeybind } from "./config/keybind"
@@ -116,21 +117,20 @@ const KEY_ALIASES = {
   pgup: "pageup",
 } as const
 
-function expandKeyAliases(input: string) {
+// The key with its legacy aliases replaced, or None when it has no alias.
+function expandKeyAliases(input: string): Option.Option<string> {
   const result = Object.entries(KEY_ALIASES).reduce(
     (acc, [alias, key]) => acc.replace(new RegExp(`(^|[+,\\s>])${alias}(?=$|[+,\\s<])`, "gi"), `$1${key}`),
     input,
   )
-  if (result === input) return
-  return result
+  return result === input ? Option.none() : Option.some(result)
 }
 
 function registerKeyAliases(keymap: OpenTuiKeymap) {
-  return keymap.appendBindingExpander((ctx) => {
-    const key = expandKeyAliases(ctx.input)
-    if (!key) return
-    return [{ key, displays: ctx.displays }]
-  })
+  // A BindingExpander returns undefined to leave the binding unexpanded.
+  return keymap.appendBindingExpander((ctx) =>
+    Option.getOrUndefined(Option.map(expandKeyAliases(ctx.input), (key) => [{ key, displays: ctx.displays }])),
+  )
 }
 
 const inputCommands = [

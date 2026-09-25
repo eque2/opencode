@@ -470,7 +470,7 @@ export function unknownKeys(input: object) {
 
 export function bindingDefaults(): BindingDefaults<Renderable, KeyEvent> {
   return ({ command, binding }) => {
-    if (binding.desc !== undefined) return
+    if (binding.desc !== undefined) return undefined
     return { desc: CommandDescriptions[command] }
   }
 }
