@@ -2,6 +2,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { ServerConnection } from "@/context/server"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
+import { Predicate } from "effect"
 import { lazy } from "solid-js"
 import { DialogSelectDirectory } from "./dialog-select-directory"
 import { directoryPickerKind } from "./directory-picker-policy"
@@ -30,7 +31,7 @@ export function useDirectoryPicker() {
 
     let selected = false
     const onSelect = (result: string | string[] | null) => {
-      selected = result !== null
+      selected = Predicate.isNotNull(result)
       input.onSelect(result)
     }
     const cancel = () => {
