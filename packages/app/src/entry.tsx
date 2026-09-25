@@ -1,6 +1,7 @@
 // @refresh reload
 
 import * as Sentry from "@sentry/solid"
+import { Option, Result, String as Str } from "effect"
 import { render } from "solid-js/web"
 import { AppBaseProviders, AppInterface } from "@/app"
 import { loadInitialLocale } from "@/context/language"
@@ -30,30 +31,31 @@ const getRootNotFoundError = () => {
   return locale === "zh" ? (zh[key] ?? en[key]) : en[key]
 }
 
-const getStorage = (key: string) => {
-  if (typeof localStorage === "undefined") return null
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+/** Runs a localStorage call. None when there is no storage or the call throws (quota, blocked storage). */
+const tryStorage = <A,>(run: () => A): Option.Option<A> => {
+  if (typeof localStorage === "undefined") return Option.none()
+  return Result.getSuccess(Result.try(run))
 }
 
-const setStorage = (key: string, value: string | null) => {
-  if (typeof localStorage === "undefined") return
-  try {
-    if (value !== null) {
-      localStorage.setItem(key, value)
-      return
-    }
-    localStorage.removeItem(key)
-  } catch {
-    return
-  }
+const getStorage = (key: string): Option.Option<string> =>
+  Option.flatMap(
+    tryStorage(() => localStorage.getItem(key)),
+    (value) => Option.fromNullishOr(value),
+  )
+
+/** Stores the value, or removes the key for None. A storage failure is ignored. */
+const setStorage = (key: string, value: Option.Option<string>) => {
+  tryStorage(() =>
+    Option.match(value, {
+      onNone: () => localStorage.removeItem(key),
+      onSome: (text) => localStorage.setItem(key, text),
+    }),
+  )
 }
 
-const readDefaultServerUrl = () => getStorage(DEFAULT_SERVER_URL_KEY)
-const writeDefaultServerUrl = (url: string | null) => setStorage(DEFAULT_SERVER_URL_KEY, url)
+/** The stored default server URL. An empty string counts as no URL. */
+const readDefaultServerUrl = () => Option.filter(getStorage(DEFAULT_SERVER_URL_KEY), Str.isNonEmpty)
+const writeDefaultServerUrl = (url: Option.Option<string>) => setStorage(DEFAULT_SERVER_URL_KEY, url)
 
 const notify: Platform["notify"] = async (title, description, onClick) => {
   if (!("Notification" in window)) return
@@ -103,11 +105,7 @@ const getCurrentUrl = () => {
   return location.origin
 }
 
-const getDefaultUrl = () => {
-  const lsDefault = readDefaultServerUrl()
-  if (lsDefault) return lsDefault
-  return getCurrentUrl()
-}
+const getDefaultUrl = () => Option.getOrElse(readDefaultServerUrl(), getCurrentUrl)
 
 const clearAuthToken = () => {
   const params = new URLSearchParams(location.search)
@@ -123,11 +121,10 @@ const platform: Platform = {
   openExternal,
   restart,
   notify,
-  getDefaultServer: async () => {
-    const stored = readDefaultServerUrl()
-    return stored ? ServerConnection.Key.make(stored) : null
-  },
-  setDefaultServer: writeDefaultServerUrl,
+  // Platform.getDefaultServer and setDefaultServer use null for "no default server".
+  getDefaultServer: async () =>
+    Option.getOrNull(Option.map(readDefaultServerUrl(), (url) => ServerConnection.Key.make(url))),
+  setDefaultServer: (url) => writeDefaultServerUrl(Option.fromNullishOr(url)),
 }
 
 if (import.meta.env.VITE_SENTRY_DSN) {
