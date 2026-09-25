@@ -93,7 +93,7 @@ test.skip("text ended populates assistant text content", () => {
         sessionID,
         assistantMessageID,
         timestamp: DateTime.makeUnsafe(2),
-        textID: "text-1",
+        textID: SessionMessage.TextID.make("text-1"),
       },
     } satisfies SessionEvent.Event),
   )
@@ -106,7 +106,7 @@ test.skip("text ended populates assistant text content", () => {
         sessionID,
         assistantMessageID,
         timestamp: DateTime.makeUnsafe(3),
-        textID: "text-1",
+        textID: SessionMessage.TextID.make("text-1"),
         text: "hello assistant",
       },
     } satisfies SessionEvent.Event),
@@ -114,13 +114,15 @@ test.skip("text ended populates assistant text content", () => {
 
   expect(state.messages[0]?.type).toBe("assistant")
   if (state.messages[0]?.type !== "assistant") return
-  expect(state.messages[0].content).toEqual([{ type: "text", id: "text-1", text: "hello assistant" }])
+  expect(state.messages[0].content).toEqual([
+    { type: "text", id: SessionMessage.TextID.make("text-1"), text: "hello assistant" },
+  ])
 })
 
 test.skip("tool completion stores completed timestamp", () => {
   const state: SessionMessageUpdater.MemoryState = { messages: [] }
   const sessionID = SessionID.make("session")
-  const callID = "call"
+  const callID = SessionMessage.ToolCallID.make("call")
   const assistantMessageID = SessionMessage.ID.create()
 
   Effect.runSync(
