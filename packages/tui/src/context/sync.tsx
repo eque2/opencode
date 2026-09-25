@@ -620,18 +620,19 @@ export const {
                 if (!match.found) draft.session.splice(match.index, 0, session.data)
                 draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
-                const infos = (messages.data ?? []).flatMap((message) => {
+                const hydrated = (messages.data ?? []).flatMap((message) => {
                   if (!MutableHashSet.has(tracker.messages, message.info.id)) return [message.info]
                   const current = currentMessages.find((item) => item.id === message.info.id)
                   return current ? [current] : []
                 })
-                infos.push(
+                const infos = [
+                  ...hydrated,
                   ...currentMessages.filter(
                     (message) =>
-                      MutableHashSet.has(tracker.messages, message.id) && !infos.some((item) => item.id === message.id),
+                      MutableHashSet.has(tracker.messages, message.id) &&
+                      !hydrated.some((item) => item.id === message.id),
                   ),
-                )
-                infos.sort(compareMessage)
+                ].toSorted(compareMessage)
                 const removed = infos.slice(0, -100)
                 const visible = infos.slice(-100)
                 const visibleIDs = HashSet.fromIterable(visible.map((message) => message.id))
@@ -641,7 +642,7 @@ export const {
                     continue
                   }
                   const currentParts = draft.part[message.info.id] ?? []
-                  const parts = message.parts.flatMap((part) => {
+                  const hydratedParts = message.parts.flatMap((part) => {
                     const current = currentParts.find((item) => item.id === part.id)
                     if (MutableHashSet.has(tracker.parts, part.id)) return current ? [current] : []
                     if (
@@ -655,13 +656,14 @@ export const {
                     }
                     return [part]
                   })
-                  parts.push(
+                  draft.part[message.info.id] = [
+                    ...hydratedParts,
                     ...currentParts.filter(
                       (part) =>
-                        MutableHashSet.has(tracker.parts, part.id) && !parts.some((item) => item.id === part.id),
+                        MutableHashSet.has(tracker.parts, part.id) &&
+                        !hydratedParts.some((item) => item.id === part.id),
                     ),
-                  )
-                  draft.part[message.info.id] = parts
+                  ]
                 }
                 for (const message of removed) delete draft.part[message.id]
                 draft.message[sessionID] = visible
