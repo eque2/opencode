@@ -41,14 +41,14 @@ describe("pickAttachmentFiles", () => {
   test("reads the current project directory for every native picker invocation", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const paths: string[] = []
-        const files: File[] = []
+        let paths: ReadonlyArray<string> = []
+        let files: ReadonlyArray<File> = []
         const file = new File(["hello"], "hello.txt", { type: "text/plain" })
         let directory = "C:\\Projects\\LoremIpsum"
         const picker = (options?: { defaultPath?: string }, onFile?: (file: File) => Promise<unknown>) =>
           Effect.runPromise(
             Effect.gen(function* () {
-              paths.push(options?.defaultPath ?? "")
+              paths = [...paths, options?.defaultPath ?? ""]
               if (onFile) yield* Effect.promise(() => onFile(file))
             }),
           )
@@ -57,7 +57,12 @@ describe("pickAttachmentFiles", () => {
           picker,
           directory: () => directory,
           fallback: () => {},
-          onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
+          onFile: (selected) =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                files = [...files, selected]
+              }),
+            ),
           onError: () => {},
         })
         yield* Effect.yieldNow
@@ -66,7 +71,12 @@ describe("pickAttachmentFiles", () => {
           picker,
           directory: () => directory,
           fallback: () => {},
-          onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
+          onFile: (selected) =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                files = [...files, selected]
+              }),
+            ),
           onError: () => {},
         })
         yield* Effect.yieldNow
@@ -92,7 +102,7 @@ describe("pickAttachmentFiles", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const error = new Error("picker unavailable")
-        const errors: unknown[] = []
+        let errors: ReadonlyArray<unknown> = []
         const handled = Promise.withResolvers<void>()
         pickAttachmentFiles({
           picker: () => Promise.reject(error),
@@ -100,7 +110,7 @@ describe("pickAttachmentFiles", () => {
           fallback: () => {},
           onFile: () => Effect.runPromise(Effect.void),
           onError: (cause) => {
-            errors.push(cause)
+            errors = [...errors, cause]
             handled.resolve()
           },
         })

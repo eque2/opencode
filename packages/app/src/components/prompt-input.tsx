@@ -1,4 +1,4 @@
-import { DateTime, Effect, HashMap, HashSet, Option, Predicate } from "effect"
+import { Chunk, DateTime, Effect, HashMap, HashSet, Option, Predicate } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import {
@@ -873,7 +873,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   )
 
   const parseFromDOM = (): Prompt => {
-    const parts: Prompt = []
+    let parts = Chunk.empty<ContentPart>()
     let position = 0
     let buffer = ""
 
@@ -883,7 +883,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       if (content.includes("\u200B")) content = content.replace(/\u200B/g, "")
       buffer = ""
       if (!content) return
-      parts.push({ type: "text", content, start: position, end: position + content.length })
+      parts = Chunk.append(parts, { type: "text", content, start: position, end: position + content.length })
       position += content.length
     }
 
@@ -904,7 +904,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               },
             }
           : {}
-      parts.push({
+      parts = Chunk.append(parts, {
         type: "file",
         path: file.dataset.path!,
         content,
@@ -920,7 +920,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     const pushAgent = (agent: HTMLElement) => {
       const content = agent.textContent ?? ""
-      parts.push({
+      parts = Chunk.append(parts, {
         type: "agent",
         name: agent.dataset.name!,
         content,
@@ -969,8 +969,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     flushText()
 
-    if (parts.length === 0) parts.push(...DEFAULT_PROMPT)
-    return parts
+    return Chunk.isEmpty(parts) ? [...DEFAULT_PROMPT] : Chunk.toArray(parts)
   }
 
   const handleInput = () => {
