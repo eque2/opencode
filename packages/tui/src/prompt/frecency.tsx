@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
@@ -40,7 +40,7 @@ export function parseFrecency(text: string) {
 
 function calculateFrecency(entry?: { frequency: number; lastOpen: number }) {
   if (!entry) return 0
-  return entry.frequency / (1 + (Date.now() - entry.lastOpen) / 86400000)
+  return entry.frequency / (1 + (DateTime.toEpochMillis(DateTime.nowUnsafe()) - entry.lastOpen) / 86400000)
 }
 
 export const { use: useFrecency, provider: FrecencyProvider } = createSimpleContext({
@@ -67,7 +67,10 @@ export const { use: useFrecency, provider: FrecencyProvider } = createSimpleCont
 
     function updateFrecency(filePath: string) {
       const absolutePath = path.resolve(paths.cwd, filePath)
-      const newEntry = { frequency: (store.data[absolutePath]?.frequency || 0) + 1, lastOpen: Date.now() }
+      const newEntry = {
+        frequency: (store.data[absolutePath]?.frequency || 0) + 1,
+        lastOpen: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+      }
       setStore("data", absolutePath, newEntry)
       Effect.runFork(
         appendText(frecencyPath, formatFrecency([{ path: absolutePath, ...newEntry }])).pipe(

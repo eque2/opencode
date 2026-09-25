@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
@@ -71,7 +71,7 @@ export const { use: usePromptStash, provider: PromptStashProvider } = createSimp
         return store.entries
       },
       push(entry: Omit<StashEntry, "timestamp">) {
-        const stash = structuredClone(unwrap({ ...entry, timestamp: Date.now() }))
+        const stash = structuredClone(unwrap({ ...entry, timestamp: DateTime.toEpochMillis(DateTime.nowUnsafe()) }))
         let trimmed = false
         setStore(
           produce((draft) => {
