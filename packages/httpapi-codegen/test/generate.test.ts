@@ -327,6 +327,30 @@ describe("HttpApiCodegen.generate", () => {
     expect(types).not.toContain("Schema.Json")
   })
 
+  test("drops string literals that a string member absorbs in Promise wire types", () => {
+    const Color = Schema.Union([Schema.String, Schema.Literals(["primary", "secondary"])]).annotate({
+      identifier: "Color",
+    })
+    const output = emitPromise(
+      compileContract(
+        api(
+          HttpApiEndpoint.get("get", "/session", {
+            success: Schema.Struct({
+              color: Color,
+              tone: Schema.Union([Schema.String, Schema.Literal("dark"), Schema.Literal(1)]),
+              mode: Schema.Union([Schema.Number, Schema.Literals(["primary", "secondary"])]),
+            }),
+          }),
+        ),
+      ),
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types).toContain('readonly "color": (string)')
+    expect(types).toContain('readonly "tone": string | 1')
+    expect(types).toContain('readonly "mode": number | "primary" | "secondary"')
+  })
+
   test("emits an optional Promise input when every field is optional", () => {
     const output = emitPromise(
       compileContract(

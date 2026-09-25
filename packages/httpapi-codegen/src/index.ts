@@ -675,7 +675,9 @@ function identifierPart(value: string) {
 }
 
 function structuralType(schema: Schema.Top): Result.Result<string, GenerationError> {
-  const document = SchemaRepresentation.toCodeDocument(SchemaRepresentation.toRepresentations([schema.ast]))
+  const document = SchemaRepresentation.toCodeDocument(
+    collapseStringLiterals(SchemaRepresentation.toRepresentations([schema.ast])),
+  )
   if (
     document.artifacts.some(
       (artifact) =>
@@ -704,6 +706,72 @@ function structuralType(schema: Schema.Top): Result.Result<string, GenerationErr
   return Result.map(expand(document.codes[0].Type), (type) =>
     type.replaceAll(/ & Brand\.Brand<"[^"]+">/g, "").replaceAll("Schema.Json", "JsonValue"),
   )
+}
+
+// TypeScript absorbs every string literal into `string`, so a Promise type union that has a `string` member prints
+// without its string literal members. The emitted type is the same and has no redundant constituent.
+function collapseStringLiterals(document: SchemaRepresentation.MultiDocument): SchemaRepresentation.MultiDocument {
+  return {
+    representations: Arr.map(document.representations, collapseRepresentation),
+    references: Object.fromEntries(
+      Object.entries(document.references).map(([reference, representation]) => [
+        reference,
+        collapseRepresentation(representation),
+      ]),
+    ),
+  }
+}
+
+function collapseRepresentation(
+  representation: SchemaRepresentation.Representation,
+): SchemaRepresentation.Representation {
+  switch (representation._tag) {
+    case "Declaration":
+      return { ...representation, typeParameters: representation.typeParameters.map(collapseRepresentation) }
+    case "Suspend":
+      return { ...representation, thunk: collapseRepresentation(representation.thunk) }
+    case "TemplateLiteral":
+      return { ...representation, parts: representation.parts.map(collapseRepresentation) }
+    case "Arrays":
+      return {
+        ...representation,
+        elements: representation.elements.map((element) => ({ ...element, type: collapseRepresentation(element.type) })),
+        rest: representation.rest.map(collapseRepresentation),
+      }
+    case "Objects":
+      return {
+        ...representation,
+        propertySignatures: representation.propertySignatures.map((field) => ({
+          ...field,
+          type: collapseRepresentation(field.type),
+        })),
+        indexSignatures: representation.indexSignatures.map((field) => ({
+          parameter: collapseRepresentation(field.parameter),
+          type: collapseRepresentation(field.type),
+        })),
+      }
+    case "Union": {
+      const types = representation.types.map(collapseRepresentation)
+      return {
+        ...representation,
+        types: types.some((type) => type._tag === "String") ? Arr.getSomes(types.map(withoutStringLiterals)) : types,
+      }
+    }
+    default:
+      return representation
+  }
+}
+
+// Schema.Literals is a nested union, so a nested union keeps only its other members and goes when none is left.
+function withoutStringLiterals(
+  representation: SchemaRepresentation.Representation,
+): Option.Option<SchemaRepresentation.Representation> {
+  if (representation._tag === "Literal") {
+    return typeof representation.literal === "string" ? Option.none() : Option.some(representation)
+  }
+  if (representation._tag !== "Union") return Option.some(representation)
+  const types = Arr.getSomes(representation.types.map(withoutStringLiterals))
+  return types.length === 0 ? Option.none() : Option.some({ ...representation, types })
 }
 
 function promisePath(path: string, input: ReadonlyArray<InputField>): Result.Result<string, GenerationError> {
