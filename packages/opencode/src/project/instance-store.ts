@@ -34,10 +34,11 @@ interface Entry {
   readonly deferred: Deferred.Deferred<InstanceContext>
 }
 
-const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Service> = Layer.effect(
+const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Service | FSUtil.Service> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const project = yield* Project.Service
+    const fsu = yield* FSUtil.Service
     const bootstrap = yield* InstanceBootstrap.Service
     const scope = yield* Scope.Scope
     const cache = new Map<string, Entry>()
@@ -105,44 +106,50 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       return true
     })
 
-    const load = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
-      return Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const existing = cache.get(directory)
-          if (existing) return yield* restore(Deferred.await(existing.deferred))
+    const load = (input: LoadInput): Effect.Effect<InstanceContext> =>
+      fsu.resolve(input.directory).pipe(
+        Effect.flatMap((directory) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const existing = cache.get(directory)
+              if (existing) return yield* restore(Deferred.await(existing.deferred))
 
-          const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
-          cache.set(directory, entry)
-          yield* Effect.gen(function* () {
-            yield* Effect.logInfo("creating instance", { directory: directory })
-            yield* completeLoad(directory, input, entry)
-          }).pipe(Effect.forkIn(scope, { startImmediately: true }))
-          return yield* restore(Deferred.await(entry.deferred))
-        }),
-      ).pipe(Effect.withSpan("InstanceStore.load"))
-    }
+              const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
+              cache.set(directory, entry)
+              yield* Effect.gen(function* () {
+                yield* Effect.logInfo("creating instance", { directory: directory })
+                yield* completeLoad(directory, input, entry)
+              }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+              return yield* restore(Deferred.await(entry.deferred))
+            }),
+          ),
+        ),
+        Effect.withSpan("InstanceStore.load"),
+      )
 
-    const reload = (input: LoadInput): Effect.Effect<InstanceContext> => {
-      const directory = FSUtil.resolve(input.directory)
-      return Effect.uninterruptibleMask((restore) =>
-        Effect.gen(function* () {
-          const previous = cache.get(directory)
-          const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
-          cache.set(directory, entry)
-          yield* Effect.gen(function* () {
-            yield* Effect.logInfo("reloading instance", { directory: directory })
-            if (previous) {
-              yield* Deferred.await(previous.deferred).pipe(Effect.ignore)
-              yield* Effect.promise(() => runDisposers(directory))
-              yield* emitDisposed({ directory, project: input.project?.id })
-            }
-            yield* completeLoad(directory, input, entry)
-          }).pipe(Effect.forkIn(scope, { startImmediately: true }))
-          return yield* restore(Deferred.await(entry.deferred))
-        }),
-      ).pipe(Effect.withSpan("InstanceStore.reload"))
-    }
+    const reload = (input: LoadInput): Effect.Effect<InstanceContext> =>
+      fsu.resolve(input.directory).pipe(
+        Effect.flatMap((directory) =>
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const previous = cache.get(directory)
+              const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
+              cache.set(directory, entry)
+              yield* Effect.gen(function* () {
+                yield* Effect.logInfo("reloading instance", { directory: directory })
+                if (previous) {
+                  yield* Deferred.await(previous.deferred).pipe(Effect.ignore)
+                  yield* Effect.promise(() => runDisposers(directory))
+                  yield* emitDisposed({ directory, project: input.project?.id })
+                }
+                yield* completeLoad(directory, input, entry)
+              }).pipe(Effect.forkIn(scope, { startImmediately: true }))
+              return yield* restore(Deferred.await(entry.deferred))
+            }),
+          ),
+        ),
+        Effect.withSpan("InstanceStore.reload"),
+      )
 
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
       const entry = cache.get(ctx.directory)
@@ -155,7 +162,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     })
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {
-      const directory = FSUtil.resolve(input)
+      const directory = yield* fsu.resolve(input)
       const entry = cache.get(directory)
       if (!entry) return
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
@@ -207,7 +214,7 @@ export const bootstrapNode = LayerNode.unbound(InstanceBootstrap.Service, Node.t
 export const node = makeGlobalNode({
   service: Service,
   layer: layer,
-  deps: [Project.node, bootstrapNode],
+  deps: [Project.node, FSUtil.node, bootstrapNode],
 })
 
 export * as InstanceStore from "./instance-store"

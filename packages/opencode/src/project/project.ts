@@ -197,7 +197,7 @@ const layer = Layer.effect(
       directory: string
     }) {
       if (input.projectID === ProjectV2.ID.global) return
-      const opened = AbsolutePath.make(FSUtil.resolve(input.directory))
+      const opened = AbsolutePath.make(yield* fs.resolve(input.directory))
       yield* projectDirectories
         .create({
           directory: opened,
