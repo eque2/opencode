@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Result } from "effect"
 import { uuid } from "./uuid"
 
 const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto")
@@ -59,10 +60,9 @@ describe("uuid", () => {
   })
 
   test("falls back when randomUUID throws", () => {
+    // The stub must throw synchronously, as the platform randomUUID does.
     setCrypto({
-      randomUUID: () => {
-        throw new DOMException("Failed", "OperationError")
-      },
+      randomUUID: () => Result.getOrThrow(Result.fail(new DOMException("Failed", "OperationError"))),
     })
     setSecure(true)
     setRandom(() => 0.5)
