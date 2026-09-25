@@ -55,7 +55,7 @@ const Registration = Schema.Struct({
   version: Schema.optional(Schema.String),
   url: Schema.String,
   pid: Schema.Int.check(Schema.isGreaterThan(0)),
-})
+}).annotate({ identifier: "CliDaemon.Registration" })
 type Registration = typeof Registration.Type
 
 function sameRegistration(left: Registration, right: Registration) {
