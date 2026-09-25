@@ -222,7 +222,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     const tab = files.tab(item.path)
     void tabs().open(tab)
     tabs().setActive(tab)
-    void Promise.resolve(files.load(item.path)).finally(() => queueCommentFocus())
+    Effect.runFork(
+      Effect.promise(() => files.load(item.path)).pipe(Effect.ensuring(Effect.sync(() => queueCommentFocus()))),
+    )
   }
 
   const recent = createMemo(() => {

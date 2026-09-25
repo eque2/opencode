@@ -612,5 +612,5 @@ function openComment(
   const tab = files.tab(item.path)
   void props.controls.session.tabs.open(tab)
   props.controls.session.tabs.setActive(tab)
-  void Promise.resolve(files.load(item.path)).finally(() => queueFocus())
+  Effect.runFork(Effect.promise(() => files.load(item.path)).pipe(Effect.ensuring(Effect.sync(() => queueFocus()))))
 }

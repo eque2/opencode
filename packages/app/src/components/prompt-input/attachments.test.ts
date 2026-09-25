@@ -105,7 +105,7 @@ describe("pickAttachmentFiles", () => {
         let errors: ReadonlyArray<unknown> = []
         const handled = Promise.withResolvers<void>()
         pickAttachmentFiles({
-          picker: () => Promise.reject(error),
+          picker: () => Effect.runPromise(Effect.fail(error)),
           directory: () => "C:\\Projects\\LoremIpsum",
           fallback: () => {},
           onFile: () => Effect.runPromise(Effect.void),
