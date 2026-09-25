@@ -24,18 +24,18 @@ export const setOptionIfSupported = (value: unknown, key: string, next: unknown)
 }
 
 export const getHoveredLinkText = (value: unknown) => {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const link = value.currentHoveredLink
-  if (!isRecord(link)) return
-  if (typeof link.text !== "string") return
+  if (!isRecord(link)) return undefined
+  if (typeof link.text !== "string") return undefined
   return link.text
 }
 
 /** The speech recognition constructor of a window-like value, webkit first. The check proves only that it is a function. */
 export const getSpeechRecognitionCtor = (value: unknown): Function | undefined => {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const ctor =
     typeof value.webkitSpeechRecognition === "function" ? value.webkitSpeechRecognition : value.SpeechRecognition
-  if (!Predicate.isFunction(ctor)) return
+  if (!Predicate.isFunction(ctor)) return undefined
   return ctor
 }
