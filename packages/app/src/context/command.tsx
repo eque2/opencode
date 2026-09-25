@@ -285,7 +285,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     const bind = (id: string, def: KeybindConfig | undefined) => {
       const custom = settings.keybinds.get(actionId(id))
       const config = custom ?? def
-      if (!config || config === "none") return
+      if (!config || config === "none") return undefined
       return config
     }
 
