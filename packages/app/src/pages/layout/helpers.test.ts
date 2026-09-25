@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import {
   collectNewSessionDeepLinks,
   collectOpenProjectDeepLinks,
@@ -51,16 +52,22 @@ describe("layout deep links", () => {
     expect(parseDeepLink("opencode://open-project/%E0%A4%A%")).toBeUndefined()
   })
 
-  test("parses links when URL.canParse is unavailable", () => {
-    const original = Object.getOwnPropertyDescriptor(URL, "canParse")
-    Object.defineProperty(URL, "canParse", { configurable: true, value: undefined })
-    try {
-      expect(parseDeepLink("opencode://open-project?directory=/tmp/demo")).toBe("/tmp/demo")
-    } finally {
-      if (original) Object.defineProperty(URL, "canParse", original)
-      if (!original) Reflect.deleteProperty(URL, "canParse")
-    }
-  })
+  test("parses links when URL.canParse is unavailable", () =>
+    Effect.runPromise(
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const original = Object.getOwnPropertyDescriptor(URL, "canParse")
+          // canParse is an own static of URL, so deleting it leaves URL.canParse unavailable.
+          Reflect.deleteProperty(URL, "canParse")
+          return original
+        }),
+        () => Effect.sync(() => expect(parseDeepLink("opencode://open-project?directory=/tmp/demo")).toBe("/tmp/demo")),
+        (original) =>
+          Effect.sync(() => {
+            if (original) Object.defineProperty(URL, "canParse", original)
+          }),
+      ),
+    ))
 
   test("ignores open-project deep links without directory", () => {
     expect(parseDeepLink("opencode://open-project")).toBeUndefined()
