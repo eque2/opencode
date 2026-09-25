@@ -8,7 +8,7 @@ import {
   type DiffRenderable,
   type ScrollBoxRenderable,
 } from "@opentui/core"
-import { Array as Arr, Equal, HashSet, MutableHashMap, Option, Order } from "effect"
+import { Array as Arr, Effect, Equal, HashSet, MutableHashMap, Option, Order, Schema } from "effect"
 import { LANGUAGE_EXTENSIONS } from "../../util/filetype"
 import { useBindings, useCommandShortcut } from "../../keymap"
 import { useTheme } from "../../context/theme"
@@ -53,6 +53,15 @@ type DiffRouteParams = {
   readonly sessionID?: string
   readonly messageID?: string
   readonly returnRoute?: TuiRouteCurrent
+}
+
+class DiffLoadError extends Schema.TaggedError<DiffLoadError>()("TuiDiffViewer.LoadError", {
+  cause: Schema.Defect(),
+}) {}
+
+// Waits on an SDK diff request. A rejection becomes a DiffLoadError, so the resource still enters its error state.
+function loadDiff<A>(request: () => Promise<A>) {
+  return Effect.tryPromise({ try: request, catch: (cause) => new DiffLoadError({ cause }) })
 }
 
 // Option values are new objects on every set. Compare them by value, so an unchanged value does not notify,
@@ -125,27 +134,33 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       ),
     }
   })
-  const [diff] = createResource(diffInput, async (input) => {
-    if (input.mode === "last-turn") {
-      const sessionID = input.sessionID
-      if (!sessionID) return []
-      const result = await props.api.client.session.diff(
-        { sessionID, messageID: input.messageID },
-        { throwOnError: true },
-      )
-      return normalizeDiffs(result.data ?? [])
-    }
+  const [diff] = createResource(diffInput, (input) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if (input.mode === "last-turn") {
+          const sessionID = input.sessionID
+          if (!sessionID) return []
+          const result = yield* loadDiff(() =>
+            props.api.client.session.diff({ sessionID, messageID: input.messageID }, { throwOnError: true }),
+          )
+          return normalizeDiffs(result.data ?? [])
+        }
 
-    const result = await props.api.client.vcs.diff(
-      {
-        ...Option.match(input.directory, { onNone: () => ({}), onSome: (directory) => ({ directory }) }),
-        mode: input.mode,
-        context: VCS_DIFF_CONTEXT_LINES,
-      },
-      { throwOnError: true },
-    )
-    return normalizeDiffs(result.data ?? [])
-  })
+        const vcsMode = input.mode
+        const result = yield* loadDiff(() =>
+          props.api.client.vcs.diff(
+            {
+              ...Option.match(input.directory, { onNone: () => ({}), onSome: (directory) => ({ directory }) }),
+              mode: vcsMode,
+              context: VCS_DIFF_CONTEXT_LINES,
+            },
+            { throwOnError: true },
+          ),
+        )
+        return normalizeDiffs(result.data ?? [])
+      }),
+    ),
+  )
   const files = createMemo(() => diff() ?? [])
   const [focus, setFocus] = createSignal<DiffViewerFocus>("patches")
   const [fileTreeEnabled, setFileTreeEnabled] = createSignal(storedFlag(props.api.kv.get(KV_SHOW_FILE_TREE), true))
@@ -1095,35 +1110,38 @@ function DiffViewerHelpDialog() {
   )
 }
 
-const tui: TuiPlugin = async (api) => {
-  api.route.register([
-    {
-      name: ROUTE,
-      render: () => <DiffViewer api={api} />,
-    },
-  ])
-
-  api.keymap.registerLayer({
-    commands: [
-      {
-        name: "diff.open",
-        title: "Open diff viewer",
-        slashName: "diff",
-        category: "VCS",
-        namespace: "palette",
-        run() {
-          const current = api.route.current
-          api.route.navigate(ROUTE, {
-            mode: "git",
-            ...("params" in current ? { sessionID: current.params?.sessionID } : {}),
-            returnRoute: current,
-          })
-          api.ui.dialog.clear()
+const tui: TuiPlugin = (api) =>
+  Effect.runPromise(
+    Effect.sync(() => {
+      api.route.register([
+        {
+          name: ROUTE,
+          render: () => <DiffViewer api={api} />,
         },
-      },
-    ],
-  })
-}
+      ])
+
+      api.keymap.registerLayer({
+        commands: [
+          {
+            name: "diff.open",
+            title: "Open diff viewer",
+            slashName: "diff",
+            category: "VCS",
+            namespace: "palette",
+            run() {
+              const current = api.route.current
+              api.route.navigate(ROUTE, {
+                mode: "git",
+                ...("params" in current ? { sessionID: current.params?.sessionID } : {}),
+                returnRoute: current,
+              })
+              api.ui.dialog.clear()
+            },
+          },
+        ],
+      })
+    }),
+  )
 
 export default {
   id: "diff-viewer",
