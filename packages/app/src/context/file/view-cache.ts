@@ -1,4 +1,5 @@
 import { createEffect, createRoot } from "solid-js"
+import { Option } from "effect"
 import { createStore, produce } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { createScopedCache } from "@/utils/scoped-cache"
@@ -16,29 +17,30 @@ function normalizeSelectedLines(range: SelectedLineRange): SelectedLineRange {
   const endSide = range.endSide ?? startSide
 
   return {
-    ...range,
     start: range.end,
     end: range.start,
     side: endSide,
-    endSide: startSide !== endSide ? startSide : undefined,
+    ...(startSide !== endSide ? { endSide: startSide } : {}),
   }
 }
 
-function equalSelectedLines(a: SelectedLineRange | null | undefined, b: SelectedLineRange | null | undefined) {
-  if (!a && !b) return true
-  if (!a || !b) return false
+const sameSelectedLines = Option.makeEquivalence((a: SelectedLineRange, b: SelectedLineRange) => {
   const left = normalizeSelectedLines(a)
   const right = normalizeSelectedLines(b)
   return (
     left.start === right.start && left.end === right.end && left.side === right.side && left.endSide === right.endSide
   )
-}
+})
 
-function createViewSession(scope: ServerScope, dir: string, id: string | undefined) {
-  const legacyViewKey = `${dir}/file${id ? "/" + id : ""}.v1`
+function createViewSession(scope: ServerScope, dir: string, id: Option.Option<string>) {
+  const legacySuffix = Option.match(
+    Option.filter(id, (value) => value.length > 0),
+    { onNone: () => "", onSome: (value) => "/" + value },
+  )
+  const legacyViewKey = `${dir}/file${legacySuffix}.v1`
 
   const [view, setView, _, ready] = persisted(
-    Persist.serverScoped(scope, dir, id, "file-view", [legacyViewKey]),
+    Persist.serverScoped(scope, dir, Option.getOrUndefined(id), "file-view", [legacyViewKey]),
     createStore<{
       file: Record<string, FileViewState>
     }>({
@@ -97,13 +99,16 @@ function createViewSession(scope: ServerScope, dir: string, id: string | undefin
     pruneView(path)
   }
 
+  // A null range clears the selection. Readers treat a missing key and a
+  // stored null the same, so the key is deleted instead of set to null.
   const setSelectedLines = (path: string, range: SelectedLineRange | null) => {
-    const next = range ? normalizeSelectedLines(range) : null
+    const next = Option.map(Option.fromNullOr(range), normalizeSelectedLines)
     setView(
       produce((draft) => {
         const file = draft.file[path] ?? (draft.file[path] = {})
-        if (equalSelectedLines(file.selectedLines, next)) return
-        file.selectedLines = next
+        if (sameSelectedLines(Option.fromNullishOr(file.selectedLines), next)) return
+        if (Option.isSome(next)) file.selectedLines = next.value
+        else delete file.selectedLines
       }),
     )
     pruneView(path)
@@ -127,7 +132,11 @@ export function createFileViewCache(scope: ServerScope) {
       const dir = split >= 0 ? key.slice(0, split) : key
       const id = split >= 0 ? key.slice(split + 1) : WORKSPACE_KEY
       return createRoot((dispose) => ({
-        value: createViewSession(scope, dir, id === WORKSPACE_KEY ? undefined : id),
+        value: createViewSession(
+          scope,
+          dir,
+          Option.liftPredicate(id, (value) => value !== WORKSPACE_KEY),
+        ),
         dispose,
       }))
     },

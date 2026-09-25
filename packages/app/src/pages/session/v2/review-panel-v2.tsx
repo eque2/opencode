@@ -1,5 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
-import { Data, Effect, HashMap, Option } from "effect"
+import { Array as Arr, Data, Effect, HashMap, Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -200,12 +200,11 @@ function ReviewPanelV2Sidebar(props: {
   const language = useLanguage()
   const [explicitHighlight, setExplicitHighlight] = createSignal<string | undefined>()
   const highlightedPath = createMemo(() => {
-    if (!props.searching()) return undefined
+    if (!props.searching()) return Option.none<string>()
     const files = props.filteredFiles()
-    if (files.length === 0) return undefined
     const explicit = explicitHighlight()
-    if (explicit && files.includes(explicit)) return explicit
-    return files[0]
+    if (explicit && files.includes(explicit)) return Option.some(explicit)
+    return Arr.head(files)
   })
 
   const onFilterKeyDown = (event: KeyboardEvent & { currentTarget: HTMLInputElement }) => {

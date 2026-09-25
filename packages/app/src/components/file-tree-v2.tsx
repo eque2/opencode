@@ -82,8 +82,8 @@ const FileTreeNodeV2 = (
       component={local.as ?? "div"}
       data-slot="file-tree-v2-row"
       data-path={local.node.path}
-      data-selected={local.node.path === local.active ? "" : undefined}
-      data-ignored={local.node.ignored ? "" : undefined}
+      bool:data-selected={local.node.path === local.active}
+      bool:data-ignored={local.node.ignored}
       classList={{
         ...local.classList,
         [local.class ?? ""]: !!local.class,
@@ -103,15 +103,13 @@ const FileTreeNodeV2 = (
       <span class="flex-1 min-w-0 text-start text-12-medium whitespace-nowrap truncate">
         <bdi dir="auto">{local.node.name}</bdi>
       </span>
-      {(() => {
-        const value = kind()
-        if (Option.isNone(value) || local.node.type !== "file") return null
-        return (
-          <span data-slot="file-tree-v2-change" data-change={kindChange(value.value)}>
-            {kindLabel(value.value)}
+      <Show when={local.node.type === "file" && Option.getOrUndefined(kind())}>
+        {(value) => (
+          <span data-slot="file-tree-v2-change" data-change={kindChange(value())}>
+            {kindLabel(value())}
           </span>
-        )
-      })()}
+        )}
+      </Show>
     </Dynamic>
   )
 }
@@ -136,14 +134,16 @@ export default function FileTreeV2(props: {
   const live = () => props.allowed === undefined
   const draggable = () => props.draggable ?? true
   const active = () => normalizeFileTreeV2Path(props.active ?? "")
-  const model = createMemo(() => (live() ? undefined : buildFileTreeV2Model(props.allowed ?? [])))
+  const model = createMemo(() => (live() ? Option.none() : Option.some(buildFileTreeV2Model(props.allowed ?? []))))
   const expanded = (path: string) => file.tree.state(path)?.expanded ?? !live()
-  const rows = createMemo(() => {
-    if (live()) return flattenLiveFileTreeV2((path) => file.tree.children(path), expanded)
-    return flattenFileTreeV2(model()!, expanded)
-  })
+  const rows = createMemo(() =>
+    Option.match(model(), {
+      onNone: () => flattenLiveFileTreeV2((path) => file.tree.children(path), expanded),
+      onSome: (value) => flattenFileTreeV2(value, expanded),
+    }),
+  )
   const [root, setRoot] = createSignal<HTMLDivElement>()
-  const [focused, setFocused] = createSignal<string>()
+  const [focused, setFocused] = createSignal(Option.none<string>())
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
       return rows().length
@@ -159,8 +159,10 @@ export default function FileTreeV2(props: {
     },
     rangeExtractor: (range) => {
       const indexes = defaultRangeExtractor(range)
-      const path = focused()
-      const index = path ? rows().findIndex((row) => row.node.path === path) : -1
+      const index = Option.match(focused(), {
+        onNone: () => -1,
+        onSome: (path) => rows().findIndex((row) => row.node.path === path),
+      })
       if (index < 0 || indexes.includes(index)) return indexes
       return [...indexes, index].sort((a, b) => a - b)
     },
@@ -173,17 +175,17 @@ export default function FileTreeV2(props: {
 
   // Only scroll when the active path changes (or first appears in the tree).
   // Do not re-scroll when expand/collapse reshuffles `rows()`.
-  let scrolledActive: string | undefined
+  let scrolledActive = Option.none<string>()
   createEffect(() => {
     const path = active()
     if (!path) {
-      scrolledActive = undefined
+      scrolledActive = Option.none()
       return
     }
     const index = rows().findIndex((row) => row.node.path === path)
     if (index < 0) return
-    if (scrolledActive === path) return
-    scrolledActive = path
+    if (Option.contains(scrolledActive, path)) return
+    scrolledActive = Option.some(path)
     queueMicrotask(() => {
       const next = rows().findIndex((row) => row.node.path === path)
       if (next < 0) return
@@ -205,7 +207,11 @@ export default function FileTreeV2(props: {
       file.tree.collapse(originalPath)
       return
     }
-    file.tree.expand(originalPath, live() ? undefined : { list: false })
+    if (live()) {
+      file.tree.expand(originalPath)
+      return
+    }
+    file.tree.expand(originalPath, { list: false })
   }
 
   const rowByKey = createMemo(() => HashMap.fromIterable(rows().map((row) => [row.node.path, row] as const)))
@@ -218,7 +224,7 @@ export default function FileTreeV2(props: {
     <div
       ref={setRoot}
       data-component="file-tree-v2"
-      data-total-rows={live() ? rows().length : model()!.total}
+      data-total-rows={Option.match(model(), { onNone: () => rows().length, onSome: (value) => value.total })}
       class="group/file-tree-v2"
       style={{ position: "relative", height: `${virtualizer.getTotalSize()}px` }}
     >
@@ -250,8 +256,8 @@ export default function FileTreeV2(props: {
                           as="button"
                           type="button"
                           class="relative"
-                          onFocus={() => setFocused(row().node.path)}
-                          onBlur={() => setFocused(undefined)}
+                          onFocus={() => setFocused(Option.some(row().node.path))}
+                          onBlur={() => setFocused(Option.none())}
                           onClick={() => selectFile(row().node, props.onFileClick)}
                           onDblClick={() => selectFile(row().node, props.onFileDoubleClick)}
                         >
@@ -275,15 +281,15 @@ export default function FileTreeV2(props: {
                         as="button"
                         type="button"
                         class="relative"
-                        onFocus={() => setFocused(row().node.path)}
-                        onBlur={() => setFocused(undefined)}
+                        onFocus={() => setFocused(Option.some(row().node.path))}
+                        onBlur={() => setFocused(Option.none())}
                         aria-expanded={expanded(row().node.path)}
                         onClick={() => toggleDirectory(row().node.path, row().node.originalPath)}
                       >
                         <GuideLines level={row().level} />
                         <div
                           data-slot="file-tree-v2-chevron"
-                          data-expanded={expanded(row().node.path) ? "" : undefined}
+                          bool:data-expanded={expanded(row().node.path)}
                           class="size-4 flex items-center justify-center"
                         >
                           <Icon name="chevron-down" />

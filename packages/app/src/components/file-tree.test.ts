@@ -7,15 +7,15 @@ let dirsToExpand: typeof import("./file-tree").dirsToExpand
 
 beforeAll(async () => {
   mock.module("@solidjs/router", () => ({
-    useNavigate: () => () => undefined,
+    useNavigate: () => () => {},
     useParams: () => ({}),
     useLocation: () => ({}),
-    useSearchParams: () => [{}, () => undefined],
+    useSearchParams: () => [{}, () => {}],
   }))
   mock.module("@/context/file", () => ({
     useFile: () => ({
       tree: {
-        state: () => undefined,
+        state: () => {},
         list: () => Promise.resolve(),
         children: () => [],
         expand: () => {},
@@ -29,8 +29,8 @@ beforeAll(async () => {
       Content: (props: { children?: unknown }) => props.children,
     },
   }))
-  mock.module("@opencode-ai/ui/file-icon", () => ({ FileIcon: () => null }))
-  mock.module("@opencode-ai/ui/icon", () => ({ Icon: () => null }))
+  mock.module("@opencode-ai/ui/file-icon", () => ({ FileIcon: () => [] }))
+  mock.module("@opencode-ai/ui/icon", () => ({ Icon: () => [] }))
   mock.module("@opencode-ai/ui/tooltip", () => ({ Tooltip: (props: { children?: unknown }) => props.children }))
   const mod = await import("./file-tree")
   shouldListRoot = mod.shouldListRoot

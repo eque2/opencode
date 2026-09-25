@@ -55,7 +55,7 @@ export function createFileTreeStore(options: TreeStoreOptions) {
       dir,
       produce((draft) => {
         draft.loading = true
-        draft.error = undefined
+        delete draft.error
       }),
     )
 
@@ -166,7 +166,7 @@ export function createFileTreeStore(options: TreeStoreOptions) {
     collapseDir,
     dirState,
     children,
-    node: (path: string) => tree.node[path],
+    node: (path: string) => Option.fromNullishOr(tree.node[path]),
     isLoaded: (path: string) => Boolean(tree.dir[path]?.loaded),
     reset,
   }

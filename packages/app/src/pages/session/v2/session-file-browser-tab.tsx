@@ -1,5 +1,5 @@
 import { createMemo, createSignal, createUniqueId, Show } from "solid-js"
-import { Array as Arr, type HashMap } from "effect"
+import { Array as Arr, Option, type HashMap } from "effect"
 import { createQuery, keepPreviousData } from "@tanstack/solid-query"
 import { Icon } from "@opencode-ai/ui/icon"
 import { SessionFilePanelV2, SessionFilePanelV2Empty } from "@opencode-ai/session-ui/v2/session-file-panel-v2"
@@ -60,10 +60,9 @@ export function SessionFileBrowserTab(props: {
   })
   const highlighted = createMemo(() => {
     const values = files()
-    if (values.length === 0) return undefined
     const explicit = explicitHighlight()
-    if (explicit && values.includes(explicit)) return explicit
-    return values[0]
+    if (explicit && values.includes(explicit)) return Option.some(explicit)
+    return Arr.head(values)
   })
   const loading = createMemo(() => query().length > 0 && search.isPending)
   const project = createMemo(() => {
@@ -107,7 +106,7 @@ export function SessionFileBrowserTab(props: {
           filterAutofocus={props.placeholder}
           filterRef={props.filterRef}
           filterControls={resultsID}
-          filterActiveDescendant={highlighted() ? optionID(highlighted()!) : undefined}
+          filterActiveDescendant={Option.getOrUndefined(Option.map(highlighted(), optionID))}
           filterExpanded={query().length > 0 && files().length > 0}
           width={props.state.sidebarWidth()}
           onWidthChange={props.state.resizeSidebar}

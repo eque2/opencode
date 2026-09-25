@@ -1,4 +1,8 @@
-import { Chunk } from "effect"
+import { Chunk, HashMap, Option } from "effect"
+
+// Git quotes these control characters with a C-style escape. Any other escaped
+// character, such as a backslash or a double quote, stands for itself.
+const GIT_ESCAPES = HashMap.make(["n", "\n"], ["r", "\r"], ["t", "\t"], ["b", "\b"], ["f", "\f"], ["v", "\v"])
 
 export function stripFileProtocol(input: string) {
   if (!input.startsWith("file://")) return input
@@ -50,24 +54,9 @@ export function unquoteGitPath(input: string) {
       continue
     }
 
-    const escaped =
-      next === "n"
-        ? "\n"
-        : next === "r"
-          ? "\r"
-          : next === "t"
-            ? "\t"
-            : next === "b"
-              ? "\b"
-              : next === "f"
-                ? "\f"
-                : next === "v"
-                  ? "\v"
-                  : next === "\\" || next === '"'
-                    ? next
-                    : undefined
+    const escaped = Option.getOrElse(HashMap.get(GIT_ESCAPES, next), () => next)
 
-    bytes = Chunk.append(bytes, (escaped ?? next).charCodeAt(0))
+    bytes = Chunk.append(bytes, escaped.charCodeAt(0))
     i++
   }
 

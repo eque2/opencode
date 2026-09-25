@@ -100,7 +100,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           "file",
           target,
           produce((draft) => {
-            draft.content = undefined
+            delete draft.content
             draft.loaded = false
           }),
         )
@@ -132,7 +132,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         file,
         produce((draft) => {
           draft.loading = true
-          draft.error = undefined
+          delete draft.error
         }),
       )
     }

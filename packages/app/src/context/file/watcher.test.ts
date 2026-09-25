@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk } from "effect"
+import { Chunk, Option } from "effect"
 import { invalidateFromWatcher } from "./watcher"
 
 describe("file watcher invalidation", () => {
@@ -20,7 +20,7 @@ describe("file watcher invalidation", () => {
         loadFile: (path) => {
           loads = Chunk.append(loads, path)
         },
-        node: () => undefined,
+        node: () => Option.none(),
         isDirLoaded: (path) => path === "src",
         refreshDir: (path) => {
           refresh = Chunk.append(refresh, path)
@@ -50,13 +50,14 @@ describe("file watcher invalidation", () => {
         loadFile: (path) => {
           loads = Chunk.append(loads, path)
         },
-        node: () => ({
-          path: "src/open.ts",
-          type: "file",
-          name: "open.ts",
-          absolute: "/repo/src/open.ts",
-          ignored: false,
-        }),
+        node: () =>
+          Option.some({
+            path: "src/open.ts",
+            type: "file",
+            name: "open.ts",
+            absolute: "/repo/src/open.ts",
+            ignored: false,
+          }),
         isDirLoaded: () => false,
         refreshDir: () => {},
       },
@@ -80,7 +81,7 @@ describe("file watcher invalidation", () => {
         normalize: (input) => input,
         hasFile: () => false,
         loadFile: () => {},
-        node: () => ({ path: "src", type: "directory", name: "src", absolute: "/repo/src", ignored: false }),
+        node: () => Option.some({ path: "src", type: "directory", name: "src", absolute: "/repo/src", ignored: false }),
         isDirLoaded: (path) => path === "src",
         refreshDir: (path) => {
           refresh = Chunk.append(refresh, path)
@@ -100,13 +101,14 @@ describe("file watcher invalidation", () => {
         normalize: (input) => input,
         hasFile: () => false,
         loadFile: () => {},
-        node: () => ({
-          path: "src/file.ts",
-          type: "file",
-          name: "file.ts",
-          absolute: "/repo/src/file.ts",
-          ignored: false,
-        }),
+        node: () =>
+          Option.some({
+            path: "src/file.ts",
+            type: "file",
+            name: "file.ts",
+            absolute: "/repo/src/file.ts",
+            ignored: false,
+          }),
         isDirLoaded: () => true,
         refreshDir: (path) => {
           refresh = Chunk.append(refresh, path)
@@ -134,7 +136,7 @@ describe("file watcher invalidation", () => {
         loadFile: () => {
           throw new Error("should not load")
         },
-        node: () => undefined,
+        node: () => Option.none(),
         isDirLoaded: () => true,
         refreshDir: (path) => {
           refresh = Chunk.append(refresh, path)
@@ -151,7 +153,7 @@ describe("file watcher invalidation", () => {
         normalize: (input) => input,
         hasFile: () => false,
         loadFile: () => {},
-        node: () => undefined,
+        node: () => Option.none(),
         isDirLoaded: () => true,
         refreshDir: (path) => {
           refresh = Chunk.append(refresh, path)
