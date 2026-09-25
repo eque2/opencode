@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type {
   AgentListOutput,
   ModelDefaultOutput,
+  ModelInfo,
   ModelListOutput,
   ProviderListOutput,
 } from "@opencode-ai/client/promise"
@@ -116,7 +117,10 @@ describe("normalizeProviderList", () => {
   })
 
   test("preserves an empty current default", () => {
-    expect(normalizeProviderList([] as ProviderListOutput["data"], [], null).defaultModel).toBeNull()
+    const noServerDefault = Option.none<ModelInfo>()
+    expect(
+      normalizeProviderList([] as ProviderListOutput["data"], [], Option.getOrNull(noServerDefault)).defaultModel,
+    ).toBeNull()
   })
 })
 

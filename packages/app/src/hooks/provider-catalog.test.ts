@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { Provider } from "@opencode-ai/sdk/v2/client"
-import { HashMap } from "effect"
+import { HashMap, Option } from "effect"
 import { resolveDefaultModel, selectProviderCatalog } from "./provider-catalog"
 
 const catalog = (id: string): NormalizedProviderListResponse => {
@@ -71,7 +71,8 @@ test("uses the current server default model", () => {
 })
 
 test("does not use legacy config when the current server has no default", () => {
-  expect(resolveDefaultModel(null, "anthropic/claude")).toBeUndefined()
+  const noServerDefault = Option.none<{ providerID: string; modelID: string }>()
+  expect(resolveDefaultModel(Option.getOrNull(noServerDefault), "anthropic/claude")).toBeUndefined()
 })
 
 test("uses config for legacy servers", () => {

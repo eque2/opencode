@@ -114,7 +114,11 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
           batch(() => {
             const model = current()
             if (!model) return
-            prompt.model.set({ providerID: model.provider.id, modelID: model.id, variant: value ?? null })
+            prompt.model.set({
+              providerID: model.provider.id,
+              modelID: model.id,
+              variant: Option.getOrNull(Option.fromNullishOr(value)),
+            })
             models.variant.set({ providerID: model.provider.id, modelID: model.id }, value)
           }),
         )

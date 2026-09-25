@@ -15,7 +15,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
-import { HashMap, Predicate } from "effect"
+import { HashMap, Option, Predicate } from "effect"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -154,7 +154,9 @@ export function normalizeProviderList(
   return {
     all,
     connected: providers.map((provider) => provider.id),
-    defaultModel: defaultModel ? { providerID: defaultModel.providerID, modelID: defaultModel.id } : null,
+    defaultModel: Option.getOrNull(
+      Option.map(Option.fromNullishOr(defaultModel), (model) => ({ providerID: model.providerID, modelID: model.id })),
+    ),
     default: Object.fromEntries(
       providers.flatMap((provider) => {
         const model =
