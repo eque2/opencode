@@ -172,7 +172,7 @@ export const SettingsGeneral: Component = () => {
   )
 
   const [displayBackend, { refetch: refetchDisplayBackend }] = createResource(
-    () => (linux() && platform.getDisplayBackend ? true : false),
+    () => linux() && platform.getDisplayBackend !== undefined,
     () => Effect.runPromise(readDisplayBackend),
     { initialValue: Option.none<DisplayBackend>() },
   )
@@ -188,7 +188,7 @@ export const SettingsGeneral: Component = () => {
   ).pipe(Effect.orElseSucceed(() => false))
 
   const [pinchZoom, { mutate: setPinchZoom }] = createResource(
-    () => (desktop() && platform.getPinchZoomEnabled ? true : false),
+    () => desktop() && platform.getPinchZoomEnabled !== undefined,
     () => Effect.runPromise(readPinchZoom),
     { initialValue: false },
   )
