@@ -4,7 +4,7 @@ import { useRoute } from "../context/route"
 import { useSync } from "../context/sync"
 import { createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import path from "path"
-import { HashSet, MutableHashSet } from "effect"
+import { HashMap, HashSet, MutableHashSet, Option } from "effect"
 import { Locale } from "../util/locale"
 import { useProject } from "../context/project"
 import { useTheme } from "../context/theme"
@@ -79,16 +79,16 @@ export function DialogSessionList() {
   const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
   const sessions = createMemo(() => {
     const result = searchResults() ?? browseResults() ?? sync.data.session
-    const synced = new Map(sync.data.session.map((session) => [session.id, session]))
+    const synced = HashMap.fromIterable(sync.data.session.map((session) => [session.id, session]))
     const ids = MutableHashSet.fromIterable(result.map((session) => session.id))
     const extra = [currentSessionID(), ...local.session.pinned()].flatMap((id) => {
       if (!id || MutableHashSet.has(ids, id)) return []
-      const session = synced.get(id)
-      if (session) MutableHashSet.add(ids, id)
-      return session ? [session] : []
+      const session = HashMap.get(synced, id)
+      if (Option.isSome(session)) MutableHashSet.add(ids, id)
+      return Option.toArray(session)
     })
     const query = search().trim().toLowerCase()
-    return [...result.map((session) => synced.get(session.id) ?? session), ...extra]
+    return [...result.map((session) => Option.getOrElse(HashMap.get(synced, session.id), () => session)), ...extra]
       .filter((session) => !HashSet.has(deleted(), session.id))
       .filter((session) => !query || session.title.toLowerCase().includes(query))
   })
@@ -99,7 +99,9 @@ export function DialogSessionList() {
     }),
   )
 
-  function recover(session: NonNullable<ReturnType<typeof sessions>[number]>) {
+  type SessionInfo = NonNullable<ReturnType<typeof sessions>[number]>
+
+  function recover(session: SessionInfo) {
     const workspace = project.workspace.get(session.workspaceID!)
     const list = () => dialog.replace(() => <DialogSessionList />)
     const warp = async (selection: WorkspaceSelection) => {
@@ -208,7 +210,7 @@ export function DialogSessionList() {
 
   const options = createMemo(() => {
     const today = new Date().toDateString()
-    const sessionMap = new Map(
+    const sessionMap = HashMap.fromIterable(
       sessions()
         .filter((x) => x.parentID === undefined)
         .map((x) => [x.id, x]),
@@ -217,15 +219,14 @@ export function DialogSessionList() {
     const searchResult = searchResults()
     const order = searchResult ? orderByRecency(sessions()) : browseOrder()
     const current = currentSessionID()
-    const displayOrder = current && sessionMap.has(current) && !order.includes(current) ? [...order, current] : order
+    const displayOrder =
+      current && HashMap.has(sessionMap, current) && !order.includes(current) ? [...order, current] : order
 
-    const pinned = local.session.pinned().filter((id) => sessionMap.has(id))
+    const pinned = local.session.pinned().filter((id) => HashMap.has(sessionMap, id))
     const pinnedSet = HashSet.fromIterable(pinned)
-    const slotByID = new Map<string, number>(local.session.slots().map((id, i) => [id, i + 1]))
+    const slotByID = HashMap.fromIterable(local.session.slots().map((id, i) => [id, i + 1]))
 
-    function buildOption(id: string, category: string) {
-      const x = sessionMap.get(id)
-      if (!x) return undefined
+    function buildOption(x: SessionInfo, category: string) {
       const directory = x.path
         ? x.directory.endsWith(x.path)
           ? x.directory.slice(0, -x.path.length).replace(/\/$/, "")
@@ -237,11 +238,11 @@ export function DialogSessionList() {
       const isDeleting = toDelete() === x.id
       const status = sync.data.session_status?.[x.id]
       const isWorking = status?.type === "busy" || status?.type === "retry"
-      const slot = slotByID.get(x.id)
+      const slot = HashMap.get(slotByID, x.id)
       const gutter = isWorking
         ? () => <Spinner />
-        : slot !== undefined
-          ? () => <text fg={theme.accent}>{slot}</text>
+        : Option.isSome(slot)
+          ? () => <text fg={theme.accent}>{slot.value}</text>
           : undefined
       return {
         title: isDeleting ? `Press ${deleteHint()} again to confirm` : x.title,
@@ -255,15 +256,25 @@ export function DialogSessionList() {
 
     const remaining = displayOrder
       .filter((id) => !HashSet.has(pinnedSet, id))
-      .map((id) => {
-        const x = sessionMap.get(id)
-        if (!x) return undefined
-        const label = new Date(x.time.updated).toDateString()
-        return buildOption(id, label === today ? "Today" : label)
-      })
-      .filter((x) => x !== undefined)
+      .flatMap((id) =>
+        HashMap.get(sessionMap, id).pipe(
+          Option.map((x) => {
+            const label = new Date(x.time.updated).toDateString()
+            return buildOption(x, label === today ? "Today" : label)
+          }),
+          Option.toArray,
+        ),
+      )
 
-    return [...pinned.map((id) => buildOption(id, "Pinned")).filter((x) => x !== undefined), ...remaining]
+    return [
+      ...pinned.flatMap((id) =>
+        HashMap.get(sessionMap, id).pipe(
+          Option.map((x) => buildOption(x, "Pinned")),
+          Option.toArray,
+        ),
+      ),
+      ...remaining,
+    ]
   })
 
   onMount(() => {
