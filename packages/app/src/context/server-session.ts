@@ -2,6 +2,7 @@ import { Binary } from "@opencode-ai/core/util/binary"
 import { retry } from "@opencode-ai/core/util/retry"
 import type { OpenCodeEvent, SessionApi, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type {
+  Event,
   Message,
   OpencodeClient,
   Part,
@@ -292,6 +293,15 @@ const isSessionApi = (value: SessionApi | ServerSessionOptions): value is Sessio
 
 const isServerSessionOptions = (value: SessionApi | ServerSessionOptions): value is ServerSessionOptions =>
   !("get" in value)
+
+// The text a delta extends: the part's field when it holds a string.
+const textField = (part: Part | undefined, field: string): Option.Option<string> => {
+  if (!part) return Option.none()
+  // Every Part variant is a plain object type, so it widens to a string-keyed record without an assertion.
+  const fields: Readonly<Record<string, unknown>> = part
+  const value = fields[field]
+  return Predicate.isString(value) ? Option.some(value) : Option.none()
+}
 
 export function createServerSession(
   client: OpencodeClient,
@@ -1118,20 +1128,20 @@ export function createServerSession(
     batch(() => {
       for (const message of normalized.messages) {
         if (!MutableHashSet.has(touched, message.id)) continue
-        apply({ type: "message.updated", properties: { sessionID: reduction.sessionID, info: message } })
+        observeSession(reduction.sessionID)
+        applyMessageUpdated(message)
       }
       for (const messageID of touched) {
         const next = normalized.parts.get(messageID) ?? []
         const nextIDs = MutableHashSet.fromIterable(next.map((part) => part.id))
         for (const part of next) {
-          apply({ type: "message.part.updated", properties: { sessionID: reduction.sessionID, part } })
+          observeSession(reduction.sessionID)
+          applyPartUpdated(part)
         }
         for (const part of data.part[messageID] ?? []) {
           if (MutableHashSet.has(nextIDs, part.id)) continue
-          apply({
-            type: "message.part.removed",
-            properties: { sessionID: reduction.sessionID, messageID, partID: part.id },
-          })
+          observeSession(reduction.sessionID)
+          applyPartRemoved(reduction.sessionID, messageID, part.id)
         }
       }
     })
@@ -1207,31 +1217,143 @@ export function createServerSession(
       refreshSession(sessionID, { force: true })
   }
 
-  const apply = (event: { type: string; properties?: unknown }) => {
+  // A session event keeps its session in the cache, and loads the session info when the event arrives first.
+  const observeSession = (sessionID: string) => {
+    touch(sessionID)
+    if (!data.info[sessionID]) refreshSession(sessionID)
+  }
+
+  const applyMessageUpdated = (message: Message) => {
+    const info = cleanMessage(message)
+    indexLegacyMessage(info)
+    const load = MutableHashMap.get(messageLoads, info.sessionID)
+    if (Option.isSome(load)) {
+      MutableHashSet.add(load.value.touchedMessages, info.id)
+      MutableHashSet.remove(load.value.removedMessages, info.id)
+    }
+    const item = optimisticItem(info.sessionID, info.id)
+    if (Option.isSome(item)) {
+      if (item.value.parts.length === 0) clearOptimistic(info.sessionID, info.id)
+      if (item.value.parts.length > 0)
+        setOptimisticItem(info.sessionID, info.id, { ...item.value, confirmedMessage: true })
+    }
+    removeFromIndex(orphanParts, info.sessionID, info.id)
+    removeFromIndex(removedMessages, info.sessionID, info.id)
+    const messages = data.message[info.sessionID]
+    if (!messages) {
+      setData("message", info.sessionID, [info])
+      return
+    }
+    const result = Binary.search(messages, messageKey(info), messageKey)
+    if (result.found) setData("message", info.sessionID, result.index, reconcile(info))
+    if (!result.found)
+      setData("message", info.sessionID, (value = []) => {
+        const next = value.slice()
+        next.splice(result.index, 0, info)
+        return next
+      })
+  }
+
+  const applyPartUpdated = (part: Part) => {
+    if (HashSet.has(SKIP_PARTS, part.type)) return
+    const messages = data.message[part.sessionID]
+    const load = MutableHashMap.get(messageLoads, part.sessionID)
+    const missing = !messages?.some((message) => message.id === part.messageID)
+    // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
+    if (
+      missing &&
+      (Option.isNone(load) ||
+        MutableHashSet.has(load.value.clearedMessageParts, part.messageID) ||
+        hasID(MutableHashMap.get(removedMessages, part.sessionID), part.messageID))
+    )
+      return
+    if (missing) {
+      addToIndex(orphanParts, part.sessionID, part.messageID)
+      if (Option.isSome(load)) MutableHashSet.add(load.value.orphanParents, part.messageID)
+    }
+    if (Option.isSome(load)) {
+      removeFromIndex(load.value.deltaParts, part.messageID, part.id)
+      removeFromIndex(load.value.carriedDeltaParts, part.messageID, part.id)
+      removeFromIndex(load.value.removedParts, part.messageID, part.id)
+      removeFromIndex(load.value.optimisticParts, part.messageID, part.id)
+    }
+    const pending = MutableHashMap.get(pendingParts, part.sessionID)
+    if (Option.isSome(pending)) {
+      removeFromIndex(pending.value, part.messageID, part.id)
+      if (MutableHashMap.size(pending.value) === 0) MutableHashMap.remove(pendingParts, part.sessionID)
+    }
+    MutableHashMap.remove(deltaBases, part.id)
+    trackPartChange(part.sessionID, part.messageID, part.id)
+    confirmOptimisticPart(part.sessionID, part.messageID, part)
+    setData(
+      "part_text_accum_delta",
+      produce((draft) => void delete draft[part.id]),
+    )
+    const parts = data.part[part.messageID]
+    if (!parts) {
+      setData("part", part.messageID, [part])
+      return
+    }
+    const result = Binary.search(parts, part.id, (item) => item.id)
+    if (result.found) setData("part", part.messageID, result.index, reconcile(part))
+    if (!result.found)
+      setData("part", part.messageID, (value = []) => {
+        const next = value.slice()
+        next.splice(result.index, 0, part)
+        return next
+      })
+  }
+
+  const applyPartRemoved = (sessionID: string, messageID: string, partID: string) => {
+    // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
+    const pending = Option.getOrElse(MutableHashMap.get(pendingParts, sessionID), (): IDIndex => MutableHashMap.empty())
+    addToIndex(pending, messageID, partID)
+    MutableHashMap.set(pendingParts, sessionID, pending)
+    const load = MutableHashMap.get(messageLoads, sessionID)
+    if (Option.isSome(load)) {
+      removeFromIndex(load.value.deltaParts, messageID, partID)
+      removeFromIndex(load.value.carriedDeltaParts, messageID, partID)
+      addToIndex(load.value.removedParts, messageID, partID)
+      removeFromIndex(load.value.optimisticParts, messageID, partID)
+    }
+    trackPartChange(sessionID, messageID, partID)
+    clearOptimisticPart(sessionID, messageID, partID)
+    setData(
+      produce((draft) => {
+        delete draft.part_text_accum_delta[partID]
+        MutableHashMap.remove(deltaBases, partID)
+        const parts = draft.part[messageID]
+        if (!parts) return
+        const result = Binary.search(parts, partID, (part) => part.id)
+        const next = result.found ? parts.toSpliced(result.index, 1) : parts
+        if (next.length === 0) {
+          delete draft.part[messageID]
+          return
+        }
+        if (result.found) draft.part[messageID] = next
+      }),
+    )
+  }
+
+  const apply = (event: Event) => {
     const eventID = eventSessionID(event)
     if (eventID) {
-      touch(eventID)
-      if (
-        !data.info[eventID] &&
-        event.type !== "session.created" &&
-        event.type !== "session.updated" &&
-        event.type !== "session.deleted"
-      )
-        refreshSession(eventID)
+      if (event.type === "session.created" || event.type === "session.updated" || event.type === "session.deleted")
+        touch(eventID)
+      else observeSession(eventID)
     }
     switch (event.type) {
       case "session.created":
-        remember((event.properties as { info: Session }).info)
+        remember(event.properties.info)
         return
       case "session.updated": {
-        const info = (event.properties as { info: Session }).info
+        const info = event.properties.info
         remember(info)
         if (info.time.archived) evict([info.id])
         return
       }
       case "session.deleted": {
-        const properties = event.properties as { sessionID?: string; info?: Session }
-        const sessionID = properties.info?.id ?? properties.sessionID
+        const sessionID = event.properties.info?.id ?? event.properties.sessionID
         if (!sessionID) return
         MutableHashSet.remove(infoSeen, sessionID)
         setData(
@@ -1241,49 +1363,17 @@ export function createServerSession(
         evict([sessionID])
         return
       }
-      case "todo.updated": {
-        const props = event.properties as { sessionID: string; todos: Todo[] }
-        setData("todo", props.sessionID, reconcile(props.todos, { key: "id" }))
+      case "todo.updated":
+        setData("todo", event.properties.sessionID, reconcile(event.properties.todos, { key: "id" }))
         return
-      }
-      case "session.status": {
-        const props = event.properties as { sessionID: string; status: SessionStatus }
-        setData("session_status", props.sessionID, reconcile(props.status))
+      case "session.status":
+        setData("session_status", event.properties.sessionID, reconcile(event.properties.status))
         return
-      }
-      case "message.updated": {
-        const info = cleanMessage((event.properties as { info: Message }).info)
-        indexLegacyMessage(info)
-        const load = MutableHashMap.get(messageLoads, info.sessionID)
-        if (Option.isSome(load)) {
-          MutableHashSet.add(load.value.touchedMessages, info.id)
-          MutableHashSet.remove(load.value.removedMessages, info.id)
-        }
-        const item = optimisticItem(info.sessionID, info.id)
-        if (Option.isSome(item)) {
-          if (item.value.parts.length === 0) clearOptimistic(info.sessionID, info.id)
-          if (item.value.parts.length > 0)
-            setOptimisticItem(info.sessionID, info.id, { ...item.value, confirmedMessage: true })
-        }
-        removeFromIndex(orphanParts, info.sessionID, info.id)
-        removeFromIndex(removedMessages, info.sessionID, info.id)
-        const messages = data.message[info.sessionID]
-        if (!messages) {
-          setData("message", info.sessionID, [info])
-          return
-        }
-        const result = Binary.search(messages, messageKey(info), messageKey)
-        if (result.found) setData("message", info.sessionID, result.index, reconcile(info))
-        if (!result.found)
-          setData("message", info.sessionID, (value = []) => {
-            const next = value.slice()
-            next.splice(result.index, 0, info)
-            return next
-          })
+      case "message.updated":
+        applyMessageUpdated(event.properties.info)
         return
-      }
       case "message.removed": {
-        const props = event.properties as { sessionID: string; messageID: string }
+        const props = event.properties
         setData("session_message", props.sessionID, (messages) =>
           messages?.filter((message) => message.id !== props.messageID),
         )
@@ -1316,100 +1406,14 @@ export function createServerSession(
         )
         return
       }
-      case "message.part.updated": {
-        const part = (event.properties as { part: Part }).part
-        if (HashSet.has(SKIP_PARTS, part.type)) return
-        const messages = data.message[part.sessionID]
-        const load = MutableHashMap.get(messageLoads, part.sessionID)
-        const missing = !messages?.some((message) => message.id === part.messageID)
-        // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
-        if (
-          missing &&
-          (Option.isNone(load) ||
-            MutableHashSet.has(load.value.clearedMessageParts, part.messageID) ||
-            hasID(MutableHashMap.get(removedMessages, part.sessionID), part.messageID))
-        )
-          return
-        if (missing) {
-          addToIndex(orphanParts, part.sessionID, part.messageID)
-          if (Option.isSome(load)) MutableHashSet.add(load.value.orphanParents, part.messageID)
-        }
-        if (Option.isSome(load)) {
-          removeFromIndex(load.value.deltaParts, part.messageID, part.id)
-          removeFromIndex(load.value.carriedDeltaParts, part.messageID, part.id)
-          removeFromIndex(load.value.removedParts, part.messageID, part.id)
-          removeFromIndex(load.value.optimisticParts, part.messageID, part.id)
-        }
-        const pending = MutableHashMap.get(pendingParts, part.sessionID)
-        if (Option.isSome(pending)) {
-          removeFromIndex(pending.value, part.messageID, part.id)
-          if (MutableHashMap.size(pending.value) === 0) MutableHashMap.remove(pendingParts, part.sessionID)
-        }
-        MutableHashMap.remove(deltaBases, part.id)
-        trackPartChange(part.sessionID, part.messageID, part.id)
-        confirmOptimisticPart(part.sessionID, part.messageID, part)
-        setData(
-          "part_text_accum_delta",
-          produce((draft) => void delete draft[part.id]),
-        )
-        const parts = data.part[part.messageID]
-        if (!parts) {
-          setData("part", part.messageID, [part])
-          return
-        }
-        const result = Binary.search(parts, part.id, (item) => item.id)
-        if (result.found) setData("part", part.messageID, result.index, reconcile(part))
-        if (!result.found)
-          setData("part", part.messageID, (value = []) => {
-            const next = value.slice()
-            next.splice(result.index, 0, part)
-            return next
-          })
+      case "message.part.updated":
+        applyPartUpdated(event.properties.part)
         return
-      }
-      case "message.part.removed": {
-        const props = event.properties as { sessionID: string; messageID: string; partID: string }
-        // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
-        const pending = Option.getOrElse(
-          MutableHashMap.get(pendingParts, props.sessionID),
-          (): IDIndex => MutableHashMap.empty(),
-        )
-        addToIndex(pending, props.messageID, props.partID)
-        MutableHashMap.set(pendingParts, props.sessionID, pending)
-        const load = MutableHashMap.get(messageLoads, props.sessionID)
-        if (Option.isSome(load)) {
-          removeFromIndex(load.value.deltaParts, props.messageID, props.partID)
-          removeFromIndex(load.value.carriedDeltaParts, props.messageID, props.partID)
-          addToIndex(load.value.removedParts, props.messageID, props.partID)
-          removeFromIndex(load.value.optimisticParts, props.messageID, props.partID)
-        }
-        trackPartChange(props.sessionID, props.messageID, props.partID)
-        clearOptimisticPart(props.sessionID, props.messageID, props.partID)
-        setData(
-          produce((draft) => {
-            delete draft.part_text_accum_delta[props.partID]
-            MutableHashMap.remove(deltaBases, props.partID)
-            const parts = draft.part[props.messageID]
-            if (!parts) return
-            const result = Binary.search(parts, props.partID, (part) => part.id)
-            const next = result.found ? parts.toSpliced(result.index, 1) : parts
-            if (next.length === 0) {
-              delete draft.part[props.messageID]
-              return
-            }
-            if (result.found) draft.part[props.messageID] = next
-          }),
-        )
+      case "message.part.removed":
+        applyPartRemoved(event.properties.sessionID, event.properties.messageID, event.properties.partID)
         return
-      }
       case "message.part.delta": {
-        const props = event.properties as {
-          sessionID: string
-          messageID: string
-          partID: string
-          field: string
-          delta: string
-        }
+        const props = event.properties
         const parts = data.part[props.messageID]
         if (!parts) return
         const result = Binary.search(parts, props.partID, (part) => part.id)
@@ -1420,14 +1424,13 @@ export function createServerSession(
           addToIndex(load.value.deltaParts, props.messageID, props.partID)
           removeFromIndex(load.value.carriedDeltaParts, props.messageID, props.partID)
         }
-        const field = props.field as keyof (typeof parts)[number]
-        const current = parts[result.index]?.[field]
-        if (!MutableHashMap.has(deltaBases, props.partID) && typeof current === "string")
-          MutableHashMap.set(deltaBases, props.partID, { base: current, sessionID: props.sessionID })
+        const current = textField(parts[result.index], props.field)
+        if (!MutableHashMap.has(deltaBases, props.partID) && Option.isSome(current))
+          MutableHashMap.set(deltaBases, props.partID, { base: current.value, sessionID: props.sessionID })
         setData(
           "part_text_accum_delta",
           props.partID,
-          (value) => (value ?? (typeof current === "string" ? current : "")) + props.delta,
+          (value) => (value ?? Option.getOrElse(current, () => "")) + props.delta,
         )
         setData(
           "part",
@@ -1435,14 +1438,15 @@ export function createServerSession(
           produce((draft) => {
             if (!draft) return
             const part = draft[result.index]
-            const field = props.field as keyof typeof part
-            ;(part[field] as string) = ((part[field] as string | undefined) ?? "") + props.delta
+            Object.assign(part, {
+              [props.field]: Option.getOrElse(textField(part, props.field), () => "") + props.delta,
+            })
           }),
         )
         return
       }
       case "permission.asked": {
-        const permission = event.properties as PermissionRequest
+        const permission: PermissionRequest = event.properties
         const permissions = data.permission[permission.sessionID]
         if (!permissions) {
           setData("permission", permission.sessionID, [permission])
@@ -1459,7 +1463,7 @@ export function createServerSession(
         return
       }
       case "permission.replied": {
-        const props = event.properties as { sessionID: string; requestID: string }
+        const props = event.properties
         setData(
           "permission",
           props.sessionID,
@@ -1472,7 +1476,7 @@ export function createServerSession(
         return
       }
       case "question.asked": {
-        const question = event.properties as QuestionRequest
+        const question: QuestionRequest = event.properties
         const questions = data.question[question.sessionID]
         if (!questions) {
           setData("question", question.sessionID, [question])
@@ -1490,7 +1494,7 @@ export function createServerSession(
       }
       case "question.replied":
       case "question.rejected": {
-        const props = event.properties as { sessionID: string; requestID: string }
+        const props = event.properties
         setData(
           "question",
           props.sessionID,
