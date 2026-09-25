@@ -1,4 +1,5 @@
 import { TextAttributes } from "@opentui/core"
+import { Effect } from "effect"
 import { createMemo, createSignal, For } from "solid-js"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { useTheme } from "../context/theme"
@@ -18,6 +19,9 @@ export function DialogDebug() {
   const clipboard = useClipboard()
   const toast = useToast()
   const [copied, setCopied] = createSignal(false)
+  // The environment read finishes synchronously, so the first render already shows the terminal.
+  const [terminal, setTerminal] = createSignal("unknown")
+  Effect.runFork(describeTerminal.pipe(Effect.tap((value) => Effect.sync(() => setTerminal(value)))))
 
   dialog.setSize("large")
 
@@ -27,7 +31,7 @@ export function DialogDebug() {
       { label: "Version", value: `${InstallationVersion} (${InstallationChannel})` },
       { label: "Date", value: new Date().toISOString() },
       { label: "OS", value: describeOS() },
-      { label: "Terminal", value: describeTerminal() },
+      { label: "Terminal", value: terminal() },
       { label: "Session ID", value: route.data.type === "session" ? route.data.sessionID : "n/a" },
       { label: "Model", value: model ? `${model.providerID}/${model.modelID}` : "n/a" },
     ]
