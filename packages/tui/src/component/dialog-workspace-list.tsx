@@ -1,4 +1,5 @@
 import type { Workspace } from "@opencode-ai/sdk/v2"
+import { Data, Effect } from "effect"
 import { useDialog } from "../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useProject } from "../context/project"
@@ -12,6 +13,9 @@ import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
 
 type WorkspaceOption = { workspace: Workspace }
+
+/** The SDK rejected a workspace remove request or returned an error response. */
+class WorkspaceRemoveError extends Data.TaggedError("WorkspaceRemoveError")<{ readonly cause: unknown }> {}
 
 export function DialogWorkspaceList() {
   const dialog = useDialog()
@@ -55,7 +59,7 @@ export function DialogWorkspaceList() {
     setExpanded(workspace.id, (open) => !open)
   }
 
-  async function remove(workspace: Workspace) {
+  function remove(workspace: Workspace) {
     if (removing()) return
     if (deleting() !== workspace.id) {
       setDeleting(workspace.id)
@@ -64,31 +68,44 @@ export function DialogWorkspaceList() {
 
     setDeleting(undefined)
     setRemoving(workspace.id)
-    const result = await sdk.client.experimental.workspace.remove({ id: workspace.id }).catch((err) => ({
-      error: err,
-    }))
-    if (result?.error) {
-      setRemoving(undefined)
-      toast.show({
-        variant: "error",
-        title: "Failed to delete workspace",
-        message: errorMessage(result.error),
-      })
-      return
-    }
+    Effect.runFork(
+      Effect.gen(function* () {
+        yield* Effect.tryPromise({
+          try: () => sdk.client.experimental.workspace.remove({ id: workspace.id }),
+          catch: (cause) => new WorkspaceRemoveError({ cause }),
+        }).pipe(
+          Effect.filterOrFail(
+            (result) => !result.error,
+            (result) => new WorkspaceRemoveError({ cause: result.error }),
+          ),
+        )
 
-    if (current() === workspace.id) {
-      project.workspace.set(undefined)
-      route.navigate({ type: "home" })
-    }
-    await project.workspace.sync()
-    await sync.bootstrap({ fatal: false }).catch(() => undefined)
-    setRemoving(undefined)
+        if (current() === workspace.id) {
+          project.workspace.set(undefined)
+          route.navigate({ type: "home" })
+        }
+        yield* Effect.promise(() => project.workspace.sync())
+        yield* Effect.tryPromise(() => sync.bootstrap({ fatal: false })).pipe(Effect.ignore)
+        setRemoving(undefined)
+      }).pipe(
+        Effect.catchTag("WorkspaceRemoveError", (error) =>
+          Effect.sync(() => {
+            setRemoving(undefined)
+            toast.show({
+              variant: "error",
+              title: "Failed to delete workspace",
+              message: errorMessage(error.cause),
+            })
+          }),
+        ),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    )
   }
 
   onMount(() => {
     dialog.setSize("large")
-    void sdk.client.experimental.workspace.syncList().catch(() => undefined)
+    Effect.runFork(Effect.tryPromise(() => sdk.client.experimental.workspace.syncList()).pipe(Effect.ignore))
     void project.workspace.sync()
   })
 
@@ -104,7 +121,7 @@ export function DialogWorkspaceList() {
         {
           command: "session.delete",
           title: "delete",
-          onTrigger: (option) => void remove(option.value.workspace),
+          onTrigger: (option) => remove(option.value.workspace),
         },
       ]}
     />
