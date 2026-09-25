@@ -1,5 +1,5 @@
 import type { OpenCodeEvent, SessionMessageInfo, SessionPendingMessage } from "@opencode-ai/client/promise"
-import { Struct } from "effect"
+import { MutableHashMap, Option, Struct } from "effect"
 
 type Assistant = Extract<SessionMessageInfo, { type: "assistant" }>
 type Compaction = Extract<SessionMessageInfo, { type: "compaction" }>
@@ -13,7 +13,7 @@ export type V2SessionReduction = {
 }
 
 export function createV2SessionReducer() {
-  const pending = new Map<string, SessionPendingMessage>()
+  const pending = MutableHashMap.empty<string, SessionPendingMessage>()
 
   const reduce = (source: readonly SessionMessageInfo[], event: OpenCodeEvent): V2SessionReduction | undefined => {
     if (!("data" in event) || !("sessionID" in event.data) || typeof event.data.sessionID !== "string") return undefined
@@ -28,12 +28,13 @@ export function createV2SessionReducer() {
 
     switch (event.type) {
       case "session.input.admitted":
-        pending.set(key(sessionID, event.data.inputID), event.data.input)
+        MutableHashMap.set(pending, key(sessionID, event.data.inputID), event.data.input)
         return result([...source])
       case "session.input.promoted": {
-        const input = pending.get(key(sessionID, event.data.inputID))
-        pending.delete(key(sessionID, event.data.inputID))
-        if (!input) return { ...result([...source]), missing: event.data.inputID }
+        const admitted = MutableHashMap.get(pending, key(sessionID, event.data.inputID))
+        MutableHashMap.remove(pending, key(sessionID, event.data.inputID))
+        if (Option.isNone(admitted)) return { ...result([...source]), missing: event.data.inputID }
+        const input = admitted.value
         if (input.type === "user")
           return append({
             id: event.data.inputID,
@@ -406,9 +407,8 @@ export function createV2SessionReducer() {
   return {
     reduce,
     clear(sessionID: string) {
-      for (const id of pending.keys()) {
-        if (id.startsWith(`${sessionID}:`)) pending.delete(id)
-      }
+      const stale = Array.from(MutableHashMap.keys(pending)).filter((id) => id.startsWith(`${sessionID}:`))
+      for (const id of stale) MutableHashMap.remove(pending, id)
     },
   }
 }
