@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { describe, expect, test } from "bun:test"
 import { RGBA } from "@opentui/core"
-import { HashSet } from "effect"
+import { HashSet, Option } from "effect"
 import { testRender } from "@opentui/solid"
 import type { JSX } from "solid-js"
 import { createTuiResolvedConfig } from "../../fixture/tui-runtime"
@@ -98,7 +98,7 @@ describe("DiffViewerFileTree", () => {
           error={undefined}
           theme={theme}
           focused
-          highlightedNode={src.id}
+          highlightedNode={Option.some(src.id)}
         />
       )),
     )

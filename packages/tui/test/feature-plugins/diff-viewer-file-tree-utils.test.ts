@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { HashSet } from "effect"
+import { HashSet, Option } from "effect"
 import {
   allExpandedFileTreeDirectories,
   buildFileTree,
@@ -178,11 +178,11 @@ describe("diff viewer file tree utilities", () => {
   test("moves selection across visible rows and clamps to bounds", () => {
     const rows = flattenFileTree(buildFileTree([{ file: "src/config/tui.ts" }, { file: "README.md" }]))
 
-    expect(moveFileTreeSelection(rows, undefined, 1)).toBe(rows[0].id)
-    expect(moveFileTreeSelection(rows, rows[0].id, 1)).toBe(rows[1].id)
-    expect(moveFileTreeSelection(rows, rows[1].id, 99)).toBe(rows[rows.length - 1].id)
-    expect(moveFileTreeSelection(rows, rows[1].id, -99)).toBe(rows[0].id)
-    expect(moveFileTreeSelection([], undefined, 1)).toBeUndefined()
+    expect(moveFileTreeSelection(rows, Option.none(), 1)).toEqual(Option.some(rows[0].id))
+    expect(moveFileTreeSelection(rows, Option.some(rows[0].id), 1)).toEqual(Option.some(rows[1].id))
+    expect(moveFileTreeSelection(rows, Option.some(rows[1].id), 99)).toEqual(Option.some(rows[rows.length - 1].id))
+    expect(moveFileTreeSelection(rows, Option.some(rows[1].id), -99)).toEqual(Option.some(rows[0].id))
+    expect(moveFileTreeSelection([], Option.none(), 1)).toEqual(Option.none())
   })
 
   test("moves directory selection to first visible child", () => {
@@ -191,9 +191,9 @@ describe("diff viewer file tree utilities", () => {
     const config = rows.find((row) => row.kind === "directory" && row.name === "config")!
     const tui = rows.find((row) => row.name === "tui.ts")!
 
-    expect(moveFileTreeSelectionToFirstChild(rows, src.id)).toBe(config.id)
-    expect(moveFileTreeSelectionToFirstChild(rows, tui.id)).toBe(tui.id)
-    expect(moveFileTreeSelectionToFirstChild(rows, undefined)).toBeUndefined()
+    expect(moveFileTreeSelectionToFirstChild(rows, Option.some(src.id))).toEqual(Option.some(config.id))
+    expect(moveFileTreeSelectionToFirstChild(rows, Option.some(tui.id))).toEqual(Option.some(tui.id))
+    expect(moveFileTreeSelectionToFirstChild(rows, Option.none())).toEqual(Option.none())
   })
 
   test("moves collapsed chain selection to first visible child", () => {
@@ -203,7 +203,7 @@ describe("diff viewer file tree utilities", () => {
     const packages = rows.find((row) => row.kind === "directory" && row.name === "packages/opencode/src")!
     const cli = rows.find((row) => row.kind === "directory" && row.name === "cli")!
 
-    expect(moveFileTreeSelectionToFirstChild(rows, packages.id)).toBe(cli.id)
+    expect(moveFileTreeSelectionToFirstChild(rows, Option.some(packages.id))).toEqual(Option.some(cli.id))
   })
 
   test("moves file and collapsed directory selection to visible parent", () => {
@@ -214,10 +214,10 @@ describe("diff viewer file tree utilities", () => {
     const cli = rows.find((row) => row.kind === "directory" && row.name === "cli")!
     const app = rows.find((row) => row.name === "app.ts")!
 
-    expect(moveFileTreeSelectionToParent(rows, app.id)).toBe(cli.id)
-    expect(moveFileTreeSelectionToParent(rows, cli.id)).toBe(root.id)
-    expect(moveFileTreeSelectionToParent(rows, root.id)).toBe(root.id)
-    expect(moveFileTreeSelectionToParent(rows, undefined)).toBeUndefined()
+    expect(moveFileTreeSelectionToParent(rows, Option.some(app.id))).toEqual(Option.some(cli.id))
+    expect(moveFileTreeSelectionToParent(rows, Option.some(cli.id))).toEqual(Option.some(root.id))
+    expect(moveFileTreeSelectionToParent(rows, Option.some(root.id))).toEqual(Option.some(root.id))
+    expect(moveFileTreeSelectionToParent(rows, Option.none())).toEqual(Option.none())
   })
 
   test("moves file selection relative to the highlighted row", () => {
@@ -230,31 +230,30 @@ describe("diff viewer file tree utilities", () => {
     const index = rows.find((row) => row.name === "index.ts")!
     const readme = rows.find((row) => row.name === "README.md")!
 
-    expect(moveFileTreeSelectionToFile(rows, undefined, 1)).toBe(tui.id)
-    expect(moveFileTreeSelectionToFile(rows, undefined, -1)).toBe(readme.id)
-    expect(moveFileTreeSelectionToFile(rows, config.id, 1)).toBe(tui.id)
-    expect(moveFileTreeSelectionToFile(rows, session.id, -1)).toBe(tui.id)
-    expect(moveFileTreeSelectionToFile(rows, tui.id, 1)).toBe(index.id)
-    expect(moveFileTreeSelectionToFile(rows, index.id, -1)).toBe(tui.id)
-    expect(moveFileTreeSelectionToFile(rows, readme.id, 1)).toBe(readme.id)
+    expect(moveFileTreeSelectionToFile(rows, Option.none(), 1)).toEqual(Option.some(tui.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.none(), -1)).toEqual(Option.some(readme.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.some(config.id), 1)).toEqual(Option.some(tui.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.some(session.id), -1)).toEqual(Option.some(tui.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.some(tui.id), 1)).toEqual(Option.some(index.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.some(index.id), -1)).toEqual(Option.some(tui.id))
+    expect(moveFileTreeSelectionToFile(rows, Option.some(readme.id), 1)).toEqual(Option.some(readme.id))
   })
 
   test("selects a file tree node and expands its parents for a patch file", () => {
     const tree = buildFileTree([{ file: "src/config/tui.ts" }, { file: "src/session/index.ts" }, { file: "README.md" }])
-    const selection = fileTreeFileSelection(tree, 1)
+    const selection = Option.getOrThrow(fileTreeFileSelection(tree, 1))
+    const index = tree.nodes.find((node) => node.kind === "file" && node.name === "index.ts")!
 
-    expect(selection?.highlightedNode).toBe(
-      tree.nodes.find((node) => node.kind === "file" && node.name === "index.ts")?.id,
-    )
-    expect([...selection!.expandedNodes].map((id) => tree.nodes[id].name)).toEqual(["session", "src"])
-    expect(fileTreeFileSelection(tree, 99)).toBeUndefined()
+    expect(selection.highlightedNode).toBe(index.id)
+    expect([...selection.expandedNodes].map((id) => tree.nodes[id].name)).toEqual(["session", "src"])
+    expect(fileTreeFileSelection(tree, 99)).toEqual(Option.none())
   })
 
   test("prefers the selected file when choosing the single patch file", () => {
-    expect(singlePatchFileIndex(2, 1, 0, 3)).toBe(2)
-    expect(singlePatchFileIndex(undefined, 1, 0, 3)).toBe(1)
-    expect(singlePatchFileIndex(undefined, undefined, 0, 3)).toBe(0)
-    expect(singlePatchFileIndex(undefined, undefined, undefined, 3)).toBe(3)
+    expect(singlePatchFileIndex(Option.some(2), Option.some(1), Option.some(0), Option.some(3))).toEqual(Option.some(2))
+    expect(singlePatchFileIndex(Option.none(), Option.some(1), Option.some(0), Option.some(3))).toEqual(Option.some(1))
+    expect(singlePatchFileIndex(Option.none(), Option.none(), Option.some(0), Option.some(3))).toEqual(Option.some(0))
+    expect(singlePatchFileIndex(Option.none(), Option.none(), Option.none(), Option.some(3))).toEqual(Option.some(3))
   })
 
   test("orders patches by the flattened file tree order", () => {
@@ -279,14 +278,14 @@ describe("diff viewer file tree utilities", () => {
   test("moves patch selection through the ordered patch file indexes", () => {
     const fileIndexes = [2, 1, 0]
 
-    expect(movePatchFileIndex(fileIndexes, undefined, 1)).toBe(2)
-    expect(movePatchFileIndex(fileIndexes, undefined, -1)).toBe(2)
-    expect(movePatchFileIndex(fileIndexes, 2, 1)).toBe(1)
-    expect(movePatchFileIndex(fileIndexes, 1, -1)).toBe(2)
-    expect(movePatchFileIndex(fileIndexes, 0, 1)).toBe(0)
-    expect(movePatchFileIndex(fileIndexes, 99, 1)).toBe(2)
-    expect(movePatchFileIndex(fileIndexes, 99, -1)).toBe(2)
-    expect(movePatchFileIndex([], undefined, 1)).toBeUndefined()
+    expect(movePatchFileIndex(fileIndexes, Option.none(), 1)).toEqual(Option.some(2))
+    expect(movePatchFileIndex(fileIndexes, Option.none(), -1)).toEqual(Option.some(2))
+    expect(movePatchFileIndex(fileIndexes, Option.some(2), 1)).toEqual(Option.some(1))
+    expect(movePatchFileIndex(fileIndexes, Option.some(1), -1)).toEqual(Option.some(2))
+    expect(movePatchFileIndex(fileIndexes, Option.some(0), 1)).toEqual(Option.some(0))
+    expect(movePatchFileIndex(fileIndexes, Option.some(99), 1)).toEqual(Option.some(2))
+    expect(movePatchFileIndex(fileIndexes, Option.some(99), -1)).toEqual(Option.some(2))
+    expect(movePatchFileIndex([], Option.none(), 1)).toEqual(Option.none())
   })
 
   test("toggles only selected directory expansion", () => {
@@ -295,15 +294,15 @@ describe("diff viewer file tree utilities", () => {
     const readme = tree.nodes.find((node) => node.kind === "file" && node.name === "README.md")!
     const expanded = allExpandedFileTreeDirectories(tree)
 
-    const collapsed = toggleFileTreeDirectory(tree, expanded, src.id)
+    const collapsed = toggleFileTreeDirectory(tree, expanded, Option.some(src.id))
     expect(HashSet.has(collapsed, src.id)).toBe(false)
     expect(flattenFileTree(tree, collapsed).map((row) => row.name)).toEqual(["src/config", "README.md"])
 
-    const reopened = toggleFileTreeDirectory(tree, collapsed, src.id)
+    const reopened = toggleFileTreeDirectory(tree, collapsed, Option.some(src.id))
     expect(HashSet.has(reopened, src.id)).toBe(true)
 
-    expect(toggleFileTreeDirectory(tree, reopened, readme.id)).toBe(reopened)
-    expect(toggleFileTreeDirectory(tree, reopened, undefined)).toBe(reopened)
+    expect(toggleFileTreeDirectory(tree, reopened, Option.some(readme.id))).toBe(reopened)
+    expect(toggleFileTreeDirectory(tree, reopened, Option.none())).toBe(reopened)
   })
 
   test("sets only selected directory expansion", () => {
@@ -312,13 +311,13 @@ describe("diff viewer file tree utilities", () => {
     const readme = tree.nodes.find((node) => node.kind === "file" && node.name === "README.md")!
     const expanded = allExpandedFileTreeDirectories(tree)
 
-    const collapsed = setFileTreeDirectoryExpanded(tree, expanded, src.id, false)
+    const collapsed = setFileTreeDirectoryExpanded(tree, expanded, Option.some(src.id), false)
     expect(HashSet.has(collapsed, src.id)).toBe(false)
 
-    const reopened = setFileTreeDirectoryExpanded(tree, collapsed, src.id, true)
+    const reopened = setFileTreeDirectoryExpanded(tree, collapsed, Option.some(src.id), true)
     expect(HashSet.has(reopened, src.id)).toBe(true)
 
-    expect(setFileTreeDirectoryExpanded(tree, reopened, readme.id, false)).toBe(reopened)
-    expect(setFileTreeDirectoryExpanded(tree, reopened, undefined, false)).toBe(reopened)
+    expect(setFileTreeDirectoryExpanded(tree, reopened, Option.some(readme.id), false)).toBe(reopened)
+    expect(setFileTreeDirectoryExpanded(tree, reopened, Option.none(), false)).toBe(reopened)
   })
 })
