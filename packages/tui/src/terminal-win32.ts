@@ -73,7 +73,6 @@ export function win32InstallCtrlCGuard() {
   if (unhook) return unhook
 
   const stdin = process.stdin as ReadStream
-  const original = stdin.setRawMode
 
   const handle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
   const buf = new Uint32Array(1)
@@ -94,17 +93,7 @@ export function win32InstallCtrlCGuard() {
     setImmediate(enforce)
   }
 
-  let wrapped: ReadStream["setRawMode"] | undefined
-
-  if (typeof original === "function") {
-    wrapped = (mode: boolean) => {
-      const result = original.call(stdin, mode)
-      later()
-      return result
-    }
-
-    stdin.setRawMode = wrapped
-  }
+  const restoreRawMode = typeof stdin.setRawMode === "function" ? hookRawMode(stdin, later) : () => {}
 
   // Ensure it's cleared immediately too (covers any earlier mode changes).
   later()
@@ -118,13 +107,31 @@ export function win32InstallCtrlCGuard() {
     done = true
 
     clearInterval(interval)
-    if (wrapped && stdin.setRawMode === wrapped) {
-      stdin.setRawMode = original
-    }
+    restoreRawMode()
 
     k32!.symbols.SetConsoleMode(handle, initial)
     unhook = undefined
   }
 
   return unhook
+}
+
+/**
+ * Wrap `stdin.setRawMode` so each raw-mode toggle runs `after`.
+ *
+ * Returns a function that puts the original method back, unless other code
+ * replaced the wrapper in the meantime.
+ */
+function hookRawMode(stdin: ReadStream, after: () => void) {
+  // Bound, so the saved method keeps stdin as `this` when the wrapper calls it.
+  const original = stdin.setRawMode.bind(stdin)
+  const wrapped = (mode: boolean) => {
+    const result = original(mode)
+    after()
+    return result
+  }
+  stdin.setRawMode = wrapped
+  return () => {
+    if (stdin.setRawMode === wrapped) stdin.setRawMode = original
+  }
 }
