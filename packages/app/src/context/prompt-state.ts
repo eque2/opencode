@@ -153,14 +153,14 @@ export function isCommentItem(item: ContextItem | (ContextItem & { key: string }
 
 function createPromptActions(setStore: SetStoreFunction<PromptStore>) {
   return {
-    set(prompt: Prompt, cursorPosition?: number) {
+    set: (prompt: Prompt, cursorPosition?: number) => {
       const next = clonePrompt(prompt)
       batch(() => {
         setStore("prompt", next)
         if (cursorPosition !== undefined) setStore("cursor", cursorPosition)
       })
     },
-    reset() {
+    reset: () => {
       batch(() => {
         setStore("prompt", clonePrompt(DEFAULT_PROMPT))
         setStore("cursor", 0)
