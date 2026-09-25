@@ -14,7 +14,7 @@ import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
-import { HashMap, Option } from "effect"
+import { HashMap, MutableHashMap, Option } from "effect"
 
 export type ModelKey = { providerID: string; modelID: string; variant?: string }
 
@@ -29,7 +29,7 @@ type Saved = {
 }
 
 const WORKSPACE_KEY = "__workspace__"
-const handoff = new Map<string, State>()
+const handoff = MutableHashMap.empty<string, State>()
 
 const handoffKey = (scope: ServerScope, dir: string, id: string) => ScopedKey.from(scope, dir, id)
 
@@ -130,7 +130,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const scope = createMemo<State | undefined>(() => {
       const session = id()
       if (!session) return store.draft ?? store.promoting
-      return saved.session[session] ?? handoff.get(handoffKey(serverSDK().scope, sdk().directory, session))
+      return (
+        saved.session[session] ??
+        Option.getOrUndefined(MutableHashMap.get(handoff, handoffKey(serverSDK().scope, sdk().directory, session)))
+      )
     })
 
     createEffect(() => {
@@ -138,16 +141,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       if (!session) return
 
       const key = handoffKey(serverSDK().scope, sdk().directory, session)
-      const next = handoff.get(key)
-      if (!next) return
+      const next = MutableHashMap.get(handoff, key)
+      if (Option.isNone(next)) return
       if (saved.session[session] !== undefined) {
-        handoff.delete(key)
+        MutableHashMap.remove(handoff, key)
         setStore("promoting", undefined)
         return
       }
 
-      setSaved("session", session, clone(next))
-      handoff.delete(key)
+      setSaved("session", session, clone(next.value))
+      MutableHashMap.remove(handoff, key)
       setStore("promoting", undefined)
     })
 
@@ -391,7 +394,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           const next = clone(state ?? snapshot())
           if (!next) return
           const key = handoffKey(serverSDK().scope, dir, session)
-          handoff.set(key, next)
+          MutableHashMap.set(handoff, key, next)
 
           if (dir === sdk().directory) {
             setSaved("session", session, next)
@@ -405,7 +408,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           if (!session) return
           if (msg.sessionID !== session) return
           if (saved.session[session] !== undefined) return
-          if (handoff.has(handoffKey(serverSDK().scope, sdk().directory, session))) return
+          if (MutableHashMap.has(handoff, handoffKey(serverSDK().scope, sdk().directory, session))) return
 
           setSaved("session", session, {
             agent: msg.agent,
