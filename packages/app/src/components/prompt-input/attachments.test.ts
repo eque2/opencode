@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import { attachmentMime, pickAttachmentFiles } from "./files"
 import { pasteMode } from "./paste"
+
+class PickerUnavailableError extends Data.TaggedError("PickerUnavailableError")<{ readonly message: string }> {}
 
 describe("attachmentMime", () => {
   test("keeps PDFs when the browser reports the mime", () =>
@@ -101,7 +103,7 @@ describe("pickAttachmentFiles", () => {
   test("reports native picker failures without rejecting", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const error = new Error("picker unavailable")
+        const error = new PickerUnavailableError({ message: "picker unavailable" })
         let errors: ReadonlyArray<unknown> = []
         const handled = Promise.withResolvers<void>()
         pickAttachmentFiles({
