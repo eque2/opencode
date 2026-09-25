@@ -10,10 +10,18 @@ import { uuid } from "@/utils/uuid"
 import { SessionTabsRemovedDetail } from "@/components/titlebar-session-events"
 import { sessionHref } from "@/utils/session-route"
 import { createTabMemory } from "./tab-memory"
-import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
+import {
+  CloseNavigation,
+  nextTabAfterClose,
+  pushClosedTab,
+  removeClosedTabs,
+  takeClosedTab,
+  type ClosedTab,
+} from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
 import { Array as Arr, Data, Effect, HashMap, HashSet, MutableHashSet, Option } from "effect"
+import { constVoid } from "effect/Function"
 
 export type SessionTab = {
   type: "session"
@@ -175,11 +183,14 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       MutableHashSet.add(closing, key)
       void startTransition(() => {
         setStore((tabs) => Arr.remove(tabs, index))
-        if (nextTab === null) {
-          setRecentKey(undefined)
-          navigate("/")
-        }
-        if (nextTab) navigateTab(nextTab)
+        CloseNavigation.$match(nextTab, {
+          Stay: constVoid,
+          Home: () => {
+            setRecentKey(undefined)
+            navigate("/")
+          },
+          Select: ({ tab }) => navigateTab(tab),
+        })
       }).finally(() => MutableHashSet.remove(closing, key))
       memory.remove(key)
       removeInfo(key)

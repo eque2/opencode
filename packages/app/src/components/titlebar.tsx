@@ -1,4 +1,5 @@
 import {
+  type Accessor,
   createEffect,
   createMemo,
   createResource,
@@ -38,7 +39,7 @@ import { tabKey, useTabs, type Tab } from "@/context/tabs"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 import { normalizeSessionInfo } from "@/utils/session"
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, Equivalence, Option } from "effect"
 
 const legacyTitlebarHeight = 40
 const v2TitlebarHeight = 36
@@ -66,13 +67,21 @@ export type TitlebarUpdate = {
   install: () => void
 }
 
-export function useTitlebarRightMount() {
+/** Compares two optional mount elements by identity, as the signal compared the elements before. */
+const sameMount = Option.makeEquivalence(Equivalence.strictEqual<HTMLElement>())
+
+/**
+ * The titlebar slot element that other views portal into. The accessor gives
+ * null while the slot is not in the DOM, the value the Portal mount props of
+ * its consumers take.
+ */
+export function useTitlebarRightMount(): Accessor<HTMLElement | null> {
   const language = useLanguage()
-  const [mount, setMount] = createSignal<HTMLElement | null>(null)
-  const sync = () => setMount(document.getElementById("opencode-titlebar-right"))
+  const [mount, setMount] = createSignal(Option.none<HTMLElement>(), { equals: sameMount })
+  const sync = () => setMount(Option.fromNullishOr(document.getElementById("opencode-titlebar-right")))
   onMount(sync)
   createEffect(on(language.direction, sync, { defer: true }))
-  return mount
+  return () => Option.getOrNull(mount())
 }
 
 export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visible: boolean; toggle: () => void } }) {

@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { Data, HashSet } from "effect"
 import type { SessionTab, Tab } from "./tabs"
 
 export type ClosedTab = {
@@ -31,9 +31,24 @@ export function removeClosedTabs(stack: ClosedTab[], server: SessionTab["server"
   return stack.filter((entry) => entry.tab.server !== server || !HashSet.has(removed, entry.tab.sessionId))
 }
 
-export function nextTabAfterClose(tabs: Tab[], index: number, active: boolean) {
-  if (!active) return undefined
-  return tabs[index + 1] ?? tabs[index - 1] ?? null
+/**
+ * Where the view goes after a tab closes.
+ *
+ * - `Stay`: the closed tab was not the active view, so nothing navigates.
+ * - `Home`: the closed tab was the last one, so the view goes home.
+ * - `Select`: the view moves to the neighbouring tab.
+ */
+export type CloseNavigation = Data.TaggedEnum<{
+  Stay: {}
+  Home: {}
+  Select: { readonly tab: Tab }
+}>
+export const CloseNavigation = Data.taggedEnum<CloseNavigation>()
+
+export function nextTabAfterClose(tabs: Tab[], index: number, active: boolean): CloseNavigation {
+  if (!active) return CloseNavigation.Stay()
+  const tab = tabs[index + 1] ?? tabs[index - 1]
+  return tab ? CloseNavigation.Select({ tab }) : CloseNavigation.Home()
 }
 
 function isOpen(tabs: Tab[], tab: SessionTab) {

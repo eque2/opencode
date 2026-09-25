@@ -95,13 +95,14 @@ function SessionTabEntry(props: {
 }) {
   const tabs = useTabs()
   const language = useLanguage()
-  const sdk = createMemo(() => props.serverCtx()?.sdk ?? null)
+  const sdk = createMemo(() => props.serverCtx()?.sdk)
   const cachedSession = createMemo(() => props.serverCtx()?.sync.session.peek(props.tab.sessionId))
   const persisted = createMemo(() => tabs.info[props.id])
   const [loadedSession] = createResource(
     () => {
       const ctx = props.serverCtx()
-      return ctx ? { id: props.tab.sessionId, ctx } : null
+      if (!ctx) return undefined
+      return { id: props.tab.sessionId, ctx }
     },
     ({ id, ctx }) => ctx.sync.session.resolve(id).catch(() => undefined),
   )
@@ -333,6 +334,7 @@ export function TitlebarTabStrip(props: {
           plugins={(defaults) => [
             ...defaults.filter((plugin) => plugin !== Accessibility),
             AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+            // eslint-disable-next-line effect/no-null-use-option -- @dnd-kit/dom FeedbackOptions.dropAnimation documents null as the value that disables the drop animation; undefined means the default animation
             Feedback.configure({ dropAnimation: null }),
           ]}
           onDragStart={(event) => {

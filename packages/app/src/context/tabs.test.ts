@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 import { createRoot, getOwner, onCleanup } from "solid-js"
 import { createTabMemory } from "./tab-memory"
-import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
+import {
+  CloseNavigation,
+  nextTabAfterClose,
+  pushClosedTab,
+  removeClosedTabs,
+  takeClosedTab,
+  type ClosedTab,
+} from "./closed-tabs"
 import type { SessionTab, Tab } from "./tabs"
 import { migrateTabs } from "./tab-migration"
 import { ServerConnection } from "./server"
@@ -13,11 +20,22 @@ function sessionTab(sessionId: string): SessionTab {
   return { type: "session", server, sessionId }
 }
 
+/** Decodes persisted JSON text into the unknown value that the persist layer hands to migrate. */
+const decodePersisted = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+/** Encodes one persisted entry as the JSON text the window storage holds. */
+const encodePersisted = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
+
 describe("tab migration", () => {
   test("drops null and malformed persisted tabs", () => {
-    expect(
-      migrateTabs([null, sessionTab("a"), { type: "session", server }, { type: "unknown", server }, "invalid"], server),
-    ).toEqual([sessionTab("a")])
+    // The persisted list holds a null entry, a valid tab, a session tab without an id, an unknown type and a string.
+    const entries = [
+      "null",
+      encodePersisted(sessionTab("a")),
+      encodePersisted({ type: "session", server }),
+      encodePersisted({ type: "unknown", server }),
+      encodePersisted("invalid"),
+    ]
+    expect(migrateTabs(decodePersisted(`[${entries.join(",")}]`), server)).toEqual([sessionTab("a")])
   })
 
   test("adds the fallback server to valid legacy tabs", () => {
@@ -25,7 +43,8 @@ describe("tab migration", () => {
   })
 
   test("replaces invalid top-level persisted data", () => {
-    expect(migrateTabs(null, server)).toEqual([])
+    // The window storage holds the JSON text null.
+    expect(migrateTabs(decodePersisted("null"), server)).toEqual([])
     expect(migrateTabs({}, server)).toEqual([])
   })
 })
@@ -119,8 +138,8 @@ describe("closed tab stack", () => {
   test("does not navigate when a background tab closes", () => {
     const tabs = [sessionTab("a"), sessionTab("b"), sessionTab("c")]
 
-    expect(nextTabAfterClose(tabs, 1, false)).toBeUndefined()
-    expect(nextTabAfterClose(tabs, 1, true)).toEqual(sessionTab("c"))
-    expect(nextTabAfterClose([sessionTab("a")], 0, true)).toBeNull()
+    expect(nextTabAfterClose(tabs, 1, false)).toEqual(CloseNavigation.Stay())
+    expect(nextTabAfterClose(tabs, 1, true)).toEqual(CloseNavigation.Select({ tab: sessionTab("c") }))
+    expect(nextTabAfterClose([sessionTab("a")], 0, true)).toEqual(CloseNavigation.Home())
   })
 })
