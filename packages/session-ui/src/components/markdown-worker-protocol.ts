@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { Projection } from "./markdown-stream"
 
 export type MarkdownToken = [content: string, style: string]
@@ -31,24 +32,38 @@ export type MarkdownWorkerState = {
   unstable: MarkdownToken[]
 }
 
-export function shouldReleaseMarkdownWorkerState(complete: boolean, latestID: number | undefined, responseID: number) {
-  return complete && latestID === responseID
+export function shouldReleaseMarkdownWorkerState(
+  complete: boolean,
+  latestID: Option.Option<number>,
+  responseID: number,
+) {
+  return complete && Option.exists(latestID, (id) => id === responseID)
 }
 
-export function markdownBlockKey(owner: string, cacheKey: string | undefined, index: number, mode: string) {
-  return `${owner}:${cacheKey ? `${cacheKey}:${index}:${mode}` : `block:${index}`}`
+export function markdownBlockKey(owner: string, cacheKey: Option.Option<string>, index: number, mode: string) {
+  // An empty cache key counts as no key, as the old truthiness check did.
+  const scope = Option.match(
+    Option.filter(cacheKey, (key) => key.length > 0),
+    {
+      onNone: () => `block:${index}`,
+      onSome: (key) => `${key}:${index}:${mode}`,
+    },
+  )
+  return `${owner}:${scope}`
 }
 
 export function applyMarkdownWorkerResponse(
-  state: MarkdownWorkerState | undefined,
+  state: Option.Option<MarkdownWorkerState>,
   response: Extract<MarkdownWorkerResponse, { type: "highlight" }>,
-) {
-  if (state && response.id <= state.id) return state
+): MarkdownWorkerState {
+  if (Option.isSome(state) && response.id <= state.value.id) return state.value
+  const generation = Option.match(state, { onNone: () => 0, onSome: (value) => value.generation })
+  const stable = Option.match(state, { onNone: () => [], onSome: (value) => value.stable })
   return {
     id: response.id,
-    generation: (state?.generation ?? 0) + (response.reset ? 1 : 0),
+    generation: generation + (response.reset ? 1 : 0),
     language: response.language,
-    stable: response.reset ? response.stable : [...(state?.stable ?? []), ...response.stable],
+    stable: response.reset ? response.stable : [...stable, ...response.stable],
     unstable: response.unstable,
   }
 }

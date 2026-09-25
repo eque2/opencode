@@ -28,7 +28,7 @@ type ParsePending = {
   reject: (error: Error) => void
 }
 
-let worker: Worker | undefined
+let worker: Option.Option<Worker> = Option.none()
 let disabled: Error | undefined
 let nextID = 0
 const pending = new Map<number, HighlightPending>()
@@ -38,7 +38,7 @@ const states = new Map<string, MarkdownWorkerState>()
 const keys = MutableHashSet.empty<string>()
 const latest = new Map<string, number>()
 const transport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "highlight" }>>({
-  post: (request) => worker!.postMessage(request),
+  post: (request) => post(request),
   supersede: (request) => {
     const result = pending.get(request.id)
     if (!result) return
@@ -47,7 +47,7 @@ const transport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "
   },
 })
 const projectTransport = createWorkerTransport<Extract<MarkdownWorkerRequest, { type: "project" }>>({
-  post: (request) => worker!.postMessage(request),
+  post: (request) => post(request),
   supersede: (request) => {
     const result = projects.get(request.id)
     if (!result) return
@@ -81,7 +81,7 @@ export function disposeMarkdownProjection(key: string) {
     projects.delete(id)
     request.reject(new MarkdownWorkerDisposedError())
   })
-  worker?.postMessage({ type: "dispose", key } satisfies MarkdownWorkerRequest)
+  post({ type: "dispose", key })
 }
 
 export function highlightStreamingCode(key: string, text: string, language: string, complete = false) {
@@ -109,23 +109,29 @@ export function disposeStreamingCode(key: string) {
     pending.delete(id)
     request.reject(new MarkdownWorkerDisposedError())
   })
-  worker?.postMessage({ type: "dispose", key } satisfies MarkdownWorkerRequest)
+  post({ type: "dispose", key })
 }
 
 export class MarkdownWorkerDisposedError extends Error {}
 export class MarkdownWorkerSupersededError extends Error {}
 export class MarkdownWorkerUnavailableError extends Error {}
 
+function post(request: MarkdownWorkerRequest) {
+  if (Option.isSome(worker)) worker.value.postMessage(request)
+}
+
 function getWorker() {
-  if (worker) return worker
+  if (Option.isSome(worker)) return worker.value
   if (disabled) throw new MarkdownWorkerUnavailableError(disabled.message)
+  let instance: Worker
   try {
-    worker = new Worker(MarkdownWorkerUrl, { type: "module" })
+    instance = new Worker(MarkdownWorkerUrl, { type: "module" })
   } catch (error) {
     disabled = error instanceof Error ? error : new Error(String(error))
     throw new MarkdownWorkerUnavailableError(disabled.message)
   }
-  worker.onmessage = (event: MessageEvent<MarkdownWorkerResponse>) => {
+  worker = Option.some(instance)
+  instance.onmessage = (event: MessageEvent<MarkdownWorkerResponse>) => {
     if (event.data.type === "parse") {
       const result = parses.get(event.data.id)
       if (!result) return
@@ -191,8 +197,8 @@ function getWorker() {
       transport.complete(key, event.data.id)
       return
     }
-    const state = applyMarkdownWorkerResponse(states.get(key), event.data)
-    if (shouldReleaseMarkdownWorkerState(result.complete, latest.get(key), event.data.id)) {
+    const state = applyMarkdownWorkerResponse(Option.fromNullishOr(states.get(key)), event.data)
+    if (shouldReleaseMarkdownWorkerState(result.complete, Option.fromNullishOr(latest.get(key)), event.data.id)) {
       states.delete(key)
       MutableHashSet.remove(keys, key)
       latest.delete(key)
@@ -214,10 +220,10 @@ function getWorker() {
     states.clear()
     MutableHashSet.clear(keys)
     latest.clear()
-    worker?.terminate()
-    worker = undefined
+    if (Option.isSome(worker)) worker.value.terminate()
+    worker = Option.none()
   }
-  worker.onerror = (event) => fail(event.message || "Markdown highlighting worker failed")
-  worker.onmessageerror = () => fail("Markdown worker response failed")
-  return worker
+  instance.onerror = (event) => fail(event.message || "Markdown highlighting worker failed")
+  instance.onmessageerror = () => fail("Markdown worker response failed")
+  return instance
 }

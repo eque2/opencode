@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import { ShikiStreamTokenizer } from "@shikijs/stream"
+import { Option } from "effect"
 import { createMarkdownParser } from "@opencode-ai/ui/context/marked-parser"
 import { OpenCodeTheme } from "@opencode-ai/ui/context/marked-theme"
 import {
@@ -70,7 +71,7 @@ async function parse(request: Extract<MarkdownWorkerRequest, { type: "parse" }>)
 
 async function runProject(request: Extract<MarkdownWorkerRequest, { type: "project" }>) {
   try {
-    const projection = project(projections.get(request.key), request.text, request.live)
+    const projection = project(Option.fromNullishOr(projections.get(request.key)), request.text, request.live)
     projections.set(request.key, projection)
     post({ type: "project", id: request.id, key: request.key, projection })
   } catch (error) {

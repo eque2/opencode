@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { canReusePendingBlock } from "./markdown-projection"
 import { project, stream } from "./markdown-stream"
 
@@ -137,8 +138,8 @@ describe("markdown stream", () => {
   })
 
   test("appends plain code deltas without reprojecting frozen blocks", () => {
-    const previous = project(undefined, "# Plan\n\n```ts\nconst one = 1\n", true)
-    const next = project(previous, `${previous.text}const two = 2\n`, true)
+    const previous = project(Option.none(), "# Plan\n\n```ts\nconst one = 1\n", true)
+    const next = project(Option.some(previous), `${previous.text}const two = 2\n`, true)
 
     expect(next.blocks[0]).toBe(previous.blocks[0])
     expect(next.blocks.at(-1)).toEqual({
@@ -150,8 +151,8 @@ describe("markdown stream", () => {
   })
 
   test("finalizes only the live tail when streaming stops", () => {
-    const live = project(undefined, "# Plan\n\nFinished paragraph.\n\n- final item", true)
-    const final = project(live, live.text, false)
+    const live = project(Option.none(), "# Plan\n\nFinished paragraph.\n\n- final item", true)
+    const final = project(Option.some(live), live.text, false)
 
     expect(final.blocks[0]).toBe(live.blocks[0])
     expect(final.blocks[1]).toBe(live.blocks[1])
@@ -159,8 +160,8 @@ describe("markdown stream", () => {
   })
 
   test("catches up paced text before finalizing", () => {
-    const live = project(undefined, "# Plan\n\nFinished paragraph.\n\n- final", true)
-    const final = project(live, `${live.text} item`, false)
+    const live = project(Option.none(), "# Plan\n\nFinished paragraph.\n\n- final", true)
+    const final = project(Option.some(live), `${live.text} item`, false)
 
     expect(canReusePendingBlock(live.blocks[0], final.blocks[0]!)).toBe(true)
     expect(canReusePendingBlock(live.blocks[1], final.blocks[1]!)).toBe(true)
@@ -168,8 +169,8 @@ describe("markdown stream", () => {
   })
 
   test("completes an open code block when streaming stops", () => {
-    const live = project(undefined, "```ts\nconst value = 1", true)
-    const final = project(live, live.text, false)
+    const live = project(Option.none(), "```ts\nconst value = 1", true)
+    const final = project(Option.some(live), live.text, false)
 
     expect(final.blocks).toEqual([
       {
@@ -183,8 +184,8 @@ describe("markdown stream", () => {
   })
 
   test("does not add a blank line before the first streamed code", () => {
-    const previous = project(undefined, "```ts\n", true)
-    const next = project(previous, `${previous.text}const x = 1`, true)
+    const previous = project(Option.none(), "```ts\n", true)
+    const next = project(Option.some(previous), `${previous.text}const x = 1`, true)
 
     expect(next.blocks.at(-1)).toEqual({
       raw: "```ts\nconst x = 1",
@@ -195,11 +196,11 @@ describe("markdown stream", () => {
   })
 
   test("closes code fences split across provider deltas", () => {
-    const open = project(undefined, "```ts\nconst x = 1\n", true)
-    const one = project(open, `${open.text}\``, true)
-    const two = project(one, `${one.text}\``, true)
-    const closed = project(two, `${two.text}\``, true)
-    const prose = project(closed, `${closed.text}\nafter`, true)
+    const open = project(Option.none(), "```ts\nconst x = 1\n", true)
+    const one = project(Option.some(open), `${open.text}\``, true)
+    const two = project(Option.some(one), `${one.text}\``, true)
+    const closed = project(Option.some(two), `${two.text}\``, true)
+    const prose = project(Option.some(closed), `${closed.text}\nafter`, true)
 
     expect(closed.blocks.at(-1)).toEqual({
       raw: "```ts\nconst x = 1\n```",
@@ -215,10 +216,10 @@ describe("markdown stream", () => {
   })
 
   test("closes tilde fences split across provider deltas", () => {
-    const open = project(undefined, "~~~ts\nconst x = 1\n", true)
-    const one = project(open, `${open.text}~`, true)
-    const two = project(one, `${one.text}~`, true)
-    const closed = project(two, `${two.text}~`, true)
+    const open = project(Option.none(), "~~~ts\nconst x = 1\n", true)
+    const one = project(Option.some(open), `${open.text}~`, true)
+    const two = project(Option.some(one), `${one.text}~`, true)
+    const closed = project(Option.some(two), `${two.text}~`, true)
 
     expect(closed.blocks.at(-1)).toEqual({
       raw: "~~~ts\nconst x = 1\n~~~",

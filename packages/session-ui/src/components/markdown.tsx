@@ -1,5 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { HashSet, MutableHashSet } from "effect"
+import { HashSet, MutableHashSet, Option } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -431,8 +431,8 @@ export function Markdown(
       const base = src.key ?? checksum(src.text)
       return Promise.all(
         src.projection.blocks.map(async (block, index) => {
-          const key = base ? `${base}:${index}:${block.mode}` : undefined
-          const blockKey = markdownBlockKey(owner, src.key, index, block.mode)
+          const key = base ? Option.some(`${base}:${index}:${block.mode}`) : Option.none()
+          const blockKey = markdownBlockKey(owner, Option.fromNullishOr(src.key), index, block.mode)
 
           if (block.mode === "code") {
             const cached = completedCode.get(blockKey)
@@ -450,17 +450,17 @@ export function Markdown(
             return rendered
           }
 
-          if (key) {
-            const cached = getCachedMarkdown(key)
+          if (Option.isSome(key)) {
+            const cached = getCachedMarkdown(key.value)
             if (cached?.raw === block.raw) {
-              touchCachedMarkdown(key, cached)
+              touchCachedMarkdown(key.value, cached)
               return { key: blockKey, mode: block.mode, ...cached }
             }
           }
 
           const hash = checksum(block.raw)
           const safe = sanitizeMarkdown(await parseMarkdown(block.src))
-          if (key && hash) touchCachedMarkdown(key, { raw: block.raw, hash, html: safe })
+          if (Option.isSome(key) && hash) touchCachedMarkdown(key.value, { raw: block.raw, hash, html: safe })
           return { key: blockKey, mode: block.mode, raw: block.raw, hash: hash ?? "", html: safe }
         }),
       )
@@ -566,9 +566,9 @@ function pendingBlocks(
   if (!projection || result.text === projection.text) return result.blocks
   const initial = result.blocks.length === 1 && result.blocks[0]?.key === "initial"
   return projection.blocks.map((block, index) => {
-    const current = initial ? undefined : result.blocks[index]
-    if (current && canReusePendingBlock(current, block)) return current
-    const key = markdownBlockKey(owner, cacheKey, index, block.mode)
+    const current = initial ? Option.none() : Option.fromNullishOr(result.blocks.at(index))
+    if (Option.isSome(current) && canReusePendingBlock(current.value, block)) return current.value
+    const key = markdownBlockKey(owner, Option.fromNullishOr(cacheKey), index, block.mode)
     if (block.mode !== "code")
       return { key, mode: block.mode, raw: block.raw, hash: String(block.raw.length), html: fallback(block.src) }
     return {
@@ -641,16 +641,21 @@ function updateCodeBlock(
   block: Extract<RenderedBlock, { mode: "code" }>,
   labels: CopyLabels,
 ) {
-  const existing = current instanceof HTMLDivElement && current.dataset.markdownKey === block.key ? current : undefined
-  const next = existing ?? document.createElement("div")
+  const existing = Option.liftPredicate(
+    current,
+    (element): element is HTMLDivElement =>
+      element instanceof HTMLDivElement && element.dataset.markdownKey === block.key,
+  )
+  const next = Option.getOrElse(existing, () => document.createElement("div"))
   next.dataset.markdownBlock = ""
   next.dataset.markdownKey = block.key
   next.dataset.markdownHash = block.hash
   next.dataset.markdownComplete = block.complete ? "true" : "false"
   next.style.display = "contents"
 
-  const code = existing?.querySelector("code")
-  if (code instanceof HTMLElement) {
+  const existingCode = Option.flatMapNullishOr(existing, (element) => element.querySelector("code"))
+  if (Option.isSome(existingCode)) {
+    const code = existingCode.value
     const wrapper = code.closest('[data-component="markdown-code"]')
     if (wrapper instanceof HTMLElement) applyCodeMetadata(wrapper, block.language)
     code.className = `language-${block.language}`
