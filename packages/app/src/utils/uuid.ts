@@ -1,4 +1,9 @@
-const fallback = () => Math.random().toString(16).slice(2)
+import { Random } from "effect"
+
+// uuid() is a sync API that runs outside any fiber, so the fallback reads the default Random service directly.
+const random = Random.Random.defaultValue()
+
+const fallback = () => random.nextDoubleUnsafe().toString(16).slice(2)
 
 export function uuid() {
   const c = globalThis.crypto
