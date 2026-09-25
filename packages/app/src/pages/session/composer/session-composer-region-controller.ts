@@ -109,10 +109,16 @@ export function createSessionComposerRegionController(input: {
     () => `${input.sessionKey()}\0${store.ready}`,
   )
   const value = createMemo(() => Math.max(0, Math.min(1, progress())))
-  const ready = Promise.resolve()
+  // A prompt store without a ready promise is ready at once; the resource still settles asynchronously.
   const [promptReady] = createResource(
-    () => input.prompt.ready.promise ?? ready,
-    (promise) => promise.then(() => true),
+    () => Option.fromNullishOr(input.prompt.ready.promise),
+    (pending) =>
+      Effect.runPromise(
+        Option.match(pending, {
+          onNone: () => Effect.succeed(true),
+          onSome: (promise) => Effect.promise(() => promise).pipe(Effect.as(true)),
+        }),
+      ),
   )
 
   return {
