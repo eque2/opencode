@@ -1542,7 +1542,7 @@ export function MessageTimeline(props: {
                           if (event.isComposing || event.keyCode === 229) return
                           if (event.key === "Enter") {
                             event.preventDefault()
-                            void saveTitleEditor()
+                            saveTitleEditor()
                             return
                           }
                           if (event.key === "Escape") {
