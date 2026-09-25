@@ -4,6 +4,7 @@ import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
 import { SplitBorder } from "./border"
 import { TextAttributes } from "@opentui/core"
+import { MissingProviderError } from "../context/errors"
 export type ToastOptions = {
   title?: string
   message: string
@@ -96,7 +97,8 @@ export function ToastProvider(props: ParentProps) {
 export function useToast() {
   const value = useContext(ctx)
   if (!value) {
-    throw new Error("useToast must be used within a ToastProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useToast must be used within a ToastProvider" })
   }
   return value
 }

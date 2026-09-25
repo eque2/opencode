@@ -1,4 +1,5 @@
 import { createContext, Show, useContext, type ParentProps } from "solid-js"
+import { MissingProviderError } from "./errors"
 
 export function createSimpleContext<T, Props extends Record<string, any>>(input: {
   name: string
@@ -19,7 +20,10 @@ export function createSimpleContext<T, Props extends Record<string, any>>(input:
     },
     use: () => {
       const value = useContext(ctx)
-      if (!value) throw new Error(`${input.name} context must be used within a context provider`)
+      if (!value) {
+        // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+        throw new MissingProviderError({ message: `${input.name} context must be used within a context provider` })
+      }
       return value
     },
   }
