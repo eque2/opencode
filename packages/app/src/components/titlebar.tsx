@@ -39,12 +39,24 @@ import type { PromptSession } from "@/context/prompt"
 import "./titlebar.css"
 import { newTabTooltipKeybind } from "./command-tooltip-keybind"
 import { normalizeSessionInfo } from "@/utils/session"
+import { Data, Effect } from "effect"
 
 const legacyTitlebarHeight = 40
 const v2TitlebarHeight = 36
 const minTitlebarZoom = 0.25
 const windowsControlsBaseWidth = 138 // 3 native Windows caption buttons at 46px each.
 const macTrafficLightsBaseWidth = 84
+
+/** A new draft tab that failed to open. `cause` is the original rejection. */
+class TitlebarDraftError extends Data.TaggedError("App.TitlebarDraftError")<{ readonly cause: unknown }> {}
+
+/**
+ * Runs titlebar work in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 export type TitlebarUpdate = {
   version: () => string | undefined
@@ -255,6 +267,14 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
               }
             })
 
+            const openDraft = (...args: Parameters<typeof tabs.newDraft>) =>
+              runDetached(
+                Effect.tryPromise({
+                  try: () => tabs.newDraft(...args),
+                  catch: (cause) => new TitlebarDraftError({ cause }),
+                }),
+              )
+
             makeEventListener(window, SESSION_TABS_REMOVED_EVENT, (event) => {
               const detail = readSessionTabsRemovedDetail(event)
               if (!detail) return
@@ -271,14 +291,14 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   sessionId: activeSession.id,
                 }
                 const model = tabs.stateValue<PromptSession>(sessionTab, "prompt")?.model.current()
-                tabs.newDraft({ server: sessionTab.server, directory: activeSession.directory }, "", model)
+                openDraft({ server: sessionTab.server, directory: activeSession.directory }, "", model)
                 return
               }
 
               const activeTab = currentTab()
               if (activeTab?.type === "draft") {
                 const model = tabs.stateValue<PromptSession>(activeTab, "prompt")?.model.current()
-                tabs.newDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
+                openDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
                 return
               }
 
@@ -292,14 +312,14 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                       .find((item) => item.worktree === selection.directory)
                   : undefined
                 if (conn && project) {
-                  tabs.newDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
+                  openDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
                   return
                 }
               }
 
               const current = layout.projects.list()[0]
               if (current) {
-                tabs.newDraft({ server: server.key, directory: current.worktree }, "")
+                openDraft({ server: server.key, directory: current.worktree }, "")
                 return
               }
 
@@ -309,7 +329,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
               })[0]
               if (!fallback) return
 
-              tabs.newDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
+              openDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
             }
             const toggleHome = () => tabs.toggleHome({ home: layout.route().type === "home", current: currentTab() })
 
