@@ -139,9 +139,9 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     () => replacementCurrent() ?? (props.current?.type === "directory" ? props.current.directory : currentCheckout()),
   )
   const currentRoot = createMemo<ProjectDirectory | undefined>(() => {
-    if (showError()) return
+    if (showError()) return undefined
     const directory = currentDirectory()
-    if (!directory) return
+    if (!directory) return undefined
     return (
       directoryData()
         ?.filter((root) => contains(root.directory, directory))
