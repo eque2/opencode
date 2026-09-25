@@ -3,7 +3,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { WordmarkV2 } from "@opencode-ai/ui/v2/wordmark-v2"
-import { DateTime } from "effect"
+import { DateTime, Option } from "effect"
 import { Show, createMemo, createSignal, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
@@ -110,10 +110,11 @@ function ProviderTip() {
       providers.paid().length === 0 &&
       DateTime.toEpochMillis(DateTime.nowUnsafe()) - persistedState.dismissedAt >= providerTipDismissalDuration,
   )
-  const [ref, setRef] = createSignal<HTMLDivElement>()
+  const [ref, setRef] = createSignal(Option.none<HTMLDivElement>())
   const presence = createPresence({
     show: visible,
-    element: () => ref() ?? null,
+    // solid-presence types the element as HTMLElement | null.
+    element: () => Option.getOrNull(ref()),
   })
   const openProviders = () => {
     void import("@/components/dialog-connect-provider").then(({ DialogConnectProvider }) => {
@@ -125,7 +126,7 @@ function ProviderTip() {
     <Show when={presence.present()}>
       <div class="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-10">
         <div
-          ref={setRef}
+          ref={(element) => setRef(Option.some(element))}
           data-component="provider-tip"
           data-visible={visible()}
           class="group/provider-tip pointer-events-auto relative flex h-6 max-w-full items-center transition-[opacity,transform] duration-[250ms] ease-[cubic-bezier(0.215,0.61,0.355,1)] motion-reduce:transition-none"
