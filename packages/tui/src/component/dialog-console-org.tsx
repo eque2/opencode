@@ -95,26 +95,32 @@ export function DialogConsoleOrg() {
             <text fg={theme.textMuted}>{accountHost(item.accountUrl)}</text>
           </box>
         ),
-        onSelect: async () => {
+        onSelect: () => {
           if (item.active) {
             dialog.clear()
             return
           }
 
-          await sdk.client.experimental.console.switchOrg(
-            {
-              accountID: item.accountID,
-              orgID: item.orgID,
-            },
-            { throwOnError: true },
-          )
+          Effect.runFork(
+            Effect.gen(function* () {
+              yield* Effect.promise(() =>
+                sdk.client.experimental.console.switchOrg(
+                  {
+                    accountID: item.accountID,
+                    orgID: item.orgID,
+                  },
+                  { throwOnError: true },
+                ),
+              )
 
-          await sdk.client.instance.dispose()
-          toast.show({
-            message: `Switched to ${item.orgName}`,
-            variant: "info",
-          })
-          dialog.clear()
+              yield* Effect.promise(() => sdk.client.instance.dispose())
+              toast.show({
+                message: `Switched to ${item.orgName}`,
+                variant: "info",
+              })
+              dialog.clear()
+            }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
+          )
         },
       }))
   })
