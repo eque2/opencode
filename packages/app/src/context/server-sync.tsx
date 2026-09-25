@@ -309,7 +309,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       return configQuery.data ?? {}
     },
     get reload() {
-      return updateConfigMutation.isPending ? "pending" : undefined
+      if (updateConfigMutation.isPending) return "pending"
+      return undefined
     },
   })
 
