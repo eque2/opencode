@@ -50,7 +50,7 @@ const migrate = (value: unknown) => {
 }
 
 const clone = (value: State | undefined) => {
-  if (!value) return
+  if (!value) return undefined
   return {
     ...value,
     model: value.model ? { ...value.model } : undefined,
@@ -110,6 +110,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         if (!model) continue
         if (validModel(model)) return model
       }
+      return undefined
     }
 
     const pickAgent = (name: string | undefined) => {
@@ -152,14 +153,16 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
 
     const configuredModel = () => {
       const model = resolveDefaultModel(providers.defaultModel(), sync().data.config.model)
-      if (!model) return
+      if (!model) return undefined
       if (validModel(model)) return model
+      return undefined
     }
 
     const recentModel = () => {
       for (const item of models.recent.list()) {
         if (validModel(item)) return item
       }
+      return undefined
     }
 
     const defaultModel = () => {
@@ -176,6 +179,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const model = { providerID: provider.id, modelID: first.id }
         if (validModel(model)) return model
       }
+      return undefined
     }
 
     const fallback = createMemo<ModelKey | undefined>(() => configuredModel() ?? recentModel() ?? defaultModel())
@@ -237,14 +241,14 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         () => agent.current()?.model,
         fallback,
       )
-      if (!item) return
+      if (!item) return undefined
       return models.find(item)
     }
 
     const configured = () => {
       const item = agent.current()
       const model = current()
-      if (!item || !model) return
+      if (!item || !model) return undefined
       return getConfiguredAgentVariant({
         agent: { model: item.model, variant: item.variant },
         model: { providerID: model.provider.id, modelID: model.id, variants: model.variants },
@@ -333,9 +337,10 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           })
           if (resolved) return resolved
           const model = current()
-          if (!model) return
+          if (!model) return undefined
           const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
           if (saved && this.list().includes(saved)) return saved
+          return undefined
         },
         list() {
           const item = current()
