@@ -12,7 +12,7 @@ const KeyStroke = Schema.Struct({
   meta: Schema.optional(Schema.Boolean),
   super: Schema.optional(Schema.Boolean),
   hyper: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "TuiKeybind.KeyStroke" })
 
 const BindingObject = Schema.StructWithRest(
   Schema.Struct({

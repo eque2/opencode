@@ -99,7 +99,7 @@ export type Resolved = Omit<Info, "attention" | "keybinds" | "leader_timeout" | 
 
 export const ResolveOptions = Schema.Struct({
   terminalSuspend: Schema.Boolean,
-})
+}).annotate({ identifier: "TuiConfig.ResolveOptions" })
 export type ResolveOptions = Schema.Schema.Type<typeof ResolveOptions>
 
 export function resolve(input: Info, options: ResolveOptions): Resolved {
