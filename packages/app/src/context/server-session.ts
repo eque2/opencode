@@ -12,6 +12,7 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
+import { HashSet, MutableHashSet } from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -26,11 +27,43 @@ import type { ServerApi } from "@/utils/server"
 type MessageApi = ServerApi["message"]
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
-const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
+const SKIP_PARTS: HashSet.HashSet<string> = HashSet.make("patch", "step-start", "step-finish")
 const initialMessagePageSize = 20
 const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
-const emptyIDs: ReadonlySet<string> = new Set()
+
+type IDSet = MutableHashSet.MutableHashSet<string>
+
+const hasID = (ids: IDSet | undefined, id: string) => ids !== undefined && MutableHashSet.has(ids, id)
+
+const removeID = (ids: IDSet | undefined, id: string) => {
+  if (ids) MutableHashSet.remove(ids, id)
+}
+
+// Adds `id` to the set held under `key`, and creates that set on first use.
+const addToIndex = (index: Map<string, IDSet>, key: string, id: string) => {
+  const ids = index.get(key)
+  if (ids) {
+    MutableHashSet.add(ids, id)
+    return
+  }
+  index.set(key, MutableHashSet.make(id))
+}
+
+// Adds every id in `ids` to the set held under `key`, and creates that set on first use.
+const mergeIntoIndex = (index: Map<string, IDSet>, key: string, ids: Iterable<string>) => {
+  const target = index.get(key) ?? MutableHashSet.empty<string>()
+  for (const id of ids) MutableHashSet.add(target, id)
+  index.set(key, target)
+}
+
+// Removes `id` from the set held under `key`, and drops that set when it becomes empty.
+const removeFromIndex = (index: Map<string, IDSet> | undefined, key: string, id: string) => {
+  const ids = index?.get(key)
+  if (!ids) return
+  MutableHashSet.remove(ids, id)
+  if (MutableHashSet.size(ids) === 0) index?.delete(key)
+}
 
 function needsOlderTurnRoot(source: readonly SessionMessageInfo[]) {
   const boundary = source.find(
@@ -86,17 +119,17 @@ function legacyMessageSource(items: { info: Message; parts: Part[] }[]): Session
 
 // Most markers describe the current HTTP attempt; deltaParts persists non-durable stream state across retries.
 type MessageLoadState = {
-  touchedMessages: Set<string>
-  removedMessages: Set<string>
-  retainedMessages: Set<string>
-  touchedParts: Map<string, Set<string>>
-  deltaParts: Map<string, Set<string>>
-  carriedDeltaParts: Map<string, Set<string>>
-  removedParts: Map<string, Set<string>>
-  optimisticParts: Map<string, Set<string>>
-  orphanParents: Set<string>
-  clearedMessageParts: Set<string>
-  touchedSource: Set<string>
+  touchedMessages: IDSet
+  removedMessages: IDSet
+  retainedMessages: IDSet
+  touchedParts: Map<string, IDSet>
+  deltaParts: Map<string, IDSet>
+  carriedDeltaParts: Map<string, IDSet>
+  removedParts: Map<string, IDSet>
+  optimisticParts: Map<string, IDSet>
+  orphanParents: IDSet
+  clearedMessageParts: IDSet
+  touchedSource: IDSet
 }
 
 type MessageLoadBaseline = Pick<
@@ -152,9 +185,9 @@ function reconcileFetched<T extends { id: string }>(
   fetched: T[],
   current: readonly T[],
   options: {
-    touched?: ReadonlySet<string>
-    retained?: ReadonlySet<string>
-    removed?: ReadonlySet<string>
+    touched?: Iterable<string>
+    retained?: Iterable<string>
+    removed?: Iterable<string>
     preserveUnfetched?: boolean | ((item: T) => boolean)
     compare?: (a: T, b: T) => number
   } = {},
@@ -167,18 +200,18 @@ function reconcileFetched<T extends { id: string }>(
         result.set(item.id, item)
     }
   }
-  for (const id of options.retained ?? emptyIDs) {
+  for (const id of options.retained ?? []) {
     if (result.has(id)) continue
     const item = live.get(id)
     if (item) result.set(id, item)
   }
   // Events observed while the request is pending are the freshest client state for those identities.
-  for (const id of options.touched ?? emptyIDs) {
+  for (const id of options.touched ?? []) {
     const item = live.get(id)
     if (item) result.set(id, item)
     if (!item) result.delete(id)
   }
-  for (const id of options.removed ?? emptyIDs) result.delete(id)
+  for (const id of options.removed ?? []) result.delete(id)
   const items = [...result.values()]
   return options.compare ? items.sort(options.compare) : items
 }
@@ -214,9 +247,9 @@ export function createServerSession(
   const optimistic = new Map<string, Map<string, OptimisticItem>>()
   const v2 = createV2SessionReducer()
   const messageLoads = new Map<string, MessageLoadState>()
-  const pendingParts = new Map<string, Map<string, Set<string>>>()
-  const orphanParts = new Map<string, Set<string>>()
-  const removedMessages = new Map<string, Set<string>>()
+  const pendingParts = new Map<string, Map<string, IDSet>>()
+  const orphanParts = new Map<string, IDSet>()
+  const removedMessages = new Map<string, IDSet>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
@@ -229,7 +262,7 @@ export function createServerSession(
     delete cache.part[messageID]
   }
   const seen = new Set<string>()
-  const infoSeen = new Set<string>()
+  const infoSeen: IDSet = MutableHashSet.empty()
   const pinned = new Map<string, number>()
   const generations = new Map<string, object>()
   const generation = (sessionID: string) => {
@@ -259,10 +292,10 @@ export function createServerSession(
 
   const remember = (session: Session) => {
     setData("info", session.id, reconcile(session))
-    infoSeen.delete(session.id)
-    infoSeen.add(session.id)
-    if (infoSeen.size > sessionInfoLimit) {
-      const preserve = new Set([
+    MutableHashSet.remove(infoSeen, session.id)
+    MutableHashSet.add(infoSeen, session.id)
+    if (MutableHashSet.size(infoSeen) > sessionInfoLimit) {
+      const preserve = MutableHashSet.fromIterable([
         ...pinned.keys(),
         ...requests.keys(),
         ...inflight.keys(),
@@ -282,16 +315,16 @@ export function createServerSession(
       for (const sessionID of preserve) {
         let current = data.info[sessionID]
         while (current) {
-          preserve.add(current.id)
+          MutableHashSet.add(preserve, current.id)
           current = current.parentID ? data.info[current.parentID] : undefined
         }
       }
       const stale: string[] = []
       for (const sessionID of infoSeen) {
-        if (infoSeen.size - stale.length <= sessionInfoLimit) break
-        if (!preserve.has(sessionID)) stale.push(sessionID)
+        if (MutableHashSet.size(infoSeen) - stale.length <= sessionInfoLimit) break
+        if (!MutableHashSet.has(preserve, sessionID)) stale.push(sessionID)
       }
-      stale.forEach((sessionID) => infoSeen.delete(sessionID))
+      stale.forEach((sessionID) => MutableHashSet.remove(infoSeen, sessionID))
       stale.forEach((sessionID) => generations.delete(sessionID))
       setData(
         "info",
@@ -337,11 +370,11 @@ export function createServerSession(
   const peekLineage = (sessionID: string) => {
     const session = data.info[sessionID]
     if (!session) return
-    const seen = new Set([session.id])
+    const visited = MutableHashSet.make(session.id)
     let root = session
     while (root.parentID) {
-      if (seen.has(root.parentID)) throw new Error(`Session parent cycle: ${root.parentID}`)
-      seen.add(root.parentID)
+      if (MutableHashSet.has(visited, root.parentID)) throw new Error(`Session parent cycle: ${root.parentID}`)
+      MutableHashSet.add(visited, root.parentID)
       const parent = data.info[root.parentID]
       if (!parent) return
       root = parent
@@ -394,8 +427,8 @@ export function createServerSession(
     const items = optimistic.get(sessionID)
     const item = items?.get(messageID)
     if (!items || !item) return
-    const confirmed = new Set(confirmedParts.map((part) => part.id))
-    const parts = item.parts.filter((part) => !confirmed.has(part.id))
+    const confirmed = MutableHashSet.fromIterable(confirmedParts.map((part) => part.id))
+    const parts = item.parts.filter((part) => !MutableHashSet.has(confirmed, part.id))
     if (parts.length === 0) {
       clearOptimistic(sessionID, messageID)
       return
@@ -413,72 +446,66 @@ export function createServerSession(
     if (!load) return
     // A part event keeps an existing parent when the fetched page omits it without overriding fetched metadata.
     const messages = data.message[sessionID]
-    if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
-    const parts = load.touchedParts.get(messageID)
-    if (parts) {
-      parts.add(partID)
-      return
-    }
-    load.touchedParts.set(messageID, new Set([partID]))
+    if (messages?.some((message) => message.id === messageID)) MutableHashSet.add(load.retainedMessages, messageID)
+    addToIndex(load.touchedParts, messageID, partID)
   }
 
   const resetMessageLoad = (sessionID: string, load: MessageLoadState, baseline?: MessageLoadBaseline) => {
-    load.touchedMessages.clear()
-    load.retainedMessages.clear()
+    MutableHashSet.clear(load.touchedMessages)
+    MutableHashSet.clear(load.retainedMessages)
     load.touchedParts.clear()
     load.carriedDeltaParts.clear()
-    load.clearedMessageParts.clear()
+    MutableHashSet.clear(load.clearedMessageParts)
     for (const messageID of load.removedMessages) {
-      load.touchedMessages.add(messageID)
-      load.clearedMessageParts.add(messageID)
+      MutableHashSet.add(load.touchedMessages, messageID)
+      MutableHashSet.add(load.clearedMessageParts, messageID)
     }
     for (const [messageID, parts] of load.deltaParts) {
-      load.touchedParts.set(messageID, new Set(parts))
-      load.carriedDeltaParts.set(messageID, new Set(parts))
+      load.touchedParts.set(messageID, MutableHashSet.fromIterable(parts))
+      load.carriedDeltaParts.set(messageID, MutableHashSet.fromIterable(parts))
       const messages = data.message[sessionID]
-      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) MutableHashSet.add(load.retainedMessages, messageID)
     }
     for (const [messageID, parts] of load.removedParts) {
-      const touched = load.touchedParts.get(messageID) ?? new Set<string>()
-      parts.forEach((partID) => touched.add(partID))
-      load.touchedParts.set(messageID, touched)
+      mergeIntoIndex(load.touchedParts, messageID, parts)
       const messages = data.message[sessionID]
-      if (messages?.some((message) => message.id === messageID)) load.retainedMessages.add(messageID)
+      if (messages?.some((message) => message.id === messageID)) MutableHashSet.add(load.retainedMessages, messageID)
     }
     for (const [messageID, parts] of load.optimisticParts) {
-      load.removedMessages.delete(messageID)
-      load.clearedMessageParts.add(messageID)
-      load.touchedMessages.add(messageID)
-      const touched = load.touchedParts.get(messageID) ?? new Set<string>()
-      parts.forEach((partID) => touched.add(partID))
-      load.touchedParts.set(messageID, touched)
+      MutableHashSet.remove(load.removedMessages, messageID)
+      MutableHashSet.add(load.clearedMessageParts, messageID)
+      MutableHashSet.add(load.touchedMessages, messageID)
+      mergeIntoIndex(load.touchedParts, messageID, parts)
     }
-    baseline?.touchedMessages.forEach((messageID) => load.touchedMessages.add(messageID))
-    baseline?.retainedMessages.forEach((messageID) => load.retainedMessages.add(messageID))
-    baseline?.clearedMessageParts.forEach((messageID) => load.clearedMessageParts.add(messageID))
-    baseline?.touchedParts.forEach((parts, messageID) => {
-      const touched = load.touchedParts.get(messageID) ?? new Set<string>()
-      parts.forEach((partID) => touched.add(partID))
-      load.touchedParts.set(messageID, touched)
-    })
+    if (!baseline) return
+    for (const messageID of baseline.touchedMessages) MutableHashSet.add(load.touchedMessages, messageID)
+    for (const messageID of baseline.retainedMessages) MutableHashSet.add(load.retainedMessages, messageID)
+    for (const messageID of baseline.clearedMessageParts) MutableHashSet.add(load.clearedMessageParts, messageID)
+    baseline.touchedParts.forEach((parts, messageID) => mergeIntoIndex(load.touchedParts, messageID, parts))
   }
 
   const messageLoadBaseline = (load: MessageLoadState, exclude: string): MessageLoadBaseline => ({
-    touchedMessages: new Set([...load.touchedMessages].filter((messageID) => messageID !== exclude)),
-    retainedMessages: new Set([...load.retainedMessages].filter((messageID) => messageID !== exclude)),
+    touchedMessages: MutableHashSet.fromIterable(
+      [...load.touchedMessages].filter((messageID) => messageID !== exclude),
+    ),
+    retainedMessages: MutableHashSet.fromIterable(
+      [...load.retainedMessages].filter((messageID) => messageID !== exclude),
+    ),
     touchedParts: new Map(
       [...load.touchedParts]
         .filter(([messageID]) => messageID !== exclude)
-        .map(([messageID, parts]) => [messageID, new Set(parts)]),
+        .map(([messageID, parts]) => [messageID, MutableHashSet.fromIterable(parts)]),
     ),
-    clearedMessageParts: new Set([...load.clearedMessageParts].filter((messageID) => messageID !== exclude)),
+    clearedMessageParts: MutableHashSet.fromIterable(
+      [...load.clearedMessageParts].filter((messageID) => messageID !== exclude),
+    ),
   })
 
   const evict = (sessionIDs: string[]) => {
     if (sessionIDs.length === 0) return
-    const evicted = new Set(sessionIDs)
+    const evicted = MutableHashSet.fromIterable(sessionIDs)
     for (const [partID, item] of deltaBases) {
-      if (evicted.has(item.sessionID)) deltaBases.delete(partID)
+      if (MutableHashSet.has(evicted, item.sessionID)) deltaBases.delete(partID)
     }
     sessionIDs.forEach((sessionID) => {
       generations.delete(sessionID)
@@ -510,24 +537,24 @@ export function createServerSession(
     )
   }
 
-  const protectedSessions = () =>
-    new Set([
-      ...pinned.keys(),
-      ...requests.keys(),
-      ...inflight.keys(),
-      ...inflightTodo.keys(),
-      ...messageLoads.keys(),
-      ...optimistic.keys(),
-      ...Object.entries(data.permission)
-        .filter(([, items]) => items.length > 0)
-        .map(([sessionID]) => sessionID),
-      ...Object.entries(data.question)
-        .filter(([, items]) => items.length > 0)
-        .map(([sessionID]) => sessionID),
-      ...Object.entries(data.session_status)
-        .filter(([, status]) => status.type !== "idle")
-        .map(([sessionID]) => sessionID),
-    ])
+  // Duplicates are harmless: callers only test membership.
+  const protectedSessions = () => [
+    ...pinned.keys(),
+    ...requests.keys(),
+    ...inflight.keys(),
+    ...inflightTodo.keys(),
+    ...messageLoads.keys(),
+    ...optimistic.keys(),
+    ...Object.entries(data.permission)
+      .filter(([, items]) => items.length > 0)
+      .map(([sessionID]) => sessionID),
+    ...Object.entries(data.question)
+      .filter(([, items]) => items.length > 0)
+      .map(([sessionID]) => sessionID),
+    ...Object.entries(data.session_status)
+      .filter(([, status]) => status.type !== "idle")
+      .map(([sessionID]) => sessionID),
+  ]
 
   const touch = (sessionID: string) =>
     evict(
@@ -604,8 +631,8 @@ export function createServerSession(
   }
 
   const replaceMessages = (sessionID: string, messages: Message[]) => {
-    const messageIDs = new Set(messages.map((message) => message.id))
-    const dropped = (data.message[sessionID] ?? []).filter((message) => !messageIDs.has(message.id))
+    const messageIDs = MutableHashSet.fromIterable(messages.map((message) => message.id))
+    const dropped = (data.message[sessionID] ?? []).filter((message) => !MutableHashSet.has(messageIDs, message.id))
     setData("message", sessionID, reconcile(messages, { key: "id" }))
     setData(
       produce((draft) => {
@@ -615,20 +642,15 @@ export function createServerSession(
     return messageIDs
   }
 
-  const replaceParts = (
-    sessionID: string,
-    items: MessagePage["part"],
-    messageIDs: Set<string>,
-    load?: MessageLoadState,
-  ) => {
+  const replaceParts = (sessionID: string, items: MessagePage["part"], messageIDs: IDSet, load?: MessageLoadState) => {
     for (const item of items) {
-      if (!messageIDs.has(item.id)) continue
-      const fetched = load?.clearedMessageParts.has(item.id)
+      if (!MutableHashSet.has(messageIDs, item.id)) continue
+      const fetched = hasID(load?.clearedMessageParts, item.id)
         ? []
-        : item.part.filter((part) => !SKIP_PARTS.has(part.type))
-      const fetchedIDs = new Set(fetched.map((part) => part.id))
+        : item.part.filter((part) => !HashSet.has(SKIP_PARTS, part.type))
+      const fetchedIDs = MutableHashSet.fromIterable(fetched.map((part) => part.id))
       const pending = pendingParts.get(sessionID)?.get(item.id)
-      const touched = new Set([...(load?.touchedParts.get(item.id) ?? []), ...(pending ?? [])])
+      const touched = MutableHashSet.fromIterable([...(load?.touchedParts.get(item.id) ?? []), ...(pending ?? [])])
       for (const part of fetched) {
         const accumulated = data.part_text_accum_delta[part.id]
         const base = deltaBases.get(part.id)?.base
@@ -640,24 +662,25 @@ export function createServerSession(
           part.text.startsWith(base) &&
           accumulated.startsWith(part.text) &&
           accumulated !== part.text
-        if (preserveDelta) touched.add(part.id)
-        if (load?.carriedDeltaParts.get(item.id)?.has(part.id) && !preserveDelta) touched.delete(part.id)
+        if (preserveDelta) MutableHashSet.add(touched, part.id)
+        if (hasID(load?.carriedDeltaParts.get(item.id), part.id) && !preserveDelta)
+          MutableHashSet.remove(touched, part.id)
       }
       for (const partID of load?.carriedDeltaParts.get(item.id) ?? []) {
-        if (!fetchedIDs.has(partID)) touched.delete(partID)
+        if (!MutableHashSet.has(fetchedIDs, partID)) MutableHashSet.remove(touched, partID)
       }
       const parts = reconcileFetched(fetched, data.part[item.id] ?? [], { touched })
       if (!parts.length) {
-        orphanParts.get(sessionID)?.delete(item.id)
+        removeID(orphanParts.get(sessionID), item.id)
         setData(produce((draft) => deleteMessageParts(draft, item.id)))
         continue
       }
-      const partIDs = new Set(parts.map((part) => part.id))
+      const partIDs = MutableHashSet.fromIterable(parts.map((part) => part.id))
       setData(
         "part_text_accum_delta",
         produce((draft) => {
           for (const part of data.part[item.id] ?? []) {
-            if (!partIDs.has(part.id) || !touched.has(part.id)) {
+            if (!MutableHashSet.has(partIDs, part.id) || !MutableHashSet.has(touched, part.id)) {
               delete draft[part.id]
               deltaBases.delete(part.id)
             }
@@ -665,7 +688,7 @@ export function createServerSession(
         }),
       )
       setData("part", item.id, reconcile(parts, { key: "id" }))
-      orphanParts.get(sessionID)?.delete(item.id)
+      removeID(orphanParts.get(sessionID), item.id)
     }
   }
 
@@ -683,7 +706,7 @@ export function createServerSession(
           const current = existing.filter((message) => !incoming.has(message.id))
           const live = new Map(existing.map((message) => [message.id, message]))
           return (page.sourceMode === "older" ? [...page.source, ...current] : [...current, ...page.source]).map(
-            (message) => (load?.touchedSource.has(message.id) ? (live.get(message.id) ?? message) : message),
+            (message) => (hasID(load?.touchedSource, message.id) ? (live.get(message.id) ?? message) : message),
           )
         })()
       : undefined
@@ -702,11 +725,11 @@ export function createServerSession(
         : page
     const merged = mergeOptimisticPage(projected, [...(optimistic.get(sessionID)?.values() ?? [])])
     merged.observed.forEach((item) => {
-      if (!load?.clearedMessageParts.has(item.messageID)) confirmOptimistic(sessionID, item.messageID, item.parts)
+      if (!hasID(load?.clearedMessageParts, item.messageID)) confirmOptimistic(sessionID, item.messageID, item.parts)
     })
-    const touchedMessages = new Set([...(load?.touchedMessages ?? []), ...(removedMessages.get(sessionID) ?? [])])
     const messages = reconcileFetched(merged.session, data.message[sessionID] ?? [], {
-      touched: touchedMessages,
+      // Duplicate ids are harmless: reconcileFetched applies each touched id idempotently.
+      touched: [...(load?.touchedMessages ?? []), ...(removedMessages.get(sessionID) ?? [])],
       retained: load?.retainedMessages,
       removed: load?.removedMessages,
       preserveUnfetched,
@@ -719,7 +742,8 @@ export function createServerSession(
       const orphans = orphanParts.get(sessionID)
       if (cleanupOrphans && page.complete && orphans) {
         for (const messageID of orphans) {
-          if (!messageIDs.has(messageID)) setData(produce((draft) => deleteMessageParts(draft, messageID)))
+          if (!MutableHashSet.has(messageIDs, messageID))
+            setData(produce((draft) => deleteMessageParts(draft, messageID)))
         }
         orphanParts.delete(sessionID)
       }
@@ -734,17 +758,17 @@ export function createServerSession(
     if (meta.loading[sessionID]) return
     const active = generation(sessionID)
     const load: MessageLoadState = {
-      touchedMessages: new Set(),
-      removedMessages: new Set(),
-      retainedMessages: new Set(),
+      touchedMessages: MutableHashSet.empty(),
+      removedMessages: MutableHashSet.empty(),
+      retainedMessages: MutableHashSet.empty(),
       touchedParts: new Map(),
       deltaParts: new Map(),
       carriedDeltaParts: new Map(),
       removedParts: new Map(),
       optimisticParts: new Map(),
-      orphanParents: new Set(),
-      clearedMessageParts: new Set(),
-      touchedSource: new Set(),
+      orphanParents: MutableHashSet.empty(),
+      clearedMessageParts: MutableHashSet.empty(),
+      touchedSource: MutableHashSet.empty(),
     }
     messageLoads.set(sessionID, load)
     setMeta("loading", sessionID, true)
@@ -759,23 +783,21 @@ export function createServerSession(
 
       const parents = [] as Awaited<ReturnType<typeof fetchMessage>>[]
       if (mode !== "prepend") {
-        const users = new Set([
+        const users = MutableHashSet.fromIterable([
           ...page.session.filter((message) => message.role === "user").map((message) => message.id),
           ...(data.message[sessionID] ?? [])
             .filter((message) => {
               if (message.role !== "user") return false
               const item = optimistic.get(sessionID)?.get(message.id)
-              return load.touchedMessages.has(message.id) && (!item || item.confirmedMessage === true)
+              return MutableHashSet.has(load.touchedMessages, message.id) && (!item || item.confirmedMessage === true)
             })
             .map((message) => message.id),
         ])
-        const parentIDs = [
-          ...new Set(
-            page.session.flatMap((message) =>
-              message.role === "assistant" && !users.has(message.parentID) ? [message.parentID] : [],
-            ),
+        const parentIDs = MutableHashSet.fromIterable(
+          page.session.flatMap((message) =>
+            message.role === "assistant" && !MutableHashSet.has(users, message.parentID) ? [message.parentID] : [],
           ),
-        ]
+        )
         for (const parentID of parentIDs) {
           if (generations.get(sessionID) !== active) break
           const parent = await fetchMessage(sessionID, parentID, () =>
@@ -783,7 +805,7 @@ export function createServerSession(
           ).catch((error) => {
             const cause = error instanceof Error && typeof error.cause === "object" ? error.cause : undefined
             if (cause && "status" in cause && cause.status === 404) {
-              load.removedMessages.add(parentID)
+              MutableHashSet.add(load.removedMessages, parentID)
               return
             }
             throw error
@@ -822,11 +844,12 @@ export function createServerSession(
     } finally {
       if (!applied && generations.get(sessionID) === active && messageLoads.get(sessionID) === load) {
         for (const messageID of load.orphanParents) {
-          if (!orphanParts.get(sessionID)?.has(messageID)) continue
+          if (!hasID(orphanParts.get(sessionID), messageID)) continue
           setData(produce((draft) => deleteMessageParts(draft, messageID)))
-          orphanParts.get(sessionID)?.delete(messageID)
+          removeID(orphanParts.get(sessionID), messageID)
         }
-        if (orphanParts.get(sessionID)?.size === 0) orphanParts.delete(sessionID)
+        const orphans = orphanParts.get(sessionID)
+        if (orphans && MutableHashSet.size(orphans) === 0) orphanParts.delete(sessionID)
       }
       if (messageLoads.get(sessionID) === load) messageLoads.delete(sessionID)
       if (generations.get(sessionID) === active) setMeta("loading", sessionID, false)
@@ -881,37 +904,40 @@ export function createServerSession(
   }
 
   const projectV2 = (reduction: V2SessionReduction) => {
-    reduction.touched.forEach((messageID) => messageLoads.get(reduction.sessionID)?.touchedSource.add(messageID))
+    const load = messageLoads.get(reduction.sessionID)
+    if (load) reduction.touched.forEach((messageID) => MutableHashSet.add(load.touchedSource, messageID))
     setData("session_message", reduction.sessionID, reconcile(reduction.messages))
     if (reduction.touched.length === 0) return
 
-    const touched = new Set(reduction.touched)
+    const touched = MutableHashSet.fromIterable(reduction.touched)
     let parentID: string | undefined
     for (const message of reduction.messages) {
       if (message.type === "user" || (message.type === "synthetic" && message.description?.trim()))
         parentID = message.id
       if (message.type === "shell") {
-        if (touched.has(message.id)) touched.add(`${message.id}:assistant`)
+        if (MutableHashSet.has(touched, message.id)) MutableHashSet.add(touched, `${message.id}:assistant`)
         parentID = undefined
       }
-      if (message.type === "assistant" && touched.has(message.id) && parentID) touched.add(parentID)
-      if (message.type === "compaction" && touched.has(message.id) && parentID) touched.add(parentID)
+      if (message.type === "assistant" && MutableHashSet.has(touched, message.id) && parentID)
+        MutableHashSet.add(touched, parentID)
+      if (message.type === "compaction" && MutableHashSet.has(touched, message.id) && parentID)
+        MutableHashSet.add(touched, parentID)
     }
 
     const normalized = normalizeSessionMessages(reduction.sessionID, reduction.messages)
     batch(() => {
       for (const message of normalized.messages) {
-        if (!touched.has(message.id)) continue
+        if (!MutableHashSet.has(touched, message.id)) continue
         apply({ type: "message.updated", properties: { sessionID: reduction.sessionID, info: message } })
       }
       for (const messageID of touched) {
         const next = normalized.parts.get(messageID) ?? []
-        const nextIDs = new Set(next.map((part) => part.id))
+        const nextIDs = MutableHashSet.fromIterable(next.map((part) => part.id))
         for (const part of next) {
           apply({ type: "message.part.updated", properties: { sessionID: reduction.sessionID, part } })
         }
         for (const part of data.part[messageID] ?? []) {
-          if (nextIDs.has(part.id)) continue
+          if (MutableHashSet.has(nextIDs, part.id)) continue
           apply({
             type: "message.part.removed",
             properties: { sessionID: reduction.sessionID, messageID, partID: part.id },
@@ -1009,7 +1035,7 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
-        infoSeen.delete(sessionID)
+        MutableHashSet.remove(infoSeen, sessionID)
         setData(
           "info",
           produce((draft) => void delete draft[sessionID]),
@@ -1031,20 +1057,18 @@ export function createServerSession(
         const info = cleanMessage((event.properties as { info: Message }).info)
         indexLegacyMessage(info)
         const load = messageLoads.get(info.sessionID)
-        load?.touchedMessages.add(info.id)
-        load?.removedMessages.delete(info.id)
+        if (load) {
+          MutableHashSet.add(load.touchedMessages, info.id)
+          MutableHashSet.remove(load.removedMessages, info.id)
+        }
         const items = optimistic.get(info.sessionID)
         const item = items?.get(info.id)
         if (items && item) {
           if (item.parts.length === 0) clearOptimistic(info.sessionID, info.id)
           if (item.parts.length > 0) items.set(info.id, { ...item, confirmedMessage: true })
         }
-        const orphans = orphanParts.get(info.sessionID)
-        orphans?.delete(info.id)
-        if (orphans?.size === 0) orphanParts.delete(info.sessionID)
-        const removedMessagesForSession = removedMessages.get(info.sessionID)
-        removedMessagesForSession?.delete(info.id)
-        if (removedMessagesForSession?.size === 0) removedMessages.delete(info.sessionID)
+        removeFromIndex(orphanParts, info.sessionID, info.id)
+        removeFromIndex(removedMessages, info.sessionID, info.id)
         const messages = data.message[info.sessionID]
         if (!messages) {
           setData("message", info.sessionID, [info])
@@ -1066,18 +1090,18 @@ export function createServerSession(
           messages?.filter((message) => message.id !== props.messageID),
         )
         const load = messageLoads.get(props.sessionID)
-        load?.touchedMessages.add(props.messageID)
-        load?.removedMessages.add(props.messageID)
-        load?.clearedMessageParts.add(props.messageID)
-        load?.deltaParts.delete(props.messageID)
-        load?.carriedDeltaParts.delete(props.messageID)
-        load?.removedParts.delete(props.messageID)
-        load?.optimisticParts.delete(props.messageID)
+        if (load) {
+          MutableHashSet.add(load.touchedMessages, props.messageID)
+          MutableHashSet.add(load.removedMessages, props.messageID)
+          MutableHashSet.add(load.clearedMessageParts, props.messageID)
+          load.deltaParts.delete(props.messageID)
+          load.carriedDeltaParts.delete(props.messageID)
+          load.removedParts.delete(props.messageID)
+          load.optimisticParts.delete(props.messageID)
+        }
         pendingParts.get(props.sessionID)?.delete(props.messageID)
         if (pendingParts.get(props.sessionID)?.size === 0) pendingParts.delete(props.sessionID)
-        const removedMessagesForSession = removedMessages.get(props.sessionID) ?? new Set<string>()
-        removedMessagesForSession.add(props.messageID)
-        removedMessages.set(props.sessionID, removedMessagesForSession)
+        addToIndex(removedMessages, props.sessionID, props.messageID)
         clearOptimistic(props.sessionID, props.messageID)
         setData(
           produce((draft) => {
@@ -1093,7 +1117,7 @@ export function createServerSession(
       }
       case "message.part.updated": {
         const part = (event.properties as { part: Part }).part
-        if (SKIP_PARTS.has(part.type)) return
+        if (HashSet.has(SKIP_PARTS, part.type)) return
         const messages = data.message[part.sessionID]
         const load = messageLoads.get(part.sessionID)
         const missing = !messages?.some((message) => message.id === part.messageID)
@@ -1101,32 +1125,20 @@ export function createServerSession(
         if (
           missing &&
           (!load ||
-            load.clearedMessageParts.has(part.messageID) ||
-            removedMessages.get(part.sessionID)?.has(part.messageID))
+            MutableHashSet.has(load.clearedMessageParts, part.messageID) ||
+            hasID(removedMessages.get(part.sessionID), part.messageID))
         )
           return
         if (missing) {
-          const orphans = orphanParts.get(part.sessionID) ?? new Set<string>()
-          orphans.add(part.messageID)
-          orphanParts.set(part.sessionID, orphans)
-          load?.orphanParents.add(part.messageID)
+          addToIndex(orphanParts, part.sessionID, part.messageID)
+          if (load) MutableHashSet.add(load.orphanParents, part.messageID)
         }
-        const deltas = load?.deltaParts.get(part.messageID)
-        deltas?.delete(part.id)
-        if (deltas?.size === 0) load?.deltaParts.delete(part.messageID)
-        const carried = load?.carriedDeltaParts.get(part.messageID)
-        carried?.delete(part.id)
-        if (carried?.size === 0) load?.carriedDeltaParts.delete(part.messageID)
-        const removed = load?.removedParts.get(part.messageID)
-        removed?.delete(part.id)
-        if (removed?.size === 0) load?.removedParts.delete(part.messageID)
-        const pending = pendingParts.get(part.sessionID)?.get(part.messageID)
-        pending?.delete(part.id)
-        if (pending?.size === 0) pendingParts.get(part.sessionID)?.delete(part.messageID)
+        removeFromIndex(load?.deltaParts, part.messageID, part.id)
+        removeFromIndex(load?.carriedDeltaParts, part.messageID, part.id)
+        removeFromIndex(load?.removedParts, part.messageID, part.id)
+        removeFromIndex(pendingParts.get(part.sessionID), part.messageID, part.id)
         if (pendingParts.get(part.sessionID)?.size === 0) pendingParts.delete(part.sessionID)
-        const optimistic = load?.optimisticParts.get(part.messageID)
-        optimistic?.delete(part.id)
-        if (optimistic?.size === 0) load?.optimisticParts.delete(part.messageID)
+        removeFromIndex(load?.optimisticParts, part.messageID, part.id)
         deltaBases.delete(part.id)
         trackPartChange(part.sessionID, part.messageID, part.id)
         confirmOptimisticPart(part.sessionID, part.messageID, part)
@@ -1152,25 +1164,15 @@ export function createServerSession(
       case "message.part.removed": {
         const props = event.properties as { sessionID: string; messageID: string; partID: string }
         // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
-        const pending = pendingParts.get(props.sessionID) ?? new Map<string, Set<string>>()
-        const parts = pending.get(props.messageID) ?? new Set<string>()
-        parts.add(props.partID)
-        pending.set(props.messageID, parts)
+        const pending = pendingParts.get(props.sessionID) ?? new Map<string, IDSet>()
+        addToIndex(pending, props.messageID, props.partID)
         pendingParts.set(props.sessionID, pending)
-        const deltas = messageLoads.get(props.sessionID)?.deltaParts.get(props.messageID)
-        deltas?.delete(props.partID)
-        if (deltas?.size === 0) messageLoads.get(props.sessionID)?.deltaParts.delete(props.messageID)
         const load = messageLoads.get(props.sessionID)
-        const carried = load?.carriedDeltaParts.get(props.messageID)
-        carried?.delete(props.partID)
-        if (carried?.size === 0) load?.carriedDeltaParts.delete(props.messageID)
+        removeFromIndex(load?.deltaParts, props.messageID, props.partID)
+        removeFromIndex(load?.carriedDeltaParts, props.messageID, props.partID)
         if (load) {
-          const parts = load.removedParts.get(props.messageID) ?? new Set<string>()
-          parts.add(props.partID)
-          load.removedParts.set(props.messageID, parts)
-          const optimistic = load.optimisticParts.get(props.messageID)
-          optimistic?.delete(props.partID)
-          if (optimistic?.size === 0) load.optimisticParts.delete(props.messageID)
+          addToIndex(load.removedParts, props.messageID, props.partID)
+          removeFromIndex(load.optimisticParts, props.messageID, props.partID)
         }
         trackPartChange(props.sessionID, props.messageID, props.partID)
         clearOptimisticPart(props.sessionID, props.messageID, props.partID)
@@ -1202,12 +1204,8 @@ export function createServerSession(
         trackPartChange(props.sessionID, props.messageID, props.partID)
         const load = messageLoads.get(props.sessionID)
         if (load) {
-          const parts = load.deltaParts.get(props.messageID) ?? new Set<string>()
-          parts.add(props.partID)
-          load.deltaParts.set(props.messageID, parts)
-          const carried = load.carriedDeltaParts.get(props.messageID)
-          carried?.delete(props.partID)
-          if (carried?.size === 0) load.carriedDeltaParts.delete(props.messageID)
+          addToIndex(load.deltaParts, props.messageID, props.partID)
+          removeFromIndex(load.carriedDeltaParts, props.messageID, props.partID)
         }
         const field = props.field as keyof (typeof parts)[number]
         const current = parts[result.index]?.[field]
@@ -1321,22 +1319,21 @@ export function createServerSession(
     optimistic: {
       add(input: { sessionID: string; message: Message; parts: Part[] }) {
         const parts = input.parts
-          .filter((part) => !!part?.id && !SKIP_PARTS.has(part.type))
+          .filter((part) => !!part?.id && !HashSet.has(SKIP_PARTS, part.type))
           .sort((a, b) => cmp(a.id, b.id))
         const load = messageLoads.get(input.sessionID)
-        if (load?.clearedMessageParts.has(input.message.id)) {
-          const touched = load.touchedParts.get(input.message.id) ?? new Set<string>()
-          parts.forEach((part) => touched.add(part.id))
-          load.touchedParts.set(input.message.id, touched)
-        }
+        if (load && MutableHashSet.has(load.clearedMessageParts, input.message.id))
+          mergeIntoIndex(
+            load.touchedParts,
+            input.message.id,
+            parts.map((part) => part.id),
+          )
         if (load) {
-          load.removedMessages.delete(input.message.id)
-          load.optimisticParts.set(input.message.id, new Set(parts.map((part) => part.id)))
+          MutableHashSet.remove(load.removedMessages, input.message.id)
+          load.optimisticParts.set(input.message.id, MutableHashSet.fromIterable(parts.map((part) => part.id)))
         }
         const items = optimistic.get(input.sessionID)
-        const removedMessagesForSession = removedMessages.get(input.sessionID)
-        removedMessagesForSession?.delete(input.message.id)
-        if (removedMessagesForSession?.size === 0) removedMessages.delete(input.sessionID)
+        removeFromIndex(removedMessages, input.sessionID, input.message.id)
         if (items) items.set(input.message.id, { ...input, parts, confirmedParts: [] })
         if (!items)
           optimistic.set(input.sessionID, new Map([[input.message.id, { ...input, parts, confirmedParts: [] }]]))
@@ -1358,7 +1355,7 @@ export function createServerSession(
         messageLoads.get(input.sessionID)?.optimisticParts.delete(input.messageID)
         clearOptimistic(input.sessionID, input.messageID)
         if (item.confirmedMessage) {
-          const partIDs = new Set(item.parts.map((part) => part.id))
+          const partIDs = MutableHashSet.fromIterable(item.parts.map((part) => part.id))
           setData(
             produce((draft) => {
               for (const part of item.parts) {
@@ -1367,7 +1364,7 @@ export function createServerSession(
               }
               const parts = draft.part[input.messageID]
               if (!parts) return
-              draft.part[input.messageID] = parts.filter((part) => !partIDs.has(part.id))
+              draft.part[input.messageID] = parts.filter((part) => !MutableHashSet.has(partIDs, part.id))
               if (draft.part[input.messageID]?.length === 0) delete draft.part[input.messageID]
             }),
           )
@@ -1406,7 +1403,7 @@ export function createServerSession(
       },
     },
     evict(sessionID: string) {
-      if (protectedSessions().has(sessionID)) return
+      if (protectedSessions().includes(sessionID)) return
       seen.delete(sessionID)
       evict([sessionID])
     },
