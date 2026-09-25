@@ -7,7 +7,7 @@ import { useMutation } from "@tanstack/solid-query"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@/utils/toast"
 import { batch, For } from "solid-js"
-import { createStore, produce } from "solid-js/store"
+import { createStore } from "solid-js/store"
 import { ExternalLink } from "@/components/external-link"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
@@ -58,41 +58,21 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
   })
 
   const addModel = () => {
-    setForm(
-      "models",
-      produce((rows) => {
-        rows.push(modelRow())
-      }),
-    )
+    setForm("models", (rows) => [...rows, modelRow()])
   }
 
   const removeModel = (index: number) => {
     if (form.models.length <= 1) return
-    setForm(
-      "models",
-      produce((rows) => {
-        rows.splice(index, 1)
-      }),
-    )
+    setForm("models", (rows) => rows.filter((_, i) => i !== index))
   }
 
   const addHeader = () => {
-    setForm(
-      "headers",
-      produce((rows) => {
-        rows.push(headerRow())
-      }),
-    )
+    setForm("headers", (rows) => [...rows, headerRow()])
   }
 
   const removeHeader = (index: number) => {
     if (form.headers.length <= 1) return
-    setForm(
-      "headers",
-      produce((rows) => {
-        rows.splice(index, 1)
-      }),
-    )
+    setForm("headers", (rows) => rows.filter((_, i) => i !== index))
   }
 
   const setField = (key: "providerID" | "name" | "baseURL" | "apiKey", value: string) => {
