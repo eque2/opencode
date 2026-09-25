@@ -1,5 +1,5 @@
 import { createStore, produce, reconcile } from "solid-js/store"
-import { HashSet, MutableHashMap, Option } from "effect"
+import { Data, Effect, HashSet, MutableHashMap, Option, Predicate } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 type DirectoryState = {
@@ -10,12 +10,21 @@ type DirectoryState = {
   children?: string[]
 }
 
+export class FileTreeListError extends Data.TaggedError("App.FileTreeListError")<{ readonly cause: unknown }> {}
+
 type TreeStoreOptions = {
   scope: () => string
   normalizeDir: (input: string) => string
-  list: (input: string) => Promise<FileNode[]>
-  onError: (message: string) => void
+  list: (input: string) => Effect.Effect<readonly FileNode[], FileTreeListError>
+  onError: (message: Option.Option<string>) => void
 }
+
+// The listing request can reject with an Error or with a plain error body, so
+// read a string message from either one.
+const causeMessage = (cause: unknown) =>
+  Predicate.hasProperty(cause, "message") && Predicate.isString(cause.message)
+    ? Option.some(cause.message)
+    : Option.none<string>()
 
 export function createFileTreeStore(options: TreeStoreOptions) {
   const [tree, setTree] = createStore<{
@@ -40,12 +49,30 @@ export function createFileTreeStore(options: TreeStoreOptions) {
     setTree("dir", path, { expanded: false })
   }
 
-  const listDir = (input: string, opts?: { force?: boolean }) => {
+  // Records a running listing until it settles. A listing that settles before
+  // runPromise returns is not recorded, so no settled promise stays cached.
+  const track = (dir: string, program: Effect.Effect<void>) => {
+    let settled = false
+    const promise = Effect.runPromise(
+      program.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            settled = true
+            MutableHashMap.remove(inflight, dir)
+          }),
+        ),
+      ),
+    )
+    if (!settled) MutableHashMap.set(inflight, dir, promise)
+    return promise
+  }
+
+  const listDir = (input: string, opts?: { force?: boolean }): Promise<void> => {
     const dir = options.normalizeDir(input)
     ensureDir(dir)
 
     const current = tree.dir[dir]
-    if (!opts?.force && current?.loaded) return Promise.resolve()
+    if (!opts?.force && current?.loaded) return Effect.runPromise(Effect.void)
 
     const pending = MutableHashMap.get(inflight, dir)
     if (Option.isSome(pending)) return pending.value
@@ -61,9 +88,8 @@ export function createFileTreeStore(options: TreeStoreOptions) {
 
     const directory = options.scope()
 
-    const promise = options
-      .list(dir)
-      .then((nodes) => {
+    const listing = options.list(dir).pipe(
+      Effect.map((nodes) => {
         if (options.scope() !== directory) return
         const prevChildren = tree.dir[dir]?.children ?? []
         const nextChildren = nodes.map((node) => node.path)
@@ -72,10 +98,10 @@ export function createFileTreeStore(options: TreeStoreOptions) {
         setTree(
           "node",
           produce((draft) => {
-            const removed = prevChildren.filter((child) => !HashSet.has(nextSet, child))
-            const removedDirs = removed.filter((child) => draft[child]?.type === "directory")
+            const removedChildren = prevChildren.filter((child) => !HashSet.has(nextSet, child))
+            const removedDirs = removedChildren.filter((child) => draft[child]?.type === "directory")
 
-            for (const child of removed) {
+            for (const child of removedChildren) {
               delete draft[child]
             }
 
@@ -105,25 +131,26 @@ export function createFileTreeStore(options: TreeStoreOptions) {
             draft.children = nextChildren
           }),
         )
-      })
-      .catch((e) => {
-        if (options.scope() !== directory) return
-        setTree(
-          "dir",
-          dir,
-          produce((draft) => {
-            draft.loading = false
-            draft.error = e.message
-          }),
-        )
-        options.onError(e.message)
-      })
-      .finally(() => {
-        MutableHashMap.remove(inflight, dir)
-      })
+      }),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          if (options.scope() !== directory) return
+          const message = causeMessage(error.cause)
+          setTree(
+            "dir",
+            dir,
+            produce((draft) => {
+              draft.loading = false
+              if (Option.isSome(message)) draft.error = message.value
+              else delete draft.error
+            }),
+          )
+          options.onError(message)
+        }),
+      ),
+    )
 
-    MutableHashMap.set(inflight, dir, promise)
-    return promise
+    return track(dir, listing)
   }
 
   // `list: false` marks a directory expanded without fetching its children, for
