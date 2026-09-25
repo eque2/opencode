@@ -44,6 +44,12 @@ const SessionState = Schema.Struct({
 }).annotate({ identifier: "TuiLocal.SessionState" })
 const SessionStateFile = Schema.fromJsonString(SessionState)
 
+/** The server could not connect or disconnect an MCP server. The cause is the SDK rejection. */
+class McpToggleError extends Schema.TaggedError<McpToggleError>()("TuiLocal.McpToggleError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 export function parseModel(model: string) {
   const [providerID, ...rest] = model.split("/")
   return {
@@ -541,15 +547,25 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         const status = sync.data.mcp[name]
         return status?.status === "connected"
       },
-      async toggle(name: string) {
-        const status = sync.data.mcp[name]
-        if (status?.status === "connected") {
-          // Disable: disconnect the MCP
-          await sdk.client.mcp.disconnect({ name })
-        } else {
-          // Enable/Retry: connect the MCP (handles disabled, failed, and other states)
-          await sdk.client.mcp.connect({ name })
-        }
+      toggle(name: string) {
+        return Effect.runPromise(
+          Effect.gen(function* () {
+            const status = sync.data.mcp[name]
+            if (status?.status === "connected") {
+              // Disable: disconnect the MCP
+              yield* Effect.tryPromise({
+                try: () => sdk.client.mcp.disconnect({ name }),
+                catch: (cause) => new McpToggleError({ message: `Failed to disconnect MCP server ${name}`, cause }),
+              })
+              return
+            }
+            // Enable/Retry: connect the MCP (handles disabled, failed, and other states)
+            yield* Effect.tryPromise({
+              try: () => sdk.client.mcp.connect({ name }),
+              catch: (cause) => new McpToggleError({ message: `Failed to connect MCP server ${name}`, cause }),
+            })
+          }),
+        )
       },
     }
 
