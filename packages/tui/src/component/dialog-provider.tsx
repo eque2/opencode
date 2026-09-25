@@ -15,6 +15,7 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { Schema } from "effect"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -26,6 +27,8 @@ const PROVIDER_PRIORITY: Record<string, number> = {
 }
 
 const CUSTOM_PROVIDER_OPTION_VALUE = "__opencode_custom_provider__"
+// The toast shows an SDK error body as JSON text, whatever shape the server sent.
+const errorJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 const CUSTOM_PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 
 type ProviderOptionBase = {
@@ -187,7 +190,7 @@ export function createDialogProviderOptions() {
               if (result.error) {
                 toast.show({
                   variant: "error",
-                  message: JSON.stringify(result.error),
+                  message: errorJson(result.error),
                 })
                 dialog.clear()
                 return
@@ -270,7 +273,7 @@ function AutoMethod(props: AutoMethodProps) {
         message:
           "name" in result.error && result.error.name === "ProviderAuthOauthCallbackFailed"
             ? "OAuth authorization failed. Try /connect again."
-            : JSON.stringify(result.error),
+            : errorJson(result.error),
       })
       dialog.clear()
       return
