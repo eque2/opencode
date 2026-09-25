@@ -82,7 +82,7 @@ const systemError = (
     .join(" | ")
   const { tag, ...detail } = reason
   return PlatformError.systemError({
-    // eslint-disable-next-line effect/no-manual-tag -- effect PlatformError.systemError takes the SystemErrorTag reason as its _tag option, and PlatformError has no other SystemError constructor
+    // eslint-disable-next-line effect/no-manual-tag -- (a) effect PlatformError.systemError requires the SystemErrorTag reason as its _tag option, and no other SystemError constructor exists
     _tag: tag,
     module: "ChildProcess",
     method,
