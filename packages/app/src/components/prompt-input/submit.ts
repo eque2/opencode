@@ -4,7 +4,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
-import { Cause, Data, Effect, MutableHashMap, Option, Predicate } from "effect"
+import { Cause, Clock, Data, Effect, MutableHashMap, Option, Predicate } from "effect"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
@@ -158,11 +158,12 @@ const sendFollowup = Effect.fn("PromptSubmit.sendFollowup")(function* (input: Fo
     sessionDirectory: input.draft.sessionDirectory,
   })
 
+  const created = yield* Clock.currentTimeMillis
   const message: Message = {
     id: messageID,
     sessionID: input.draft.sessionID,
     role: "user",
-    time: { created: Date.now() },
+    time: { created },
     agent: input.draft.agent,
     model: { ...input.draft.model, variant: input.draft.variant },
   }
