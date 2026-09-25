@@ -162,7 +162,7 @@ app
     Effect.runPromise(
       Effect.gen(function* () {
         const authorization = c.req.header("authorization")
-        const expected = `Bearer ${(Resource as unknown as Record<string, { value: string }>).SUPPORT_API_KEY.value}`
+        const expected = `Bearer ${Resource.SUPPORT_API_KEY.value}`
         const actual = Buffer.from(authorization ?? "")
         const secret = Buffer.from(expected)
         if (actual.length !== secret.length || !timingSafeEqual(actual, secret))
