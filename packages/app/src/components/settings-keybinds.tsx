@@ -210,7 +210,7 @@ function filteredFor(
 }
 
 function useKeyCapture(input: {
-  active: () => string | null
+  active: () => Option.Option<string>
   stop: () => void
   set: (id: string, keybind: string) => void
   used: () => UsedKeybinds
@@ -218,8 +218,9 @@ function useKeyCapture(input: {
 }) {
   onMount(() => {
     const handle = (event: KeyboardEvent) => {
-      const id = input.active()
-      if (!id) return
+      const active = input.active()
+      if (Option.isNone(active)) return
+      const id = active.value
 
       event.preventDefault()
       event.stopPropagation()
@@ -285,7 +286,8 @@ export function createKeybindSettingsController(
   },
   language: Pick<LanguageContext, "locale" | "t"> = useLanguage(),
 ) {
-  const [store, setStore] = createStore({ active: null as string | null })
+  // The id whose keybind is being captured, or none.
+  const [store, setStore] = createStore({ active: Option.none<string>() })
   const overrides = createMemo(() => keybinds(input.settings.current.keybinds))
   const list = createMemo(() => {
     language.locale()
@@ -315,24 +317,25 @@ export function createKeybindSettingsController(
     return value
   })
   const stop = () => {
-    if (!store.active) return
-    setStore("active", null)
+    if (Option.isNone(store.active)) return
+    setStore("active", Option.none())
     input.command.keybinds(true)
   }
   const toggle = (id: string) => {
-    if (store.active === id) {
+    if (Option.contains(store.active, id)) {
       stop()
       return
     }
-    if (store.active) stop()
-    setStore("active", id)
+    if (Option.isSome(store.active)) stop()
+    setStore("active", Option.some(id))
     input.command.keybinds(false)
   }
   const notify = input.notify ?? ((toast: { title: string; description: string }) => showToast(toast))
 
   const handle = (event: KeyboardEvent) => {
-    const id = store.active
-    if (!id) return
+    const active = store.active
+    if (Option.isNone(active)) return
+    const id = active.value
 
     event.preventDefault()
     event.stopPropagation()
@@ -386,7 +389,7 @@ export function createKeybindSettingsController(
   if (target) makeEventListener(target, "keydown", handle, { capture: true })
 
   onCleanup(() => {
-    if (store.active) input.command.keybinds(true)
+    if (Option.isSome(store.active)) input.command.keybinds(true)
   })
 
   return {
@@ -402,7 +405,8 @@ export function createKeybindSettingsController(
       keybind: (id: string) => formatKeybind(effective(id) ?? "", language.t),
     },
     capture: {
-      active: () => store.active,
+      // The exported contract (and test-browser/settings-keybinds.test.ts) reads null for no capture.
+      active: () => Option.getOrNull(store.active),
       toggle,
     },
     settings: {
@@ -546,25 +550,25 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
   const settings = useSettings()
 
   const [store, setStore] = createStore({
-    active: null as string | null,
+    active: Option.none<string>(),
     filter: "",
   })
 
   const stop = () => {
-    if (!store.active) return
-    setStore("active", null)
+    if (Option.isNone(store.active)) return
+    setStore("active", Option.none())
     command.keybinds(true)
   }
 
   const start = (id: string) => {
-    if (store.active === id) {
+    if (Option.contains(store.active, id)) {
       stop()
       return
     }
 
-    if (store.active) stop()
+    if (Option.isSome(store.active)) stop()
 
-    setStore("active", id)
+    setStore("active", Option.some(id))
     command.keybinds(false)
   }
 
@@ -646,7 +650,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
   })
 
   onCleanup(() => {
-    if (store.active) command.keybinds(true)
+    if (Option.isSome(store.active)) command.keybinds(true)
   })
 
   const emptyResults = (
@@ -720,17 +724,17 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
                         data-keybind-id={id}
                         classList={{
                           "settings-v2-keybind-button": props.v2,
-                          "settings-v2-keybind-button--active": props.v2 && store.active === id,
+                          "settings-v2-keybind-button--active": props.v2 && Option.contains(store.active, id),
                           "h-8 px-3 rounded-md text-12-regular": !props.v2,
                           "bg-surface-base text-text-subtle hover:bg-surface-raised-base-hover active:bg-surface-raised-base-active":
-                            !props.v2 && store.active !== id,
+                            !props.v2 && !Option.contains(store.active, id),
                           "border border-border-weak-base bg-surface-inset-base text-text-weak":
-                            !props.v2 && store.active === id,
+                            !props.v2 && Option.contains(store.active, id),
                         }}
                         onClick={() => start(id)}
                       >
                         <Show
-                          when={store.active === id}
+                          when={Option.contains(store.active, id)}
                           fallback={command.keybind(id) || language.t("settings.shortcuts.unassigned")}
                         >
                           {language.t("settings.shortcuts.pressKeys")}
