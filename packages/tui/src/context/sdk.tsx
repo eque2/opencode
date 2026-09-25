@@ -1,5 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import type { GlobalEvent } from "@opencode-ai/sdk/v2"
+import { DateTime } from "effect"
 import { useTuiFlags } from "./runtime"
 import { createSimpleContext } from "./helper"
 import { batch, onCleanup, onMount } from "solid-js"
@@ -57,7 +58,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       const events = queue
       queue = []
       timer = undefined
-      last = Date.now()
+      last = DateTime.toEpochMillis(DateTime.nowUnsafe())
       // Batch all event emissions so all store updates result in a single render
       batch(() => {
         for (const event of events) {
@@ -68,7 +69,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
 
     const handleEvent = (event: GlobalEvent) => {
       queue.push(event)
-      const elapsed = Date.now() - last
+      const elapsed = DateTime.toEpochMillis(DateTime.nowUnsafe()) - last
 
       if (timer) return
       // If we just flushed recently (within 16ms), batch this with future events
