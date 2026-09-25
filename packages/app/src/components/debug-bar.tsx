@@ -6,7 +6,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { Chunk, Option } from "effect"
+import { Chunk, MutableHashMap, Option } from "effect"
 
 type Mem = Performance & {
   memory?: {
@@ -280,7 +280,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     let obs = Chunk.empty<PerformanceObserver>()
     let fps = Chunk.empty<Sample>()
     let long = Chunk.empty<Sample>()
-    const seen = new Map<number | string, { at: number; delay: number; dur: number }>()
+    const seen = MutableHashMap.empty<number | string, { at: number; delay: number; dur: number }>()
     let hasLong = false
     let poll: number | undefined
     let raf = 0
@@ -312,11 +312,11 @@ export function DebugBar(props: { inline?: boolean } = {}) {
 
     const syncInp = (at = performance.now()) => {
       for (const [key, entry] of seen) {
-        if (at - entry.at > span) seen.delete(key)
+        if (at - entry.at > span) MutableHashMap.remove(seen, key)
       }
       let delay = 0
       let inp = 0
-      for (const entry of seen.values()) {
+      for (const entry of MutableHashMap.values(seen)) {
         delay = Math.max(delay, entry.delay)
         inp = Math.max(inp, entry.dur)
       }
@@ -335,7 +335,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     const reset = () => {
       fps = Chunk.empty()
       long = Chunk.empty()
-      seen.clear()
+      MutableHashMap.clear(seen)
       last = 0
       snap = 0
       batch(() => {
@@ -395,16 +395,17 @@ export function DebugBar(props: { inline?: boolean } = {}) {
           entry.interactionId && entry.interactionId > 0
             ? entry.interactionId
             : `${entry.name}:${Math.round(entry.startTime)}`
-        const prev = seen.get(key)
+        const prev = Option.getOrElse(MutableHashMap.get(seen, key), () => ({ delay: 0, dur: 0 }))
         const delay = Math.max(0, (entry.processingStart ?? entry.startTime) - entry.startTime)
-        seen.set(key, {
+        MutableHashMap.set(seen, key, {
           at: entry.startTime,
-          delay: Math.max(prev?.delay ?? 0, delay),
-          dur: Math.max(prev?.dur ?? 0, entry.duration),
+          delay: Math.max(prev.delay, delay),
+          dur: Math.max(prev.dur, entry.duration),
         })
-        if (seen.size <= 200) continue
-        const first = seen.keys().next().value
-        if (first !== undefined) seen.delete(first)
+        if (MutableHashMap.size(seen) <= 200) continue
+        // Primitive keys keep insertion order, so the first key is the oldest interaction.
+        const first = MutableHashMap.keys(seen)[Symbol.iterator]().next()
+        if (!first.done) MutableHashMap.remove(seen, first.value)
       }
       syncInp()
     })

@@ -22,7 +22,7 @@ import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { matchesModelSearch } from "./dialog-select-model-search"
-import { Option } from "effect"
+import { MutableHashMap, Option } from "effect"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -280,9 +280,11 @@ function createModelSelectorController(input: {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name))
     },
     groups: (models: ModelItem[]) => {
-      const byProvider = new Map<string, ModelItem[]>()
+      // String keys keep insertion order, so groups start in the order their first model appears.
+      const byProvider = MutableHashMap.empty<string, ModelItem[]>()
       for (const item of models) {
-        byProvider.set(item.provider.id, [...(byProvider.get(item.provider.id) ?? []), item])
+        const items = Option.getOrElse(MutableHashMap.get(byProvider, item.provider.id), (): ModelItem[] => [])
+        MutableHashMap.set(byProvider, item.provider.id, [...items, item])
       }
       return Array.from(byProvider, ([category, items]) => ({ category, items })).sort(sortModelGroups)
     },
