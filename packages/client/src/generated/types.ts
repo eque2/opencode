@@ -1,5 +1,7 @@
 import type { OpenCodeEventEncoded } from "@opencode-ai/protocol/groups/event"
 
+import type * as ProtocolErrors from "@opencode-ai/protocol/errors"
+
 export type JsonValue =
   | null
   | boolean
@@ -10,89 +12,51 @@ export type JsonValue =
 
 const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null
 
-export type UnauthorizedError = { readonly _tag: "UnauthorizedError"; readonly message: string }
+export type UnauthorizedError = typeof ProtocolErrors.UnauthorizedError.Encoded
 export const isUnauthorizedError = (value: unknown): value is UnauthorizedError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnauthorizedError"
 
-export type InvalidRequestError = {
-  readonly _tag: "InvalidRequestError"
-  readonly message: string
-  readonly kind?: string | undefined
-  readonly field?: string | undefined
-}
+export type InvalidRequestError = typeof ProtocolErrors.InvalidRequestError.Encoded
 export const isInvalidRequestError = (value: unknown): value is InvalidRequestError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidRequestError"
 
-export type InvalidCursorError = { readonly _tag: "InvalidCursorError"; readonly message: string }
+export type InvalidCursorError = typeof ProtocolErrors.InvalidCursorError.Encoded
 export const isInvalidCursorError = (value: unknown): value is InvalidCursorError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidCursorError"
 
-export type SessionNotFoundError = {
-  readonly _tag: "SessionNotFoundError"
-  readonly sessionID: string
-  readonly message: string
-}
+export type SessionNotFoundError = typeof ProtocolErrors.SessionNotFoundError.Encoded
 export const isSessionNotFoundError = (value: unknown): value is SessionNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "SessionNotFoundError"
 
-export type ConflictError = {
-  readonly _tag: "ConflictError"
-  readonly message: string
-  readonly resource?: string | undefined
-}
+export type ConflictError = typeof ProtocolErrors.ConflictError.Encoded
 export const isConflictError = (value: unknown): value is ConflictError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "ConflictError"
 
-export type ServiceUnavailableError = {
-  readonly _tag: "ServiceUnavailableError"
-  readonly message: string
-  readonly service?: string | undefined
-}
+export type ServiceUnavailableError = typeof ProtocolErrors.ServiceUnavailableError.Encoded
 export const isServiceUnavailableError = (value: unknown): value is ServiceUnavailableError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "ServiceUnavailableError"
 
-export type MessageNotFoundError = {
-  readonly _tag: "MessageNotFoundError"
-  readonly sessionID: string
-  readonly messageID: string
-  readonly message: string
-}
+export type MessageNotFoundError = typeof ProtocolErrors.MessageNotFoundError.Encoded
 export const isMessageNotFoundError = (value: unknown): value is MessageNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "MessageNotFoundError"
 
-export type UnknownError = {
-  readonly _tag: "UnknownError"
-  readonly message: string
-  readonly ref?: string | undefined
-}
+export type UnknownError = typeof ProtocolErrors.UnknownError.Encoded
 export const isUnknownError = (value: unknown): value is UnknownError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnknownError"
 
-export type ProviderNotFoundError = {
-  readonly _tag: "ProviderNotFoundError"
-  readonly providerID: string
-  readonly message: string
-}
+export type ProviderNotFoundError = typeof ProtocolErrors.ProviderNotFoundError.Encoded
 export const isProviderNotFoundError = (value: unknown): value is ProviderNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
 
-export type PermissionNotFoundError = {
-  readonly _tag: "PermissionNotFoundError"
-  readonly requestID: string
-  readonly message: string
-}
+export type PermissionNotFoundError = typeof ProtocolErrors.PermissionNotFoundError.Encoded
 export const isPermissionNotFoundError = (value: unknown): value is PermissionNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
 
-export type PtyNotFoundError = { readonly _tag: "PtyNotFoundError"; readonly ptyID: string; readonly message: string }
+export type PtyNotFoundError = typeof ProtocolErrors.PtyNotFoundError.Encoded
 export const isPtyNotFoundError = (value: unknown): value is PtyNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "PtyNotFoundError"
 
-export type QuestionNotFoundError = {
-  readonly _tag: "QuestionNotFoundError"
-  readonly requestID: string
-  readonly message: string
-}
+export type QuestionNotFoundError = typeof ProtocolErrors.QuestionNotFoundError.Encoded
 export const isQuestionNotFoundError = (value: unknown): value is QuestionNotFoundError =>
   isNonNullObject(value) && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
 
