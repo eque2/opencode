@@ -32,11 +32,9 @@ export default function NewLayout(props: ParentProps) {
     >
       <Titlebar
         update={update}
-        debugTools={
-          import.meta.env.DEV
-            ? { visible: state.debugTools, toggle: () => setState("debugTools", (value) => !value) }
-            : undefined
-        }
+        {...(import.meta.env.DEV
+          ? { debugTools: { visible: state.debugTools, toggle: () => setState("debugTools", (value) => !value) } }
+          : {})}
       />
       <main class="flex-1 min-h-0 min-w-0 overflow-x-hidden flex flex-col items-start contain-strict">
         <Suspense>{props.children}</Suspense>
