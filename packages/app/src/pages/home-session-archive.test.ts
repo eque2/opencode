@@ -1,51 +1,61 @@
 import { expect, test } from "bun:test"
+import { Data, Effect } from "effect"
 import { SESSION_TABS_REMOVED_EVENT, readSessionTabsRemovedDetail } from "@/components/titlebar-session-events"
 import { archiveHomeSession } from "./home-session-archive"
-import type { ServerConnection } from "@/context/server"
+import { ServerConnection } from "@/context/server"
 
-const remote = "remote" as ServerConnection.Key
+const remote = ServerConnection.Key.make("remote")
 
-test("archiving a Home session removes its open titlebar tab", async () => {
-  let detail: ReturnType<typeof readSessionTabsRemovedDetail>
-  let removed = false
-  window.addEventListener(
-    SESSION_TABS_REMOVED_EVENT,
-    (event) => {
-      detail = readSessionTabsRemovedDetail(event)
-    },
-    { once: true },
-  )
+/** The rejection of the archive stand-in. */
+class ArchiveTestFailure extends Data.TaggedError("ArchiveTestFailure")<{ readonly message: string }> {}
 
-  await archiveHomeSession({
-    server: remote,
-    session: { id: "ses_1", directory: "/workspace" },
-    archive: async () => undefined,
-    remove: () => {
-      removed = true
-    },
-  })
+test("archiving a Home session removes its open titlebar tab", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      let detail: ReturnType<typeof readSessionTabsRemovedDetail>
+      let removed = false
+      window.addEventListener(
+        SESSION_TABS_REMOVED_EVENT,
+        (event) => {
+          detail = readSessionTabsRemovedDetail(event)
+        },
+        { once: true },
+      )
 
-  expect(removed).toBe(true)
-  expect(detail).toEqual({ server: remote, directory: "/workspace", sessionIDs: ["ses_1"] })
-})
+      yield* archiveHomeSession({
+        server: remote,
+        session: { id: "ses_1", directory: "/workspace" },
+        archive: () => Effect.runPromise(Effect.void),
+        remove: () => {
+          removed = true
+        },
+      })
 
-test("reports archive failures without removing the session", async () => {
-  const failure = new Error("offline")
-  let error: unknown
-  let removed = false
+      expect(removed).toBe(true)
+      expect(detail).toEqual({ server: remote, directory: "/workspace", sessionIDs: ["ses_1"] })
+    }),
+  ))
 
-  await archiveHomeSession({
-    server: remote,
-    session: { id: "ses_1", directory: "/workspace" },
-    archive: async () => Promise.reject(failure),
-    remove: () => {
-      removed = true
-    },
-    onError: (value) => {
-      error = value
-    },
-  })
+test("reports archive failures without removing the session", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const failure = new ArchiveTestFailure({ message: "offline" })
+      let error: unknown
+      let removed = false
 
-  expect(error).toBe(failure)
-  expect(removed).toBe(false)
-})
+      yield* archiveHomeSession({
+        server: remote,
+        session: { id: "ses_1", directory: "/workspace" },
+        archive: () => Effect.runPromise(Effect.fail(failure)),
+        remove: () => {
+          removed = true
+        },
+        onError: (value) => {
+          error = value
+        },
+      })
+
+      expect(error).toBe(failure)
+      expect(removed).toBe(false)
+    }),
+  ))

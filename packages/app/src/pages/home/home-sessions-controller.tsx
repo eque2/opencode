@@ -2,7 +2,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useQuery } from "@tanstack/solid-query"
-import { DateTime, HashMap, HashSet, MutableHashSet } from "effect"
+import { Data, DateTime, Effect, HashMap, HashSet, MutableHashSet } from "effect"
 import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTransition } from "solid-js"
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
@@ -25,6 +25,21 @@ import type { HomeController } from "./home-controller"
 import { sessionDayOf, type SessionDay } from "./home-time"
 
 const HOME_SESSION_LIMIT = 64
+
+/** A Home request that rejected. `cause` is the original rejection. */
+class HomeSessionRequestError extends Data.TaggedError("App.HomeSessionRequestError")<{ readonly cause: unknown }> {}
+
+/** Runs one Home request as an Effect. A rejection fails with HomeSessionRequestError. */
+const homeRequest = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new HomeSessionRequestError({ cause }) })
+
+/**
+ * Runs a Home action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 export type HomeSessionRecord = {
   session: Session
   project: LocalProject
@@ -52,26 +67,31 @@ export function createHomeSessionsController(home: HomeController) {
   const homeSessions = () => home.server.focusedSync().homeSessions
   const sessionEventLoad = useQuery(() => ({
     queryKey: homeSessions().eventsKey,
-    queryFn: async (): Promise<HomeSessionEvents> => ({ sequence: 0, entries: [] }),
+    queryFn: (): Promise<HomeSessionEvents> => Effect.runPromise(Effect.succeed({ sequence: 0, entries: [] })),
     initialData: { sequence: 0, entries: [] } satisfies HomeSessionEvents,
     enabled: false,
   }))
   const sessionLoad = useQuery(() => ({
     queryKey: homeSessions().indexKey,
     enabled: !!home.server.focusedContext(),
-    queryFn: async ({ signal }) => {
-      const ctx = home.server.focusedContext()
-      if (!ctx) return { sessions: [], eventSequence: 0 }
-      const cache = homeSessions()
-      const eventSequence = cache.eventSequence()
-      const index = await loadHomeSessionIndex(
-        (input, options) => ctx.sdk.client.v2.session.list(input, options),
-        eventSequence,
-        signal,
-      )
-      cache.complete(eventSequence)
-      return index
-    },
+    queryFn: ({ signal }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const ctx = home.server.focusedContext()
+          if (!ctx) return { sessions: [], eventSequence: 0 }
+          const cache = homeSessions()
+          const eventSequence = cache.eventSequence()
+          const index = yield* homeRequest(() =>
+            loadHomeSessionIndex(
+              (input, options) => ctx.sdk.client.v2.session.list(input, options),
+              eventSequence,
+              signal,
+            ),
+          )
+          cache.complete(eventSequence)
+          return index
+        }),
+      ),
     retry: false,
     staleTime: 30_000,
     refetchOnMount: true,
@@ -106,24 +126,26 @@ export function createHomeSessionsController(home: HomeController) {
         if (MutableHashSet.has(prefetched, key)) return
         MutableHashSet.add(prefetched, key)
         createRoot((dispose) => {
-          try {
-            void ctx.sync.session
-              .sync(record.session.id)
-              .then(() =>
-                Promise.all(
-                  (ctx.sync.session.data.message[record.session.id] ?? []).flatMap((message) =>
-                    (ctx.sync.session.data.part[message.id] ?? []).flatMap((part) => {
-                      if (part.type !== "text" || !part.text) return []
-                      return preloadMarkdown(part.text, part.id)
-                    }),
-                  ),
-                ),
-              )
-              .catch(() => {})
-              .finally(dispose)
-          } catch {
-            dispose()
-          }
+          const textParts = () =>
+            (ctx.sync.session.data.message[record.session.id] ?? []).flatMap((message) =>
+              (ctx.sync.session.data.part[message.id] ?? []).flatMap((part) =>
+                part.type === "text" && part.text ? [{ id: part.id, text: part.text }] : [],
+              ),
+            )
+          // runFork starts the sync call at once, inside this root, as the direct call did.
+          Effect.runFork(
+            homeRequest(() => ctx.sync.session.sync(record.session.id)).pipe(
+              Effect.andThen(() =>
+                Effect.forEach(textParts(), (part) => homeRequest(() => preloadMarkdown(part.text, part.id)), {
+                  concurrency: "unbounded",
+                  discard: true,
+                }),
+              ),
+              // The prefetch is best effort: any failure only leaves the cache cold.
+              Effect.ignoreCause,
+              Effect.ensuring(Effect.sync(dispose)),
+            ),
+          )
         })
       })
   })
@@ -133,29 +155,35 @@ export function createHomeSessionsController(home: HomeController) {
       id: "command.palette",
       title: language.t("command.palette"),
       hidden: true,
-      onSelect: async () => {
+      onSelect: () => {
         const conn = home.server.focused()
         if (!conn) return
         const ctx = home.server.focusedContext()
         if (!ctx) return
-        const { DialogHomeCommandPaletteV2 } = await import("@/components/dialog-command-palette-v2")
-        void dialog.show(() => (
-          <DialogHomeCommandPaletteV2
-            server={conn}
-            onSelectSession={(entry) => {
-              if (!entry.sessionID || !entry.directory || !entry.server) return
-              const sessionID = entry.sessionID
-              const server = entry.server
-              const directory = entry.project?.worktree ?? entry.directory
-              ctx.projects.open(directory)
-              ctx.projects.touch(directory)
-              void startTransition(() => {
-                const tab = tabs.addSessionTab({ server, sessionId: sessionID })
-                tabs.select(tab)
-              })
-            }}
-          />
-        ))
+        runDetached(
+          Effect.map(
+            Effect.promise(() => import("@/components/dialog-command-palette-v2")),
+            ({ DialogHomeCommandPaletteV2 }) => {
+              void dialog.show(() => (
+                <DialogHomeCommandPaletteV2
+                  server={conn}
+                  onSelectSession={(entry) => {
+                    if (!entry.sessionID || !entry.directory || !entry.server) return
+                    const sessionID = entry.sessionID
+                    const server = entry.server
+                    const directory = entry.project?.worktree ?? entry.directory
+                    ctx.projects.open(directory)
+                    ctx.projects.touch(directory)
+                    void startTransition(() => {
+                      const tab = tabs.addSessionTab({ server, sessionId: sessionID })
+                      tabs.select(tab)
+                    })
+                  }}
+                />
+              ))
+            },
+          ),
+        )
       },
     },
   ])
@@ -201,36 +229,40 @@ export function createHomeSessionsController(home: HomeController) {
           tabs.select(tab)
         })
       },
-      archive: async (session: Session) => {
+      archive: (session: Session) => {
         const conn = home.server.focused()
         const ctx = home.server.focusedContext()
         if (!conn || !ctx) return
         const [, setStore] = ctx.sync.child(session.directory)
-        if ((await ctx.sdk.protocol) !== "v1") return
-        await archiveHomeSession({
-          server: ServerConnection.key(conn),
-          session,
-          archive: (sessionID) =>
-            ctx.sdk.client.session.update({
-              sessionID,
-              directory: session.directory,
-              time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
-            }),
-          remove: () => {
-            setStore(
-              produce((draft) => {
-                const match = Binary.search(draft.session, session.id, (item) => item.id)
-                if (match.found) draft.session.splice(match.index, 1)
-              }),
-            )
-            homeSessions().remove(session.id)
-          },
-          onError: (cause) =>
-            showToast({
-              title: language.t("common.requestFailed"),
-              description: errorMessage(cause, language.t("common.requestFailed")),
-            }),
-        })
+        runDetached(
+          Effect.gen(function* () {
+            if ((yield* homeRequest(() => ctx.sdk.protocol)) !== "v1") return
+            yield* archiveHomeSession({
+              server: ServerConnection.key(conn),
+              session,
+              archive: (sessionID) =>
+                ctx.sdk.client.session.update({
+                  sessionID,
+                  directory: session.directory,
+                  time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
+                }),
+              remove: () => {
+                setStore(
+                  produce((draft) => {
+                    const match = Binary.search(draft.session, session.id, (item) => item.id)
+                    if (match.found) draft.session.splice(match.index, 1)
+                  }),
+                )
+                homeSessions().remove(session.id)
+              },
+              onError: (cause) =>
+                showToast({
+                  title: language.t("common.requestFailed"),
+                  description: errorMessage(cause, language.t("common.requestFailed")),
+                }),
+            })
+          }),
+        )
       },
     },
     tab: {

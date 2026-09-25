@@ -53,7 +53,7 @@ export type HomeSessionsViewProps = {
   isOpenTab: (record: HomeSessionRecord) => boolean
   onCreateSession: () => void
   onOpenSession: (session: Session, options?: OpenSessionOptions) => void
-  onArchiveSession: (session: Session) => Promise<void>
+  onArchiveSession: (session: Session) => void
   onSetHoverTarget: (element: HTMLElement) => void
   onSetThumbTrack: (element: HTMLDivElement) => void
   onSetContent: (element: HTMLDivElement) => void
@@ -470,7 +470,7 @@ function HomeSessionRow(props: HomeSessionsViewProps & { record: HomeSessionReco
               onClick={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                void props.onArchiveSession(props.record.session)
+                props.onArchiveSession(props.record.session)
               }}
             />
           </TooltipV2>
