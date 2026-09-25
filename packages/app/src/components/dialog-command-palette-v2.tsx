@@ -1,5 +1,5 @@
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
-import { DateTime, HashSet, MutableHashMap, Option } from "effect"
+import { Data, DateTime, Effect, HashSet, MutableHashMap, Option } from "effect"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { Dialog, DialogBody } from "@opencode-ai/ui/v2/dialog-v2"
@@ -36,6 +36,9 @@ function groups(entries: CommandPaletteEntry[]) {
   return Array.from(map).map(([category, entries]) => ({ category, entries }))
 }
 
+/** A palette file search that rejected. `cause` is the original rejection. */
+class CommandPaletteLoadError extends Data.TaggedError("App.CommandPaletteLoadError")<{ readonly cause: unknown }> {}
+
 function matchesEntry(entry: CommandPaletteEntry, query: string) {
   const value = query.toLowerCase()
   return [entry.title, entry.description, entry.category].some((text) => text?.toLowerCase().includes(value))
@@ -43,18 +46,31 @@ function matchesEntry(entry: CommandPaletteEntry, query: string) {
 
 export function DialogCommandPaletteV2(props: { onOpenFile?: (path: string) => void }) {
   const palette = createCommandPaletteModel(props)
-  const loadItems = async (text: string) => {
-    const q = text.trim()
-    if (!q) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
+  const loadItems = (text: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const q = text.trim()
+        if (!q) return [...palette.preferredCommandEntries(), ...palette.recentFileEntries()]
 
-    const [files, nextSessions] = await Promise.all([palette.file.searchFiles(q), Promise.resolve(palette.sessions(q))])
-    const category = palette.language.t("palette.group.files")
-    return [
-      ...palette.commandEntries().filter((entry) => matchesEntry(entry, q)),
-      ...nextSessions,
-      ...files.map((path) => createCommandPaletteFileEntry(path, category)),
-    ]
-  }
+        // The file and session searches run at the same time; a failed file search fails the load, as before.
+        const [files, nextSessions] = yield* Effect.all(
+          [
+            Effect.tryPromise({
+              try: () => palette.file.searchFiles(q),
+              catch: (cause) => new CommandPaletteLoadError({ cause }),
+            }),
+            Effect.promise(() => palette.sessions(q)),
+          ],
+          { concurrency: "unbounded" },
+        )
+        const category = palette.language.t("palette.group.files")
+        return [
+          ...palette.commandEntries().filter((entry) => matchesEntry(entry, q)),
+          ...nextSessions,
+          ...files.map((path) => createCommandPaletteFileEntry(path, category)),
+        ]
+      }),
+    )
 
   return (
     <CommandPaletteView
@@ -116,11 +132,15 @@ export function DialogHomeCommandPaletteV2(props: {
     }
     if (item.type === "session") props.onSelectSession(item)
   }
-  const loadItems = async (text: string) => {
-    const query = text.trim()
-    if (!query) return commandEntries().slice(0, 5)
-    return [...commandEntries().filter((entry) => matchesEntry(entry, query)), ...(await sessions(query))]
-  }
+  const loadItems = (text: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const query = text.trim()
+        if (!query) return commandEntries().slice(0, 5)
+        const commands = commandEntries().filter((entry) => matchesEntry(entry, query))
+        return [...commands, ...(yield* Effect.promise(() => sessions(query)))]
+      }),
+    )
 
   onCleanup(() => {
     if (state.committed) return
