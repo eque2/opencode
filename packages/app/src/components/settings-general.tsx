@@ -9,7 +9,7 @@ import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useParams } from "@solidjs/router"
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { usePlatform, type DisplayBackend } from "@/context/platform"
@@ -41,6 +41,11 @@ const demoSoundState: { cleanup: Option.Option<() => void>; run: number } = {
 }
 // Holds the delayed start of the next demo sound.
 const demoSoundDelay = makeFiberSlot()
+
+/** A settings request that rejected. `cause` is the original rejection. */
+class SettingsGeneralRequestError extends Data.TaggedError("App.SettingsGeneralRequestError")<{
+  readonly cause: unknown
+}> {}
 
 type ThemeOption = {
   id: string
@@ -135,14 +140,21 @@ export const SettingsGeneral: Component = () => {
   const serverSdk = useServerSDK()
 
   const [shells] = createResource(
-    async () => {
-      const sdk = serverSdk()
-      if ((await sdk.protocol) === "v1") {
-        return (await sdk.client.pty.shells()).data ?? []
-      }
-      // return (await sdk.api.pty.shells()).data
-      return [] as ShellOption[]
-    },
+    () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const sdk = serverSdk()
+          if ((yield* Effect.promise(() => sdk.protocol)) === "v1") {
+            const result = yield* Effect.tryPromise({
+              try: () => sdk.client.pty.shells(),
+              catch: (cause) => new SettingsGeneralRequestError({ cause }),
+            })
+            return result.data ?? []
+          }
+          // return (await sdk.api.pty.shells()).data
+          return [] as ShellOption[]
+        }),
+      ),
     { initialValue: [] as ShellOption[] },
   )
 
