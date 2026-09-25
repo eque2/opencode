@@ -1,4 +1,5 @@
 import { Data, Effect, MutableHashMap } from "effect"
+import { makeFiberSlot } from "@/utils/fiber-slot"
 
 type QueueInput = {
   paused: () => boolean
@@ -20,14 +21,16 @@ const attempt = (run: () => Promise<void> | void) =>
     ),
   )
 
-/** Lets the event loop turn once between refresh steps, as the old setTimeout(0) tick did. */
+/** Lets the event loop turn once, as a setTimeout(0) did. It delays a drain start and separates refresh steps. */
 const tick = Effect.sleep("0 millis")
 
 export function createRefreshQueue(input: QueueInput) {
   const queued = MutableHashMap.empty<string, string>()
   let root = false
   let running = false
-  let timer: ReturnType<typeof setTimeout> | undefined
+  // The pending drain start. `scheduled` is true from schedule() until the timer fiber starts the drain.
+  const timer = makeFiberSlot()
+  let scheduled = false
 
   const key = input.key ?? ((directory: string) => directory)
 
@@ -38,11 +41,19 @@ export function createRefreshQueue(input: QueueInput) {
   }
 
   const schedule = () => {
-    if (timer) return
-    timer = setTimeout(() => {
-      timer = undefined
-      Effect.runFork(drain.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
-    }, 0)
+    if (scheduled) return
+    scheduled = true
+    // The drain runs in its own fiber, so dispose() stops only a drain that has not started yet.
+    timer.run(
+      tick.pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            scheduled = false
+          }),
+        ),
+        Effect.andThen(Effect.forkDetach(drain.pipe(Effect.tapCause((cause) => Effect.logError(cause))))),
+      ),
+    )
   }
 
   const push = (directory: string) => {
@@ -99,9 +110,9 @@ export function createRefreshQueue(input: QueueInput) {
       MutableHashMap.remove(queued, key(directory))
     },
     dispose() {
-      if (!timer) return
-      clearTimeout(timer)
-      timer = undefined
+      if (!scheduled) return
+      timer.interrupt()
+      scheduled = false
     },
   }
 }
