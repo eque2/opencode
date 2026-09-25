@@ -2,7 +2,7 @@ import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { batch, createEffect, createMemo, createRoot, on, onCleanup } from "solid-js"
 import { useParams } from "@solidjs/router"
-import { HashSet, Iterable, MutableHashMap, Option, Predicate } from "effect"
+import { Effect, HashSet, Iterable, MutableHashMap, Option, Predicate } from "effect"
 import { useSDK, type DirectorySDK } from "./sdk"
 import type { Platform } from "./platform"
 import { useServerSDK } from "./server-sdk"
@@ -10,6 +10,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { defaultTitle, titleNumber } from "./terminal-title"
 import { Persist, persisted, removePersisted } from "@/utils/persist"
 import { ScopedKey, ServerScope, type ServerScope as ServerScopeValue } from "@/utils/server-scope"
+import { terminalRequest } from "@/utils/terminal-request"
 
 export type LocalPTY = {
   id: string
@@ -251,69 +252,149 @@ function createWorkspaceTerminalSession(
       setStore("all", index, (item) => ({ ...item, ...pty }))
     }
     const size = pty.cols && pty.rows ? { size: { rows: pty.rows, cols: pty.cols } } : {}
-    const doUpdate = async () => {
-      if ((await sdk.protocol) === "v1") {
-        await sdk.client.pty.update({ ptyID: pty.id, title: pty.title, ...size })
-      } else {
-        await sdk.api.pty.update({ ptyID: pty.id, location, title: pty.title, ...size })
+    const request = Effect.gen(function* () {
+      if ((yield* Effect.promise(() => sdk.protocol)) === "v1") {
+        yield* terminalRequest(() => sdk.client.pty.update({ ptyID: pty.id, title: pty.title, ...size }))
+        return
       }
-    }
-    doUpdate().catch((error: unknown) => {
-      if (Option.isSome(previous)) {
-        const currentIndex = store.all.findIndex((item) => item.id === pty.id)
-        if (currentIndex >= 0) setStore("all", currentIndex, previous.value)
-      }
-      console.error("Failed to update terminal", error)
+      yield* terminalRequest(() => sdk.api.pty.update({ ptyID: pty.id, location, title: pty.title, ...size }))
     })
+    Effect.runFork(
+      request.pipe(
+        Effect.catchTag("App.TerminalRequestError", (error) =>
+          Effect.gen(function* () {
+            if (Option.isSome(previous)) {
+              const currentIndex = store.all.findIndex((item) => item.id === pty.id)
+              if (currentIndex >= 0) setStore("all", currentIndex, previous.value)
+            }
+            yield* Effect.logError("Failed to update terminal", error.cause)
+          }),
+        ),
+      ),
+    )
   }
 
-  const clone = async (id: string) => {
-    const index = store.all.findIndex((x) => x.id === id)
-    const pty = store.all[index]
-    if (!pty) return
-    const data = await (async () => {
-      if ((await sdk.protocol) === "v1") {
-        return (await sdk.client.pty.create({ title: pty.title })).data
+  const createPty = (title: string) =>
+    Effect.gen(function* () {
+      if ((yield* Effect.promise(() => sdk.protocol)) === "v1") {
+        return (yield* terminalRequest(() => sdk.client.pty.create({ title }))).data
       }
-      return (
-        await sdk.api.pty.create({
-          location,
-          title: pty.title,
+      return (yield* terminalRequest(() => sdk.api.pty.create({ location, title }))).data
+    })
+
+  const clone = (id: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const index = store.all.findIndex((x) => x.id === id)
+        const pty = store.all[index]
+        if (!pty) return
+        const created = yield* createPty(pty.title).pipe(
+          Effect.map(Option.fromNullishOr),
+          Effect.catchTag("App.TerminalRequestError", (error) =>
+            Effect.logError("Failed to clone terminal", error.cause).pipe(Effect.as(Option.none())),
+          ),
+        )
+        if (Option.isNone(created) || !created.value.id) return
+        const data = created.value
+
+        const active = store.active === pty.id
+
+        batch(() => {
+          setStore(
+            "all",
+            index,
+            produce((draft) => {
+              draft.id = data.id
+              draft.title = data.title ?? pty.title
+              draft.titleNumber = pty.titleNumber
+              delete draft.buffer
+              delete draft.cursor
+              delete draft.scrollY
+              delete draft.rows
+              delete draft.cols
+            }),
+          )
+          if (active) {
+            setStore("active", data.id)
+          }
         })
-      ).data
-    })().catch((error: unknown) => {
-      console.error("Failed to clone terminal", error)
-      return undefined
-    })
-    if (!data?.id) return
-
-    const active = store.active === pty.id
-
-    batch(() => {
-      setStore(
-        "all",
-        index,
-        produce((draft) => {
-          draft.id = data.id
-          draft.title = data.title ?? pty.title
-          draft.titleNumber = pty.titleNumber
-          delete draft.buffer
-          delete draft.cursor
-          delete draft.scrollY
-          delete draft.rows
-          delete draft.cols
-        }),
-      )
-      if (active) {
-        setStore("active", data.id)
-      }
-    })
-  }
+      }),
+    )
 
   const trim = (id: string) => {
     const index = store.all.findIndex((x) => x.id === id)
     if (index === -1) return
     setStore("all", index, (pty) => (hasRestoreState(pty) ? dropRestoreState(pty) : pty))
+  }
+
+  const close = (id: string) => {
+    const index = store.all.findIndex((f) => f.id === id)
+    if (index !== -1) {
+      batch(() => {
+        if (store.active === id) {
+          const next = index > 0 ? store.all[index - 1]?.id : store.all[1]?.id
+          setStore("active", next)
+        }
+        setStore(
+          "all",
+          produce((all) => {
+            all.splice(index, 1)
+          }),
+        )
+      })
+    }
+
+    const remove = Effect.gen(function* () {
+      if ((yield* Effect.promise(() => sdk.protocol)) === "v1") {
+        yield* terminalRequest(() => sdk.client.pty.remove({ ptyID: id }))
+        return
+      }
+      yield* terminalRequest(() => sdk.api.pty.remove({ ptyID: id, location }))
+    })
+    return Effect.runPromise(
+      remove.pipe(
+        Effect.catchTag("App.TerminalRequestError", (error) =>
+          Effect.logError("Failed to close terminal", error.cause),
+        ),
+      ),
+    )
+  }
+
+  const create = (options?: { focus?: boolean }) => {
+    const nextNumber = pickNextTerminalNumber()
+    const focusRequest = options?.focus ? Option.some(requestFocus(Option.none(), true)) : Option.none<number>()
+
+    const created = (data: Effect.Success<ReturnType<typeof createPty>>) => {
+      const id = data?.id
+      if (!id) {
+        if (Option.isSome(focusRequest)) cancelFocus(focusRequest.value)
+        return
+      }
+      const newTerminal = {
+        id,
+        title: data?.title ?? defaultTitle(nextNumber),
+        titleNumber: nextNumber,
+      }
+      batch(() => {
+        setStore("all", store.all.length, newTerminal)
+        setStore("active", id)
+        if (Option.isSome(focusRequest) && Option.isSome(ui.focus) && ui.focus.value.request === focusRequest.value) {
+          setUi("focus", Option.some({ request: focusRequest.value, id: Option.some(id), pending: false }))
+        }
+      })
+    }
+
+    Effect.runFork(
+      createPty(defaultTitle(nextNumber)).pipe(
+        Effect.flatMap((data) => Effect.sync(() => created(data))),
+        Effect.catchTag("App.TerminalRequestError", (error) =>
+          Effect.gen(function* () {
+            if (Option.isSome(focusRequest)) cancelFocus(focusRequest.value)
+            yield* Effect.logError("Failed to create terminal", error.cause)
+          }),
+        ),
+      ),
+    )
   }
 
   return {
@@ -330,45 +411,7 @@ function createWorkspaceTerminalSession(
         setStore("all", [])
       })
     },
-    new: (options?: { focus?: boolean }) => {
-      const nextNumber = pickNextTerminalNumber()
-      const focusRequest = options?.focus ? Option.some(requestFocus(Option.none(), true)) : Option.none<number>()
-
-      const doCreate = async () => {
-        if ((await sdk.protocol) === "v1") {
-          return (await sdk.client.pty.create({ title: defaultTitle(nextNumber) })).data
-        }
-        return (await sdk.api.pty.create({ location, title: defaultTitle(nextNumber) })).data
-      }
-      doCreate()
-        .then((data) => {
-          const id = data?.id
-          if (!id) {
-            if (Option.isSome(focusRequest)) cancelFocus(focusRequest.value)
-            return
-          }
-          const newTerminal = {
-            id,
-            title: data?.title ?? defaultTitle(nextNumber),
-            titleNumber: nextNumber,
-          }
-          batch(() => {
-            setStore("all", store.all.length, newTerminal)
-            setStore("active", id)
-            if (
-              Option.isSome(focusRequest) &&
-              Option.isSome(ui.focus) &&
-              ui.focus.value.request === focusRequest.value
-            ) {
-              setUi("focus", Option.some({ request: focusRequest.value, id: Option.some(id), pending: false }))
-            }
-          })
-        })
-        .catch((error: unknown) => {
-          if (Option.isSome(focusRequest)) cancelFocus(focusRequest.value)
-          console.error("Failed to create terminal", error)
-        })
-    },
+    new: create,
     update: (pty: Partial<LocalPTY> & { id: string }) => {
       update(pty)
     },
@@ -380,29 +423,21 @@ function createWorkspaceTerminalSession(
         return next
       })
     },
-    clone: async (id: string) => {
-      await clone(id)
-    },
-    bind: () => {
-      return {
-        trim,
-        update: (pty: Partial<LocalPTY> & { id: string }) => {
-          update(pty)
-        },
-        clone: async (id: string) => {
-          await clone(id)
-        },
-      }
-    },
+    clone,
+    bind: () => ({
+      trim,
+      update: (pty: Partial<LocalPTY> & { id: string }) => {
+        update(pty)
+      },
+      clone,
+    }),
     open: (id: string) => {
       setStore("active", id)
     },
     requestFocus: (id?: string) => {
       requestFocus(Option.fromNullishOr(id))
     },
-    focusRequested: (id?: string) => {
-      return focusRequested(id)
-    },
+    focusRequested: (id?: string) => focusRequested(id),
     consumeFocus: (id: string) => {
       consumeFocus(id)
     },
@@ -421,31 +456,7 @@ function createWorkspaceTerminalSession(
       const prevIndex = index === 0 ? store.all.length - 1 : index - 1
       setStore("active", store.all[prevIndex]?.id)
     },
-    close: async (id: string) => {
-      const index = store.all.findIndex((f) => f.id === id)
-      if (index !== -1) {
-        batch(() => {
-          if (store.active === id) {
-            const next = index > 0 ? store.all[index - 1]?.id : store.all[1]?.id
-            setStore("active", next)
-          }
-          setStore(
-            "all",
-            produce((all) => {
-              all.splice(index, 1)
-            }),
-          )
-        })
-      }
-
-      const removePromise =
-        (await sdk.protocol) === "v1"
-          ? sdk.client.pty.remove({ ptyID: id })
-          : sdk.api.pty.remove({ ptyID: id, location })
-      await removePromise.catch((error: unknown) => {
-        console.error("Failed to close terminal", error)
-      })
-    },
+    close,
     move: (id: string, to: number) => {
       const index = store.all.findIndex((f) => f.id === id)
       if (index === -1) return
