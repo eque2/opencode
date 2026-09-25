@@ -711,6 +711,7 @@ export default function Page() {
   const vcsMode = createMemo<VcsMode | undefined>(() => {
     const mode = reviewMode()
     if (mode === "git" || mode === "branch") return mode
+    return undefined
   })
   const vcsKey = createMemo(
     () =>
@@ -839,7 +840,7 @@ export default function Page() {
     const list = [...root.querySelectorAll<HTMLElement>("[data-message-id]")]
       .map((el) => {
         const id = el.dataset.messageId
-        if (!id) return
+        if (!id) return undefined
 
         const rect = el.getBoundingClientRect()
         return { id, top: rect.top, bottom: rect.bottom }
@@ -1457,7 +1458,7 @@ export default function Page() {
 
   const reviewDiffId = (path: string) => {
     const sum = checksum(path)
-    if (!sum) return
+    if (!sum) return undefined
     return `session-review-diff-${sum}`
   }
 
@@ -1793,7 +1794,7 @@ export default function Page() {
 
   const editingFollowup = createMemo(() => {
     const id = params.id
-    if (!id) return
+    if (!id) return undefined
     return followup.edit[id]
   })
 
@@ -1840,8 +1841,8 @@ export default function Page() {
 
   const sendingFollowup = createMemo(() => {
     const id = params.id
-    if (!id) return
-    if (!followupBusy(id)) return
+    if (!id) return undefined
+    if (!followupBusy(id)) return undefined
     return followupMutation.variables?.id
   })
 
@@ -1999,12 +2000,12 @@ export default function Page() {
   })
 
   const revert = (input: { sessionID: string; messageID: string }) => {
-    if (reverting()) return
+    if (reverting()) return undefined
     return revertMutation.mutateAsync(input)
   }
 
   const restore = (id: string) => {
-    if (!params.id || reverting()) return
+    if (!params.id || reverting()) return undefined
     return restoreMutation.mutateAsync(id)
   }
 

@@ -84,7 +84,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
   const detailSource = createMemo(() => {
     const diff = sourceActiveItem()
     const load = props.loadDiff
-    if (!diff || !load || !reviewDiffNeedsLoad(diff)) return
+    if (!diff || !load || !reviewDiffNeedsLoad(diff)) return undefined
     return { diff, load, version: props.diffVersion }
   })
   const [loadedDiff] = createResource(detailSource, ({ diff, load, version }) =>
