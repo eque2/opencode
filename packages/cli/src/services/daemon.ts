@@ -12,7 +12,7 @@ import path from "path"
 export interface Interface {
   readonly client: () => Effect.Effect<ReturnType<typeof createOpencodeClient>, unknown>
   readonly transport: () => Effect.Effect<{ url: string; headers: RequestInit["headers"] }, unknown>
-  readonly start: () => Effect.Effect<string, Error>
+  readonly start: () => Effect.Effect<string, EntrypointError | StartError>
   readonly status: () => Effect.Effect<string | undefined>
   readonly stop: () => Effect.Effect<void, unknown>
   readonly password: (value?: string) => Effect.Effect<string, unknown>
@@ -20,6 +20,35 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/cli/Daemon") {}
+
+export class UnhealthyError extends Schema.TaggedError<UnhealthyError>()("CliDaemon.UnhealthyError", {
+  message: Schema.String,
+}) {}
+
+export class VersionMismatchError extends Schema.TaggedError<VersionMismatchError>()("CliDaemon.VersionMismatchError", {
+  message: Schema.String,
+}) {}
+
+export class SignalError extends Schema.TaggedError<SignalError>()("CliDaemon.SignalError", {
+  pid: Schema.Number,
+  signal: Schema.Union([Schema.String, Schema.Number]),
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+export class StillRunningError extends Schema.TaggedError<StillRunningError>()("CliDaemon.StillRunningError", {
+  pid: Schema.Number,
+  message: Schema.String,
+}) {}
+
+export class EntrypointError extends Schema.TaggedError<EntrypointError>()("CliDaemon.EntrypointError", {
+  message: Schema.String,
+}) {}
+
+export class StartError extends Schema.TaggedError<StartError>()("CliDaemon.StartError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 const Registration = Schema.Struct({
   id: Schema.optional(Schema.String),
@@ -69,24 +98,30 @@ export const layer = Layer.effect(
       const client = yield* createClient(info.url)
       const response = yield* Effect.tryPromise(() => client.v2.health.get({ signal: AbortSignal.timeout(2_000) }))
       if (response.data?.healthy === true) return info
-      return yield* Effect.fail(new Error("Registered server is not healthy"))
+      return yield* Effect.fail(new UnhealthyError({ message: "Registered server is not healthy" }))
     })
 
     const compatible = Effect.fnUntraced(function* () {
       const info = yield* healthy()
       if (info.version === InstallationVersion) return info
-      return yield* Effect.fail(new Error("Registered server version does not match the client"))
+      return yield* Effect.fail(
+        new VersionMismatchError({ message: "Registered server version does not match the client" }),
+      )
     })
 
-    const signal = (pid: number, signal: NodeJS.Signals) =>
-      Effect.try({ try: () => process.kill(pid, signal), catch: (cause) => cause }).pipe(Effect.ignore)
+    const kill = (pid: number, signal: NodeJS.Signals | 0) =>
+      Effect.try({
+        try: () => process.kill(pid, signal),
+        catch: (cause) =>
+          new SignalError({ pid, signal, message: `Failed to send ${signal} to process ${pid}`, cause }),
+      })
+
+    const signal = (pid: number, signal: NodeJS.Signals) => kill(pid, signal).pipe(Effect.ignore)
 
     const awaitStopped = Effect.fnUntraced(function* (pid: number) {
-      const running = yield* Effect.try({ try: () => process.kill(pid, 0), catch: () => false }).pipe(
-        Effect.orElseSucceed(() => false),
-      )
+      const running = yield* kill(pid, 0).pipe(Effect.orElseSucceed(() => false))
       if (!running) return true
-      return yield* Effect.fail(new Error(`Server process ${pid} is still running`))
+      return yield* Effect.fail(new StillRunningError({ pid, message: `Server process ${pid} is still running` }))
     })
 
     const stopProcess = Effect.fnUntraced(function* (info: Registration) {
@@ -117,7 +152,7 @@ export const layer = Layer.effect(
 
       const entrypoint = compiled ? undefined : process.argv[1]
       if (!compiled && entrypoint === undefined)
-        return yield* Effect.fail(new Error("Failed to resolve CLI entrypoint"))
+        return yield* Effect.fail(new EntrypointError({ message: "Failed to resolve CLI entrypoint" }))
       yield* Effect.try({
         try: () => {
           spawn(process.execPath, [...(entrypoint ? [entrypoint] : []), "serve", "--register"], {
@@ -125,13 +160,13 @@ export const layer = Layer.effect(
             stdio: "ignore",
           }).unref()
         },
-        catch: (cause) => new Error("Failed to start server", { cause }),
+        catch: (cause) => new StartError({ message: "Failed to start server", cause }),
       })
 
       return yield* compatible().pipe(
         Effect.retry(Schedule.max([Schedule.spaced("50 millis"), Schedule.recurs(100)])),
         Effect.map((info) => info.url),
-        Effect.mapError(() => new Error("Failed to start server")),
+        Effect.mapError((cause) => new StartError({ message: "Failed to start server", cause })),
       )
     })
 
