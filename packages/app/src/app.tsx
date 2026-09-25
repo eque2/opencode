@@ -149,7 +149,7 @@ function LegacyTargetSessionRedirect() {
     navigate(legacySessionHref(directory, params.id), { replace: true })
   })
 
-  return null
+  return undefined
 }
 
 // Wraps the non-draft routes. They are gated on (and keyed to) the globally selected
@@ -271,7 +271,7 @@ function BodyDesignClass() {
     document.body.classList.toggle("font-[440]", enabled)
   })
 
-  return null
+  return undefined
 }
 
 // Server-agnostic providers shared across every route. These live in the shared
@@ -308,7 +308,7 @@ function DesktopCommands() {
     return commands
   })
 
-  return null
+  return undefined
 }
 
 // Server-scoped providers shared by the legacy shell and the top-level new shell.
