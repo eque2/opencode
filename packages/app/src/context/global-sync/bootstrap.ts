@@ -138,9 +138,9 @@ export async function bootstrapGlobal(input: {
     () => input.queryClient.fetchQuery(loadGlobalConfigQuery(input.scope, input.serverSDK, input.protocol)),
     () =>
       input.queryClient.fetchQuery(
-        loadProvidersQuery(input.scope, null, input.serverAPI, input.serverSDK, input.protocol),
+        loadProvidersQueryFor(input.scope, Option.none(), input.serverAPI, input.serverSDK, input.protocol),
       ),
-    () => input.queryClient.fetchQuery(loadPathQuery(input.scope, null, input.serverSDK, input.protocol)),
+    () => input.queryClient.fetchQuery(loadPathQueryFor(input.scope, Option.none(), input.serverSDK, input.protocol)),
     () =>
       input.queryClient
         .fetchQuery(loadProjectsQuery(input.scope, input.serverAPI.project))
@@ -192,22 +192,31 @@ function warmSessions(input: {
   ).then(() => undefined)
 }
 
-export const loadProvidersQuery = (
+/**
+ * Builds the provider catalog query for one directory, or for the whole server when `directory` is none.
+ * The query key keeps `null` in the directory slot for the server-wide catalog, which server-sync invalidates.
+ */
+export const loadProvidersQueryFor = (
   scope: ServerScope,
-  directory: string | null,
+  directory: Option.Option<string>,
   sdk: CatalogApi,
   legacy?: OpencodeClient,
   protocol?: Promise<ServerProtocol>,
 ) =>
   queryOptions({
-    queryKey: [scope, directory, "providers"],
+    queryKey: [scope, Option.getOrNull(directory), "providers"],
     queryFn: () =>
       retry(async () => {
         if ((await protocol) === "v1" && legacy) {
           const result = await legacy.provider.list()
           return normalizeProviderList(result.data!)
         }
-        const location = directory ? { location: { directory } } : undefined
+        const location = Option.getOrUndefined(
+          directory.pipe(
+            Option.filter((value) => value.length > 0),
+            Option.map((value) => ({ location: { directory: value } })),
+          ),
+        )
         const [providers, models, defaultModel] = await Promise.all([
           sdk.provider.list(location),
           sdk.model.list(location),
@@ -216,6 +225,15 @@ export const loadProvidersQuery = (
         return normalizeProviderList(providers.data, models.data, defaultModel.data)
       }),
   })
+
+/** Nullable form of {@link loadProvidersQueryFor} for callers that hold `directory | null`. */
+export const loadProvidersQuery = (
+  scope: ServerScope,
+  directory: string | null,
+  sdk: CatalogApi,
+  legacy?: OpencodeClient,
+  protocol?: Promise<ServerProtocol>,
+) => loadProvidersQueryFor(scope, Option.fromNullishOr(directory), sdk, legacy, protocol)
 
 type AgentListApi = {
   readonly list: (input?: AgentListInput) => Promise<AgentListOutput>
@@ -269,20 +287,34 @@ export const loadCommands = (
     return api.list({ location: { directory } }).then((result) => result.data)
   })
 
+/**
+ * Builds the path query for one directory, or for the whole server when `directory` is none.
+ * The query key keeps `null` in the directory slot for the server-wide path.
+ */
+export const loadPathQueryFor = (
+  scope: ServerScope,
+  directory: Option.Option<string>,
+  sdk: OpencodeClient,
+  protocol?: Promise<ServerProtocol>,
+) =>
+  queryOptions<Path>({
+    queryKey: [scope, Option.getOrNull(directory), "path"],
+    queryFn: async () => {
+      if ((await protocol) !== "v1")
+        return { state: "", config: "", worktree: "", directory: Option.getOrElse(directory, () => ""), home: "" }
+      return retry(() =>
+        sdk.path.get({ directory: Option.getOrUndefined(directory) }).then((result) => result.data!),
+      )
+    },
+  })
+
+/** Nullable form of {@link loadPathQueryFor} for callers that hold `directory | null`. */
 export const loadPathQuery = (
   scope: ServerScope,
   directory: string | null,
   sdk: OpencodeClient,
   protocol?: Promise<ServerProtocol>,
-) =>
-  queryOptions<Path>({
-    queryKey: [scope, directory, "path"],
-    queryFn: async () => {
-      if ((await protocol) !== "v1")
-        return { state: "", config: "", worktree: "", directory: directory ?? "", home: "" }
-      return retry(() => sdk.path.get({ directory: directory ?? undefined }).then((result) => result.data!))
-    },
-  })
+) => loadPathQueryFor(scope, Option.fromNullishOr(directory), sdk, protocol)
 
 export const loadReferencesQuery = (
   scope: ServerScope,
