@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
 import { map, pipe, entries, sortBy, take } from "remeda"
@@ -125,15 +126,12 @@ export function DialogModel(props: { providerID?: string }) {
     return [...favoriteOptions, ...recentOptions, ...providerOptions, ...popularProviders]
   })
 
-  const provider = createMemo(() =>
-    props.providerID ? sync.data.provider.find((item) => item.id === props.providerID) : null,
+  const title = createMemo(() =>
+    Option.fromNullishOr(props.providerID).pipe(
+      Option.flatMapNullishOr((providerID) => sync.data.provider.find((item) => item.id === providerID)),
+      Option.match({ onNone: () => "Select model", onSome: (provider) => provider.name }),
+    ),
   )
-
-  const title = createMemo(() => {
-    const value = provider()
-    if (!value) return "Select model"
-    return value.name
-  })
 
   function onSelect(providerID: string, modelID: string) {
     local.model.set({ providerID, modelID }, { recent: true })
