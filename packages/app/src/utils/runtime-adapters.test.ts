@@ -43,6 +43,7 @@ describe("runtime adapters", () => {
   test("reads hovered link text safely", () => {
     expect(getHoveredLinkText({ currentHoveredLink: { text: "https://example.com" } })).toBe("https://example.com")
     expect(getHoveredLinkText({ currentHoveredLink: { text: 1 } })).toBeUndefined()
+    // eslint-disable-next-line effect/no-null-use-option -- (b) probes the JavaScript null runtime value that the untyped terminal value can hold
     expect(getHoveredLinkText(null)).toBeUndefined()
   })
 
