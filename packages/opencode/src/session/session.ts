@@ -35,7 +35,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Effect, Layer, Option, Context, Schema, Types } from "effect"
+import { Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -54,15 +54,14 @@ export function isDefaultTitle(title: string) {
 type SessionRow = typeof SessionTable.$inferSelect
 
 export function fromRow(row: SessionRow): Info {
-  const summary =
-    row.summary_additions !== null || row.summary_deletions !== null || row.summary_files !== null
-      ? {
-          additions: row.summary_additions ?? 0,
-          deletions: row.summary_deletions ?? 0,
-          files: row.summary_files ?? 0,
-          diffs: row.summary_diffs ?? undefined,
-        }
-      : undefined
+  const summary = [row.summary_additions, row.summary_deletions, row.summary_files].some(Predicate.isNotNull)
+    ? {
+        additions: row.summary_additions ?? 0,
+        deletions: row.summary_deletions ?? 0,
+        files: row.summary_files ?? 0,
+        diffs: row.summary_diffs ?? undefined,
+      }
+    : undefined
   const share = row.share_url ? { url: row.share_url } : undefined
   const revert = row.revert
     ? {
@@ -139,14 +138,15 @@ export function toRow(info: Info) {
     tokens_reasoning: (info.tokens ?? EmptyTokens).reasoning,
     tokens_cache_read: (info.tokens ?? EmptyTokens).cache.read,
     tokens_cache_write: (info.tokens ?? EmptyTokens).cache.write,
-    revert: info.revert
-      ? {
-          messageID: SessionMessage.ID.make(info.revert.messageID),
-          partID: info.revert.partID,
-          snapshot: info.revert.snapshot,
-          diff: info.revert.diff,
-        }
-      : null,
+    // An absent revert stays NULL, so an update that writes this row also clears the column.
+    revert: Option.getOrNull(
+      Option.map(Option.fromUndefinedOr(info.revert), (revert) => ({
+        messageID: SessionMessage.ID.make(revert.messageID),
+        partID: revert.partID,
+        snapshot: revert.snapshot,
+        diff: revert.diff,
+      })),
+    ),
     permission: info.permission,
     time_created: info.time.created,
     time_updated: info.time.updated,
@@ -472,13 +472,18 @@ export class Service extends Context.Service<Service, Interface>()("@opencode/Se
 
 export const use = serviceUse(Service)
 
+// A clearable field keeps its current value when it is absent, clears the value
+// when it is Option.none(), and replaces the value when it is Option.some.
 export type Patch = Omit<Partial<Info>, "time" | "share" | "summary" | "revert" | "permission"> & {
   time?: Partial<Info["time"]>
-  share?: Partial<NonNullable<Info["share"]>> | null
-  summary?: Info["summary"] | null
-  revert?: Info["revert"] | null
-  permission?: Info["permission"] | null
+  share?: Option.Option<NonNullable<Info["share"]>>
+  summary?: Option.Option<NonNullable<Info["summary"]>>
+  revert?: Option.Option<NonNullable<Info["revert"]>>
+  permission?: Option.Option<NonNullable<Info["permission"]>>
 }
+
+const patched = <A>(update: Option.Option<A> | undefined, current: A | undefined) =>
+  update ? Option.getOrUndefined(update) : current
 
 const layer: Layer.Layer<
   Service,
@@ -587,7 +592,10 @@ const layer: Layer.Layer<
           })
         }
       }
-      return rows.map((row) => ({ ...fromRow(row), project: projects.get(row.project_id) ?? null }))
+      return rows.map((row) => ({
+        ...fromRow(row),
+        project: Option.getOrNull(Option.fromUndefinedOr(projects.get(row.project_id))),
+      }))
     })
 
     const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
@@ -731,15 +739,16 @@ const layer: Layer.Layer<
     const patch = (sessionID: SessionID, info: Patch) =>
       Effect.gen(function* () {
         const current = yield* get(sessionID)
-        const next = {
+        const { time, share, summary, revert, permission, ...fields } = info
+        const next: Info = {
           ...current,
-          ...info,
-          time: info.time ? { ...current.time, ...info.time } : current.time,
-          share: info.share === null ? undefined : info.share ? { ...current.share, ...info.share } : current.share,
-          summary: info.summary === null ? undefined : (info.summary ?? current.summary),
-          revert: info.revert === null ? undefined : (info.revert ?? current.revert),
-          permission: info.permission === null ? undefined : (info.permission ?? current.permission),
-        } as Info
+          ...fields,
+          time: time ? { ...current.time, ...time } : current.time,
+          share: patched(share, current.share),
+          summary: patched(summary, current.summary),
+          revert: patched(revert, current.revert),
+          permission: patched(permission, current.permission),
+        }
         yield* events.publish(SessionV1.Event.Updated, { sessionID, info: next })
       })
 
@@ -776,9 +785,10 @@ const layer: Layer.Layer<
       sessionID: SessionID
       permission: PermissionV1.Ruleset
     }) {
-      yield* patch(input.sessionID, { permission: [...input.permission], time: { updated: Date.now() } }).pipe(
-        Effect.orDie,
-      )
+      yield* patch(input.sessionID, {
+        permission: Option.some([...input.permission]),
+        time: { updated: Date.now() },
+      }).pipe(Effect.orDie)
     })
 
     const setRevert = Effect.fn("Session.setRevert")(function* (input: {
@@ -787,25 +797,30 @@ const layer: Layer.Layer<
       summary: Info["summary"]
     }) {
       yield* patch(input.sessionID, {
-        summary: input.summary,
+        ...(input.summary ? { summary: Option.some(input.summary) } : {}),
         time: { updated: Date.now() },
-        revert: input.revert,
+        ...(input.revert ? { revert: Option.some(input.revert) } : {}),
       }).pipe(Effect.orDie)
     })
 
     const clearRevert = Effect.fn("Session.clearRevert")(function* (sessionID: SessionID) {
-      yield* patch(sessionID, { time: { updated: Date.now() }, revert: null }).pipe(Effect.orDie)
+      yield* patch(sessionID, { time: { updated: Date.now() }, revert: Option.none() }).pipe(Effect.orDie)
     })
 
     const setSummary = Effect.fn("Session.setSummary")(function* (input: {
       sessionID: SessionID
       summary: Info["summary"]
     }) {
-      yield* patch(input.sessionID, { time: { updated: Date.now() }, summary: input.summary }).pipe(Effect.orDie)
+      yield* patch(input.sessionID, {
+        time: { updated: Date.now() },
+        ...(input.summary ? { summary: Option.some(input.summary) } : {}),
+      }).pipe(Effect.orDie)
     })
 
     const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Info["share"] }) {
-      yield* patch(input.sessionID, { share: input.share ?? null, time: { updated: Date.now() } }).pipe(Effect.orDie)
+      yield* patch(input.sessionID, { share: Option.fromUndefinedOr(input.share), time: { updated: Date.now() } }).pipe(
+        Effect.orDie,
+      )
     })
 
     const setWorkspace = Effect.fn("Session.setWorkspace")(function* (input: {
