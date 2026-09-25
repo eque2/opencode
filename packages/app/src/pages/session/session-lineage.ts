@@ -1,7 +1,11 @@
+import { Data, Effect, Option, Result } from "effect"
 import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
 import { sessionNotFoundError } from "@/utils/server-errors"
 
 type LineageStore<T> = { peek: (id: string) => T | undefined; resolve: (id: string) => Promise<unknown> }
+
+/** A lineage resolve that rejected. `cause` is the original rejection, which the route error boundary reads. */
+class LineageResolveError extends Data.TaggedError("App.LineageResolveError")<{ readonly cause: unknown }> {}
 
 type Resolution<T> = { id: string; store: LineageStore<T> } & (
   | { state: "pending" }
@@ -40,30 +44,35 @@ export function createSessionLineage<T>(sessionID: () => string, lineage: () => 
         return
       }
       setStatus({ id, store, state: "pending" })
-      store
-        .resolve(id)
-        .then(() => {
-          if (!stale) setStatus({ id, store, state: "settled" })
-        })
-        .catch((failure) => {
-          if (!stale) setStatus({ id, store, state: "failed", failure })
-        })
+      Effect.runFork(
+        Effect.tryPromise({ try: () => store.resolve(id), catch: (cause) => new LineageResolveError({ cause }) }).pipe(
+          Effect.match({
+            onSuccess: () => {
+              if (!stale) setStatus({ id, store, state: "settled" })
+            },
+            onFailure: (error) => {
+              if (!stale) setStatus({ id, store, state: "failed", failure: error.cause })
+            },
+          }),
+        ),
+      )
     }),
   )
 
-  return createMemo(() => {
-    const id = sessionID()
+  const outcome = (id: string): Result.Result<Option.Option<T>, unknown> => {
     const value = cached()
-    if (value) return value
+    if (value) return Result.succeed(Option.some(value))
     const state = status()
-    if (state?.id !== id || state.store !== lineage()) return undefined
-    if (state.state === "failed") throw state.failure
+    if (state?.id !== id || state.store !== lineage()) return Result.succeed(Option.none())
+    if (state.state === "failed") return Result.fail(state.failure)
     // The viewed session is pinned (DirectoryDataProvider, directory-layout.tsx)
     // and pinned lineages are exempt from cache pruning, so a lineage missing
     // after settlement means the session (or an ancestor) was deleted, possibly
     // by another client. Match the resolve error so the boundary shows the
     // session not found fallback.
-    if (state.state === "settled") throw sessionNotFoundError(id)
-    return undefined
-  })
+    if (state.state === "settled") return Result.fail(sessionNotFoundError(id))
+    return Result.succeed(Option.none())
+  }
+
+  return createMemo(() => Option.getOrUndefined(Result.getOrThrow(outcome(sessionID()))))
 }
