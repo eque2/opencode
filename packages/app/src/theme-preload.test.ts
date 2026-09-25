@@ -1,6 +1,16 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 
-const src = await Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text()
+/** The source of the theme preload script. */
+let src: string
+
+beforeAll(() =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      src = yield* Effect.promise(() => Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text())
+    }),
+  ),
+)
 
 const run = () => Function(src)()
 
