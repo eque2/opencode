@@ -151,7 +151,7 @@ export function WslServerSettings(props: {
                           </MenuV2.Item>
                         </Show>
                         <Show when={props.controller.canDefault() && props.controller.defaultKey() === key}>
-                          <MenuV2.Item onSelect={() => props.controller.setDefault(null)}>
+                          <MenuV2.Item onSelect={() => props.controller.clearDefault()}>
                             {language.t("dialog.server.menu.defaultRemove")}
                           </MenuV2.Item>
                         </Show>

@@ -1,6 +1,7 @@
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
+import { Option } from "effect"
 import { type Component, Show } from "solid-js"
 import { useServerManagementController } from "@/components/dialog-select-server"
 import { useLanguage } from "@/context/language"
@@ -23,7 +24,7 @@ export const ServerRowMenu: Component<{
       isDefault={props.controller.defaultKey() === key}
       onEdit={props.onEdit}
       onSetDefault={() => props.controller.setDefault(key)}
-      onRemoveDefault={() => props.controller.setDefault(null)}
+      onRemoveDefault={() => props.controller.clearDefault()}
       onRemove={() => props.controller.handleRemove(key)}
       open={props.open}
       onOpenChange={props.onOpenChange}
@@ -55,7 +56,8 @@ export const ServerRowMenuView: Component<{
   onOpenChange?: (open: boolean) => void
 }> = (props) => {
   const builtin = () => ServerConnection.builtin(props.server)
-  const httpServer = () => (props.server.type === "http" ? props.server : undefined)
+  const httpServer = (): Option.Option<ServerConnection.Http> =>
+    props.server.type === "http" ? Option.some(props.server) : Option.none()
   return (
     <MenuV2 gutter={6} modal={false} placement="bottom-end" open={props.open} onOpenChange={props.onOpenChange}>
       <MenuV2.Trigger
@@ -70,10 +72,10 @@ export const ServerRowMenuView: Component<{
           <MenuV2.Group>
             <MenuV2.GroupLabel>{props.labels.server}</MenuV2.GroupLabel>
             <MenuV2.Item
-              disabled={builtin() || !httpServer()}
+              disabled={builtin() || Option.isNone(httpServer())}
               onSelect={() => {
                 const server = httpServer()
-                if (server) props.onEdit(server)
+                if (Option.isSome(server)) props.onEdit(server.value)
               }}
             >
               {props.labels.edit}
