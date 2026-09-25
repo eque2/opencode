@@ -66,10 +66,10 @@ let unhook: (() => void) | undefined
  * - A `setRawMode(...)` hook to re-clear after known raw-mode toggles.
  * - A low-frequency poll as a backstop for native/external mode changes.
  */
-export function win32InstallCtrlCGuard() {
-  if (process.platform !== "win32") return
-  if (!process.stdin.isTTY) return
-  if (!load()) return
+export function win32InstallCtrlCGuard(): (() => void) | undefined {
+  if (process.platform !== "win32") return undefined
+  if (!process.stdin.isTTY) return undefined
+  if (!load()) return undefined
   if (unhook) return unhook
 
   const stdin = process.stdin as ReadStream
@@ -77,7 +77,7 @@ export function win32InstallCtrlCGuard() {
   const handle = k32!.symbols.GetStdHandle(STD_INPUT_HANDLE)
   const buf = new Uint32Array(1)
 
-  if (k32!.symbols.GetConsoleMode(handle, ptr(buf)) === 0) return
+  if (k32!.symbols.GetConsoleMode(handle, ptr(buf)) === 0) return undefined
   const initial = buf[0]
 
   const enforce = () => {
