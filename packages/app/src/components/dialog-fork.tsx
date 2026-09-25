@@ -11,6 +11,7 @@ import { extractPromptFromParts } from "@/utils/prompt"
 import type { TextPart as SDKTextPart } from "@opencode-ai/sdk/v2/client"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { useLanguage } from "@/context/language"
+import { DateTime } from "effect"
 
 interface ForkableMessage {
   id: string
@@ -18,8 +19,9 @@ interface ForkableMessage {
   time: string
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString(undefined, { timeStyle: "short" })
+/** Formats epoch millis as a short time in the user's locale and time zone, as toLocaleTimeString did. */
+function formatTime(epochMillis: number): string {
+  return DateTime.formatLocal(DateTime.makeUnsafe(epochMillis), { timeStyle: "short" })
 }
 
 export const DialogFork: Component = () => {
@@ -48,7 +50,7 @@ export const DialogFork: Component = () => {
       result.push({
         id: message.id,
         text: textPart.text.replace(/\n/g, " ").slice(0, 200),
-        time: formatTime(new Date(message.time.created)),
+        time: formatTime(message.time.created),
       })
     }
 
