@@ -26,7 +26,7 @@ export const AcpCommand = effectCmd({
 
     const sdk = createOpencodeClient({
       baseUrl: `http://${server.hostname}:${server.port}`,
-      headers: ServerAuth.headers(),
+      headers: yield* ServerAuth.headers(),
     })
 
     const input = new WritableStream<Uint8Array>({

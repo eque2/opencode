@@ -30,7 +30,7 @@ let server: Awaited<ReturnType<typeof Server.listen>> | undefined
 export const rpc = {
   async fetch(input: { url: string; method: string; headers: Record<string, string>; body?: string }) {
     const headers = { ...input.headers }
-    const auth = ServerAuth.header()
+    const auth = await Effect.runPromise(ServerAuth.header())
     if (auth && !headers["authorization"] && !headers["Authorization"]) {
       headers["Authorization"] = auth
     }

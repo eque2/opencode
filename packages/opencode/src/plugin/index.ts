@@ -146,7 +146,7 @@ const layer = Layer.effect(
         const client = createOpencodeClient({
           baseUrl: serverUrl?.toString() ?? "http://localhost:4096",
           directory: ctx.directory,
-          headers: ServerAuth.headers(),
+          headers: yield* ServerAuth.headers(),
           ...(serverUrl ? {} : { fetch: async (...args) => Server.Default().app.fetch(...args) }),
         })
         const cfg = yield* config.get()

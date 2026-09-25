@@ -344,7 +344,7 @@ export const RunCommand = effectCmd({
         }
       })()
       const attachHeaders = args.attach
-        ? ServerAuth.headers({ password: args.password, username: args.username })
+        ? await Effect.runPromise(ServerAuth.headers({ password: args.password, username: args.username }))
         : undefined
       const attachSDK = (dir?: string) => {
         return createOpencodeClient({
@@ -912,7 +912,7 @@ export const RunCommand = effectCmd({
           const { Server } = await import("@/server/server")
           const request = new Request(input, init)
           const headers = new Headers(request.headers)
-          const auth = ServerAuth.header()
+          const auth = await Effect.runPromise(ServerAuth.header())
           if (auth) headers.set("Authorization", auth)
           return Server.Default().app.fetch(new Request(request, { headers }))
         }) as typeof globalThis.fetch
@@ -950,7 +950,7 @@ export const RunCommand = effectCmd({
         const { Server } = await import("@/server/server")
         const request = new Request(input, init)
         const headers = new Headers(request.headers)
-        const auth = ServerAuth.header()
+        const auth = await Effect.runPromise(ServerAuth.header())
         if (auth) headers.set("Authorization", auth)
         return Server.Default().app.fetch(new Request(request, { headers }))
       }) as typeof globalThis.fetch

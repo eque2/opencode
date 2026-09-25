@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { cmd } from "@/cli/cmd/cmd"
 import { Rpc } from "@/util/rpc"
 import { type rpc } from "../tui/worker"
@@ -233,7 +234,7 @@ export const TuiThreadCommand = cmd({
       const network = resolveNetworkOptionsNoConfig(args)
       const external = hasArg("--port") || hasArg("--hostname") || network.mdns === true
 
-      const headers = external ? ServerAuth.headers() : undefined
+      const headers = external ? await Effect.runPromise(ServerAuth.headers()) : undefined
 
       const transport = external
         ? {
@@ -267,7 +268,6 @@ export const TuiThreadCommand = cmd({
       }, 1000).unref?.()
 
       try {
-        const { Effect } = await import("effect")
         const { run } = await import("../tui/layer")
         const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
         await Effect.runPromise(

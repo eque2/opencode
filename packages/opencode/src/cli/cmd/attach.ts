@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { cmd } from "./cmd"
 import { UI } from "@/cli/ui"
 import { errorMessage } from "@opencode-ai/tui/util/error"
@@ -111,7 +112,7 @@ export const AttachCommand = cmd({
       return
     }
 
-    const headers = ServerAuth.headers({ password: args.password, username: args.username })
+    const headers = await Effect.runPromise(ServerAuth.headers({ password: args.password, username: args.username }))
     const config = await TuiConfig.get()
 
     try {
@@ -127,7 +128,6 @@ export const AttachCommand = cmd({
       return
     }
 
-    const { Effect } = await import("effect")
     const { run } = await import("../tui/layer")
     const { createLegacyTuiPluginHost } = await import("@/plugin/tui/runtime")
     await Effect.runPromise(

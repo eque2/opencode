@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { ConfigProvider, Layer } from "effect"
+import { ConfigProvider, Effect, Layer } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { EventPaths } from "../../src/server/routes/instance/httpapi/groups/event"
 import { PtyPaths } from "../../src/server/routes/instance/httpapi/groups/pty"
@@ -33,7 +33,7 @@ function app(input: { password?: string; username?: string }) {
 }
 
 function basic(username: string, password: string) {
-  return ServerAuth.header({ username, password }) ?? ""
+  return Effect.runPromise(ServerAuth.header({ username, password }).pipe(Effect.map((header) => header ?? "")))
 }
 
 async function cancelBody(response: Response) {
@@ -56,7 +56,7 @@ describe("HttpApi instance route authorization", () => {
     expect(missing.status).toBe(401)
 
     const authed = await server.request(EventPaths.event, {
-      headers: { ...headers, authorization: basic("opencode", "secret") },
+      headers: { ...headers, authorization: await basic("opencode", "secret") },
     })
     await cancelBody(authed)
     expect(authed.status).toBe(200)
@@ -73,7 +73,7 @@ describe("HttpApi instance route authorization", () => {
     expect(missing.status).toBe(401)
 
     const authed = await server.request(route, {
-      headers: { ...headers, authorization: basic("opencode", "secret") },
+      headers: { ...headers, authorization: await basic("opencode", "secret") },
     })
     await cancelBody(authed)
     expect(authed.status).toBe(404)
