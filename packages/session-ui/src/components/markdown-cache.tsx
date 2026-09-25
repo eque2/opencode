@@ -1,6 +1,6 @@
 import { checksum } from "@opencode-ai/core/util/encode"
 import DOMPurify from "dompurify"
-import { Array, Iterable, MutableHashMap, Option } from "effect"
+import { Array, Effect, Iterable, MutableHashMap, Option } from "effect"
 import { parseMarkdown } from "./markdown-worker"
 
 export type MarkdownCacheEntry = {
@@ -64,6 +64,6 @@ export async function preloadMarkdown(text: string, cacheKey: string) {
   touchCachedMarkdown(key, {
     raw: text,
     hash,
-    html: sanitizeMarkdown(await parseMarkdown(text)),
+    html: sanitizeMarkdown(await Effect.runPromise(parseMarkdown(text))),
   })
 }

@@ -70,7 +70,7 @@ function fallback(markdown: string) {
 
 async function code(text: string, language: string | undefined, key: string, complete = false) {
   try {
-    const result = await highlightStreamingCode(key, text, language ?? "text", complete)
+    const result = await Effect.runPromise(highlightStreamingCode(key, text, language ?? "text", complete))
     return {
       language: result.language,
       generation: result.generation,
@@ -407,7 +407,7 @@ export function Markdown(
       if (!live && !streamed) return
       return { key: owner, text: local.text, live }
     },
-    (src) => projectMarkdown(src.key, src.text, src.live),
+    (src) => Effect.runPromise(projectMarkdown(src.key, src.text, src.live)),
     { initialValue: pendingProjection("") },
   )
   const currentProjection = () => {
@@ -480,7 +480,7 @@ export function Markdown(
           }
 
           const hash = checksum(block.raw)
-          const safe = sanitizeMarkdown(await parseMarkdown(block.src))
+          const safe = sanitizeMarkdown(await Effect.runPromise(parseMarkdown(block.src)))
           if (Option.isSome(key) && hash) touchCachedMarkdown(key.value, { raw: block.raw, hash, html: safe })
           return { key: blockKey, mode: block.mode, raw: block.raw, hash: hash ?? "", html: safe }
         }),
