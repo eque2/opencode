@@ -1,7 +1,7 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { absurd } from "effect"
+import { absurd, Brand } from "effect"
 import { type Accessor, batch, createMemo } from "solid-js"
-import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
+import { createStore, produce, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { pathKey } from "@/utils/path-key"
 import { ServerScope } from "@/utils/server-scope"
@@ -82,15 +82,17 @@ export function createServerProjects<T extends ServerProjectState>(input: {
   store: Store<T>
   setStore: SetStoreFunction<T>
 }) {
-  const setStore = input.setStore as unknown as SetStoreFunction<ServerProjectState>
+  // T may carry more keys than ServerProjectState. Each write edits the
+  // ServerProjectState part of the draft in place, so it needs no path types from T.
+  const update = (edit: (draft: ServerProjectState) => void) => input.setStore(produce<T>((draft) => edit(draft)))
   const current = () => input.store.projects[input.scope()] ?? []
   const currentClosed = () => input.store.recentlyClosed?.[input.scope()] ?? []
   const remove = (directory: string) => {
-    setStore(
-      "projects",
-      input.scope(),
-      current().filter((project) => project.worktree !== directory),
-    )
+    const scope = input.scope()
+    const next = current().filter((project) => project.worktree !== directory)
+    update((draft) => {
+      draft.projects[scope] = next
+    })
   }
   return {
     list: current,
@@ -101,47 +103,66 @@ export function createServerProjects<T extends ServerProjectState>(input: {
       const key = pathKey(directory)
       const closed = currentClosed()
       if (closed.some((worktree) => pathKey(worktree) === key)) {
-        setStore(
-          "recentlyClosed",
-          scope,
-          closed.filter((worktree) => pathKey(worktree) !== key),
-        )
+        const next = closed.filter((worktree) => pathKey(worktree) !== key)
+        update((draft) => {
+          draft.recentlyClosed[scope] = next
+        })
       }
       if (current().some((project) => project.worktree === directory)) return
-      setStore("projects", scope, [{ worktree: directory, expanded: true }, ...current()])
+      const next = [{ worktree: directory, expanded: true }, ...current()]
+      update((draft) => {
+        draft.projects[scope] = next
+      })
     },
     // User-initiated close: removes the project and records it in recently closed.
     // Internal, non-user removals (e.g. sandbox/worktree normalization) should use remove().
     close(directory: string) {
       remove(directory)
+      const scope = input.scope()
       const key = pathKey(directory)
       const closed = [directory, ...currentClosed().filter((worktree) => pathKey(worktree) !== key)].slice(
         0,
         RECENTLY_CLOSED_HISTORY_LIMIT,
       )
-      setStore("recentlyClosed", input.scope(), closed)
+      update((draft) => {
+        draft.recentlyClosed[scope] = closed
+      })
     },
     expand(directory: string) {
+      const scope = input.scope()
       const index = current().findIndex((project) => project.worktree === directory)
-      if (index !== -1) setStore("projects", input.scope(), index, "expanded", true)
+      if (index !== -1)
+        update((draft) => {
+          draft.projects[scope][index].expanded = true
+        })
     },
     collapse(directory: string) {
+      const scope = input.scope()
       const index = current().findIndex((project) => project.worktree === directory)
-      if (index !== -1) setStore("projects", input.scope(), index, "expanded", false)
+      if (index !== -1)
+        update((draft) => {
+          draft.projects[scope][index].expanded = false
+        })
     },
     move(directory: string, toIndex: number) {
       const fromIndex = current().findIndex((project) => project.worktree === directory)
       if (fromIndex === -1 || fromIndex === toIndex) return
+      const scope = input.scope()
       const next = [...current()]
       const [item] = next.splice(fromIndex, 1)
       next.splice(toIndex, 0, item)
-      setStore("projects", input.scope(), next)
+      update((draft) => {
+        draft.projects[scope] = next
+      })
     },
     last() {
       return input.store.lastProject[input.scope()]
     },
     touch(directory: string) {
-      setStore("lastProject", input.scope(), directory)
+      const scope = input.scope()
+      update((draft) => {
+        draft.lastProject[scope] = directory
+      })
     },
   }
 }
@@ -236,8 +257,8 @@ export namespace ServerConnection {
     return absurd(conn)
   }
 
-  export type Key = string & { _brand: "Key" }
-  export const Key = { make: (v: string) => v as Key }
+  export type Key = string & Brand.Brand<"Key">
+  export const Key = { make: Brand.nominal<Key>() }
 
   export const builtin = (conn: Any) => conn.type === "sidecar" && conn.variant === "base"
   export const local = (conn?: Any) =>
