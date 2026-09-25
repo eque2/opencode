@@ -1265,14 +1265,16 @@ export function UserMessageDisplay(props: {
     const act = props.actions?.revert
     if (!act || busy()) return
     setState("busy", true)
-    void Promise.resolve()
-      .then(() =>
-        act({
-          sessionID: props.message.sessionID,
-          messageID: props.message.id,
-        }),
-      )
-      .finally(() => setState("busy", false))
+    const input = { sessionID: props.message.sessionID, messageID: props.message.id }
+    Effect.runFork(
+      Effect.suspend(() => {
+        const result = act(input)
+        return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.void
+      }).pipe(
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+        Effect.ensuring(Effect.sync(() => setState("busy", false))),
+      ),
+    )
   }
 
   const renderAttachments = () => (
