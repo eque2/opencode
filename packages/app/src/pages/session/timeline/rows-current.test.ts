@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test"
+import { HashMap, Option } from "effect"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { normalizeSessionMessages } from "@/utils/session-message"
 
@@ -37,11 +38,11 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
       (messageID) => normalized.parts.get(messageID) ?? [],
       true,
       "busy",
@@ -73,11 +74,11 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
       (messageID) => normalized.parts.get(messageID) ?? [],
       true,
       "idle",
@@ -114,11 +115,11 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source.slice(1),
-      (messageID) => messages.get(messageID),
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
       (messageID) => normalized.parts.get(messageID) ?? [],
       true,
       "idle",
@@ -190,11 +191,11 @@ describe("current session timeline rows", () => {
       },
     ] satisfies SessionMessageInfo[]
     const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
+    const messages = HashMap.fromIterable(normalized.messages.map((message) => [message.id, message] as const))
 
     const result = Timeline.constructSessionMessageRows(
       source,
-      (messageID) => messages.get(messageID),
+      (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
       (messageID) => normalized.parts.get(messageID) ?? [],
       true,
       "busy",

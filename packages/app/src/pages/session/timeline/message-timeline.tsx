@@ -13,7 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { Option } from "effect"
+import { MutableHashMap, Option } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -89,7 +89,11 @@ type FramedTimelineRow = Exclude<TimelineRow.TimelineRow, { _tag: "TurnGap" }>
 type TimelineRowByTag<T extends TimelineRow.TimelineRow["_tag"]> = Extract<TimelineRow.TimelineRow, { _tag: T }>
 
 const timelineFallbackItemSize = 60
-const timelineCache = new Map<string, { measurements: VirtualItem[]; toolOpen: Record<string, boolean | undefined> }>()
+// A small LRU of per-session timeline state. MutableHashMap iterates in insertion order, so the first key is the oldest.
+const timelineCache = MutableHashMap.empty<
+  string,
+  { measurements: VirtualItem[]; toolOpen: Record<string, boolean | undefined> }
+>()
 
 const taskDescription = (part: PartType, sessionID: string) => {
   if (part.type !== "tool" || part.tool !== "task") return
@@ -268,8 +272,8 @@ export function MessageTimeline(props: {
   const language = useLanguage()
   const { params, sessionKey } = useSessionKey()
   const ownerSessionKey = sessionKey()
-  const cached = timelineCache.get(ownerSessionKey)
-  const initialMeasurements = cached?.measurements
+  const cached = MutableHashMap.get(timelineCache, ownerSessionKey)
+  const initialMeasurements = Option.getOrUndefined(Option.map(cached, (entry) => entry.measurements))
   const coldBottomMount = !initialMeasurements?.length && props.shouldAnchorBottom()
   const platform = usePlatform()
 
@@ -407,7 +411,9 @@ export function MessageTimeline(props: {
     prependAnchorFrame = Option.some(requestAnimationFrame(apply))
   }
 
-  const [toolOpen, setToolOpen] = createStore<Record<string, boolean | undefined>>(cached?.toolOpen ?? {})
+  const [toolOpen, setToolOpen] = createStore<Record<string, boolean | undefined>>(
+    Option.match(cached, { onNone: () => ({}), onSome: (entry) => entry.toolOpen }),
+  )
   const [renderOverscan, setRenderOverscan] = createSignal(initialMeasurements?.length || coldBottomMount ? 6 : 20)
   let resizePinnedIndexes: number[] = []
   let resizePinFrame = Option.none<number>()
@@ -495,8 +501,8 @@ export function MessageTimeline(props: {
     const first = virtualizer.range?.startIndex
     return first !== undefined && item.index < first
   }
-  const virtualItemByKey = createMemo(
-    () => new Map(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
+  const virtualItemByKey = createMemo(() =>
+    MutableHashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
   const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key as string))
   createEffect(() => {
@@ -547,9 +553,15 @@ export function MessageTimeline(props: {
 
   onCleanup(() => {
     clearPrependAnchor()
-    timelineCache.delete(ownerSessionKey)
-    timelineCache.set(ownerSessionKey, { measurements: virtualizer.takeSnapshot(), toolOpen: { ...toolOpen } })
-    while (timelineCache.size > 16) timelineCache.delete(timelineCache.keys().next().value!)
+    MutableHashMap.remove(timelineCache, ownerSessionKey)
+    MutableHashMap.set(timelineCache, ownerSessionKey, {
+      measurements: virtualizer.takeSnapshot(),
+      toolOpen: { ...toolOpen },
+    })
+    for (const key of MutableHashMap.keys(timelineCache)) {
+      if (MutableHashMap.size(timelineCache) <= 16) break
+      MutableHashMap.remove(timelineCache, key)
+    }
     if (Option.isSome(resizePinFrame)) cancelAnimationFrame(resizePinFrame.value)
     if (Option.isSome(overscanFrame)) cancelAnimationFrame(overscanFrame.value)
     props.setRevealMessage?.(() => {})
@@ -842,16 +854,16 @@ export function MessageTimeline(props: {
     if (!result) return false
 
     const removed = new Set<string>([sessionID])
-    const byParent = new Map<string, string[]>()
+    const byParent = MutableHashMap.empty<string, string[]>()
     for (const item of sync().data.session) {
       const parentID = item.parentID
       if (!parentID) continue
-      const existing = byParent.get(parentID)
-      if (existing) {
-        existing.push(item.id)
+      const existing = MutableHashMap.get(byParent, parentID)
+      if (Option.isSome(existing)) {
+        existing.value.push(item.id)
         continue
       }
-      byParent.set(parentID, [item.id])
+      MutableHashMap.set(byParent, parentID, [item.id])
     }
 
     const stack = [sessionID]
@@ -859,10 +871,10 @@ export function MessageTimeline(props: {
       const parentID = stack.pop()
       if (!parentID) continue
 
-      const children = byParent.get(parentID)
-      if (!children) continue
+      const children = MutableHashMap.get(byParent, parentID)
+      if (Option.isNone(children)) continue
 
-      for (const child of children) {
+      for (const child of children.value) {
         if (removed.has(child)) continue
         removed.add(child)
         stack.push(child)
@@ -1252,9 +1264,12 @@ export function MessageTimeline(props: {
 
   function VirtualTimelineRow(props: { rowKey: string }) {
     let element: HTMLDivElement
-    const initialItem = virtualItemByKey().get(props.rowKey)!
+    // The row keys come from the same virtual items, so the item exists when the row mounts.
+    const initialItem = Option.getOrThrow(MutableHashMap.get(virtualItemByKey(), props.rowKey))
     const initialRow = timelineRowByKey().get(props.rowKey)!
-    const item = createMemo(() => virtualItemByKey().get(props.rowKey) ?? initialItem)
+    const item = createMemo(() =>
+      Option.getOrElse(MutableHashMap.get(virtualItemByKey(), props.rowKey), () => initialItem),
+    )
     const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
     const tool = () => {
       const value = row()

@@ -2,7 +2,7 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
 import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/message-part"
-import { Array as Arr, Option, Predicate } from "effect"
+import { Array as Arr, MutableHashMap, Option, Predicate } from "effect"
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
@@ -48,38 +48,38 @@ export namespace Timeline {
     inlineComments: boolean,
     projectedUserMessages: UserMessage[],
   ) {
-    const turnByUserID = new Map<string, Turn>()
+    const turnByUserID = MutableHashMap.empty<string, Turn>()
     // A new turn returns unwrapped and a skipped message returns the shared empty array, so flatMap allocates no wrapper.
     const sourceTurns = messages.flatMap((message): Turn | readonly Turn[] => {
       const projected = getMessage(message.id)
       if (message.type === "shell" && projected?.role === "user") {
         const assistant = getMessage(`${message.id}:assistant`)
         const turn: Turn = { user: projected, assistants: assistant?.role === "assistant" ? [assistant] : [] }
-        turnByUserID.set(projected.id, turn)
+        MutableHashMap.set(turnByUserID, projected.id, turn)
         return turn
       }
       if (projected?.role === "user") {
-        if (turnByUserID.has(projected.id)) return noTurns
+        if (MutableHashMap.has(turnByUserID, projected.id)) return noTurns
         const turn: Turn = { user: projected, assistants: [] }
-        turnByUserID.set(projected.id, turn)
+        MutableHashMap.set(turnByUserID, projected.id, turn)
         return turn
       }
       if (projected?.role !== "assistant") return noTurns
-      const existing = turnByUserID.get(projected.parentID)
-      if (existing) {
-        existing.assistants.push(projected)
+      const existing = MutableHashMap.get(turnByUserID, projected.parentID)
+      if (Option.isSome(existing)) {
+        existing.value.assistants.push(projected)
         return noTurns
       }
       const user = getMessage(projected.parentID)
       if (user?.role !== "user") return noTurns
       const turn: Turn = { user, assistants: [projected] }
-      turnByUserID.set(user.id, turn)
+      MutableHashMap.set(turnByUserID, user.id, turn)
       return turn
     })
     const turns = projectedUserMessages.reduce<readonly Turn[]>((current, user) => {
-      if (turnByUserID.has(user.id)) return current
+      if (MutableHashMap.has(turnByUserID, user.id)) return current
       const turn: Turn = { user, assistants: [] }
-      turnByUserID.set(user.id, turn)
+      MutableHashMap.set(turnByUserID, user.id, turn)
       const index = current.findIndex((item) => compareMessages(user, item.user) < 0)
       return index < 0 ? [...current, turn] : current.toSpliced(index, 0, turn)
     }, sourceTurns)
