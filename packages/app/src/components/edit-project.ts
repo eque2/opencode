@@ -52,8 +52,9 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
     setStore("dragOver", false)
   }
 
-  function inputChange(event: Event) {
-    const file = (event.currentTarget as HTMLInputElement).files?.[0]
+  // Solid types a change handler on an <input> with the input as its currentTarget.
+  function inputChange(event: Event & { currentTarget: HTMLInputElement }) {
+    const file = event.currentTarget.files?.[0]
     if (file) selectFile(file)
   }
 
