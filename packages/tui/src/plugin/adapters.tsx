@@ -96,9 +96,9 @@ function pickOption<Value>(item: SelectOption<Value>): TuiDialogSelectOption<Val
   }
 }
 
+// DialogSelect calls onMove and onSelect through `?.`, so a no-op in place of a missing callback behaves the same.
 function mapOptionCb<Value>(cb?: (item: TuiDialogSelectOption<Value>) => void) {
-  if (!cb) return
-  return (item: SelectOption<Value>) => cb(pickOption(item))
+  return (item: SelectOption<Value>) => cb?.(pickOption(item))
 }
 
 function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
@@ -116,7 +116,7 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
       return sync.path
     },
     get vcs() {
-      if (!sync.data.vcs) return
+      if (!sync.data.vcs) return undefined
       return {
         branch: sync.data.vcs.branch,
         default_branch: sync.data.vcs.default_branch,

@@ -5,7 +5,7 @@ import { fileURLToPath } from "url"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
 import { Show, createEffect, createMemo, createSignal } from "solid-js"
 import { useBindings } from "../../keymap"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
 const id = "internal:plugin-manager"
 
@@ -22,8 +22,8 @@ function state(api: TuiPluginApi, item: TuiPluginStatus) {
 }
 
 function source(spec: string) {
-  if (!spec.startsWith("file://")) return
-  return fileURLToPath(spec)
+  if (!spec.startsWith("file://")) return Option.none<string>()
+  return Option.some(fileURLToPath(spec))
 }
 
 // A defect used to surface as an unhandled rejection of the floating install or toggle Promise.
@@ -36,9 +36,7 @@ function meta(item: TuiPluginStatus, width: number) {
     if (width >= 120) return "Built-in plugin"
     return "Built-in"
   }
-  const next = source(item.spec)
-  if (next) return next
-  return item.spec
+  return Option.getOrElse(source(item.spec), () => item.spec)
 }
 
 function Install(props: { api: TuiPluginApi }) {
