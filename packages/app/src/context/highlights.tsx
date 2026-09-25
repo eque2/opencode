@@ -1,4 +1,4 @@
-import { Predicate } from "effect"
+import { MutableHashSet, Predicate } from "effect"
 import { createEffect, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -118,11 +118,11 @@ function sliceHighlights(input: { releases: ParsedRelease[]; current?: string; p
   })()
 
   const highlights = releases.slice(start, end).flatMap((release) => release.highlights)
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   const unique = highlights.filter((highlight) => {
     const key = dedupeKey(highlight)
-    if (seen.has(key)) return false
-    seen.add(key)
+    if (MutableHashSet.has(seen, key)) return false
+    MutableHashSet.add(seen, key)
     return true
   })
   return unique.slice(0, 5)
