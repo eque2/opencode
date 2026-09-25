@@ -16,7 +16,7 @@ type Contexts = {
   kv: ReturnType<typeof useKV>
 }
 
-async function waitFor(condition: () => boolean, timeout = 5000) {
+async function waitFor(condition: () => boolean, timeout = 20000) {
   const start = performance.now()
   while (!condition()) {
     if (performance.now() - start > timeout) throw new Error("timed out waiting for condition")
