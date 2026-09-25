@@ -27,7 +27,7 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
-import { HashSet, MutableHashSet, Option, Predicate, Schema } from "effect"
+import { Equivalence, HashSet, MutableHashSet, Option, Predicate, Schema } from "effect"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -322,7 +322,7 @@ export function SessionTurn(
     if (!data || typeof data !== "object" || !("message" in data)) return ""
     const msg = data.message
     if (typeof msg === "string") return unwrap(msg)
-    if (msg === undefined || msg === null) return ""
+    if (Predicate.isNullish(msg)) return ""
     // oxlint-disable-next-line no-base-to-string -- msg is unknown from error data, coercion is intentional
     return unwrap(String(msg))
   })
@@ -335,10 +335,12 @@ export function SessionTurn(
   const working = createMemo(() => status().type !== "idle" && active())
   const showReasoningSummaries = createMemo(() => props.showReasoningSummaries ?? true)
 
-  const assistantCopyPartID = createMemo(() => {
-    if (working()) return null
-    return showAssistantCopyPartID() ?? null
-  })
+  // None hides the copy action on every assistant part. AssistantParts reads that case as null.
+  const assistantCopyPartID = createMemo(
+    () => (working() ? Option.none<string>() : Option.fromUndefinedOr(showAssistantCopyPartID())),
+    Option.none<string>(),
+    { equals: Option.makeEquivalence(Equivalence.strictEqual<string>()) },
+  )
   const turnDurationMs = createMemo(() => {
     const start = message()?.time.created
     if (typeof start !== "number") return undefined
@@ -413,7 +415,7 @@ export function SessionTurn(
                 <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
                   <AssistantParts
                     messages={assistantMessages()}
-                    showAssistantCopyPartID={assistantCopyPartID()}
+                    showAssistantCopyPartID={Option.getOrNull(assistantCopyPartID())}
                     turnDurationMs={turnDurationMs()}
                     working={working()}
                     showReasoningSummaries={showReasoningSummaries()}
