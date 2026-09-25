@@ -1,11 +1,11 @@
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
 import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
-import type { PromptInfo } from "./history"
+import { PromptParts, type PromptInfo } from "./history"
 
 export type StashEntry = {
   input: string
@@ -13,20 +13,23 @@ export type StashEntry = {
   timestamp: number
 }
 
+const PromptStashEntry = Schema.Struct({
+  input: Schema.String,
+  parts: PromptParts,
+  timestamp: Schema.Number,
+}).annotate({ identifier: "TuiPromptStash.Entry" })
+
+const PromptStashLine = Schema.fromJsonString(PromptStashEntry)
+const decodePromptStashLine = Schema.decodeUnknownOption(PromptStashLine)
+
 export const MAX_STASH_ENTRIES = 50
 
-export function parsePromptStash(text: string) {
+// A line that is not JSON, or not a StashEntry, is skipped.
+export function parsePromptStash(text: string): StashEntry[] {
   return text
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as StashEntry
-      } catch {
-        return undefined
-      }
-    })
-    .filter((line): line is StashEntry => line !== undefined)
+    .flatMap((line) => Option.toArray(decodePromptStashLine(line)))
     .slice(-MAX_STASH_ENTRIES)
 }
 

@@ -1,27 +1,29 @@
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSimpleContext } from "../context/helper"
 import { useTuiPaths } from "../context/runtime"
 import { appendText, fileSystemLayer, readText, writeText } from "../util/persistence"
 
-type FrecencyEntry = { path: string; frequency: number; lastOpen: number }
+const FrecencyEntry = Schema.Struct({
+  path: Schema.String,
+  frequency: Schema.Number,
+  lastOpen: Schema.Number,
+}).annotate({ identifier: "TuiFrecency.Entry" })
+type FrecencyEntry = typeof FrecencyEntry.Type
+
+const FrecencyLine = Schema.fromJsonString(FrecencyEntry)
+const decodeFrecencyLine = Schema.decodeUnknownOption(FrecencyLine)
 
 export const MAX_FRECENCY_ENTRIES = 1000
 
+// A line that is not JSON, or not a frecency entry, is skipped. The last line for a path wins.
 export function parseFrecency(text: string) {
   const latest = text
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as FrecencyEntry
-      } catch {
-        return undefined
-      }
-    })
-    .filter((line): line is FrecencyEntry => line !== undefined)
+    .flatMap((line) => Option.toArray(decodeFrecencyLine(line)))
     .reduce<Record<string, FrecencyEntry>>((result, entry) => {
       result[entry.path] = entry
       return result

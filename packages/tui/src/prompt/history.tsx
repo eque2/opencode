@@ -1,5 +1,5 @@
 import path from "path"
-import { Effect } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { onMount } from "solid-js"
 import { createStore, produce, unwrap } from "solid-js/store"
 import type { AgentPart, FilePart, TextPart } from "@opencode-ai/sdk/v2"
@@ -25,20 +25,87 @@ export type PromptInfo = {
   )[]
 }
 
+// The span of a part's placeholder text in the prompt.
+const PromptPartSourceText = Schema.Struct({
+  value: Schema.String,
+  start: Schema.Number,
+  end: Schema.Number,
+}).annotate({ identifier: "TuiPromptHistory.PartSourceText" })
+
+const PromptPosition = Schema.Struct({
+  line: Schema.Number,
+  character: Schema.Number,
+}).annotate({ identifier: "TuiPromptHistory.Position" })
+
+const PromptFileSource = Schema.Struct({
+  text: PromptPartSourceText,
+  type: Schema.Literal("file"),
+  path: Schema.String,
+}).annotate({ identifier: "TuiPromptHistory.FileSource" })
+
+const PromptSymbolSource = Schema.Struct({
+  text: PromptPartSourceText,
+  type: Schema.Literal("symbol"),
+  path: Schema.String,
+  range: Schema.Struct({ start: PromptPosition, end: PromptPosition }),
+  name: Schema.String,
+  kind: Schema.Number,
+}).annotate({ identifier: "TuiPromptHistory.SymbolSource" })
+
+const PromptResourceSource = Schema.Struct({
+  text: PromptPartSourceText,
+  type: Schema.Literal("resource"),
+  clientName: Schema.String,
+  uri: Schema.String,
+}).annotate({ identifier: "TuiPromptHistory.ResourceSource" })
+
+// The SDK FilePart, AgentPart and TextPart without their IDs, as PromptInfo stores them.
+const PromptFilePart = Schema.Struct({
+  type: Schema.Literal("file"),
+  mime: Schema.String,
+  filename: Schema.optional(Schema.String),
+  url: Schema.String,
+  source: Schema.optional(Schema.Union([PromptFileSource, PromptSymbolSource, PromptResourceSource])),
+}).annotate({ identifier: "TuiPromptHistory.FilePart" })
+
+const PromptAgentPart = Schema.Struct({
+  type: Schema.Literal("agent"),
+  name: Schema.String,
+  source: Schema.optional(PromptPartSourceText),
+}).annotate({ identifier: "TuiPromptHistory.AgentPart" })
+
+const PromptTextPart = Schema.Struct({
+  type: Schema.Literal("text"),
+  text: Schema.String,
+  synthetic: Schema.optional(Schema.Boolean),
+  ignored: Schema.optional(Schema.Boolean),
+  time: Schema.optional(Schema.Struct({ start: Schema.Number, end: Schema.optional(Schema.Number) })),
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  source: Schema.optional(Schema.Struct({ text: PromptPartSourceText })),
+}).annotate({ identifier: "TuiPromptHistory.TextPart" })
+
+/** The persisted form of `PromptInfo["parts"]`, shared with the prompt stash. */
+export const PromptParts = Schema.mutable(
+  Schema.Array(Schema.Union([PromptFilePart, PromptAgentPart, PromptTextPart])),
+).annotate({ identifier: "TuiPromptHistory.Parts" })
+
+const PromptHistoryEntry = Schema.Struct({
+  input: Schema.String,
+  mode: Schema.optional(Schema.Literals(["normal", "shell"])),
+  parts: PromptParts,
+}).annotate({ identifier: "TuiPromptHistory.Entry" })
+
+const PromptHistoryLine = Schema.fromJsonString(PromptHistoryEntry)
+const decodePromptHistoryLine = Schema.decodeUnknownOption(PromptHistoryLine)
+
 export const MAX_HISTORY_ENTRIES = 50
 
-export function parsePromptHistory(text: string) {
+// A line that is not JSON, or not a PromptInfo, is skipped.
+export function parsePromptHistory(text: string): PromptInfo[] {
   return text
     .split("\n")
     .filter(Boolean)
-    .map((line) => {
-      try {
-        return JSON.parse(line) as PromptInfo
-      } catch {
-        return undefined
-      }
-    })
-    .filter((line): line is PromptInfo => line !== undefined)
+    .flatMap((line) => Option.toArray(decodePromptHistoryLine(line)))
     .slice(-MAX_HISTORY_ENTRIES)
 }
 
