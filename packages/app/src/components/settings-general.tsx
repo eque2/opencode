@@ -47,6 +47,14 @@ class SettingsGeneralRequestError extends Data.TaggedError("App.SettingsGeneralR
   readonly cause: unknown
 }> {}
 
+/**
+ * Runs a settings request in the background. A failure goes to the Effect
+ * logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
+
 type ThemeOption = {
   id: string
   name: string
@@ -379,7 +387,13 @@ export const SettingsGeneral: Component = () => {
             onSelect={(option) => {
               if (!option) return
               if (option.value === currentShell()) return
-              serverSync().updateConfig({ shell: option.value })
+              const shell = option.value
+              runDetached(
+                Effect.tryPromise({
+                  try: () => serverSync().updateConfig({ shell }),
+                  catch: (cause) => new SettingsGeneralRequestError({ cause }),
+                }),
+              )
             }}
             variant="secondary"
             size="small"
