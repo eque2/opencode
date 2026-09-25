@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HashMap, Option } from "effect"
 import {
   normalizeNewSessionWorktree,
   resolveNewSessionBranch,
@@ -32,7 +33,9 @@ describe("new session workspace selection", () => {
   })
 
   test("falls back to the local branch for main, create, and unknown worktrees", () => {
-    const branch = (worktree: string) => (worktree === "/project/feature" ? "feature" : undefined)
+    // Only the feature worktree has a known branch. worktreeBranch reports an unknown one as undefined.
+    const branches = HashMap.make(["/project/feature", "feature"])
+    const branch = (worktree: string) => Option.getOrUndefined(HashMap.get(branches, worktree))
     expect(resolveNewSessionBranch({ worktree: "main", local: "dev", worktreeBranch: branch })).toBe("dev")
     expect(resolveNewSessionBranch({ worktree: "create", local: "dev", worktreeBranch: branch })).toBe("dev")
     expect(resolveNewSessionBranch({ worktree: "/project/feature", local: "dev", worktreeBranch: branch })).toBe(

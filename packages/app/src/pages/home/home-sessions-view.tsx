@@ -116,7 +116,8 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
             when={props.groups().length > 0}
             fallback={
               <HomeSessionsEmpty
-                onNewSession={props.canCreateSession() ? props.onCreateSession : undefined}
+                canCreateSession={props.canCreateSession()}
+                onNewSession={props.onCreateSession}
                 language={props.language}
               />
             }
@@ -286,11 +287,9 @@ function HomeSessionSearch(props: HomeSessionsViewProps) {
             aria-expanded={props.searchOpen()}
             aria-controls={HOME_SESSION_SEARCH_RESULTS_ID}
             aria-autocomplete="list"
-            aria-activedescendant={
-              props.searchActive() && props.searchOpen()
-                ? `home-session-search-option-${props.searchActive()}`
-                : undefined
-            }
+            {...(props.searchActive() && props.searchOpen()
+              ? { "aria-activedescendant": `home-session-search-option-${props.searchActive()}` }
+              : {})}
             onFocus={props.onSearchFocus}
             onInput={(event) => props.onSearchInput(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -506,7 +505,11 @@ function HomeSessionProjectName(props: { name: string; search?: boolean }) {
   )
 }
 
-function HomeSessionsEmpty(props: { onNewSession?: () => void; language: ReturnType<typeof useLanguage> }) {
+function HomeSessionsEmpty(props: {
+  canCreateSession: boolean
+  onNewSession: () => void
+  language: ReturnType<typeof useLanguage>
+}) {
   return (
     <div class="flex min-h-full flex-col items-center gap-4 px-6 pt-[52px] text-center">
       <div
@@ -525,12 +528,16 @@ function HomeSessionsEmpty(props: { onNewSession?: () => void; language: ReturnT
       >
         {props.language.t("home.sessions.empty.description")}
       </p>
-      <Show when={props.onNewSession}>
-        {(onNewSession) => (
-          <ButtonV2 data-action="home-new-session" variant="neutral" size="normal" icon="edit" onClick={onNewSession()}>
-            {props.language.t("command.session.new")}
-          </ButtonV2>
-        )}
+      <Show when={props.canCreateSession}>
+        <ButtonV2
+          data-action="home-new-session"
+          variant="neutral"
+          size="normal"
+          icon="edit"
+          onClick={props.onNewSession}
+        >
+          {props.language.t("command.session.new")}
+        </ButtonV2>
       </Show>
     </div>
   )

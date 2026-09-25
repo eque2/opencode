@@ -46,7 +46,8 @@ export function createNewSessionDraftController(workspace: { worktree: () => str
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
-      setSearchParams({ ...searchParams, prompt: undefined })
+      // Solid Router deletes a search param whose value is "" (mergeSearchString), so this clears ?prompt.
+      setSearchParams({ ...searchParams, prompt: "" })
     })
   })
 

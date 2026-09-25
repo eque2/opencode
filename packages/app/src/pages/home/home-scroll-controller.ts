@@ -16,8 +16,9 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
   const headerRefs = MutableHashMap.empty<HomeSessionGroup["id"], HTMLDivElement>()
   const headerOffsets = MutableHashMap.empty<HomeSessionGroup["id"], number>()
   let viewport: HTMLDivElement | undefined
-  let content: HTMLDivElement | undefined
-  let positionFrame: number | undefined
+  let content = Option.none<HTMLDivElement>()
+  // The pending animation frame of a position update.
+  let positionFrame = Option.none<number>()
   let resizeObserver: ResizeObserver | undefined
   let stickyTop = HOME_SESSION_HEADER_STICKY_TOP
 
@@ -31,14 +32,14 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
     removeStale(headerRefs)
     removeStale(headerOffsets)
     if (items.length === 0) {
-      content = undefined
+      content = Option.none()
       bindResizeObserver()
     }
     queuePositionUpdate()
   })
 
   onCleanup(() => {
-    if (positionFrame !== undefined) cancelAnimationFrame(positionFrame)
+    if (Option.isSome(positionFrame)) cancelAnimationFrame(positionFrame.value)
     resizeObserver?.disconnect()
   })
 
@@ -47,11 +48,13 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
       updatePositionCache()
       return
     }
-    if (positionFrame !== undefined) return
-    positionFrame = requestAnimationFrame(() => {
-      positionFrame = undefined
-      updatePositionCache()
-    })
+    if (Option.isSome(positionFrame)) return
+    positionFrame = Option.some(
+      requestAnimationFrame(() => {
+        positionFrame = Option.none()
+        updatePositionCache()
+      }),
+    )
   }
 
   function updatePositionCache() {
@@ -87,7 +90,7 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
     if (typeof ResizeObserver === "undefined") return
     resizeObserver = new ResizeObserver(queuePositionUpdate)
     if (viewport) resizeObserver.observe(viewport)
-    if (content) resizeObserver.observe(content)
+    if (Option.isSome(content)) resizeObserver.observe(content.value)
   }
 
   function containWheel(event: WheelEvent) {
@@ -127,7 +130,7 @@ export function createHomeScrollController(groups: Accessor<HomeSessionGroup[]>)
     },
     header: {
       setContent: (element: HTMLDivElement) => {
-        content = element
+        content = Option.some(element)
         bindResizeObserver()
         queuePositionUpdate()
       },
