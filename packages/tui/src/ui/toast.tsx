@@ -1,6 +1,5 @@
 import { Effect, Fiber, Option } from "effect"
-import { createContext, onCleanup, useContext, type ParentProps, Show } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createContext, createSignal, onCleanup, useContext, type ParentProps, Show } from "solid-js"
 import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
 import { SplitBorder } from "./border"
@@ -20,7 +19,7 @@ export function Toast() {
   const dimensions = useTerminalDimensions()
 
   return (
-    <Show when={toast.currentToast}>
+    <Show when={Option.getOrUndefined(toast.currentToast)}>
       {(current) => (
         <box
           position="absolute"
@@ -53,9 +52,7 @@ export function Toast() {
 }
 
 function init() {
-  const [store, setStore] = createStore({
-    currentToast: null as ToastOptions | null,
-  })
+  const [currentToast, setCurrentToast] = createSignal(Option.none<ToastOptions>())
 
   // Hides the current toast after its duration. A new toast restarts the delay.
   let hideTimer: Option.Option<Fiber.Fiber<void>> = Option.none()
@@ -68,14 +65,14 @@ function init() {
   const toast = {
     show(options: ToastInput) {
       const toastOptions = { ...options, duration: options.duration ?? 5000 }
-      setStore("currentToast", toastOptions)
+      setCurrentToast(Option.some(toastOptions))
       cancelHide()
       hideTimer = Option.some(
         Effect.runFork(
           Effect.sleep(toastOptions.duration).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                setStore("currentToast", null)
+                setCurrentToast(Option.none())
               }),
             ),
           ),
@@ -93,8 +90,8 @@ function init() {
         message: "An unknown error has occurred",
       })
     },
-    get currentToast(): ToastOptions | null {
-      return store.currentToast
+    get currentToast(): Option.Option<ToastOptions> {
+      return currentToast()
     },
   }
   return toast

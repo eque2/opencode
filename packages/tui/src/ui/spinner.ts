@@ -1,5 +1,6 @@
 import type { ColorInput } from "@opentui/core"
 import { RGBA } from "@opentui/core"
+import { Option } from "effect"
 import type { ColorGenerator } from "opentui-spinner"
 
 interface AdvancedGradientOptions {
@@ -149,16 +150,21 @@ function createKnightRiderTrail(options: AdvancedGradientOptions): ColorGenerato
   // Store the base alpha from the inactive factor
   const baseInactiveAlpha = defaultRgba.a
 
-  let cachedFrameIndex = -1
-  let cachedState: ScannerState | null = null
+  // The scanner state of the last frame. Every character of one frame reads the same state.
+  let cache = Option.none<{ readonly frameIndex: number; readonly state: ScannerState }>()
 
   return (frameIndex: number, charIndex: number, _totalFrames: number, totalChars: number) => {
-    if (frameIndex !== cachedFrameIndex) {
-      cachedFrameIndex = frameIndex
-      cachedState = getScannerState(frameIndex, totalChars, options)
-    }
-
-    const state = cachedState!
+    const state = Option.match(
+      Option.filter(cache, (entry) => entry.frameIndex === frameIndex),
+      {
+        onSome: (entry) => entry.state,
+        onNone: () => {
+          const next = getScannerState(frameIndex, totalChars, options)
+          cache = Option.some({ frameIndex, state: next })
+          return next
+        },
+      },
+    )
 
     const index = calculateColorIndex(frameIndex, charIndex, totalChars, options, state)
 
