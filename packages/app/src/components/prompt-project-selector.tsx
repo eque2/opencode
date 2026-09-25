@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Predicate } from "effect"
+import { Option, Predicate } from "effect"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
@@ -34,8 +34,8 @@ export type PromptProjectControls = {
   available: PromptProject[]
   directory: string
   server?: string
-  select: (worktree: string, server?: string) => void
-  add: (title: string, server?: string) => void
+  select: (worktree: string, server: Option.Option<string>) => void
+  add: (title: string, server: Option.Option<string>) => void
 }
 
 const actionPrefix = "action:"
@@ -92,10 +92,12 @@ export function createPromptProjectController(input: {
     ]
   }
   const initialActive = () => {
-    const selectedKey = selected() ? projectKey(selected()!) : undefined
     const options = keys()
-    if (selectedKey && options.includes(selectedKey)) return selectedKey
-    return options[0] ?? ""
+    return Option.fromNullishOr(selected()).pipe(
+      Option.map(projectKey),
+      Option.filter((key) => options.includes(key)),
+      Option.getOrElse(() => options[0] ?? ""),
+    )
   }
   const close = () => {
     setStore({ open: false, search: "", active: "" })
@@ -106,11 +108,11 @@ export function createPromptProjectController(input: {
       pathKey(project.worktree) !== pathKey(current()?.worktree ?? "") ||
       project.server?.key !== current()?.server?.key
     ) {
-      input.controls().select(project.worktree, project.server?.key)
+      input.controls().select(project.worktree, Option.fromNullishOr(project.server?.key))
     }
     close()
   }
-  const add = (server?: string) => {
+  const add = (server: Option.Option<string>) => {
     setStore({ open: false, search: "", active: "" })
     input.controls().add(language.t("command.project.open"), server)
   }
@@ -121,7 +123,7 @@ export function createPromptProjectController(input: {
       .available.find((project) => !search || displayName(project).toLowerCase().includes(search))
     setStore({
       search: value,
-      active: first ? projectKey(first) : actionKey(servers().length > 1 ? undefined : servers()[0]?.key),
+      active: first ? projectKey(first) : servers().length > 1 ? actionKey() : actionKey(servers()[0]?.key),
     })
   }
 
@@ -167,14 +169,14 @@ export function createPromptProjectController(input: {
       setStore("active", options[(start + delta + options.length) % options.length])
     },
     activeProject() {
-      return store.active.startsWith(projectPrefix)
-        ? projects().find((project) => projectKey(project) === store.active)
-        : undefined
+      if (!store.active.startsWith(projectPrefix)) return Option.none<PromptProject>()
+      return Option.fromNullishOr(projects().find((project) => projectKey(project) === store.active))
     },
     activeServer() {
-      return store.active.startsWith(actionPrefix)
-        ? decodeURIComponent(store.active.slice(actionPrefix.length)) || undefined
-        : undefined
+      if (!store.active.startsWith(actionPrefix)) return Option.none<string>()
+      return Option.some(decodeURIComponent(store.active.slice(actionPrefix.length))).pipe(
+        Option.filter((server) => server !== ""),
+      )
     },
     activeAction() {
       return store.active.startsWith(actionPrefix)
@@ -200,56 +202,62 @@ export function PromptProjectSelector(props: {
   const [triggerReady, setTriggerReady] = createSignal(false)
   let contentRef: HTMLDivElement | undefined
   const dismiss = createMenuDismissController(() => contentRef)
-  let triggerFrame: number | undefined
+  let triggerFrame = Option.none<number>()
 
   // Floating UI requires a connected anchor; route transitions can construct this trigger before adoption.
   const setTriggerRef = (element: HTMLButtonElement) => {
     const ready = () => {
       if (!element.isConnected) {
-        triggerFrame = requestAnimationFrame(ready)
+        triggerFrame = Option.some(requestAnimationFrame(ready))
         return
       }
-      triggerFrame = undefined
+      triggerFrame = Option.none()
       setTriggerReady(true)
     }
     ready()
   }
 
   onCleanup(() => {
-    if (triggerFrame !== undefined) cancelAnimationFrame(triggerFrame)
+    if (Option.isSome(triggerFrame)) cancelAnimationFrame(triggerFrame.value)
   })
 
   const activeItem = () =>
-    props.controller.active()
-      ? contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(props.controller.active())}"]`)
-      : undefined
+    Option.some(props.controller.active()).pipe(
+      Option.filter((key) => key !== ""),
+      Option.flatMapNullishOr((key) => contentRef?.querySelector<HTMLElement>(`[data-option-key="${CSS.escape(key)}"]`)),
+    )
   const selectProject = (project: PromptProject) => {
     dismiss.preventTriggerRestore()
     props.controller.setOpen(false)
     dismiss.afterClose(() => props.controller.select(project))
   }
-  const selectAction = (server?: string) => {
+  const selectAction = (server: Option.Option<string>) => {
     dismiss.preventTriggerRestore()
     props.controller.setOpen(false)
     dismiss.afterClose(() => props.controller.add(server))
   }
   const selectActive = () => {
     const project = props.controller.activeProject()
-    if (project) {
-      selectProject(project)
+    if (Option.isSome(project)) {
+      selectProject(project.value)
       return
     }
     if (props.controller.activeAction() && props.controller.servers().length > 1) {
       const item = activeItem()
-      item?.focus()
-      item?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
+      if (Option.isSome(item)) {
+        item.value.focus()
+        item.value.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
+      }
       return
     }
     selectAction(props.controller.activeServer())
   }
   const moveActive = (delta: number) => {
     props.controller.moveActive(delta)
-    queueMicrotask(() => activeItem()?.scrollIntoView({ block: "nearest" }))
+    queueMicrotask(() => {
+      const item = activeItem()
+      if (Option.isSome(item)) item.value.scrollIntoView({ block: "nearest" })
+    })
   }
   const focusPreviousControl = () => {
     const target = Array.from(
@@ -265,10 +273,12 @@ export function PromptProjectSelector(props: {
       if (props.controller.open()) props.controller.setOpen(false)
     })
   }
-  const selectedValue = () => {
-    const project = props.controller.selected()
-    return project ? props.controller.projectKey(project) : undefined
-  }
+  // The radio group has no value until a project is selected, so the value key is left out.
+  const selectedValue = () =>
+    Option.match(Option.fromNullishOr(props.controller.selected()), {
+      onNone: () => ({}),
+      onSome: (project) => ({ value: props.controller.projectKey(project) }),
+    })
 
   createEffect(() => {
     if (!props.controller.open()) return
@@ -308,7 +318,7 @@ export function PromptProjectSelector(props: {
                 placeholder={props.controller.labels.search()}
                 aria-autocomplete="list"
                 aria-controls="prompt-project-menu"
-                aria-activedescendant={props.controller.active() || undefined}
+                {...(props.controller.active() ? { "aria-activedescendant": props.controller.active() } : {})}
                 class="h-7 min-w-0 flex-1 border-0 bg-transparent text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-base outline-none placeholder:text-v2-text-text-faint"
                 onInput={(event) => props.controller.setSearch(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -319,7 +329,8 @@ export function PromptProjectSelector(props: {
                       focusPreviousControl()
                       return
                     }
-                    activeItem()?.focus()
+                    const item = activeItem()
+                    if (Option.isSome(item)) item.value.focus()
                     return
                   }
                   event.stopPropagation()
@@ -361,7 +372,7 @@ export function PromptProjectSelector(props: {
               <Show
                 when={props.controller.servers().length > 1}
                 fallback={
-                  <DropdownMenu.RadioGroup value={selectedValue()}>
+                  <DropdownMenu.RadioGroup {...selectedValue()}>
                     <For each={props.controller.projects()}>
                       {(project) => (
                         <ProjectItem project={project} controller={props.controller} onSelect={selectProject} />
@@ -382,7 +393,7 @@ export function PromptProjectSelector(props: {
                       <div class="flex h-7 select-none items-center pl-1.5 pr-3 text-[11px] font-[530] leading-none tracking-[0.05px] text-v2-text-text-faint">
                         {server!.name}
                       </div>
-                      <DropdownMenu.RadioGroup value={selectedValue()}>
+                      <DropdownMenu.RadioGroup {...selectedValue()}>
                         <For
                           each={props.controller.projects().filter((project) => project.server?.key === server!.key)}
                         >
@@ -447,7 +458,7 @@ export function PromptProjectAddButton(props: { controller: PromptProjectControl
       data-action="prompt-project"
       type="button"
       class="flex h-7 min-w-0 max-w-[160px] items-center gap-1.5 rounded-sm px-2 text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-faint transition-colors hover:bg-v2-overlay-simple-overlay-hover focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none"
-      onClick={() => props.controller.add()}
+      onClick={() => props.controller.add(Option.none())}
     >
       <Icon name="folder-add-left" size="small" class="shrink-0 text-v2-icon-icon-muted" />
       <span class="min-w-0 truncate leading-5">{props.controller.labels.new()}</span>
@@ -549,7 +560,7 @@ const projectActionClass =
 function ProjectAction(props: {
   server?: string
   controller: PromptProjectController
-  onSelect: (server?: string) => void
+  onSelect: (server: Option.Option<string>) => void
 }) {
   const key = () => props.controller.actionKey(props.server)
   return (
@@ -571,7 +582,7 @@ function ProjectAction(props: {
         props.controller.setActive(key())
         props.controller.focusSearch()
       }}
-      onSelect={() => props.onSelect(props.server)}
+      onSelect={() => props.onSelect(Option.fromNullishOr(props.server))}
     >
       <Icon name="plus" size="small" />
       <DropdownMenu.ItemLabel class="min-w-0 truncate leading-5">
@@ -581,9 +592,12 @@ function ProjectAction(props: {
   )
 }
 
-function ServerAction(props: { server: { key: string; name: string }; onSelect: (server: string) => void }) {
+function ServerAction(props: {
+  server: { key: string; name: string }
+  onSelect: (server: Option.Option<string>) => void
+}) {
   return (
-    <DropdownMenu.Item class={projectActionClass} onSelect={() => props.onSelect(props.server.key)}>
+    <DropdownMenu.Item class={projectActionClass} onSelect={() => props.onSelect(Option.some(props.server.key))}>
       <DropdownMenu.ItemLabel class="min-w-0 flex-1 truncate leading-5">{props.server.name}</DropdownMenu.ItemLabel>
     </DropdownMenu.Item>
   )

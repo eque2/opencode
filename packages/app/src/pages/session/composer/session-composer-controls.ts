@@ -1,4 +1,5 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { Option } from "effect"
 import { createQuery } from "@tanstack/solid-query"
 import { useNavigate, useSearchParams } from "@solidjs/router"
 import { type Accessor, createMemo } from "solid-js"
@@ -84,8 +85,14 @@ export function createPromptProjectControls() {
         .map((project) => ({ ...project, server: item }))
     })
   })
-  const selectProject = (worktree: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
+  const connection = (serverKey: Option.Option<string>) =>
+    Option.match(serverKey, {
+      onNone: () => projectServer(),
+      onSome: (key) => server.list.find((conn) => ServerConnection.key(conn) === key),
+    })
+
+  const selectProject = (worktree: string, serverKey: Option.Option<string>) => {
+    const conn = connection(serverKey)
     if (search.draftId) {
       if (!conn) return
       const target = global.ensureServerCtx(conn)
@@ -95,7 +102,7 @@ export function createPromptProjectControls() {
       return
     }
 
-    if (!serverKey) {
+    if (Option.isNone(serverKey)) {
       layout.projects.open(worktree)
       server.projects.touch(worktree)
       navigate(`/${base64Encode(worktree)}/session`)
@@ -110,8 +117,8 @@ export function createPromptProjectControls() {
     navigate(`/${base64Encode(worktree)}/session`)
   }
 
-  const addProject = (title: string, serverKey?: string) => {
-    const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
+  const addProject = (title: string, serverKey: Option.Option<string>) => {
+    const conn = connection(serverKey)
     if (!conn) return
     pickDirectory({
       server: conn,
@@ -126,7 +133,7 @@ export function createPromptProjectControls() {
   return createMemo<PromptProjectControls>(() => ({
     available: projects(),
     directory: sdk().directory,
-    server: server.list.length > 1 ? ServerConnection.key(projectServer()) : undefined,
+    ...(server.list.length > 1 ? { server: ServerConnection.key(projectServer()) } : {}),
     select: selectProject,
     add: addProject,
   }))

@@ -39,7 +39,7 @@ export function clonePromptParts(prompt: Prompt): Prompt {
     if (part.type === "agent") return { ...part }
     return {
       ...part,
-      selection: part.selection ? { ...part.selection } : undefined,
+      ...(part.selection ? { selection: { ...part.selection } } : {}),
     }
   })
 }
@@ -122,10 +122,10 @@ function isPromptEqual(promptA: PromptHistoryStoredEntry, promptB: PromptHistory
     const partB = entryB.prompt[i]
     if (partA.type !== partB.type) return false
     if (partA.type === "text" && partA.content !== (partB.type === "text" ? partB.content : "")) return false
-    if (partA.type === "file") {
-      if (partA.path !== (partB.type === "file" ? partB.path : "")) return false
+    if (partA.type === "file" && partB.type === "file") {
+      if (partA.path !== partB.path) return false
       const a = partA.selection
-      const b = partB.type === "file" ? partB.selection : undefined
+      const b = partB.selection
       const sameSelection =
         (!a && !b) ||
         (!!a &&

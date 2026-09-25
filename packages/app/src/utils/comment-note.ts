@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { FileSelection } from "@/context/file"
 
 export type PromptComment = {
@@ -44,24 +45,25 @@ export function readCommentMetadata(value: unknown) {
   if (typeof path !== "string" || typeof comment !== "string") return
   const preview = (meta as { preview?: unknown }).preview
   const origin = (meta as { origin?: unknown }).origin
+  const range = selection((meta as { selection?: unknown }).selection)
   return {
     path,
-    selection: selection((meta as { selection?: unknown }).selection),
     comment,
-    preview: typeof preview === "string" ? preview : undefined,
-    origin: origin === "review" || origin === "file" ? origin : undefined,
+    ...(range ? { selection: range } : {}),
+    ...(typeof preview === "string" ? { preview } : {}),
+    ...(origin === "review" || origin === "file" ? { origin } : {}),
   } satisfies PromptComment
 }
 
 export function formatCommentNote(input: { path: string; selection?: FileSelection; comment: string }) {
-  const start = input.selection ? Math.min(input.selection.startLine, input.selection.endLine) : undefined
-  const end = input.selection ? Math.max(input.selection.startLine, input.selection.endLine) : undefined
-  const range =
-    start === undefined || end === undefined
-      ? "this file"
-      : start === end
-        ? `line ${start}`
-        : `lines ${start} through ${end}`
+  const range = Option.fromNullishOr(input.selection).pipe(
+    Option.map((selection) => {
+      const start = Math.min(selection.startLine, selection.endLine)
+      const end = Math.max(selection.startLine, selection.endLine)
+      return start === end ? `line ${start}` : `lines ${start} through ${end}`
+    }),
+    Option.getOrElse(() => "this file"),
+  )
   return `The user made the following comment regarding ${range} of ${input.path}: ${input.comment}`
 }
 
@@ -70,19 +72,25 @@ export function parseCommentNote(text: string) {
     /^The user made the following comment regarding (this file|line (\d+)|lines (\d+) through (\d+)) of (.+?): ([\s\S]+)$/,
   )
   if (!match) return
-  const start = match[2] ? Number(match[2]) : match[3] ? Number(match[3]) : undefined
-  const end = match[2] ? Number(match[2]) : match[4] ? Number(match[4]) : undefined
+  // "line N" fills group 2; "lines N through M" fills groups 3 and 4; "this file" fills neither.
+  const lines = match[2]
+    ? Option.some({ start: Number(match[2]), end: Number(match[2]) })
+    : match[3] && match[4]
+      ? Option.some({ start: Number(match[3]), end: Number(match[4]) })
+      : Option.none<{ start: number; end: number }>()
   return {
     path: match[5],
-    selection:
-      start !== undefined && end !== undefined
-        ? {
-            startLine: start,
-            startChar: 0,
-            endLine: end,
-            endChar: 0,
-          }
-        : undefined,
     comment: match[6],
+    ...Option.match(lines, {
+      onNone: () => ({}),
+      onSome: (range) => ({
+        selection: {
+          startLine: range.start,
+          startChar: 0,
+          endLine: range.end,
+          endChar: 0,
+        },
+      }),
+    }),
   } satisfies PromptComment
 }

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Option } from "effect"
 import { createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { Todo } from "@opencode-ai/sdk/v2"
@@ -10,6 +11,10 @@ import {
   createSessionComposerController,
   createSessionComposerRegionController,
 } from "@/pages/session/composer"
+import type {
+  SessionComposerFollowupDock,
+  SessionComposerRevertDock,
+} from "@/pages/session/composer/session-composer-region-controller"
 
 export default {
   title: "UI/Todo Panel Motion",
@@ -56,21 +61,46 @@ const btn = (accent?: boolean) =>
     "font-size": "13px",
   }) as const
 
-const controls = {
-  agents: { available: [], options: ["build"], current: "build", loading: false, visible: true, select: () => {} },
-  model: {
-    selection: {
-      current: () => ({ id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", provider: { id: "anthropic" } }),
-      variant: { list: () => [], current: () => undefined, set: () => {} },
+// Story state leaves an absent value out of the store; reading the missing key gives the undefined the
+// composer controls expect.
+type TodoStoryControls = {
+  variant?: string
+  tabs: string[]
+  activeTab?: string
+  followup?: SessionComposerFollowupDock
+  revert?: SessionComposerRevertDock
+}
+
+function createStoryControls() {
+  const [state, setState] = createStore<TodoStoryControls>({ tabs: [] })
+  return {
+    state,
+    input: {
+      agents: { available: [], options: ["build"], current: "build", loading: false, visible: true, select: () => {} },
+      model: {
+        selection: {
+          current: () => ({ id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", provider: { id: "anthropic" } }),
+          variant: {
+            list: () => [],
+            current: () => state.variant,
+            set: (variant?: string) => setState("variant", variant),
+          },
+        },
+        paid: true,
+        loading: false,
+      },
+      session: {
+        id: "story-session",
+        tabs: {
+          active: () => state.activeTab,
+          all: () => state.tabs,
+          open: (tab: string) => setState("tabs", (tabs) => (tabs.includes(tab) ? tabs : [...tabs, tab])),
+          setActive: (tab: string) => setState("activeTab", tab),
+        },
+        reviewPanel: { opened: () => false, open: () => {} },
+      },
     },
-    paid: true,
-    loading: false,
-  },
-  session: {
-    id: "story-session",
-    tabs: { active: () => undefined, all: () => [], open: () => {}, setActive: () => {} },
-    reviewPanel: { opened: () => false, open: () => {} },
-  },
+  }
 }
 
 const css = `
@@ -154,6 +184,7 @@ export const Playground = {
   render: () => {
     const global = useServerSync()
     const prompt = usePrompt()
+    const controls = createStoryControls()
     const [cfg, setCfg] = createStore({
       open: true,
       collapsed: false,
@@ -194,7 +225,7 @@ export const Playground = {
     const countMaskHeight = () => cfg.countMaskHeight
     const countWidthDuration = () => cfg.countWidthDuration
     const state = createSessionComposerController({ closeMs: () => Math.round(dockCloseDuration() * 1000) })
-    let frame
+    let frame = Option.none<number>()
     let scrollRef
 
     const todos = createMemo<Todo[]>(() => {
@@ -211,8 +242,8 @@ export const Playground = {
     })
 
     const clear = () => {
-      if (frame) cancelAnimationFrame(frame)
-      frame = undefined
+      if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
+      frame = Option.none()
     }
 
     const pin = () => {
@@ -225,10 +256,12 @@ export const Playground = {
     const openDock = () => {
       clear()
       setCfg("open", true)
-      frame = requestAnimationFrame(() => {
-        pin()
-        frame = undefined
-      })
+      frame = Option.some(
+        requestAnimationFrame(() => {
+          pin()
+          frame = Option.none()
+        }),
+      )
     }
 
     const closeDock = () => {
@@ -249,11 +282,13 @@ export const Playground = {
     const toggleDrawer = () => {
       if (!dockOpen()) {
         openDock()
-        frame = requestAnimationFrame(() => {
-          pin()
-          setCollapsed(true)
-          frame = undefined
-        })
+        frame = Option.some(
+          requestAnimationFrame(() => {
+            pin()
+            setCollapsed(true)
+            frame = Option.none()
+          }),
+        )
         return
       }
       setCollapsed(!collapsed())
@@ -293,8 +328,8 @@ export const Playground = {
                       ready: () => true,
                       centered: () => false,
                       todo: { collapsed, onToggle: () => setCollapsed(!collapsed()) },
-                      followup: () => undefined,
-                      revert: () => undefined,
+                      followup: () => controls.state.followup,
+                      revert: () => controls.state.revert,
                       onResponseSubmit: pin,
                       openParent: () => {},
                       setPromptRef: () => {},
@@ -302,7 +337,7 @@ export const Playground = {
                     })}
                     promptInput={
                       <PromptInput
-                        controls={controls}
+                        controls={controls.input}
                         submission={{ abort: () => {}, handleSubmit: (event) => event.preventDefault() }}
                         ref={() => {}}
                         newSessionWorktree=""

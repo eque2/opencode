@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { Show, type JSX } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
@@ -15,10 +16,8 @@ export function SessionComposerRegion(props: {
   const language = useLanguage()
   const controller = props.controller
   const settings = useSettings()
-  const rolled = () => {
-    const revert = controller.revert()
-    return revert?.items.length ? revert : undefined
-  }
+  const rolled = () =>
+    Option.fromNullishOr(controller.revert()).pipe(Option.filter((revert) => revert.items.length > 0))
 
   return (
     <div
@@ -86,7 +85,7 @@ export function SessionComposerRegion(props: {
             when={controller.promptReady()}
             fallback={
               <>
-                <Show when={rolled()} keyed>
+                <Show when={Option.getOrUndefined(rolled())} keyed>
                   {(revert) => (
                     <div class="pb-2">
                       <SessionRevertDock
@@ -107,7 +106,7 @@ export function SessionComposerRegion(props: {
               </>
             }
           >
-            <Show when={rolled()} keyed>
+            <Show when={Option.getOrUndefined(rolled())} keyed>
               {(revert) => (
                 <div
                   style={{
@@ -148,7 +147,7 @@ export function SessionComposerRegion(props: {
                   class="w-full rounded-[12px] border border-border-weak-base bg-background-base p-3 text-16-regular text-text-weak"
                 >
                   <span>{language.t("session.child.promptDisabled")} </span>
-                  <Show when={controller.parentID()}>
+                  <Show when={Option.isSome(controller.parentID())}>
                     <button
                       type="button"
                       class="text-text-base transition-colors hover:text-text-strong"

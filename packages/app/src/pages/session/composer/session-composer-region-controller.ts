@@ -1,11 +1,19 @@
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
-import { type Accessor, createEffect, createMemo, createResource, onCleanup } from "solid-js"
+import { Effect, Option } from "effect"
+import { type Accessor, createEffect, createMemo, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { PromptInputState } from "@/components/prompt-input"
 import { useSync } from "@/context/sync"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import type { SessionComposerController } from "./session-composer-state"
+
+/** Completes on the next animation frame. Interrupting it cancels the frame request. */
+const nextFrame = Effect.callback<void>((resume) => {
+  const handle = requestAnimationFrame(() => resume(Effect.void))
+  return Effect.sync(() => cancelAnimationFrame(handle))
+})
 
 export type SessionComposerFollowupDock = {
   items: { id: string; text: string }[]
@@ -40,40 +48,31 @@ export function createSessionComposerRegionController(input: {
   setDockRef: (el: HTMLDivElement) => void
 }) {
   const sync = useSync()
-  const [store, setStore] = createStore({
+  const [store, setStore] = createStore<{ ready: boolean; height: number; body?: HTMLDivElement }>({
     ready: input.ready() || input.state.dock(),
     height: 320,
-    body: undefined as HTMLDivElement | undefined,
   })
-  let timer: number | undefined
-  let frame: number | undefined
-
-  const clear = () => {
-    if (timer !== undefined) window.clearTimeout(timer)
-    if (frame !== undefined) cancelAnimationFrame(frame)
-    timer = undefined
-    frame = undefined
-  }
+  // Holds the frame and the 140 ms delay that reveal the dock; the owner cleanup interrupts it.
+  const reveal = createFiberSlot()
 
   createEffect(() => {
     input.sessionKey()
     const ready = input.ready()
     const dock = input.state.dock()
 
-    clear()
+    reveal.interrupt()
     if (store.ready || (!ready && !dock)) return
     if (dock) {
       setStore("ready", true)
       return
     }
 
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-      timer = window.setTimeout(() => {
-        setStore("ready", true)
-        timer = undefined
-      }, 140)
-    })
+    reveal.run(
+      nextFrame.pipe(
+        Effect.andThen(Effect.sleep("140 millis")),
+        Effect.andThen(Effect.sync(() => setStore("ready", true))),
+      ),
+    )
   })
 
   createEffect(() => {
@@ -100,12 +99,9 @@ export function createSessionComposerRegionController(input: {
     update()
   })
 
-  onCleanup(clear)
-
-  const parentID = createMemo(() => {
-    const id = input.sessionID()
-    return id ? sync().session.get(id)?.parentID : undefined
-  })
+  const parentID = createMemo(() =>
+    Option.fromNullishOr(input.sessionID()).pipe(Option.flatMapNullishOr((id) => sync().session.get(id)?.parentID)),
+  )
   const open = createMemo(() => store.ready && input.state.dock() && !input.state.closing())
   const progress = useSpring(
     () => (open() ? 1 : 0),
@@ -130,8 +126,8 @@ export function createSessionComposerRegionController(input: {
     setPromptRef: input.setPromptRef,
     setDockRef: input.setDockRef,
     parentID,
-    child: () => !!parentID(),
-    showComposer: () => !input.state.blocked() || !!parentID(),
+    child: () => Option.isSome(parentID()),
+    showComposer: () => !input.state.blocked() || Option.isSome(parentID()),
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,
     promptReady: () => input.prompt.ready() || promptReady(),
     dock: () => (store.ready && input.state.dock()) || value() > 0.001,

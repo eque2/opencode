@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 const prefixes = {
   session: "ses",
   message: "msg",
@@ -78,10 +80,12 @@ function randomBase62(length: number): string {
 
 function getRandomBytes(length: number): Uint8Array {
   const bytes = new Uint8Array(length)
-  const cryptoObj = typeof globalThis !== "undefined" ? globalThis.crypto : undefined
+  const cryptoObj = Option.fromNullishOr(globalThis.crypto).pipe(
+    Option.filter((source) => typeof source.getRandomValues === "function"),
+  )
 
-  if (cryptoObj && typeof cryptoObj.getRandomValues === "function") {
-    cryptoObj.getRandomValues(bytes)
+  if (Option.isSome(cryptoObj)) {
+    cryptoObj.value.getRandomValues(bytes)
     return bytes
   }
 
