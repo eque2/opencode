@@ -226,7 +226,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
             )
 
             const matchRoute = (route: LayoutRoute) => {
-              if (route.type === "home") return
+              if (route.type === "home") return undefined
               if (route.type === "draft") {
                 return tabsStore.find((item) => item.type === "draft" && item.draftID === route.draftID)
               }
@@ -245,6 +245,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   if (parent) return parent
                 }
               }
+              return undefined
             }
 
             const currentTab = () => matchRoute(layout.route())

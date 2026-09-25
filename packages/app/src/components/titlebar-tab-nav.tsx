@@ -53,30 +53,32 @@ export function TabNavItem(props: {
   const serverCtx = createMemo(() => {
     const conn = global.servers.list().find((item) => ServerConnection.key(item) === props.server)
     if (conn) return global.ensureServerCtx(conn)
+    return undefined
   })
   const project = createMemo(() => {
     const session = props.session()
-    if (!session) return
+    if (!session) return undefined
     return projectForSession(session, serverCtx()?.projects.list() ?? [])
   })
   const title = createMemo(() => props.session()?.title ?? props.fallbackTitle)
 
   const projectName = createMemo(() => {
     const session = props.session()
-    if (!session) return
+    if (!session) return undefined
     return displayName(project() ?? { worktree: session.directory })
   })
   const previewPath = createMemo(() => {
     const session = props.session()
-    if (!session) return
+    if (!session) return undefined
     const home = serverCtx()?.sync.data.path.home
     return home ? session.directory.replace(home, "~") : session.directory
   })
   // Only label the server when multiple servers are connected.
   const serverLabel = createMemo(() => {
-    if (global.servers.list().length <= 1) return
+    if (global.servers.list().length <= 1) return undefined
     const conn = global.servers.list().find((item) => ServerConnection.key(item) === props.server)
-    return conn ? serverName(conn) : undefined
+    if (!conn) return undefined
+    return serverName(conn)
   })
 
   const [popoverOpen, setPopoverOpen] = createSignal(false)

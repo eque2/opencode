@@ -41,17 +41,17 @@ export function trimHistory(stack: string[], index: number, max = MAX_TITLEBAR_H
 }
 
 export function backPath(state: TitlebarHistory) {
-  if (state.index <= 0) return
+  if (state.index <= 0) return undefined
   const index = state.index - 1
   const to = state.stack[index]
-  if (!to) return
+  if (!to) return undefined
   return { state: { ...state, index, action: "back" as const }, to }
 }
 
 export function forwardPath(state: TitlebarHistory) {
-  if (state.index >= state.stack.length - 1) return
+  if (state.index >= state.stack.length - 1) return undefined
   const index = state.index + 1
   const to = state.stack[index]
-  if (!to) return
+  if (!to) return undefined
   return { state: { ...state, index, action: "forward" as const }, to }
 }

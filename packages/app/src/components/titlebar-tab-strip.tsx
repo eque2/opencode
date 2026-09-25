@@ -340,9 +340,10 @@ export function TitlebarTabStrip(props: {
                 const visibleIndex = () => visibleTabs().findIndex((item) => tabKey(item) === id)
                 useTabShortcut(visibleIndex, () => props.onNavigate(tab, ref))
                 const serverCtx = createMemo(() => {
-                  if (tab.type !== "session") return
+                  if (tab.type !== "session") return undefined
                   const conn = global.servers.list().find((item) => ServerConnection.key(item) === tab.server)
                   if (conn) return global.ensureServerCtx(conn)
+                  return undefined
                 })
 
                 if (tab.type === "session") {
