@@ -370,7 +370,7 @@ const layer = Layer.effect(
 
     const initGit = Effect.fn("Project.initGit")(function* (input: { directory: string; project: Info }) {
       if (input.project.vcs === "git") return input.project
-      if (!(yield* Effect.sync(() => which("git")))) throw new Error("Git is not installed")
+      if (Option.isNone(yield* which("git"))) throw new Error("Git is not installed")
       const result = yield* git(["init", "--quiet"], { cwd: input.directory })
       if (result.code !== 0) {
         throw new Error(result.stderr.trim() || result.text.trim() || "Failed to initialize git repository")
