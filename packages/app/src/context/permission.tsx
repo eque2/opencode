@@ -1,3 +1,4 @@
+import { Array as Arr, Data, DateTime, Effect, HashSet, MutableHashMap, Option, Predicate } from "effect"
 import { createEffect, createMemo, createRoot, getOwner, onCleanup } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -45,11 +46,28 @@ function isNonAllowRule(rule: unknown) {
 function hasPermissionPromptRules(permission: unknown) {
   if (!permission) return false
   if (typeof permission === "string") return permission !== "allow"
-  if (typeof permission !== "object") return false
-  if (Array.isArray(permission)) return false
+  if (!Predicate.isObject(permission)) return false
 
-  const config = permission as Record<string, unknown>
-  return Object.values(config).some(isNonAllowRule)
+  return Object.values(permission).some(isNonAllowRule)
+}
+
+/** No connected server has the key that the permission state asked for. */
+class PermissionServerNotFoundError extends Data.TaggedError("App.PermissionServerNotFoundError")<{
+  readonly message: string
+}> {}
+
+/** A permission list request that rejected. `cause` is the original rejection. */
+class PermissionRequestError extends Data.TaggedError("App.PermissionRequestError")<{ readonly cause: unknown }> {}
+
+const permissionRequest = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new PermissionRequestError({ cause }) })
+
+/**
+ * Runs permission work in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 }
 
 export const { use: usePermission, provider: PermissionProvider } = createSimpleContext({
@@ -62,11 +80,14 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     const server = useServer()
     const tabs = useTabs()
     const settings = useSettings()
-    const owner = getOwner()
-    const states = new Map<ServerScope, { key: ServerConnection.Key; dispose: () => void; state: PermissionState }>()
+    const owner = Option.fromNullishOr(getOwner())
+    const states = MutableHashMap.empty<
+      ServerScope,
+      { key: ServerConnection.Key; dispose: () => void; state: PermissionState }
+    >()
 
     const activeDraft = createMemo(() => {
-      if (!search.draftId) return
+      if (!search.draftId) return undefined
       return tabs.store.find((tab): tab is DraftTab => tab.type === "draft" && tab.draftID === search.draftId)
     })
 
@@ -76,26 +97,33 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     })
 
     const ensure = (key: ServerConnection.Key) => {
-      const conn = global.servers.list().find((item) => ServerConnection.key(item) === key)
-      if (!conn) throw new Error(`Permission server not found: ${key}`)
-      const ctx = global.ensureServerCtx(conn)
-      const existing = states.get(ctx.sdk.scope)
-      if (existing && global.servers.list().some((item) => ServerConnection.key(item) === existing.key)) {
-        return existing.state
-      }
-      if (existing) {
-        existing.dispose()
-        states.delete(ctx.sdk.scope)
-      }
-      const root = createRoot(
-        (dispose) => ({
-          key,
-          dispose,
-          state: createServerPermissionState({ sdk: ctx.sdk, sync: ctx.sync }),
-        }),
-        owner ?? undefined,
+      const conn = Option.getOrThrowWith(
+        Arr.findFirst(global.servers.list(), (item) => ServerConnection.key(item) === key),
+        () => new PermissionServerNotFoundError({ message: `Permission server not found: ${key}` }),
       )
-      states.set(ctx.sdk.scope, root)
+      const ctx = global.ensureServerCtx(conn)
+      const existing = MutableHashMap.get(states, ctx.sdk.scope)
+      if (
+        Option.isSome(existing) &&
+        global.servers.list().some((item) => ServerConnection.key(item) === existing.value.key)
+      ) {
+        return existing.value.state
+      }
+      if (Option.isSome(existing)) {
+        existing.value.dispose()
+        MutableHashMap.remove(states, ctx.sdk.scope)
+      }
+      const build = (dispose: () => void) => ({
+        key,
+        dispose,
+        state: createServerPermissionState({ sdk: ctx.sdk, sync: ctx.sync }),
+      })
+      // With no owner at init, createRoot takes the owner that is current at this call.
+      const root = Option.match(owner, {
+        onSome: (value) => createRoot(build, value),
+        onNone: () => createRoot(build),
+      })
+      MutableHashMap.set(states, ctx.sdk.scope, root)
       return root.state
     }
 
@@ -105,17 +133,17 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
 
     createEffect(() => {
       const list = global.servers.list()
-      const keys = new Set(list.map(ServerConnection.key))
-      states.forEach((value, scope) => {
-        if (keys.has(value.key)) return
+      const keys = HashSet.fromIterable(list.map(ServerConnection.key))
+      MutableHashMap.forEach(states, (value, scope) => {
+        if (HashSet.has(keys, value.key)) return
         value.dispose()
-        states.delete(scope)
+        MutableHashMap.remove(states, scope)
         const replacement = list.find((conn) => server.scope(ServerConnection.key(conn)) === scope)
         if (replacement) ensure(ServerConnection.key(replacement))
       })
     })
 
-    onCleanup(() => states.forEach((value) => value.dispose()))
+    onCleanup(() => MutableHashMap.forEach(states, (value) => value.dispose()))
 
     let lastSelected: PermissionState | undefined
     const selected = () => {
@@ -131,8 +159,8 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       if (directory) return directory
       const draft = activeDraft()
       if (draft) return draft.directory
-      if (!params.id) return
-      if (!global.servers.list().some((conn) => ServerConnection.key(conn) === activeServer())) return
+      if (!params.id) return undefined
+      if (!global.servers.list().some((conn) => ServerConnection.key(conn) === activeServer())) return undefined
       return selected().sync.session.lineage.peek(params.id)?.session.directory
     })
 
@@ -192,17 +220,12 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     {
       ...Persist.serverGlobal(input.sdk.scope, "permission", ["permission.v3"]),
       migrate(value) {
-        if (!value || typeof value !== "object" || Array.isArray(value)) return value
-
-        const data = value as Record<string, unknown>
-        if (data.autoAccept) return value
+        if (!Predicate.isObject(value)) return value
+        if (value.autoAccept) return value
 
         return {
-          ...data,
-          autoAccept:
-            typeof data.autoAcceptEdits === "object" && data.autoAcceptEdits && !Array.isArray(data.autoAcceptEdits)
-              ? data.autoAcceptEdits
-              : {},
+          ...value,
+          autoAccept: Predicate.isObject(value.autoAcceptEdits) ? value.autoAcceptEdits : {},
         }
       },
     },
@@ -227,19 +250,20 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
 
   const MAX_RESPONDED = 1000
   const RESPONDED_TTL_MS = 60 * 60 * 1000
-  const responded = new Map<string, number>()
-  const enableVersion = new Map<string, number>()
+  // Insertion order holds for string keys, so the first entries are the oldest responses.
+  const responded = MutableHashMap.empty<string, number>()
+  const enableVersion = MutableHashMap.empty<string, number>()
   const meta = { disposed: false }
 
   function pruneResponded(now: number) {
     for (const [id, ts] of responded) {
       if (now - ts < RESPONDED_TTL_MS) break
-      responded.delete(id)
+      MutableHashMap.remove(responded, id)
     }
 
-    for (const id of responded.keys()) {
-      if (responded.size <= MAX_RESPONDED) break
-      responded.delete(id)
+    for (const id of MutableHashMap.keys(responded)) {
+      if (MutableHashMap.size(responded) <= MAX_RESPONDED) break
+      MutableHashMap.remove(responded, id)
     }
   }
 
@@ -250,27 +274,28 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
         sessionID: request.sessionID,
         requestID: request.permissionID,
         reply: request.response,
-        location: request.directory ? { directory: request.directory } : undefined,
+        ...(request.directory ? { location: { directory: request.directory } } : {}),
       })
       .catch(() => {
-        responded.delete(request.permissionID)
+        MutableHashMap.remove(responded, request.permissionID)
       })
   }
 
-  const list = async (directory: string) => {
-    if ((await input.sdk.protocol) === "v1") {
-      return (await input.sdk.client.permission.list({ directory })).data ?? []
-    }
-    return input.sdk.api.permission.request
-      .list({ location: { directory } })
-      .then((result) => result.data.map(normalizePermissionRequest))
-  }
+  const list = (directory: string) =>
+    Effect.gen(function* () {
+      if ((yield* Effect.promise(() => input.sdk.protocol)) === "v1") {
+        const result = yield* permissionRequest(() => input.sdk.client.permission.list({ directory }))
+        return result.data ?? []
+      }
+      const result = yield* permissionRequest(() => input.sdk.api.permission.request.list({ location: { directory } }))
+      return result.data.map(normalizePermissionRequest)
+    })
 
   function respondOnce(permission: PermissionRequest, directory?: string) {
-    const now = Date.now()
-    const hit = responded.has(permission.id)
-    responded.delete(permission.id)
-    responded.set(permission.id, now)
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
+    const hit = MutableHashMap.has(responded, permission.id)
+    MutableHashMap.remove(responded, permission.id)
+    MutableHashMap.set(responded, permission.id, now)
     pruneResponded(now)
     if (hit) return
     respond({
@@ -304,37 +329,41 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     return pending === undefined || pending.some((item) => item.id === permission.id)
   }
 
-  async function shouldAutoRespondResolved(permission: PermissionRequest, directory?: string) {
-    const override = sessionAutoAccept(store.autoAccept, sessions(directory), permission, directory)
-    if (override !== undefined) return override
-    if (input.sync.session.lineage.peek(permission.sessionID)) return shouldAutoRespond(permission, directory)
-    const lineage = await input.sync.session.lineage.resolve(permission.sessionID).catch(() => undefined)
-    if (meta.disposed || !lineage) return false
-    return shouldAutoRespond(permission, directory)
-  }
+  const shouldAutoRespondResolved = (permission: PermissionRequest, directory?: string) =>
+    Effect.gen(function* () {
+      const override = sessionAutoAccept(store.autoAccept, sessions(directory), permission, directory)
+      if (override !== undefined) return override
+      if (input.sync.session.lineage.peek(permission.sessionID)) return shouldAutoRespond(permission, directory)
+      // A lineage that does not resolve means no auto-reply.
+      const resolved = yield* Effect.tryPromise(() => input.sync.session.lineage.resolve(permission.sessionID)).pipe(
+        Effect.match({ onFailure: () => false, onSuccess: () => true }),
+      )
+      if (meta.disposed || !resolved) return false
+      return shouldAutoRespond(permission, directory)
+    })
 
-  async function respondPending(
-    permission: PermissionRequest,
-    directory?: string,
-    current: () => boolean = () => true,
-  ) {
-    if (!current() || !isPending(permission)) return
-    if (!(await shouldAutoRespondResolved(permission, directory))) return
-    if (meta.disposed || !current() || !isPending(permission)) return
-    respondOnce(permission, directory)
-  }
+  const respondPending = (permission: PermissionRequest, directory?: string, current: () => boolean = () => true) =>
+    Effect.gen(function* () {
+      if (!current() || !isPending(permission)) return
+      if (!(yield* shouldAutoRespondResolved(permission, directory))) return
+      if (meta.disposed || !current() || !isPending(permission)) return
+      respondOnce(permission, directory)
+    })
 
   function bumpEnableVersion(sessionID: string, directory?: string) {
     const key = acceptKey(sessionID, directory)
-    const next = (enableVersion.get(key) ?? 0) + 1
-    enableVersion.set(key, next)
+    const next = Option.getOrElse(MutableHashMap.get(enableVersion, key), () => 0) + 1
+    MutableHashMap.set(enableVersion, key, next)
     return next
   }
+
+  const isEnableVersion = (key: string, version: number) =>
+    Option.contains(MutableHashMap.get(enableVersion, key), version)
 
   const handlePermission = (e: PermissionEvent) => {
     const event = e.details
     if (event?.type !== "permission.asked") return
-    void respondPending(event.properties, e.name)
+    runDetached(respondPending(event.properties, e.name))
   }
 
   const unsubscribe = input.sdk.event.listen((event) => {
@@ -361,15 +390,21 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
       }),
     )
 
-    list(directory)
-      .then((permissions) => {
-        if (meta.disposed) return
-        if (!isAutoAcceptingDirectory(directory)) return
-        for (const permission of permissions) {
-          void respondPending(permission, directory, () => isAutoAcceptingDirectory(directory))
-        }
-      })
-      .catch(() => undefined)
+    // A failed list leaves the pending permissions for a manual reply, as before.
+    runDetached(
+      list(directory).pipe(
+        Effect.match({
+          onFailure: () => {},
+          onSuccess: (permissions) => {
+            if (meta.disposed) return
+            if (!isAutoAcceptingDirectory(directory)) return
+            for (const permission of permissions) {
+              runDetached(respondPending(permission, directory, () => isAutoAcceptingDirectory(directory)))
+            }
+          },
+        }),
+      ),
+    )
   }
 
   function disableDirectory(directory: string) {
@@ -393,20 +428,28 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
       }),
     )
 
-    list(directory)
-      .then((permissions) => {
-        if (meta.disposed) return
-        if (enableVersion.get(key) !== version) return
-        if (!isAutoAccepting(sessionID, directory)) return
-        for (const permission of permissions) {
-          void respondPending(
-            permission,
-            directory,
-            () => enableVersion.get(key) === version && isAutoAccepting(sessionID, directory),
-          )
-        }
-      })
-      .catch(() => undefined)
+    // A failed list leaves the pending permissions for a manual reply, as before.
+    runDetached(
+      list(directory).pipe(
+        Effect.match({
+          onFailure: () => {},
+          onSuccess: (permissions) => {
+            if (meta.disposed) return
+            if (!isEnableVersion(key, version)) return
+            if (!isAutoAccepting(sessionID, directory)) return
+            for (const permission of permissions) {
+              runDetached(
+                respondPending(
+                  permission,
+                  directory,
+                  () => isEnableVersion(key, version) && isAutoAccepting(sessionID, directory),
+                ),
+              )
+            }
+          },
+        }),
+      ),
+    )
   }
 
   function disable(sessionID: string, directory?: string) {
