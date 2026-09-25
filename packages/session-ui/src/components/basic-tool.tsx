@@ -5,6 +5,7 @@ import { createStore } from "solid-js/store"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import type { IconProps } from "@opencode-ai/ui/icon"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
+import { Chunk, Option } from "effect"
 
 export type TriggerTitle = {
   title: string
@@ -51,33 +52,40 @@ export interface BasicToolProps {
 }
 
 const SPRING = { type: "spring" as const, visualDuration: 0.35, bounce: 0 }
-const deferredMounts: Array<{ active: boolean; fn: () => void }> = []
-let deferredFrame: number | undefined
+let deferredMounts = Chunk.empty<{ active: boolean; fn: () => void }>()
+let deferredFrame: Option.Option<number> = Option.none()
 
 function flushDeferredMounts() {
-  while (deferredMounts.length > 0) {
-    // Timeline tools are mounted top-to-bottom, but the viewport starts at the latest turn.
-    // Pop from the end so heavy default-open bodies near the bottom become interactive first.
-    const item = deferredMounts.pop()!
+  // Timeline tools are mounted top-to-bottom, but the viewport starts at the latest turn.
+  // Take from the end so heavy default-open bodies near the bottom become interactive first.
+  let next = Chunk.last(deferredMounts)
+  while (Option.isSome(next)) {
+    const item = next.value
+    deferredMounts = Chunk.dropRight(deferredMounts, 1)
     if (item.active) {
-      deferredFrame = deferredMounts.length > 0 ? requestAnimationFrame(flushDeferredMounts) : undefined
+      deferredFrame = Chunk.isNonEmpty(deferredMounts)
+        ? Option.some(requestAnimationFrame(flushDeferredMounts))
+        : Option.none()
       item.fn()
       return
     }
+    next = Chunk.last(deferredMounts)
   }
-  deferredFrame = undefined
+  deferredFrame = Option.none()
 }
 
 function scheduleDeferredFlush() {
-  if (deferredFrame !== undefined) return
-  deferredFrame = requestAnimationFrame(() => {
-    deferredFrame = requestAnimationFrame(flushDeferredMounts)
-  })
+  if (Option.isSome(deferredFrame)) return
+  deferredFrame = Option.some(
+    requestAnimationFrame(() => {
+      deferredFrame = Option.some(requestAnimationFrame(flushDeferredMounts))
+    }),
+  )
 }
 
 function scheduleDeferredMount(fn: () => void) {
   const item = { active: true, fn }
-  deferredMounts.push(item)
+  deferredMounts = Chunk.append(deferredMounts, item)
   scheduleDeferredFlush()
   return () => {
     item.active = false
