@@ -45,8 +45,7 @@ export const parseNewSessionDeepLink = (input: string) => Option.getOrUndefined(
 export const collectOpenProjectDeepLinks = (urls: string[]) =>
   urls.flatMap((url) => Option.toArray(openProjectDirectory(url)))
 
-export const collectNewSessionDeepLinks = (urls: string[]) =>
-  urls.flatMap((url) => Option.toArray(newSessionLink(url)))
+export const collectNewSessionDeepLinks = (urls: string[]) => urls.flatMap((url) => Option.toArray(newSessionLink(url)))
 
 /** The part of the window that the desktop shell fills with deep links received before the app loaded. */
 type DeepLinkQueue = Pick<Window, "__OPENCODE__">
