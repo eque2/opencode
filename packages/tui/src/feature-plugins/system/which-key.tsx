@@ -6,7 +6,7 @@ import { useBindings, useKeymapSelector } from "../../keymap"
 import type { ActiveKey } from "@opentui/keymap"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
-import { Effect } from "effect"
+import { Array, Effect, Record } from "effect"
 
 const command = {
   toggle: "which-key.toggle",
@@ -143,9 +143,7 @@ function activeKeyEntry(api: TuiPluginApi, active: ActiveKey<Renderable, KeyEven
 }
 
 function grouped(entries: Entry[]): Group[] {
-  const map = new Map<string, Entry[]>()
-  for (const entry of entries) map.set(entry.group, [...(map.get(entry.group) ?? []), entry])
-  return [...map]
+  return Record.toEntries(Array.groupBy(entries, (entry) => entry.group))
     .map(([label, entries]) => ({
       label,
       entries: entries.toSorted(
@@ -246,7 +244,7 @@ function WhichKeyPanel(props: {
     }
     return columnsItems
   })
-  const rowIndexes = createMemo(() => Array.from({ length: rows() }, (_, index) => index))
+  const rowIndexes = createMemo(() => Array.makeBy(rows(), (index) => index))
   const trigger = commandShortcut(props.api, command.toggle)
   const modeTrigger = commandShortcut(props.api, command.toggleLayout)
   const upActive = createMemo(() => offset() > 0)
