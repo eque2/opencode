@@ -26,6 +26,13 @@ type Shift = PerformanceEntry & {
   value: number
 }
 
+/** True for a layout-shift entry. The DOM typings have no LayoutShift type, so the fields are checked. */
+const isShift = (entry: PerformanceEntry): entry is Shift =>
+  "hadRecentInput" in entry &&
+  typeof entry.hadRecentInput === "boolean" &&
+  "value" in entry &&
+  typeof entry.value === "number"
+
 type Obs = PerformanceObserverInit & {
   durationThreshold?: number
 }
@@ -390,11 +397,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
 
     if (
       watch("layout-shift", { buffered: true, type: "layout-shift" }, (entries) => {
-        const add = entries.reduce((sum, entry) => {
-          const item = entry as Shift
-          if (item.hadRecentInput) return sum
-          return sum + item.value
-        }, 0)
+        const add = entries.filter(isShift).reduce((sum, item) => (item.hadRecentInput ? sum : sum + item.value), 0)
         if (add === 0) return
         setState("cls", (value) => Option.some(Option.getOrElse(value, () => 0) + add))
       })

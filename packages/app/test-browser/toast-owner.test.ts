@@ -44,6 +44,7 @@ describe("showToastV2", () => {
   test("creates no reactive computations at call time", () => {
     const [tick, setTick] = createSignal(0)
     let reads = 0
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Solid renders a function child, but solid-js JSX.Element has no function member, and this test must pass one
     const icon = (() => {
       reads++
       tick()

@@ -53,7 +53,8 @@ export const DialogSelectModelUnpaidV2: Component<{ model?: ModelState }> = (pro
       if (!listEl) return
       const buttons = Array.from(listEl.querySelectorAll<HTMLButtonElement>("button"))
       if (buttons.length === 0) return
-      const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      const active = document.activeElement
+      const index = active instanceof HTMLButtonElement ? buttons.indexOf(active) : -1
       const next =
         index < 0 ? (e.key === "ArrowDown" ? 0 : buttons.length - 1) : index + (e.key === "ArrowDown" ? 1 : -1)
       buttons[(next + buttons.length) % buttons.length]?.focus()

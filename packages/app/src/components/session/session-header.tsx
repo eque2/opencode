@@ -33,7 +33,7 @@ import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { reviewTooltipKeybind } from "../command-tooltip-keybind"
 import { useTitlebarRightMount } from "../titlebar"
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 
 const OPEN_APPS = [
   "vscode",
@@ -53,6 +53,7 @@ const OPEN_APPS = [
 ] as const
 
 type OpenApp = (typeof OPEN_APPS)[number]
+const isOpenApp = Schema.is(Schema.Literals(OPEN_APPS))
 type OS = "macos" | "windows" | "linux" | "unknown"
 
 const MAC_APPS = [
@@ -391,8 +392,8 @@ export function SessionHeader() {
                                       class="mt-1"
                                       value={current().id}
                                       onChange={(value) => {
-                                        if (!OPEN_APPS.includes(value as OpenApp)) return
-                                        selectApp(value as OpenApp)
+                                        if (!isOpenApp(value)) return
+                                        selectApp(value)
                                       }}
                                     >
                                       <For each={options()}>
