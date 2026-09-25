@@ -23,6 +23,7 @@ import {
   batch,
   Show,
   on,
+  type JSX,
 } from "solid-js"
 import {
   TuiFlagsProvider,
@@ -608,13 +609,13 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   )
 
   const connected = useConnected()
-  const currentWorktreeWorkspace = createMemo(() => {
-    const workspaceID = project.workspace.current()
-    if (!workspaceID) return
-    const workspace = project.workspace.get(workspaceID)
-    if (workspace?.type !== "worktree" || !workspace.directory) return
-    return workspace
-  })
+  const currentWorktreeWorkspace = createMemo(() =>
+    Option.fromNullishOr(project.workspace.current()).pipe(
+      Option.filter((workspaceID) => workspaceID !== ""),
+      Option.flatMapNullishOr((workspaceID) => project.workspace.get(workspaceID)),
+      Option.filter((workspace) => workspace.type === "worktree" && Boolean(workspace.directory)),
+    ),
+  )
   const appCommands = createMemo(() =>
     [
       {
@@ -655,13 +656,13 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         name: "workspace.copy_path",
         title: "Copy worktree path",
         category: "Workspace",
-        enabled: () => currentWorktreeWorkspace() !== undefined,
+        enabled: () => Option.isSome(currentWorktreeWorkspace()),
         run: () =>
           Effect.runPromise(
             Effect.gen(function* () {
-              const workspace = currentWorktreeWorkspace()
-              if (!workspace?.directory) return
-              yield* copyWithToast(workspace.directory, "Copied worktree path")
+              const directory = Option.flatMapNullishOr(currentWorktreeWorkspace(), (workspace) => workspace.directory)
+              if (Option.isNone(directory)) return
+              yield* copyWithToast(directory.value, "Copied worktree path")
               dialog.clear()
             }),
           ),
@@ -1151,9 +1152,9 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     ),
   )
 
-  const plugin = createMemo(() => {
-    if (!ready()) return
-    if (route.data.type !== "plugin") return
+  const plugin = createMemo((): JSX.Element => {
+    if (!ready()) return undefined
+    if (route.data.type !== "plugin") return undefined
     const render = pluginRuntime.routes.get(route.data.id)
     if (!render) return <PluginRouteMissing id={route.data.id} onHome={() => route.navigate({ type: "home" })} />
     return render({ params: route.data.data })
