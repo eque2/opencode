@@ -38,7 +38,7 @@ const ensureDirectories = Effect.gen(function* () {
   )
 })
 
-// eslint-disable-next-line effect/no-async-await-use-effect -- ES module top-level await: importers use the Global.Path directories synchronously at import (logs, bin, state), so module evaluation must wait until they exist
+// eslint-disable-next-line effect/no-async-await-use-effect -- (c) importers use the Global.Path directories synchronously at import, and test/global.test.ts pins that they exist on load; only top-level await makes module evaluation wait
 await Effect.runPromise(ensureDirectories.pipe(Effect.provide(NodeFileSystem.layer)))
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Global") {}
