@@ -5,10 +5,10 @@ export const worktree = "/tmp/opencode"
 export const directory = `${worktree}/packages/tui`
 
 export function json(data: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  })
+  // Caller headers win; the JSON content type is only a default.
+  const headers = new Headers(init?.headers)
+  if (!headers.has("content-type")) headers.set("content-type", "application/json")
+  return new Response(JSON.stringify(data), { ...init, headers })
 }
 
 export function eventSource(): EventSource {
