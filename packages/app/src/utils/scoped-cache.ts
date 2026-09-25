@@ -55,7 +55,7 @@ export function createScopedCache<T>(createValue: (key: string) => T, options: S
 
   const remove = (key: string) => {
     const entry = MutableHashMap.get(store, key)
-    if (Option.isNone(entry)) return
+    if (Option.isNone(entry)) return undefined
     MutableHashMap.remove(store, key)
     dispose(key, entry.value)
     return entry.value.value
@@ -64,10 +64,11 @@ export function createScopedCache<T>(createValue: (key: string) => T, options: S
   const peek = (key: string) => {
     sweep()
     const entry = MutableHashMap.get(store, key)
-    if (Option.isNone(entry)) return
+    if (Option.isNone(entry)) return undefined
     if (!expired(entry.value)) return entry.value.value
     MutableHashMap.remove(store, key)
     dispose(key, entry.value)
+    return undefined
   }
 
   const get = (key: string) => {

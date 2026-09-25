@@ -7,9 +7,9 @@ type Input = {
 }
 
 export const nextTabListScrollLeft = (input: Input) => {
-  if (input.scrollWidth <= input.prevScrollWidth) return
+  if (input.scrollWidth <= input.prevScrollWidth) return undefined
   if (!input.prevContextOpen && input.contextOpen) return 0
-  if (input.scrollWidth <= input.clientWidth) return
+  if (input.scrollWidth <= input.clientWidth) return undefined
   return input.scrollWidth - input.clientWidth
 }
 

@@ -53,14 +53,14 @@ export function shouldListExpanded(input: {
 
 export function dirsToExpand(input: {
   level: number
-  filter?: { dirs: HashSet.HashSet<string> }
+  filter: Option.Option<{ dirs: HashSet.HashSet<string> }>
   expanded: (dir: string) => boolean
 }) {
   if (input.level !== 0) return []
-  if (!input.filter) return []
+  if (Option.isNone(input.filter)) return []
   // HashSet has no insertion order; sorting keeps every parent ahead of its children.
   return Arr.sort(
-    Arr.filter(Array.from(input.filter.dirs), (dir) => !input.expanded(dir)),
+    Arr.filter(Array.from(input.filter.value.dirs), (dir) => !input.expanded(dir)),
     Order.String,
   )
 }
@@ -83,18 +83,19 @@ const kindDotColor = (kind: Kind) => {
   return "background-color: var(--icon-diff-modified-base)"
 }
 
-export const visibleKind = (node: FileNode, kinds?: HashMap.HashMap<string, Kind>, marks?: HashSet.HashSet<string>) => {
-  if (!kinds) return
-  const kind = HashMap.get(kinds, node.path)
-  if (Option.isNone(kind)) return
-  if (!marks || !HashSet.has(marks, node.path)) return
-  return kind.value
+export const visibleKind = (
+  node: FileNode,
+  kinds?: HashMap.HashMap<string, Kind>,
+  marks?: HashSet.HashSet<string>,
+): Option.Option<Kind> => {
+  if (!kinds || !marks || !HashSet.has(marks, node.path)) return Option.none()
+  return HashMap.get(kinds, node.path)
 }
 
-const buildDragImage = (target: HTMLElement) => {
+const buildDragImage = (target: HTMLElement): Option.Option<HTMLDivElement> => {
   const icon = target.querySelector('[data-component="file-icon"]') ?? target.querySelector("svg")
   const text = target.querySelector("span")
-  if (!icon || !text) return
+  if (!icon || !text) return Option.none()
 
   const image = document.createElement("div")
   image.className =
@@ -102,12 +103,13 @@ const buildDragImage = (target: HTMLElement) => {
   image.style.position = "absolute"
   image.style.top = "-1000px"
   image.innerHTML = (icon as SVGElement).outerHTML + (text as HTMLSpanElement).outerHTML
-  return image
+  return Option.some(image)
 }
 
 export const withFileDragImage = (event: DragEvent) => {
-  const image = buildDragImage(event.currentTarget as HTMLElement)
-  if (!image) return
+  const built = buildDragImage(event.currentTarget as HTMLElement)
+  if (Option.isNone(built)) return
+  const image = built.value
   document.body.appendChild(image)
   event.dataTransfer?.setDragImage(image, 0, 12)
   setTimeout(() => document.body.removeChild(image), 0)
@@ -141,12 +143,8 @@ const FileTreeNode = (
     "classList",
   ])
   const kind = () => visibleKind(local.node, local.kinds, local.marks)
-  const active = () => !!kind() && !local.node.ignored
-  const color = () => {
-    const value = kind()
-    if (!value) return
-    return kindTextColor(value)
-  }
+  const active = () => Option.isSome(kind()) && !local.node.ignored
+  const color = () => (active() ? Option.map(kind(), kindTextColor) : Option.none<string>())
 
   return (
     <Dynamic
@@ -176,22 +174,21 @@ const FileTreeNode = (
           "text-text-weaker": local.node.ignored,
           "text-text-weak": !local.node.ignored && !active(),
         }}
-        style={active() ? color() : undefined}
+        style={Option.getOrUndefined(color())}
       >
         {local.node.name}
       </span>
-      {(() => {
-        const value = kind()
-        if (!value) return null
-        if (local.node.type === "file") {
-          return (
-            <span class="shrink-0 w-4 text-center text-12-medium" style={kindTextColor(value)}>
-              {kindLabel(value)}
+      <Show when={Option.getOrUndefined(kind())}>
+        {(value) =>
+          local.node.type === "file" ? (
+            <span class="shrink-0 w-4 text-center text-12-medium" style={kindTextColor(value())}>
+              {kindLabel(value())}
             </span>
+          ) : (
+            <div class="shrink-0 size-1.5 mr-1.5 rounded-full" style={kindDotColor(value())} />
           )
         }
-        return <div class="shrink-0 size-1.5 mr-1.5 rounded-full" style={kindDotColor(value)} />
-      })()}
+      </Show>
     </Dynamic>
   )
 }
@@ -209,7 +206,7 @@ export default function FileTree(props: {
   onFileClick?: (file: FileNode) => void
   onFileDoubleClick?: (file: FileNode) => void
 
-  _filter?: Filter
+  _filter?: Option.Option<Filter>
   _marks?: HashSet.HashSet<string>
   _deeps?: HashMap.HashMap<string, number>
   _kinds?: HashMap.HashMap<string, Kind>
@@ -226,11 +223,11 @@ export default function FileTree(props: {
       .replaceAll("\\", "/")
   const chain = props._chain ? [...props._chain, key(props.path)] : [key(props.path)]
 
-  const filter = createMemo(() => {
+  const filter = createMemo((): Option.Option<Filter> => {
     if (props._filter) return props._filter
 
     const allowed = props.allowed
-    if (!allowed) return
+    if (!allowed) return Option.none()
 
     const files = HashSet.fromIterable(allowed)
     const dirs = HashSet.fromIterable(
@@ -240,18 +237,16 @@ export default function FileTree(props: {
       }),
     )
 
-    return { files, dirs }
+    return Option.some({ files, dirs })
   })
 
   const marks = createMemo(() => {
     if (props._marks) return props._marks
 
-    const out = HashSet.union(
+    return HashSet.union(
       HashSet.fromIterable(props.modified ?? []),
       props.kinds ? HashSet.fromIterable(HashMap.keys(props.kinds)) : HashSet.empty<string>(),
     )
-    if (HashSet.size(out) === 0) return
-    return out
   })
 
   const kinds = createMemo(() => {
@@ -328,8 +323,9 @@ export default function FileTree(props: {
 
   const nodes = createMemo(() => {
     const nodes = file.tree.children(props.path)
-    const current = filter()
-    if (!current) return nodes
+    const filtered = filter()
+    if (Option.isNone(filtered)) return nodes
+    const current = filtered.value
 
     const parent = (path: string) => {
       const idx = path.lastIndexOf("/")
@@ -392,7 +388,7 @@ export default function FileTree(props: {
           const expanded = () => file.tree.state(node.path)?.expanded ?? false
           const deep = () => Option.getOrElse(HashMap.get(deeps(), node.path), () => -1)
           const kind = () => visibleKind(node, kinds(), marks())
-          const active = () => !!kind() && !node.ignored
+          const active = () => Option.isSome(kind()) && !node.ignored
 
           return (
             <Switch>
@@ -477,13 +473,15 @@ export default function FileTree(props: {
                         mono
                       />
                     </Match>
-                    <Match when={active()}>
-                      <FileIcon
-                        node={node}
-                        class="size-4 filetree-icon filetree-icon--mono"
-                        style={kindTextColor(kind()!)}
-                        mono
-                      />
+                    <Match when={active() && Option.getOrUndefined(kind())}>
+                      {(value) => (
+                        <FileIcon
+                          node={node}
+                          class="size-4 filetree-icon filetree-icon--mono"
+                          style={kindTextColor(value())}
+                          mono
+                        />
+                      )}
                     </Match>
                     <Match when={!node.ignored}>
                       <span class="filetree-iconpair size-4">

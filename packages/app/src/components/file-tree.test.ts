@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
-import { HashSet, MutableHashSet } from "effect"
+import { HashSet, MutableHashSet, Option } from "effect"
 
 let shouldListRoot: typeof import("./file-tree").shouldListRoot
 let shouldListExpanded: typeof import("./file-tree").shouldListExpanded
@@ -57,7 +57,7 @@ describe("file tree fetch discipline", () => {
 
   test("allowed auto-expand picks only collapsed dirs", () => {
     const expanded = MutableHashSet.empty<string>()
-    const filter = { dirs: HashSet.make("src", "src/components") }
+    const filter = Option.some({ dirs: HashSet.make("src", "src/components") })
 
     const first = dirsToExpand({
       level: 0,

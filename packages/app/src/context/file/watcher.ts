@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 type WatcherEvent = {
@@ -33,15 +34,10 @@ export function invalidateFromWatcher(event: WatcherEvent, ops: WatcherOps) {
   }
 
   if (kind === "change") {
-    const dir = (() => {
-      if (path === "") return ""
-      const node = ops.node(path)
-      if (node?.type !== "directory") return
-      return path
-    })()
-    if (dir === undefined) return
-    if (!ops.isDirLoaded(dir)) return
-    ops.refreshDir(dir)
+    const dir = path === "" ? Option.some(path) : Option.liftPredicate(path, (p) => ops.node(p)?.type === "directory")
+    if (Option.isNone(dir)) return
+    if (!ops.isDirLoaded(dir.value)) return
+    ops.refreshDir(dir.value)
     return
   }
   if (kind !== "add" && kind !== "unlink") return
