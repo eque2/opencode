@@ -1,4 +1,4 @@
-import { MutableHashMap, Option } from "effect"
+import { HashSet, MutableHashMap, Option } from "effect"
 import type { DisposeCheck, EvictPlan } from "./types"
 
 export function pickDirectoriesToEvict(input: EvictPlan) {
@@ -10,7 +10,7 @@ export function pickDirectoriesToEvict(input: EvictPlan) {
   const overflow = Math.max(0, input.stores.length - input.max)
   let pendingOverflow = overflow
   const sorted = input.stores
-    .filter((dir) => !input.pins.has(dir))
+    .filter((dir) => !HashSet.has(input.pins, dir))
     .slice()
     .sort((a, b) => lastAccessAt(a) - lastAccessAt(b))
   const output: string[] = []

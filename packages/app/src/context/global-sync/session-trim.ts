@@ -1,6 +1,7 @@
 import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import { cmp } from "./utils"
 import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
+import { HashSet, MutableHashSet } from "effect"
 
 export function sessionUpdatedAt(session: Session) {
   return session.time.updated ?? session.time.created
@@ -16,11 +17,11 @@ export function compareSessionRecent(a: Session, b: Session) {
 export function takeRecentSessions(sessions: Session[], limit: number, cutoff: number) {
   if (limit <= 0) return [] as Session[]
   const selected: Session[] = []
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   for (const session of sessions) {
     if (!session?.id) continue
-    if (seen.has(session.id)) continue
-    seen.add(session.id)
+    if (MutableHashSet.has(seen, session.id)) continue
+    MutableHashSet.add(seen, session.id)
     if (sessionUpdatedAt(session) <= cutoff) continue
     const index = selected.findIndex((x) => compareSessionRecent(session, x) < 0)
     if (index === -1) selected.push(session)
@@ -46,9 +47,9 @@ export function trimSessions(
   const base = roots.slice(0, limit)
   const recent = takeRecentSessions(roots.slice(limit), SESSION_RECENT_LIMIT, cutoff)
   const keepRoots = [...base, ...recent]
-  const keepRootIds = new Set(keepRoots.map((s) => s.id))
+  const keepRootIds = HashSet.fromIterable(keepRoots.map((s) => s.id))
   const keepChildren = children.filter((s) => {
-    if (s.parentID && keepRootIds.has(s.parentID)) return true
+    if (s.parentID && HashSet.has(keepRootIds, s.parentID)) return true
     const perms = options.permission[s.id] ?? []
     if (perms.length > 0) return true
     return sessionUpdatedAt(s) > cutoff

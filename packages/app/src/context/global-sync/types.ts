@@ -17,7 +17,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { CommandInfo, McpResource, McpServer, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Accessor } from "solid-js"
-import type { MutableHashMap } from "effect"
+import type { HashSet, MutableHashMap } from "effect"
 import type { SetStoreFunction, Store } from "solid-js/store"
 
 export type ProjectMeta = {
@@ -116,7 +116,7 @@ export type DirState = {
 export type EvictPlan = {
   stores: string[]
   state: MutableHashMap.MutableHashMap<string, DirState>
-  pins: Set<string>
+  pins: HashSet.HashSet<string>
   max: number
   ttl: number
   now: number

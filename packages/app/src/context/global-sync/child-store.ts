@@ -19,7 +19,7 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
-import { Data, DateTime, Effect, HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Data, DateTime, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 
 /**
  * Raised when ensureChild cannot build a directory store: a persisted cache or
@@ -168,7 +168,7 @@ export function createChildStoreManager(input: {
     const list = pickDirectoriesToEvict({
       stores,
       state: lifecycle,
-      pins: new Set(stores.filter(pinned)),
+      pins: HashSet.fromIterable(stores.filter(pinned)),
       max: MAX_DIR_STORES,
       ttl: DIR_IDLE_TTL_MS,
       now: DateTime.toEpochMillis(DateTime.nowUnsafe()),

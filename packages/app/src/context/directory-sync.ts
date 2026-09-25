@@ -6,9 +6,10 @@ import type { createServerSdkContext } from "./server-sdk"
 import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
 import { normalizeSessionInfo } from "@/utils/session"
+import { HashSet } from "effect"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
-const sessionFields = new Set([
+const sessionFields: HashSet.HashSet<string> = HashSet.make(
   "session_status",
   "session_working",
   "session_diff",
@@ -19,7 +20,7 @@ const sessionFields = new Set([
   "session_message",
   "part",
   "part_text_accum_delta",
-])
+)
 
 export const createDirSyncContext = (
   directory: string,
@@ -31,12 +32,13 @@ export const createDirSyncContext = (
   const data = new Proxy({} as State, {
     get(_, property: keyof State) {
       if (property === "session_working") return serverSync.session.data.session_working.bind(serverSync.session.data)
-      if (sessionFields.has(property)) return serverSync.session.data[property as keyof typeof serverSync.session.data]
+      if (HashSet.has(sessionFields, property))
+        return serverSync.session.data[property as keyof typeof serverSync.session.data]
       return current()[0][property]
     },
   })
   const set = ((...input: unknown[]) => {
-    if (typeof input[0] === "string" && sessionFields.has(input[0])) {
+    if (typeof input[0] === "string" && HashSet.has(sessionFields, input[0])) {
       return (serverSync.session.set as (...args: unknown[]) => unknown)(...input)
     }
     const result = (current()[1] as (...args: unknown[]) => unknown)(...input)
