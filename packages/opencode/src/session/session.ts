@@ -35,7 +35,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Clock, DateTime, Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
+import { Array as Arr, Clock, DateTime, Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -582,7 +582,7 @@ const layer: Layer.Layer<
         .limit(input?.limit ?? 100)
         .all()
         .pipe(Effect.orDie)
-      const ids = [...new Set(rows.map((row) => row.project_id))]
+      const ids = Arr.dedupe(rows.map((row) => row.project_id))
       const projects = new Map<string, ProjectInfo>()
       if (ids.length > 0) {
         const items = yield* db

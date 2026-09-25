@@ -42,7 +42,7 @@ import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
-import { Array as Arr, Effect, Option, Predicate, Record, Schema } from "effect"
+import { Array as Arr, Effect, MutableHashSet, Option, Predicate, Record, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -149,7 +149,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
   options?: { stripMedia?: boolean; toolOutputMaxChars?: number },
 ) {
   const result: UIMessage[] = []
-  const toolNames = new Set<string>()
+  const toolNames = MutableHashSet.empty<string>()
   // Track media from tool results that need to be injected as user messages
   // for providers that don't support that media type in tool results.
   //
@@ -308,7 +308,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             type: "step-start",
           })
         if (part.type === "tool") {
-          toolNames.add(part.tool)
+          MutableHashSet.add(toolNames, part.tool)
           if (part.state.status === "completed") {
             const outputText = part.state.time.compacted
               ? "[Old tool result content cleared]"
@@ -544,7 +544,7 @@ export const get = Effect.fn("MessageV2.get")(function* (input: { sessionID: Ses
 
 export function filterCompacted(msgs: Iterable<WithParts>) {
   const result = [] as WithParts[]
-  const completed = new Set<string>()
+  const completed = MutableHashSet.empty<string>()
   let retain: MessageID | undefined
   for (const msg of msgs) {
     result.push(msg)
@@ -552,7 +552,7 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
       if (msg.info.id === retain) break
       continue
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id)) {
+    if (msg.info.role === "user" && MutableHashSet.has(completed, msg.info.id)) {
       const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
       if (!part) continue
       if (!part.tail_start_id) break
@@ -560,10 +560,14 @@ export function filterCompacted(msgs: Iterable<WithParts>) {
       if (msg.info.id === retain) break
       continue
     }
-    if (msg.info.role === "user" && completed.has(msg.info.id) && msg.parts.some((part) => part.type === "compaction"))
+    if (
+      msg.info.role === "user" &&
+      MutableHashSet.has(completed, msg.info.id) &&
+      msg.parts.some((part) => part.type === "compaction")
+    )
       break
     if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
-      completed.add(msg.info.parentID)
+      MutableHashSet.add(completed, msg.info.parentID)
   }
   result.reverse()
   const compactionIndex = result.findLastIndex(
