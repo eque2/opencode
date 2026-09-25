@@ -1,4 +1,4 @@
-import { Data, DateTime, Option } from "effect"
+import { Data, DateTime, Option, Random } from "effect"
 
 const prefixes = {
   session: "ses",
@@ -92,8 +92,10 @@ function getRandomBytes(length: number): Uint8Array {
     return bytes
   }
 
+  // Identifier is a synchronous API with no fiber, so the fallback reads the default Random service directly.
+  const random = Random.Random.defaultValue()
   for (let i = 0; i < length; i += 1) {
-    bytes[i] = Math.floor(Math.random() * 256)
+    bytes[i] = Math.floor(random.nextDoubleUnsafe() * 256)
   }
 
   return bytes
