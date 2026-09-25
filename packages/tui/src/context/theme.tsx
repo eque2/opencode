@@ -20,7 +20,7 @@ import {
   type Theme,
   type ThemeJson,
 } from "../theme"
-import { Duration, Effect, Fiber, FileSystem, MutableHashSet, Option, Result, Schema } from "effect"
+import { Data, Duration, Effect, Fiber, FileSystem, MutableHashSet, Option, Record, Result, Schema } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -45,6 +45,9 @@ export type ThemeSource = Readonly<{
 }>
 
 const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
+
+/** Reading the terminal palette, or building the system theme from it, failed. */
+class ThemePaletteError extends Data.TaggedError("TuiTheme.PaletteError")<{ readonly cause: unknown }> {}
 
 // The .opencode directory in `directory` and in each of its ancestors, nearest first.
 function projectConfigDirectories(directory: string): ReadonlyArray<string> {
@@ -169,52 +172,58 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       if (theme) setStore("active", theme)
     })
 
-    function syncCustomThemes() {
-      return Effect.runPromise(themes.discover)
-        .then((themes) => {
-          setCustomThemes(
-            Object.entries(themes).reduce<Record<string, ThemeJson>>((result, [name, theme]) => {
-              if (isTheme(theme)) result[name] = theme
-              return result
-            }, {}),
-          )
-        })
-        .catch(() => setStore("active", "opencode"))
-    }
+    // Replaces the custom themes with the discovered files that are themes. A failed discovery resets the active
+    // theme to opencode.
+    const syncCustomThemes = themes.discover.pipe(
+      Effect.andThen((found) => Effect.sync(() => setCustomThemes(Record.filter(found, isTheme)))),
+      Effect.catch(() => Effect.sync(() => setStore("active", "opencode"))),
+    )
 
     onMount(() => {
-      void Promise.allSettled([resolveSystemTheme(store.mode), syncCustomThemes()]).finally(() => {
-        setStore("ready", true)
-      })
+      Effect.runFork(
+        Effect.all([resolveSystemTheme(store.mode), syncCustomThemes], { concurrency: "unbounded", discard: true }).pipe(
+          Effect.ensuring(Effect.sync(() => setStore("ready", true))),
+        ),
+      )
     })
 
     let systemThemeSignature: string | undefined
     let systemThemeMode: Mode | undefined
     let hasResolvedSystemTheme = false
+
+    // Until a palette has been read once, a missing palette removes the system theme.
+    function dropSystemTheme() {
+      if (hasResolvedSystemTheme) return
+      setSystemTheme(Option.none())
+      if (store.active === "system") setStore("active", "opencode")
+    }
+
+    function applyPalette(colors: TerminalColors, mode: Mode) {
+      if (!colors.palette[0]) {
+        dropSystemTheme()
+        return
+      }
+      const next = Option.getOrElse(store.lock, () => terminalMode(colors) ?? mode)
+      if (store.mode !== next) setStore("mode", next)
+      const signature = encodePaletteSignature(colors)
+      hasResolvedSystemTheme = true
+      if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
+      systemThemeSignature = signature
+      systemThemeMode = next
+      setSystemTheme(Option.some(generateSystem(colors, next)))
+    }
+
+    // Reads the terminal palette and regenerates the system theme when the palette or the mode changed.
     function resolveSystemTheme(mode: Mode = store.mode) {
-      return renderer
-        .getPalette({ size: 16 })
-        .then((colors: TerminalColors) => {
-          if (!colors.palette[0]) {
-            if (hasResolvedSystemTheme) return
-            setSystemTheme(Option.none())
-            if (store.active === "system") setStore("active", "opencode")
-            return
-          }
-          const next = Option.getOrElse(store.lock, () => terminalMode(colors) ?? mode)
-          if (store.mode !== next) setStore("mode", next)
-          const signature = encodePaletteSignature(colors)
-          hasResolvedSystemTheme = true
-          if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
-          systemThemeSignature = signature
-          systemThemeMode = next
-          setSystemTheme(Option.some(generateSystem(colors, next)))
-        })
-        .catch(() => {
-          if (hasResolvedSystemTheme) return
-          setSystemTheme(Option.none())
-          if (store.active === "system") setStore("active", "opencode")
-        })
+      return Effect.tryPromise({
+        try: () => renderer.getPalette({ size: 16 }),
+        catch: (cause) => new ThemePaletteError({ cause }),
+      }).pipe(
+        Effect.flatMap((colors) =>
+          Effect.try({ try: () => applyPalette(colors, mode), catch: (cause) => new ThemePaletteError({ cause }) }),
+        ),
+        Effect.catch(() => Effect.sync(dropSystemTheme)),
+      )
     }
 
     let systemRefreshRunning = false
@@ -230,12 +239,18 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       systemRefreshRunning = true
       const retry = renderer.paletteDetectionStatus === "detecting"
       renderer.clearPaletteCache()
-      void resolveSystemTheme(mode).finally(() => {
-        systemRefreshRunning = false
-        if (!retry && !systemRefreshQueued) return
-        systemRefreshQueued = false
-        refreshSystemTheme(systemRefreshMode)
-      })
+      Effect.runFork(
+        resolveSystemTheme(mode).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              systemRefreshRunning = false
+              if (!retry && !systemRefreshQueued) return
+              systemRefreshQueued = false
+              refreshSystemTheme(systemRefreshMode)
+            }),
+          ),
+        ),
+      )
     }
 
     function apply(mode: Mode) {
@@ -287,12 +302,9 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
             THEME_REFRESH_DELAYS,
             (delay) =>
               Effect.sleep(Duration.millis(delay)).pipe(
-                Effect.andThen(
-                  Effect.sync(() => {
-                    refreshSystemTheme()
-                    if (delay === lastRefreshDelay) void syncCustomThemes()
-                  }),
-                ),
+                Effect.andThen(Effect.sync(() => refreshSystemTheme())),
+                // The custom theme re-read runs detached, so a newer refresh request does not cancel it.
+                Effect.andThen(delay === lastRefreshDelay ? Effect.forkDetach(syncCustomThemes) : Effect.void),
               ),
             { concurrency: "unbounded", discard: true },
           ).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
@@ -377,16 +389,21 @@ export function createSyntaxStyleMemo(factory: () => SyntaxStyle) {
   const retained = MutableHashSet.empty<SyntaxStyle>()
   let current: SyntaxStyle | undefined
 
+  // Destroys a replaced style once the renderer is idle, whether or not the idle wait fails.
   const release = (style: SyntaxStyle) => {
     MutableHashSet.add(retained, style)
-    void renderer
-      .idle()
-      .catch(() => {})
-      .finally(() => {
-        if (!MutableHashSet.has(retained, style)) return
-        MutableHashSet.remove(retained, style)
-        style.destroy()
-      })
+    Effect.runFork(
+      Effect.tryPromise(() => renderer.idle()).pipe(
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (!MutableHashSet.has(retained, style)) return
+            MutableHashSet.remove(retained, style)
+            style.destroy()
+          }),
+        ),
+      ),
+    )
   }
 
   onCleanup(() => {
