@@ -1,14 +1,7 @@
 import { expect, test } from "bun:test"
 import path from "path"
 import { Effect, FileSystem, Schema } from "effect"
-import {
-  appendText,
-  fileSystemLayer,
-  readJson,
-  readText,
-  writeJsonAtomic,
-  writeText,
-} from "../../src/util/persistence"
+import { appendText, fileSystemLayer, readJson, readText, writeJsonAtomic, writeText } from "../../src/util/persistence"
 
 const State = Schema.Struct({ value: Schema.Number }).annotate({ identifier: "TuiPersistenceTest.State" })
 const StateFile = Schema.fromJsonString(State)
