@@ -117,18 +117,45 @@ const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
   Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
 }
 
+/** The persisted layout page state. An absent drag key means no drag is active. */
+type LayoutPageStore = {
+  lastProjectSession: { [directory: string]: { directory: string; id: string; at: number } }
+  activeProject?: string
+  activeWorkspace?: string
+  workspaceOrder: Record<string, string[]>
+  workspaceName: Record<string, string>
+  workspaceBranchName: Record<string, Record<string, string>>
+  workspaceExpanded: Partial<Record<string, boolean>>
+  gettingStartedDismissed: boolean
+}
+
+/** The in-memory layout UI state. An absent optional key means nothing is hovered, peeked or scrolled to. */
+type LayoutUiState = {
+  autoselect: boolean
+  busyWorkspaces: Partial<Record<string, boolean>>
+  hoverProject?: string
+  scrollSessionKey?: string
+  nav?: HTMLElement
+  sortNow: number
+  sizing: boolean
+  peek?: string
+  peeked: boolean
+  debugTools: boolean
+}
+
+/** The layout reads the global provider catalog, so it names no project directory. */
+const globalCatalog = Option.none<string>()
+
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
   const [store, setStore, , ready] = persisted(
     Persist.serverGlobal(serverSDK().scope, "layout.page", ["layout.page.v1"]),
-    createStore({
-      lastProjectSession: {} as { [directory: string]: { directory: string; id: string; at: number } },
-      activeProject: undefined as string | undefined,
-      activeWorkspace: undefined as string | undefined,
-      workspaceOrder: {} as Record<string, string[]>,
-      workspaceName: {} as Record<string, string>,
-      workspaceBranchName: {} as Record<string, Record<string, string>>,
-      workspaceExpanded: {} as Partial<Record<string, boolean>>,
+    createStore<LayoutPageStore>({
+      lastProjectSession: {},
+      workspaceOrder: {},
+      workspaceName: {},
+      workspaceBranchName: {},
+      workspaceExpanded: {},
       gettingStartedDismissed: false,
     }),
   )
@@ -150,7 +177,7 @@ export default function LegacyLayout(props: ParentProps) {
   const notification = useNotification()
   const permission = usePermission()
   const navigate = useNavigate()
-  const providers = useProviders(() => undefined)
+  const providers = useProviders(() => Option.getOrUndefined(globalCatalog))
   const dialog = useDialog()
   const command = useCommand()
   const theme = useTheme()
@@ -179,15 +206,11 @@ export default function LegacyLayout(props: ParentProps) {
   const colorSchemeLabel = (scheme: ColorScheme) => language.t(colorSchemeKey[scheme])
   const currentDir = createMemo(() => route().dir)
 
-  const [state, setState] = createStore({
+  const [state, setState] = createStore<LayoutUiState>({
     autoselect: !initialDirectory,
-    busyWorkspaces: {} as Partial<Record<string, boolean>>,
-    hoverProject: undefined as string | undefined,
-    scrollSessionKey: undefined as string | undefined,
-    nav: undefined as HTMLElement | undefined,
+    busyWorkspaces: {},
     sortNow: DateTime.toEpochMillis(DateTime.nowUnsafe()),
     sizing: false,
-    peek: undefined as string | undefined,
     peeked: false,
     debugTools: true,
   })
@@ -265,24 +288,34 @@ export default function LegacyLayout(props: ParentProps) {
 
   const sidebarHovering = createMemo(() => !layout.sidebar.opened() && state.hoverProject !== undefined)
   const sidebarExpanded = createMemo(() => layout.sidebar.opened() || sidebarHovering())
-  const setHoverProject = (value: string | undefined) => {
-    setState("hoverProject", value)
-    if (value !== undefined) return
+  const setHoverState = (value: Option.Option<string>) =>
+    Option.match(value, {
+      onSome: (directory) => setState("hoverProject", directory),
+      onNone: () =>
+        setState(
+          produce((draft) => {
+            delete draft.hoverProject
+          }),
+        ),
+    })
+  const setHoverProject = (value: Option.Option<string>) => {
+    setHoverState(value)
+    if (Option.isSome(value)) return
     aim.reset()
   }
-  const clearHoverProjectSoon = () => queueMicrotask(() => setHoverProject(undefined))
+  const clearHoverProjectSoon = () => queueMicrotask(() => setHoverProject(Option.none()))
 
   const disarm = () => navLeave.interrupt()
 
   const reset = () => {
     disarm()
-    setHoverProject(undefined)
+    setHoverProject(Option.none())
   }
 
   const arm = () => {
     if (layout.sidebar.opened()) return
     if (state.hoverProject === undefined) return
-    navLeave.run(Effect.sleep("300 millis").pipe(Effect.andThen(Effect.sync(() => setHoverProject(undefined)))))
+    navLeave.run(Effect.sleep("300 millis").pipe(Effect.andThen(Effect.sync(() => setHoverProject(Option.none())))))
   }
 
   const peekClose = createFiberSlot()
@@ -310,12 +343,24 @@ export default function LegacyLayout(props: ParentProps) {
 
     setState("peeked", false)
     if (state.peek === undefined) return
-    peekClose.run(Effect.sleep("180 millis").pipe(Effect.andThen(Effect.sync(() => setState("peek", undefined)))))
+    peekClose.run(
+      Effect.sleep("180 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() =>
+            setState(
+              produce((draft) => {
+                delete draft.peek
+              }),
+            ),
+          ),
+        ),
+      ),
+    )
   })
 
   createEffect(() => {
     if (!layout.sidebar.opened()) return
-    setHoverProject(undefined)
+    setHoverProject(Option.none())
   })
 
   createEffect(() => {
@@ -685,7 +730,7 @@ export default function LegacyLayout(props: ParentProps) {
       seen: lru,
       keep: sessionID,
       limit: PREFETCH_MAX_SESSIONS_PER_DIR,
-      preserve: params.id && pathKey(directory) === pathKey(currentDir()) ? [params.id] : undefined,
+      ...(params.id && pathKey(directory) === pathKey(currentDir()) ? { preserve: [params.id] } : {}),
     })
   }
 
@@ -848,10 +893,13 @@ export default function LegacyLayout(props: ParentProps) {
     const projects = layout.projects.list()
     if (projects.length === 0) return
 
-    const current = currentProject()?.worktree
-    const fallback = currentDir() ? projectRoot(currentDir()) : undefined
-    const active = current ?? fallback
-    const index = active ? projects.findIndex((project) => project.worktree === active) : -1
+    const active = Option.fromNullishOr(currentProject()?.worktree).pipe(
+      Option.orElse(() => (currentDir() ? Option.some(projectRoot(currentDir())) : Option.none())),
+    )
+    const index = Option.match(active, {
+      onNone: () => -1,
+      onSome: (worktree) => projects.findIndex((project) => project.worktree === worktree),
+    })
 
     const target =
       index === -1
@@ -1830,7 +1878,7 @@ export default function LegacyLayout(props: ParentProps) {
   function handleDragStart(event: unknown) {
     const id = getDraggableId(event)
     if (!id) return
-    setHoverProject(undefined)
+    setHoverProject(Option.none())
     setStore("activeProject", id)
   }
 
@@ -1847,7 +1895,11 @@ export default function LegacyLayout(props: ParentProps) {
   }
 
   function handleDragEnd() {
-    setStore("activeProject", undefined)
+    setStore(
+      produce((draft) => {
+        delete draft.activeProject
+      }),
+    )
   }
 
   function workspaceIds(project: LocalProject | undefined) {
@@ -1855,18 +1907,23 @@ export default function LegacyLayout(props: ParentProps) {
     const local = project.worktree
     const dirs = [local, ...(project.sandboxes ?? [])]
     const active = currentProject()
-    const directory = pathKey(active?.worktree ?? "") === pathKey(project.worktree) ? currentDir() : undefined
+    // Only the active project shows the current directory when it is not a known workspace yet.
     const extra =
-      directory && pathKey(directory) !== pathKey(local) && !dirs.some((item) => pathKey(item) === pathKey(directory))
-        ? directory
-        : undefined
-    const pending = extra ? WorktreeState.get(serverSDK().scope, extra)?.status === "pending" : false
+      pathKey(active?.worktree ?? "") === pathKey(project.worktree)
+        ? Option.filter(
+            Option.some(currentDir()),
+            (directory) =>
+              !!directory &&
+              pathKey(directory) !== pathKey(local) &&
+              !dirs.some((item) => pathKey(item) === pathKey(directory)),
+          )
+        : Option.none<string>()
 
     const ordered = effectiveWorkspaceOrder(local, dirs, store.workspaceOrder[project.worktree])
-    if (pending && extra) return [local, extra, ...ordered.filter((item) => item !== local)]
-    if (!extra) return ordered
-    if (pending) return ordered
-    return [...ordered, extra]
+    if (Option.isNone(extra)) return ordered
+    const pending = WorktreeState.get(serverSDK().scope, extra.value)?.status === "pending"
+    if (pending) return [local, extra.value, ...ordered.filter((item) => item !== local)]
+    return [...ordered, extra.value]
   }
 
   const sidebarProject = createMemo(() => {
@@ -1907,7 +1964,11 @@ export default function LegacyLayout(props: ParentProps) {
   }
 
   function handleWorkspaceDragEnd() {
-    setStore("activeWorkspace", undefined)
+    setStore(
+      produce((draft) => {
+        delete draft.activeWorkspace
+      }),
+    )
   }
 
   const createWorkspace = Effect.fn("Layout.createWorkspace")(function* (project: LocalProject) {
@@ -1993,7 +2054,7 @@ export default function LegacyLayout(props: ParentProps) {
     onProjectFocus: (worktree) => aim.activate(worktree),
     onHoverOpenChanged: (worktree, hoverOpen) => {
       if (!hoverOpen && state.hoverProject && state.hoverProject !== worktree) return
-      setState("hoverProject", hoverOpen ? worktree : undefined)
+      setHoverState(hoverOpen ? Option.some(worktree) : Option.none())
     },
     navigateToProject,
     openSidebar: () => layout.sidebar.open(),
@@ -2069,9 +2130,7 @@ export default function LegacyLayout(props: ParentProps) {
           "flex-1 min-w-0": panelProps.mobile,
           "max-w-full overflow-hidden": panelProps.mobile,
         }}
-        style={{
-          width: panelProps.mobile ? undefined : `${panel()}px`,
-        }}
+        style={panelProps.mobile ? {} : { width: `${panel()}px` }}
       >
         <Show
           when={project()}
@@ -2347,11 +2406,9 @@ export default function LegacyLayout(props: ParentProps) {
       {autoselecting() ?? ""}
       <Titlebar
         update={titlebarUpdate}
-        debugTools={
-          import.meta.env.DEV && import.meta.env.VITE_DISABLE_DEBUG_BAR !== "1"
-            ? { visible: state.debugTools, toggle: () => setState("debugTools", (value) => !value) }
-            : undefined
-        }
+        {...(import.meta.env.DEV && import.meta.env.VITE_DISABLE_DEBUG_BAR !== "1"
+          ? { debugTools: { visible: state.debugTools, toggle: () => setState("debugTools", (value) => !value) } }
+          : {})}
       />
       <Show when={updateVersion() !== undefined}>
         <UpdateAvailableToast version={updateVersion() ?? ""} install={installUpdate} language={language} />
