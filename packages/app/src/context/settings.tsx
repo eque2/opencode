@@ -1,9 +1,10 @@
 import { createStore, reconcile } from "solid-js/store"
-import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { DateTime, Option } from "effect"
+import { Clock, DateTime, Effect, Option } from "effect"
 import { persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 export interface NotificationSettings {
   agent: boolean
@@ -118,13 +119,15 @@ export function initialAgentVisibility(
 export function shouldEnableNewLayout(previous: Option.Option<string>, current: Option.Option<string>) {
   const after = recorded(current)
   if (Option.isNone(after)) return false
-  const currentIsNewer = Option.exists(compareVersions(after.value, newLayoutDesignsUpgradeCutoff), (value) => value > 0)
+  const currentIsNewer = Option.exists(
+    compareVersions(after.value, newLayoutDesignsUpgradeCutoff),
+    (value) => value > 0,
+  )
   const before = recorded(previous)
   if (Option.isNone(before)) return currentIsNewer
   if (!isAppUpgrade(before, after)) return false
   return (
-    currentIsNewer &&
-    Option.exists(compareVersions(before.value, newLayoutDesignsUpgradeCutoff), (value) => value <= 0)
+    currentIsNewer && Option.exists(compareVersions(before.value, newLayoutDesignsUpgradeCutoff), (value) => value <= 0)
   )
 }
 
@@ -297,6 +300,8 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       )
     })
     const visible = (preference: () => boolean) => createMemo(() => !newLayoutDesigns() || preference())
+    // The reload yields one scheduler turn (a zero-delay timer in the browser), as the old setTimeout did.
+    const reload = createFiberSlot()
     const initializeAgentVisibility = (existing: boolean) => {
       const initial = initialAgentVisibility(
         Option.fromNullishOr(store.general?.agentVisibilityInitialized),
@@ -311,22 +316,15 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     }
 
     if (sunset && !oldInterfaceRetired()) {
-      const timeout = { current: undefined as ReturnType<typeof setTimeout> | undefined }
-      const checkSunset = () => {
-        const now = DateTime.nowUnsafe()
-        if (DateTime.isGreaterThanOrEqualTo(now, sunset)) {
-          setOldInterfaceRetired(true)
-          return
-        }
-        timeout.current = setTimeout(
-          checkSunset,
-          nextSunsetCheckDelay(DateTime.toEpochMillis(sunset), DateTime.toEpochMillis(now)),
-        )
-      }
-      checkSunset()
-      onCleanup(() => {
-        if (timeout.current !== undefined) clearTimeout(timeout.current)
+      const sunsetAt = DateTime.toEpochMillis(sunset)
+      // Each wait is capped at the browser timer limit, so the check repeats until the sunset passes.
+      const waitForSunset: Effect.Effect<void> = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        if (now >= sunsetAt) return yield* Effect.sync(() => setOldInterfaceRetired(true))
+        yield* Effect.sleep(nextSunsetCheckDelay(sunsetAt, now))
+        return yield* waitForSunset
       })
+      createFiberSlot().run(waitForSunset)
     }
 
     createEffect(() => {
@@ -461,7 +459,8 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
           const next = oldInterfaceRetired() ? true : value
           if (newLayoutDesigns() === next) return
           setStore("general", "newLayoutDesigns", next)
-          if (typeof window !== "undefined") setTimeout(() => window.location.reload())
+          if (typeof window !== "undefined")
+            reload.run(Effect.yieldNow.pipe(Effect.andThen(Effect.sync(() => window.location.reload()))))
         },
         layoutTransitionClassified,
         setOldLayoutEligible(eligible: boolean) {
