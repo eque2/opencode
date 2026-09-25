@@ -1,4 +1,5 @@
 import type { AssistantMessage, Part, Provider, UserMessage } from "@opencode-ai/sdk/v2"
+import { DateTime } from "effect"
 import { Locale } from "./locale"
 import * as Model from "./model"
 
@@ -31,8 +32,8 @@ export function formatTranscript(
   const providers = Model.index(options.providers)
   let transcript = `# ${session.title}\n\n`
   transcript += `**Session ID:** ${session.id}\n`
-  transcript += `**Created:** ${new Date(session.time.created).toLocaleString()}\n`
-  transcript += `**Updated:** ${new Date(session.time.updated).toLocaleString()}\n\n`
+  transcript += `**Created:** ${localeTimestamp(session.time.created)}\n`
+  transcript += `**Updated:** ${localeTimestamp(session.time.updated)}\n\n`
   transcript += `---\n\n`
 
   for (const msg of messages.toSorted(
@@ -43,6 +44,11 @@ export function formatTranscript(
   }
 
   return transcript
+}
+
+// The transcript shows times in the reader's locale, so the DateTime crosses to a Date only for Intl formatting.
+function localeTimestamp(epochMillis: number) {
+  return DateTime.toDate(DateTime.makeUnsafe(epochMillis)).toLocaleString()
 }
 
 export function formatMessage(
