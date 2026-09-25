@@ -2,7 +2,7 @@ import { usePlatform } from "@/context/platform"
 import { ServerConnection } from "@/context/server"
 import { authTokenFromCredentials, createSdkForServer } from "./server"
 import { ClientError, OpenCode } from "@opencode-ai/client"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, MutableHashMap, Option, Schema } from "effect"
 import { Accessor, createEffect, onCleanup } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 
@@ -19,10 +19,15 @@ const defaultTimeoutMs = 30_000
 const defaultRetryCount = 2
 const defaultRetryDelayMs = 100
 const cacheMs = 750
-const healthCache = new Map<
-  string,
-  { at: number; done: boolean; fetch: typeof globalThis.fetch; promise: Promise<ServerHealth> }
->()
+// state is per check. A check marks only its own state as done, so it never touches a newer entry.
+type CachedHealth = {
+  readonly state: { at: number; done: boolean }
+  readonly fetch: typeof globalThis.fetch
+  readonly promise: Promise<ServerHealth>
+}
+const healthCache = MutableHashMap.empty<string, CachedHealth>()
+
+const nowMillis = () => DateTime.toEpochMillis(DateTime.nowUnsafe())
 
 function cacheKey(server: ServerConnection.HttpBase) {
   return `${server.url}\n${server.username ?? ""}\n${server.password ?? ""}`
@@ -140,18 +145,25 @@ export function useCheckServerHealth() {
   const platform = usePlatform()
   const fetcher = platform.fetch ?? globalThis.fetch
 
-  return (http: ServerConnection.HttpBase) => {
+  return (http: ServerConnection.HttpBase): Promise<ServerHealth> => {
     const key = cacheKey(http)
-    const hit = healthCache.get(key)
-    const now = Date.now()
-    if (hit && hit.fetch === fetcher && (!hit.done || now - hit.at < cacheMs)) return hit.promise
-    const promise = checkServerHealth(http, fetcher).finally(() => {
-      const next = healthCache.get(key)
-      if (!next || next.promise !== promise) return
-      next.done = true
-      next.at = Date.now()
-    })
-    healthCache.set(key, { at: now, done: false, fetch: fetcher, promise })
+    const now = nowMillis()
+    const hit = MutableHashMap.get(healthCache, key).pipe(
+      Option.filter((entry) => entry.fetch === fetcher && (!entry.state.done || now - entry.state.at < cacheMs)),
+    )
+    if (Option.isSome(hit)) return hit.value.promise
+    const state = { at: now, done: false }
+    const promise = Effect.runPromise(
+      checkServerHealthEffect(http, fetcher).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            state.done = true
+            state.at = nowMillis()
+          }),
+        ),
+      ),
+    )
+    MutableHashMap.set(healthCache, key, { state, fetch: fetcher, promise })
     return promise
   }
 }
