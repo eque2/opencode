@@ -4,7 +4,7 @@
 // https://github.com/cline/cline/blob/main/evals/diff-edits/diff-apply/diff-06-26-25.ts
 
 import * as path from "path"
-import { Effect, Option, Result, Schema, Semaphore } from "effect"
+import { Effect, MutableHashMap, Option, Result, Schema, Semaphore } from "effect"
 import * as Tool from "./tool"
 import { LSP } from "@/lsp/lsp"
 import { createTwoFilesPatch, diffLines } from "diff"
@@ -37,15 +37,15 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
   return text.replaceAll("\n", "\r\n")
 }
 
-const locks = new Map<string, Semaphore.Semaphore>()
+// One process-wide write lock per resolved file path.
+const locks = MutableHashMap.empty<string, Semaphore.Semaphore>()
 
 function lock(resolvedFilePath: string) {
-  const hit = locks.get(resolvedFilePath)
-  if (hit) return hit
-
-  const next = Semaphore.makeUnsafe(1)
-  locks.set(resolvedFilePath, next)
-  return next
+  return Option.getOrElse(MutableHashMap.get(locks, resolvedFilePath), () => {
+    const next = Semaphore.makeUnsafe(1)
+    MutableHashMap.set(locks, resolvedFilePath, next)
+    return next
+  })
 }
 
 export const Parameters = Schema.Struct({

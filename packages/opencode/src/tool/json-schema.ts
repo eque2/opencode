@@ -1,5 +1,5 @@
 import type { JSONSchema7 } from "@ai-sdk/provider"
-import { JsonSchema, Option, Schema } from "effect"
+import { HashSet, JsonSchema, Option, Predicate, Schema } from "effect"
 import type * as Tool from "./tool"
 
 type JsonObject = Record<string, unknown>
@@ -33,9 +33,7 @@ function normalize(value: unknown, options: { stripNull?: boolean } = {}): unkno
 }
 
 function normalizeObject(value: JsonObject, options: { stripNull?: boolean } = {}): JsonObject {
-  const required = Array.isArray(value.required)
-    ? new Set(value.required.filter((item) => typeof item === "string"))
-    : undefined
+  const required = HashSet.fromIterable(Array.isArray(value.required) ? value.required.filter(Predicate.isString) : [])
   const schema = Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
@@ -43,7 +41,7 @@ function normalizeObject(value: JsonObject, options: { stripNull?: boolean } = {
         ? Object.fromEntries(
             Object.entries(item).map(([name, property]) => [
               name,
-              normalize(property, { stripNull: !required?.has(name) }),
+              normalize(property, { stripNull: !HashSet.has(required, name) }),
             ]),
           )
         : normalize(item),
@@ -107,18 +105,17 @@ function isEmptyStructUnion(items: unknown[]) {
   )
 }
 
+// allOf members can be merged into the parent only when no key appears twice across them.
 function canFlattenAllOf(allOf: JsonObject[], parent: JsonObject) {
-  const keys = new Set(Object.keys(parent).filter((key) => key !== "allOf"))
-  return allOf.every((item) =>
-    Object.keys(item).every((key) => {
-      if (keys.has(key)) return false
-      keys.add(key)
-      return true
-    }),
-  )
+  const keys = [...Object.keys(parent).filter((key) => key !== "allOf"), ...allOf.flatMap((item) => Object.keys(item))]
+  return HashSet.size(HashSet.fromIterable(keys)) === keys.length
 }
 
-function inlineLocalReferences(value: unknown, definitions: Option.Option<JsonObject>, seen: Set<string>): unknown {
+function inlineLocalReferences(
+  value: unknown,
+  definitions: Option.Option<JsonObject>,
+  seen: HashSet.HashSet<string>,
+): unknown {
   if (Array.isArray(value)) return value.map((item) => inlineLocalReferences(item, definitions, seen))
   if (!isRecord(value)) return value
   return inlineObjectReferences(value, definitions, seen)
@@ -127,20 +124,20 @@ function inlineLocalReferences(value: unknown, definitions: Option.Option<JsonOb
 function inlineObjectReferences(
   value: JsonObject,
   definitions: Option.Option<JsonObject> = Option.none(),
-  seen = new Set<string>(),
+  seen: HashSet.HashSet<string> = HashSet.empty(),
 ): JsonObject {
   // The root object's $defs apply to every nested reference.
   const localDefinitions = Option.orElse(definitions, () => Option.liftPredicate(isRecord)(value.$defs))
   if (typeof value.$ref === "string" && Option.isSome(localDefinitions)) {
     const name = value.$ref.match(/^#\/\$defs\/(.+)$/)?.[1] ?? value.$ref.match(/^#\/definitions\/(.+)$/)?.[1]
-    if (name && !seen.has(name)) {
+    if (name && !HashSet.has(seen, name)) {
       const target = localDefinitions.value[name]
       if (target) {
         const { $ref: _, ...rest } = value
         return inlineObjectReferences(
           { ...(isRecord(target) ? target : {}), ...rest },
           localDefinitions,
-          new Set(seen).add(name),
+          HashSet.add(seen, name),
         )
       }
     }

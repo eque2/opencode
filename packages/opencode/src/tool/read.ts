@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Scope, Stream } from "effect"
+import { Effect, HashSet, Option, Schema, Scope, Stream } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import * as path from "path"
 import * as Tool from "./tool"
@@ -16,7 +16,7 @@ const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
 const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
-const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const SUPPORTED_IMAGE_MIMES = HashSet.make("image/jpeg", "image/png", "image/gif", "image/webp")
 
 class ReadStop extends Schema.TaggedError<ReadStop>()("ReadStop", {}) {}
 
@@ -302,7 +302,7 @@ export const ReadTool = Tool.define<
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
-      const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
+      const isImage = HashSet.has(SUPPORTED_IMAGE_MIMES, mime)
 
       if (isImage || isPdfAttachment(mime)) {
         const bytes = yield* fs.readFile(filepath)
