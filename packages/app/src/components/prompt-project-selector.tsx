@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Option, Predicate } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
@@ -20,6 +20,7 @@ import { displayName, getProjectAvatarSource } from "@/pages/layout/helpers"
 import { pathKey } from "@/utils/path-key"
 import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 export type PromptProject = {
   name?: string
@@ -41,6 +42,15 @@ export type PromptProjectControls = {
 const actionPrefix = "action:"
 const projectPrefix = "project:"
 
+/** Completes on the next animation frame. Interrupting it cancels the frame request. */
+const nextFrame = Effect.callback<void>((resume) => {
+  const handle = requestAnimationFrame(() => resume(Effect.void))
+  return Effect.sync(() => cancelAnimationFrame(handle))
+})
+
+/** Waits for the next task, as setTimeout(fn) did, so the menu can mount its input first. */
+const nextTask = Effect.sleep("0 millis")
+
 function projectKey(project: PromptProject) {
   return `${projectPrefix}${encodeURIComponent(project.server?.key ?? "")}:${encodeURIComponent(project.worktree)}`
 }
@@ -56,6 +66,14 @@ export function createPromptProjectController(input: {
   const language = useLanguage()
   const [store, setStore] = createStore({ open: false, search: "", active: "" })
   let searchRef: HTMLInputElement | undefined
+  // The latest focus request for the search input; the owner cleanup interrupts it.
+  const searchFocus = createFiberSlot()
+  const focusSearchLater = (frame: boolean) =>
+    searchFocus.run(
+      (frame ? nextTask.pipe(Effect.andThen(nextFrame)) : nextTask).pipe(
+        Effect.andThen(Effect.sync(() => searchRef?.focus())),
+      ),
+    )
 
   const current = () => {
     const key = pathKey(input.controls().directory)
@@ -148,7 +166,7 @@ export function createPromptProjectController(input: {
     setOpen(open: boolean) {
       if (open) {
         setStore({ open: true, active: initialActive() })
-        setTimeout(() => requestAnimationFrame(() => searchRef?.focus()))
+        focusSearchLater(true)
         return
       }
       setStore({ open: false, search: "", active: "" })
@@ -156,7 +174,7 @@ export function createPromptProjectController(input: {
     setSearch,
     clearSearch() {
       setStore({ search: "", active: initialActive() })
-      setTimeout(() => searchRef?.focus())
+      focusSearchLater(false)
     },
     setActive(key: string) {
       setStore("active", key)
@@ -185,7 +203,7 @@ export function createPromptProjectController(input: {
       searchRef = el
     },
     focusSearch() {
-      setTimeout(() => requestAnimationFrame(() => searchRef?.focus()))
+      focusSearchLater(true)
     },
     handleSearchKeydown(event: KeyboardEvent) {
       return handleDocumentSearchKeydown(searchRef, event, store.search, setSearch)
