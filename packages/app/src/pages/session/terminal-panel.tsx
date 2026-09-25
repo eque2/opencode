@@ -8,6 +8,7 @@ import { TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
+import { Duration, Effect } from "effect"
 
 import { SortableTerminalTab } from "@/components/session"
 import { Terminal } from "@/components/terminal"
@@ -21,6 +22,7 @@ import { terminalTabLabel } from "@/pages/session/terminal-label"
 import { createSizing, focusTerminalById } from "@/pages/session/helpers"
 import { getTerminalHandoff, setTerminalHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 export function TerminalPanel() {
   const delays = [120, 240]
@@ -83,6 +85,8 @@ export function TerminalPanel() {
     ),
   )
 
+  const focusRetry = createFiberSlot()
+
   const focus = (id: string) => {
     focusTerminalById(id)
 
@@ -92,17 +96,26 @@ export function TerminalPanel() {
       focusTerminalById(id)
     })
 
-    const timers = delays.map((ms) =>
-      window.setTimeout(() => {
-        if (!opened()) return
-        if (terminal.active() !== id) return
-        focusTerminalById(id)
-      }, ms),
+    focusRetry.run(
+      Effect.forEach(
+        delays,
+        (ms) =>
+          Effect.sleep(Duration.millis(ms)).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (!opened()) return
+                if (terminal.active() !== id) return
+                focusTerminalById(id)
+              }),
+            ),
+          ),
+        { concurrency: "unbounded", discard: true },
+      ),
     )
 
     return () => {
       cancelAnimationFrame(frame)
-      for (const timer of timers) clearTimeout(timer)
+      focusRetry.interrupt()
     }
   }
 
