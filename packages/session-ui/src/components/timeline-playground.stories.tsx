@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { Record } from "effect"
 import { createSignal, createMemo, createEffect, on, For, Show, batch } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import type {
@@ -6,11 +7,6 @@ import type {
   UserMessage,
   AssistantMessage,
   Part,
-  TextPart,
-  ReasoningPart,
-  ToolPart,
-  FilePart,
-  AgentPart,
 } from "@opencode-ai/sdk/v2"
 import { DataProvider } from "../context/data"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -21,6 +17,20 @@ import { SessionTurn } from "./session-turn"
 // ---------------------------------------------------------------------------
 let seq = 0
 const uid = () => `pg-${++seq}-${Date.now().toString(36)}`
+
+type WithoutIds<P> = P extends unknown ? Omit<P, "id" | "sessionID" | "messageID"> : never
+
+/** A generated part before mkUser, appendParts or addFullTurn gives it an id and a message. */
+type PartDraft = WithoutIds<Part>
+
+/** Gives each draft a fresh id and attaches it to one message. */
+function attach(drafts: ReadonlyArray<PartDraft>, messageID: string, sessionID: string): Part[] {
+  return drafts.map((draft) => ({ ...draft, id: uid(), sessionID, messageID }))
+}
+
+// 1x1 blue pixel PNG as data URI for a realistic attachment
+const PIXEL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 // ---------------------------------------------------------------------------
 // Lorem ipsum content
@@ -40,12 +50,12 @@ const USER_VARIANTS = {
   short: {
     label: "short",
     text: "Fix the bug in the login form",
-    parts: [] as Part[],
+    parts: [],
   },
   medium: {
     label: "medium",
     text: "Can you update the session timeline component to support lazy loading? The current implementation loads everything eagerly which causes jank on large sessions.",
-    parts: [] as Part[],
+    parts: [],
   },
   long: {
     label: "long",
@@ -57,117 +67,94 @@ const USER_VARIANTS = {
 4. Make sure the scroll-to-bottom behavior still works correctly after these changes
 
 Please also add appropriate CSS containment hints and make sure we don't break the sticky header behavior for the session title.`,
-    parts: [] as Part[],
+    parts: [],
   },
   "with @file": {
     label: "with @file",
     text: "Update @src/components/session-turn.tsx to fix the spacing issue between parts",
-    parts: (() => {
-      const id = `static-file-${Date.now()}`
-      return [
-        {
-          id,
+    parts: [
+      {
+        type: "file",
+        mime: "text/plain",
+        filename: "session-turn.tsx",
+        url: "src/components/session-turn.tsx",
+        source: {
           type: "file",
-          mime: "text/plain",
-          filename: "session-turn.tsx",
-          url: "src/components/session-turn.tsx",
-          source: {
-            type: "file",
-            path: "src/components/session-turn.tsx",
-            text: {
-              value: "@src/components/session-turn.tsx",
-              start: 7,
-              end: 38,
-            },
+          path: "src/components/session-turn.tsx",
+          text: {
+            value: "@src/components/session-turn.tsx",
+            start: 7,
+            end: 38,
           },
-        } as FilePart,
-      ]
-    })(),
+        },
+      },
+    ],
   },
   "with @agent": {
     label: "with @agent",
     text: "Use @explore to find all CSS files related to the timeline, then fix the spacing",
-    parts: (() => {
-      return [
-        {
-          id: `static-agent-${Date.now()}`,
-          type: "agent",
-          name: "explore",
-          source: { start: 4, end: 12 },
-        } as AgentPart,
-      ]
-    })(),
+    parts: [
+      {
+        type: "agent",
+        name: "explore",
+        source: { value: "@explore", start: 4, end: 12 },
+      },
+    ],
   },
   "with image": {
     label: "with image",
     text: "Here's a screenshot of the bug I'm seeing",
-    parts: (() => {
-      // 1x1 blue pixel PNG as data URI for a realistic attachment
-      const pixel =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-      return [
-        {
-          id: `static-img-${Date.now()}`,
-          type: "file",
-          mime: "image/png",
-          filename: "screenshot.png",
-          url: pixel,
-        } as FilePart,
-      ]
-    })(),
+    parts: [
+      {
+        type: "file",
+        mime: "image/png",
+        filename: "screenshot.png",
+        url: PIXEL,
+      },
+    ],
   },
   "with file attachment": {
     label: "with file attachment",
     text: "Check this config file for issues",
-    parts: (() => {
-      return [
-        {
-          id: `static-attach-${Date.now()}`,
-          type: "file",
-          mime: "application/json",
-          filename: "tsconfig.json",
-          url: "data:application/json;base64,e30=",
-        } as FilePart,
-      ]
-    })(),
+    parts: [
+      {
+        type: "file",
+        mime: "application/json",
+        filename: "tsconfig.json",
+        url: "data:application/json;base64,e30=",
+      },
+    ],
   },
   "multi attachment": {
     label: "multi attachment",
     text: "Look at these files and the screenshot, then fix the layout",
-    parts: (() => {
-      const pixel =
-        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-      return [
-        {
-          id: `static-multi-img-${Date.now()}`,
+    parts: [
+      {
+        type: "file",
+        mime: "image/png",
+        filename: "layout-bug.png",
+        url: PIXEL,
+      },
+      {
+        type: "file",
+        mime: "text/css",
+        filename: "session-turn.css",
+        url: "data:text/css;base64,LyogZW1wdHkgKi8=",
+      },
+      {
+        type: "file",
+        mime: "text/plain",
+        filename: "session-turn.tsx",
+        url: "src/components/session-turn.tsx",
+        source: {
           type: "file",
-          mime: "image/png",
-          filename: "layout-bug.png",
-          url: pixel,
-        } as FilePart,
-        {
-          id: `static-multi-file-${Date.now()}`,
-          type: "file",
-          mime: "text/css",
-          filename: "session-turn.css",
-          url: "data:text/css;base64,LyogZW1wdHkgKi8=",
-        } as FilePart,
-        {
-          id: `static-multi-ref-${Date.now()}`,
-          type: "file",
-          mime: "text/plain",
-          filename: "session-turn.tsx",
-          url: "src/components/session-turn.tsx",
-          source: {
-            type: "file",
-            path: "src/components/session-turn.tsx",
-            text: { value: "@src/components/session-turn.tsx", start: 0, end: 0 },
-          },
-        } as FilePart,
-      ]
-    })(),
+          path: "src/components/session-turn.tsx",
+          text: { value: "@src/components/session-turn.tsx", start: 0, end: 0 },
+        },
+      },
+    ],
   },
-} satisfies Record<string, { label: string; text: string; parts: Part[] }>
+} satisfies Record<string, { label: string; text: string; parts: ReadonlyArray<PartDraft> }>
 
 const MARKDOWN_SAMPLES = {
   headings: `# Heading 1
@@ -454,35 +441,78 @@ const TOOL_SAMPLES = {
 const SESSION_ID = "playground-session"
 const DEFAULT_SESSION = { id: SESSION_ID, title: "Timeline Playground" }
 
-function record(value: unknown): value is Record<string, unknown> {
+type Row = Record<string, unknown>
+
+/** An imported message row with its part rows. load() checks both before it uses them. */
+type ImportedMessage = { info: Row; parts: Row[] }
+
+function record(value: unknown): value is Row {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
 
-function normalize(raw: unknown) {
+/** Every Part type. The Record type keeps the list complete. */
+const PART_TYPES: Record<Part["type"], true> = {
+  text: true,
+  subtask: true,
+  reasoning: true,
+  file: true,
+  tool: true,
+  "step-start": true,
+  "step-finish": true,
+  snapshot: true,
+  patch: true,
+  agent: true,
+  retry: true,
+  compaction: true,
+}
+
+/**
+ * Guards for imported rows. They check the fields that identify a message or a part,
+ * and they trust the other fields, as an `opencode export` file writes them.
+ */
+function isMessage(row: Row): row is Message {
+  return (
+    typeof row.id === "string" &&
+    typeof row.sessionID === "string" &&
+    (row.role === "user" || row.role === "assistant")
+  )
+}
+
+function isPart(row: Row): row is Part {
+  return (
+    typeof row.id === "string" &&
+    typeof row.sessionID === "string" &&
+    typeof row.messageID === "string" &&
+    typeof row.type === "string" &&
+    Object.hasOwn(PART_TYPES, row.type)
+  )
+}
+
+function normalize(raw: unknown): { info: Row; messages: ImportedMessage[] } {
   if (Array.isArray(raw)) {
     const info = raw.find((row) => record(row) && row.type === "session" && record(row.data))?.data
     if (!record(info) || typeof info.id !== "string") {
       throw new Error("No session found in JSON")
     }
 
-    const part = new Map<string, Part[]>()
+    const part = new Map<string, Row[]>()
     const messages = raw.flatMap((row) => {
       if (!record(row) || !record(row.data)) return []
       if (row.type === "part" && typeof row.data.messageID === "string") {
         const list = part.get(row.data.messageID) ?? []
-        list.push(row.data as Part)
+        list.push(row.data)
         part.set(row.data.messageID, list)
         return []
       }
       if (row.type !== "message" || typeof row.data.id !== "string") return []
-      return [{ info: row.data as Message, parts: [] as Part[] }]
+      return [{ id: row.data.id, info: row.data }]
     })
 
     return {
       info,
       messages: messages.map((msg) => ({
         info: msg.info,
-        parts: part.get(msg.info.id) ?? [],
+        parts: part.get(msg.id) ?? [],
       })),
     }
   }
@@ -491,16 +521,22 @@ function normalize(raw: unknown) {
     throw new Error("Expected an `opencode export` JSON file")
   }
 
+  const rows: ReadonlyArray<unknown> = raw.messages
   return {
     info: raw.info,
-    messages: raw.messages.flatMap((row) => {
+    messages: rows.flatMap((row) => {
       if (!record(row) || !record(row.info) || typeof row.info.id !== "string") return []
-      return [{ info: row.info as Message, parts: Array.isArray(row.parts) ? (row.parts as Part[]) : [] }]
+      const parts: ReadonlyArray<unknown> = Array.isArray(row.parts) ? row.parts : []
+      return [{ info: row.info, parts: parts.filter(record) }]
     }),
   }
 }
 
-function mkUser(text: string, extra: Part[] = [], sessionID = SESSION_ID): { message: UserMessage; parts: Part[] } {
+function mkUser(
+  text: string,
+  extra: ReadonlyArray<PartDraft> = [],
+  sessionID = SESSION_ID,
+): { message: UserMessage; parts: Part[] } {
   const id = uid()
   return {
     message: {
@@ -510,12 +546,9 @@ function mkUser(text: string, extra: Part[] = [], sessionID = SESSION_ID): { mes
       time: { created: Date.now() },
       agent: "code",
       model: { providerID: "anthropic", modelID: "claude-sonnet-4-20250514" },
-    } as UserMessage,
-    parts: [
-      { id: uid(), type: "text", text, time: { created: Date.now() } } as TextPart,
-      // Clone extra parts with fresh ids so each user message owns unique part instances
-      ...extra.map((p) => ({ ...p, id: uid() })),
-    ],
+    },
+    // attach copies the extra parts with fresh ids so each user message owns unique part instances
+    parts: attach([{ type: "text", text, time: { start: Date.now() } }, ...extra], id, sessionID),
   }
 }
 
@@ -533,20 +566,19 @@ function mkAssistant(parentID: string, sessionID = SESSION_ID): AssistantMessage
     path: { cwd: "/project", root: "/project" },
     cost: 0.003,
     tokens: { input: 1200, output: 800, reasoning: 200, cache: { read: 0, write: 0 } },
-  } as AssistantMessage
+  }
 }
 
-function textPart(text: string): TextPart {
-  return { id: uid(), type: "text", text, time: { created: Date.now() } } as TextPart
+function textPart(text: string): PartDraft {
+  return { type: "text", text, time: { start: Date.now() } }
 }
 
-function reasoningPart(text: string): ReasoningPart {
-  return { id: uid(), type: "reasoning", text, time: { start: Date.now(), end: Date.now() + 500 } } as ReasoningPart
+function reasoningPart(text: string): PartDraft {
+  return { type: "reasoning", text, time: { start: Date.now(), end: Date.now() + 500 } }
 }
 
-function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], status = "completed"): ToolPart {
+function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], status = "completed"): PartDraft {
   const base = {
-    id: uid(),
     type: "tool" as const,
     callID: uid(),
     tool: sample.tool,
@@ -562,7 +594,7 @@ function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], stat
         metadata: sample.metadata ?? {},
         time: { start: Date.now(), end: Date.now() + 1000 },
       },
-    } as ToolPart
+    }
   }
   if (status === "running") {
     return {
@@ -574,12 +606,12 @@ function toolPart(sample: (typeof TOOL_SAMPLES)[keyof typeof TOOL_SAMPLES], stat
         metadata: sample.metadata ?? {},
         time: { start: Date.now() },
       },
-    } as ToolPart
+    }
   }
   return {
     ...base,
     state: { status: "pending", input: sample.input, raw: "" },
-  } as ToolPart
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,9 +1226,10 @@ function Playground() {
       const el = (root.querySelector(sample(ctrl)) ?? root.querySelector(ctrl.selector)) as HTMLElement | null
       if (!el) continue
       const styles = getComputedStyle(el)
+      // getPropertyValue takes the dashed property name, as the dashed CSSStyleDeclaration attributes do
       const raw = ctrl.property.startsWith("--")
         ? styles.getPropertyValue(ctrl.property).trim()
-        : ((styles as any)[ctrl.property] as string)
+        : styles.getPropertyValue(ctrl.property)
       if (!raw) continue
       // Shorthands may return "24px 0px" — take the first value
       const num = parseFloat(raw.split(" ")[0])
@@ -1230,12 +1263,17 @@ function Playground() {
     updateStyle()
   }
 
+  /** Removes the overrides for the given keys from the store. */
+  const clearCss = (keys: ReadonlyArray<string>) => {
+    setCss(
+      produce((draft) => {
+        for (const key of keys) delete draft[key]
+      }),
+    )
+  }
+
   const resetCss = () => {
-    batch(() => {
-      for (const ctrl of CSS_CONTROLS) {
-        setCss(ctrl.key, undefined as any)
-      }
-    })
+    clearCss(CSS_CONTROLS.map((ctrl) => ctrl.key))
     if (styleEl) styleEl.textContent = ""
   }
 
@@ -1297,8 +1335,9 @@ function Playground() {
   }
 
   /** Append parts to the last assistant message */
-  const appendParts = (parts: Part[]) => {
+  const appendParts = (drafts: ReadonlyArray<PartDraft>) => {
     const id = ensureTurn()
+    const parts = attach(drafts, id, session().id)
     setState(
       produce((draft) => {
         const existing = draft.parts[id] ?? []
@@ -1337,9 +1376,10 @@ function Playground() {
   }
 
   // ---- Composite helpers (create full turns with user + assistant) ----
-  const addFullTurn = (userText: string, parts: Part[]) => {
+  const addFullTurn = (userText: string, drafts: ReadonlyArray<PartDraft>) => {
     const user = mkUser(userText, [], session().id)
     const asst = mkAssistant(user.message.id, session().id)
+    const parts = attach(drafts, asst.id, session().id)
     setState(
       produce((draft) => {
         draft.messages.push(user.message)
@@ -1439,23 +1479,24 @@ function Playground() {
   const load = (raw: unknown, name: string) => {
     const next = normalize(raw)
     const id = typeof next.info.id === "string" && next.info.id ? next.info.id : SESSION_ID
-    const messages = next.messages.map((msg) => ({
-      ...msg.info,
-      sessionID: typeof msg.info.sessionID === "string" ? msg.info.sessionID : id,
-    }))
-    const parts = Object.fromEntries(
-      next.messages.map((msg, idx) => {
-        const info = messages[idx]
-        return [
-          info.id,
-          msg.parts.map((part) => ({
-            ...part,
-            messageID: typeof part.messageID === "string" ? part.messageID : info.id,
-            sessionID: typeof part.sessionID === "string" ? part.sessionID : info.sessionID,
-          })),
-        ]
-      }),
-    )
+    const turns = next.messages.flatMap((msg) => {
+      const info = {
+        ...msg.info,
+        sessionID: typeof msg.info.sessionID === "string" ? msg.info.sessionID : id,
+      }
+      if (!isMessage(info)) return []
+      const parts = msg.parts.flatMap((part) => {
+        const row = {
+          ...part,
+          messageID: typeof part.messageID === "string" ? part.messageID : info.id,
+          sessionID: typeof part.sessionID === "string" ? part.sessionID : info.sessionID,
+        }
+        return isPart(row) ? [row] : []
+      })
+      return [{ info, parts }]
+    })
+    const messages = turns.map((turn) => turn.info)
+    const parts = Object.fromEntries(turns.map((turn) => [turn.info.id, turn.parts]))
 
     batch(() => {
       setSession({
@@ -1470,8 +1511,8 @@ function Playground() {
     })
   }
 
-  const importFile = async (event: Event) => {
-    const input = event.currentTarget as HTMLInputElement
+  const importFile = async (event: Event & { currentTarget: HTMLInputElement }) => {
+    const input = event.currentTarget
     const file = input.files?.[0]
     if (!file) return
 
@@ -1563,10 +1604,8 @@ function Playground() {
 
       if (ok === edits.length) {
         batch(() => {
-          for (const ctrl of controls) {
-            setDefaults(ctrl.key, css[ctrl.key]!)
-            setCss(ctrl.key, undefined as any)
-          }
+          for (const ctrl of controls) setDefaults(ctrl.key, css[ctrl.key]!)
+          clearCss(controls.map((ctrl) => ctrl.key))
         })
         updateStyle()
         // Wait for Vite HMR then re-read computed defaults
@@ -1702,7 +1741,7 @@ function Playground() {
                 Creates a new turn (user + empty assistant)
               </div>
               <div style={{ display: "flex", "flex-wrap": "wrap", gap: "4px" }}>
-                <For each={Object.keys(USER_VARIANTS) as (keyof typeof USER_VARIANTS)[]}>
+                <For each={Record.keys(USER_VARIANTS)}>
                   {(key) => (
                     <button style={btnStyle} onClick={() => addUser(key)}>
                       {USER_VARIANTS[key].label}
@@ -1730,7 +1769,7 @@ function Playground() {
                 Appends to the last turn's assistant parts
               </div>
               <div style={{ display: "flex", "flex-wrap": "wrap", gap: "4px" }}>
-                <For each={Object.keys(MARKDOWN_SAMPLES) as (keyof typeof MARKDOWN_SAMPLES)[]}>
+                <For each={Record.keys(MARKDOWN_SAMPLES)}>
                   {(key) => (
                     <button style={btnStyle} onClick={() => addText(key)}>
                       {key}
@@ -1748,7 +1787,7 @@ function Playground() {
                 Appends to the last turn's assistant parts
               </div>
               <div style={{ display: "flex", "flex-wrap": "wrap", gap: "4px" }}>
-                <For each={Object.keys(TOOL_SAMPLES) as (keyof typeof TOOL_SAMPLES)[]}>
+                <For each={Record.keys(TOOL_SAMPLES)}>
                   {(key) => (
                     <button style={btnStyle} onClick={() => addTool(key)}>
                       {key}
