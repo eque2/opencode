@@ -1,17 +1,17 @@
 import { Option } from "effect"
 
 type ReadyWatcher = {
-  observer?: MutationObserver
+  observer: Option.Option<MutationObserver>
   token: number
 }
 
 export function createReadyWatcher(): ReadyWatcher {
-  return { token: 0 }
+  return { observer: Option.none(), token: 0 }
 }
 
 export function clearReadyWatcher(state: ReadyWatcher) {
-  state.observer?.disconnect()
-  state.observer = undefined
+  if (Option.isSome(state.observer)) state.observer.value.disconnect()
+  state.observer = Option.none()
 }
 
 export function getViewerHost(container: HTMLElement | undefined): Option.Option<HTMLElement> {
@@ -85,21 +85,22 @@ export function notifyShadowReady(opts: {
     if (typeof MutationObserver === "undefined") return
 
     clearReadyWatcher(opts.state)
-    opts.state.observer = new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       if (token !== opts.state.token) return
       if (!opts.isReady(root)) return
 
       clearReadyWatcher(opts.state)
       runReady()
     })
-    opts.state.observer.observe(root, { childList: true, subtree: true })
+    opts.state.observer = Option.some(observer)
+    observer.observe(root, { childList: true, subtree: true })
   }
 
   const root = opts.getRoot()
   if (Option.isNone(root)) {
     if (typeof MutationObserver === "undefined") return
 
-    opts.state.observer = new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       if (token !== opts.state.token) return
 
       const next = opts.getRoot()
@@ -107,7 +108,8 @@ export function notifyShadowReady(opts: {
 
       observeRoot(next.value)
     })
-    opts.state.observer.observe(opts.container, { childList: true, subtree: true })
+    opts.state.observer = Option.some(observer)
+    observer.observe(opts.container, { childList: true, subtree: true })
     return
   }
 

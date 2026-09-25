@@ -18,6 +18,7 @@ import {
   Virtualizer,
 } from "@pierre/diffs"
 import { type PreloadFileDiffResult, type PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
+import { type WorkerPoolManager } from "@pierre/diffs/worker"
 import { createMediaQuery } from "@solid-primitives/media"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { ComponentProps, createEffect, createMemo, createSignal, onCleanup, onMount, Show, splitProps } from "solid-js"
@@ -51,8 +52,9 @@ import { FileSearchBar } from "./file-search"
 
 const VIRTUALIZE_BYTES = 500_000
 
-// A diff instance keeps its virtualizer, so a change of virtualizer object means a new instance.
+// A diff instance keeps the virtualizer and worker pool it was built with, so a different object means a new instance.
 const sameVirtualizer = Option.makeEquivalence(Equivalence.strictEqual<Virtualizer>())
+const sameWorkerPool = Option.makeEquivalence(Equivalence.strictEqual<WorkerPoolManager>())
 
 const codeMetrics = {
   ...DEFAULT_VIRTUAL_FILE_METRICS,
@@ -176,8 +178,8 @@ function useFileViewer(config: ViewerConfig) {
   let wrapper!: HTMLDivElement
   let container!: HTMLDivElement
   let overlay!: HTMLDivElement
-  let selectionFrame: number | undefined
-  let dragFrame: number | undefined
+  let selectionFrame: Option.Option<number> = Option.none()
+  let dragFrame: Option.Option<number> = Option.none()
   let dragStart: Option.Option<number> = Option.none()
   let dragEnd: Option.Option<number> = Option.none()
   let dragMoved = false
@@ -200,24 +202,28 @@ function useFileViewer(config: ViewerConfig) {
   // -- selection scheduling --
 
   const scheduleSelectionUpdate = () => {
-    if (selectionFrame !== undefined) return
-    selectionFrame = requestAnimationFrame(() => {
-      selectionFrame = undefined
-      const finishing = pendingSelectionEnd
-      config.updateSelection(finishing)
-      if (!pendingSelectionEnd) return
-      pendingSelectionEnd = false
-      config.onLineSelectionEnd(lastSelection)
-    })
+    if (Option.isSome(selectionFrame)) return
+    selectionFrame = Option.some(
+      requestAnimationFrame(() => {
+        selectionFrame = Option.none()
+        const finishing = pendingSelectionEnd
+        config.updateSelection(finishing)
+        if (!pendingSelectionEnd) return
+        pendingSelectionEnd = false
+        config.onLineSelectionEnd(lastSelection)
+      }),
+    )
   }
 
   const scheduleDragUpdate = () => {
-    if (dragFrame !== undefined) return
-    dragFrame = requestAnimationFrame(() => {
-      dragFrame = undefined
-      const selected = config.buildDragSelection()
-      if (Option.isSome(selected)) config.setSelectedLines(selected.value)
-    })
+    if (Option.isSome(dragFrame)) return
+    dragFrame = Option.some(
+      requestAnimationFrame(() => {
+        dragFrame = Option.none()
+        const selected = config.buildDragSelection()
+        if (Option.isSome(selected)) config.setSelectedLines(selected.value)
+      }),
+    )
   }
 
   // -- mouse handlers --
@@ -321,13 +327,15 @@ function useFileViewer(config: ViewerConfig) {
       return
     }
 
-    let frame: number | undefined
+    let frame: Option.Option<number> = Option.none()
     const mark = () => {
-      if (frame !== undefined) cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
-        frame = undefined
-        config.markCommented(root, ranges)
-      })
+      if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
+      frame = Option.some(
+        requestAnimationFrame(() => {
+          frame = Option.none()
+          config.markCommented(root, ranges)
+        }),
+      )
     }
     const observer = new MutationObserver(mark)
 
@@ -336,7 +344,7 @@ function useFileViewer(config: ViewerConfig) {
 
     onCleanup(() => {
       observer.disconnect()
-      if (frame !== undefined) cancelAnimationFrame(frame)
+      if (Option.isSome(frame)) cancelAnimationFrame(frame.value)
     })
   })
 
@@ -356,11 +364,11 @@ function useFileViewer(config: ViewerConfig) {
   onCleanup(() => {
     clearReadyWatcher(ready)
 
-    if (selectionFrame !== undefined) cancelAnimationFrame(selectionFrame)
-    if (dragFrame !== undefined) cancelAnimationFrame(dragFrame)
+    if (Option.isSome(selectionFrame)) cancelAnimationFrame(selectionFrame.value)
+    if (Option.isSome(dragFrame)) cancelAnimationFrame(dragFrame.value)
 
-    selectionFrame = undefined
-    dragFrame = undefined
+    selectionFrame = Option.none()
+    dragFrame = Option.none()
     dragStart = Option.none()
     dragEnd = Option.none()
     dragMoved = false
@@ -431,6 +439,21 @@ type AnnotationTarget<A> = {
   rerender: () => void
 }
 
+/** The live FileDiff and the inputs it was built from. */
+type DiffInstance<T> = {
+  diff: FileDiff<T>
+  virtualizer: Option.Option<Virtualizer>
+  workerPool: Option.Option<WorkerPoolManager>
+  hunkSeparators: FileDiffOptions<T>["hunkSeparators"]
+  fileDiff: Option.Option<FileDiffMetadata>
+  before: Option.Option<FileContents>
+  after: Option.Option<FileContents>
+}
+
+function sameFile(current: Option.Option<FileContents>, next: Option.Option<FileContents>) {
+  return Option.isSome(current) && Option.isSome(next) && areFilesEqual(current.value, next.value)
+}
+
 type VirtualStrategy = {
   get: () => Option.Option<Virtualizer>
   cleanup: () => void
@@ -496,14 +519,15 @@ function createLineCallbacks(opts: {
 
 function useAnnotationRerender<A>(opts: {
   viewer: Viewer
-  current: () => AnnotationTarget<A> | undefined
+  current: () => Option.Option<AnnotationTarget<A>>
   annotations: () => A[]
 }) {
   const applied = new WeakSet<AnnotationTarget<A>>()
   createEffect(() => {
     opts.viewer.rendered()
-    const active = opts.current()
-    if (!active) return
+    const current = opts.current()
+    if (Option.isNone(current)) return
+    const active = current.value
     const annotations = opts.annotations()
     // renderViewer always draws with empty annotations, so skip the extra rerender
     // when this instance has nothing applied and nothing to apply.
@@ -534,7 +558,7 @@ function notifyRendered(opts: {
 
 function renderViewer<I extends RenderTarget>(opts: {
   viewer: Viewer
-  current: I | undefined
+  current: Option.Option<I>
   reset?: boolean
   create: () => I
   update?: (value: I) => void
@@ -543,15 +567,21 @@ function renderViewer<I extends RenderTarget>(opts: {
   onReady: () => void
 }) {
   clearReadyWatcher(opts.viewer.ready)
-  const reset = opts.reset === true && opts.current !== undefined
-  if (reset) opts.current?.cleanUp()
-  const next = reset || !opts.current ? opts.create() : opts.current
-  if (reset || !opts.current) {
-    opts.viewer.container.innerHTML = ""
-    opts.assign(next)
-  } else {
-    opts.update?.(next)
-  }
+  // A reset cleans up the current instance, and a new one takes its place.
+  if (opts.reset === true && Option.isSome(opts.current)) opts.current.value.cleanUp()
+  const kept = opts.reset === true ? Option.none<I>() : opts.current
+  const next = Option.match(kept, {
+    onNone: () => {
+      const created = opts.create()
+      opts.viewer.container.innerHTML = ""
+      opts.assign(created)
+      return created
+    },
+    onSome: (value) => {
+      opts.update?.(value)
+      return value
+    },
+  })
 
   opts.draw(next)
 
@@ -750,7 +780,7 @@ function ViewerShell(props: {
 // ---------------------------------------------------------------------------
 
 function TextViewer<T>(props: TextFileProps<T>) {
-  let instance: PierreFile<T> | VirtualizedFile<T> | undefined
+  let instance: Option.Option<PierreFile<T> | VirtualizedFile<T>> = Option.none()
   let viewer!: Viewer
 
   const [local, others] = splitProps(props, textKeys)
@@ -792,8 +822,8 @@ function TextViewer<T>(props: TextFileProps<T>) {
   const lineFromMouseEvent = (event: MouseEvent): MouseHit => mouseHit(event, parseLine)
 
   const applySelection = (range: SelectedLineRange | null) => {
-    const current = instance
-    if (!current) return false
+    if (Option.isNone(instance)) return false
+    const current = instance.value
 
     if (virtual()) {
       current.setSelectedLines(range)
@@ -925,14 +955,14 @@ function TextViewer<T>(props: TextFileProps<T>) {
     renderViewer({
       viewer,
       current: instance,
-      reset: instance !== undefined,
+      reset: Option.isSome(instance),
       create: () =>
         Option.match(virtualizer, {
           onNone: (): PierreFile<T> | VirtualizedFile<T> => new PierreFile<T>(opts, workerPool),
           onSome: (value) => new VirtualizedFile<T>(opts, value, codeMetrics, workerPool),
         }),
       assign: (value) => {
-        instance = value
+        instance = Option.some(value)
       },
       draw: (value) => {
         const contents = text()
@@ -955,8 +985,8 @@ function TextViewer<T>(props: TextFileProps<T>) {
   // -- cleanup --
 
   onCleanup(() => {
-    instance?.cleanUp()
-    instance = undefined
+    if (Option.isSome(instance)) instance.value.cleanUp()
+    instance = Option.none()
     virtuals.cleanup()
   })
 
@@ -968,13 +998,8 @@ function TextViewer<T>(props: TextFileProps<T>) {
 // ---------------------------------------------------------------------------
 
 function DiffViewer<T>(props: DiffFileProps<T>) {
-  let instance: FileDiff<T> | undefined
-  let instanceVirtualizer: Option.Option<Virtualizer> = Option.none()
-  let instanceWorkerPool: ReturnType<typeof getWorkerPool>
-  let instanceVirtualHunkSeparators: FileDiffOptions<T>["hunkSeparators"] | undefined
-  let instanceFileDiff: FileDiffMetadata | undefined
-  let instanceBefore: FileContents | undefined
-  let instanceAfter: FileContents | undefined
+  let instance: Option.Option<DiffInstance<T>> = Option.none()
+  const currentDiff = () => Option.map(instance, (value) => value.diff)
   let dragSide: Option.Option<DiffSelectionSide> = Option.none()
   let dragEndSide: Option.Option<DiffSelectionSide> = Option.none()
   let viewer!: Viewer
@@ -986,8 +1011,8 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
   const lineFromMouseEvent = (event: MouseEvent): MouseHit => mouseHit(event, findDiffLineNumber, diffMouseSide)
 
   const setSelectedLines = (range: SelectedLineRange | null, preserve?: { root: ShadowRoot; text: Range }) => {
-    const active = instance
-    if (!active) return
+    if (Option.isNone(instance)) return
+    const active = instance.value.diff
 
     const fixed = fixDiffSelection(viewer.getRoot(), Option.fromNullOr(range))
     if (fixed._tag === "Pending") {
@@ -1128,7 +1153,7 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
 
   createEffect(() => {
     const opts = options()
-    const workerPool = large() ? getWorkerPool("unified") : getWorkerPool(props.diffStyle)
+    const workerPool = Option.fromUndefinedOr(large() ? getWorkerPool("unified") : getWorkerPool(props.diffStyle))
     const virtualizer = virtuals.get()
     const beforeContents = typeof local.before?.contents === "string" ? local.before.contents : ""
     const afterContents = typeof local.after?.contents === "string" ? local.after.contents : ""
@@ -1141,49 +1166,54 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
       return sampledChecksum(contents)
     }
 
-    const before = local.before
-      ? { ...local.before, contents: beforeContents, cacheKey: cacheKey(beforeContents) }
-      : undefined
-    const after = local.after
-      ? { ...local.after, contents: afterContents, cacheKey: cacheKey(afterContents) }
-      : undefined
-    const targetChanged =
+    const before = Option.map(Option.fromNullishOr(local.before), (file) => ({
+      ...file,
+      contents: beforeContents,
+      cacheKey: cacheKey(beforeContents),
+    }))
+    const after = Option.map(Option.fromNullishOr(local.after), (file) => ({
+      ...file,
+      contents: afterContents,
+      cacheKey: cacheKey(afterContents),
+    }))
+    const targetChanged = (current: DiffInstance<T>) =>
       local.fileDiff !== undefined
-        ? instanceFileDiff !== local.fileDiff
-        : instanceFileDiff !== undefined ||
-          before === undefined ||
-          after === undefined ||
-          instanceBefore === undefined ||
-          instanceAfter === undefined ||
-          !areFilesEqual(instanceBefore, before) ||
-          !areFilesEqual(instanceAfter, after)
+        ? !Option.exists(current.fileDiff, (value) => value === local.fileDiff)
+        : Option.isSome(current.fileDiff) || !sameFile(current.before, before) || !sameFile(current.after, after)
     // Pierre beta virtualized instances retain their first diff target and resolve separator metrics at construction.
     // Plain timeline diffs can retain the instance as content streams; virtualized viewers reset only when that is unsafe.
-    const reset =
-      instance !== undefined &&
-      (!sameVirtualizer(instanceVirtualizer, virtualizer) ||
-        instanceWorkerPool !== workerPool ||
-        (Option.isSome(virtualizer) && (instanceVirtualHunkSeparators !== opts.hunkSeparators || targetChanged)))
-    const forceRender = !reset && instance !== undefined && !areOptionsEqual(instance.options, opts)
+    // The instance keeps the hunk separators it was built with; they matter only for a virtualized instance.
+    const reset = Option.exists(
+      instance,
+      (current) =>
+        !sameVirtualizer(current.virtualizer, virtualizer) ||
+        !sameWorkerPool(current.workerPool, workerPool) ||
+        (Option.isSome(virtualizer) && (current.hunkSeparators !== opts.hunkSeparators || targetChanged(current))),
+    )
+    const forceRender = !reset && Option.exists(instance, (current) => !areOptionsEqual(current.diff.options, opts))
 
     renderViewer({
       viewer,
-      current: instance,
+      current: currentDiff(),
       reset,
+      // The FileDiff constructors take an optional worker pool, so an absent pool crosses as undefined.
       create: () =>
         Option.match(virtualizer, {
-          onNone: () => new FileDiff<T>(opts, workerPool),
-          onSome: (value) => new VirtualizedFileDiff<T>(opts, value, virtualMetrics, workerPool),
+          onNone: () => new FileDiff<T>(opts, Option.getOrUndefined(workerPool)),
+          onSome: (value) =>
+            new VirtualizedFileDiff<T>(opts, value, virtualMetrics, Option.getOrUndefined(workerPool)),
         }),
       update: (value) => value.setOptions(opts),
       assign: (value) => {
-        instance = value
-        instanceVirtualizer = virtualizer
-        instanceWorkerPool = workerPool
-        instanceVirtualHunkSeparators = Option.isSome(virtualizer) ? opts.hunkSeparators : undefined
-        instanceFileDiff = local.fileDiff
-        instanceBefore = before
-        instanceAfter = after
+        instance = Option.some({
+          diff: value,
+          virtualizer,
+          workerPool,
+          hunkSeparators: opts.hunkSeparators,
+          fileDiff: Option.fromUndefinedOr(local.fileDiff),
+          before,
+          after,
+        })
       },
       draw: (value) => {
         if (local.fileDiff) {
@@ -1196,11 +1226,11 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
           return
         }
 
-        if (!before || !after) return
+        if (Option.isNone(before) || Option.isNone(after)) return
 
         value.render({
-          oldFile: before,
-          newFile: after,
+          oldFile: before.value,
+          newFile: after.value,
           forceRender,
           lineAnnotations: [],
           containerWrapper: viewer.container,
@@ -1212,21 +1242,15 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
 
   useAnnotationRerender<DiffLineAnnotation<T>>({
     viewer,
-    current: () => instance,
+    current: currentDiff,
     annotations: () => (local.annotations as DiffLineAnnotation<T>[] | undefined) ?? [],
   })
 
   // -- cleanup --
 
   onCleanup(() => {
-    instance?.cleanUp()
-    instance = undefined
-    instanceVirtualizer = Option.none()
-    instanceWorkerPool = undefined
-    instanceVirtualHunkSeparators = undefined
-    instanceFileDiff = undefined
-    instanceBefore = undefined
-    instanceAfter = undefined
+    if (Option.isSome(instance)) instance.value.diff.cleanUp()
+    instance = Option.none()
     virtuals.cleanup()
     dragSide = Option.none()
     dragEndSide = Option.none()

@@ -14,8 +14,9 @@ export type FindHost = {
 
 // Registered find hosts in mount order. Each host is a distinct object, so membership is by reference.
 let hosts: ReadonlyArray<FindHost> = []
-let target: FindHost | undefined
-let current: FindHost | undefined
+// target: the host that Cmd/Ctrl+F opens when focus is outside every host. current: the host whose find bar is open.
+let target: Option.Option<FindHost> = Option.none()
+let current: Option.Option<FindHost> = Option.none()
 let installed = false
 
 function isEditable(node: unknown): boolean {
@@ -50,26 +51,26 @@ function installShortcuts() {
       const key = event.key.toLowerCase()
       if (key === "g") {
         const host = current
-        if (!host || !host.isOpen()) return
+        if (Option.isNone(host) || !host.value.isOpen()) return
         event.preventDefault()
         event.stopPropagation()
-        host.next(event.shiftKey ? -1 : 1)
+        host.value.next(event.shiftKey ? -1 : 1)
         return
       }
 
       if (key !== "f") return
 
       const active = current
-      if (active && active.isOpen()) {
+      if (Option.isSome(active) && active.value.isOpen()) {
         event.preventDefault()
         event.stopPropagation()
-        active.open()
+        active.value.open()
         return
       }
 
       const host = hostForNode(document.activeElement).pipe(
         Option.orElse(() => hostForNode(event.target)),
-        Option.orElse(() => Option.fromUndefinedOr(target)),
+        Option.orElse(() => target),
         Option.orElse(() => Arr.head(hosts)),
       )
       if (Option.isNone(host)) return
@@ -135,7 +136,7 @@ type CreateFileFindOptions = {
 
 export function createFileFind(opts: CreateFileFindOptions) {
   let input: HTMLInputElement | undefined
-  let overlayFrame: number | undefined
+  let overlayFrame: Option.Option<number> = Option.none()
   let mode: "highlights" | "overlay" = "overlay"
   let hits: Range[] = []
   const [overlayScroll, setOverlayScroll] = createSignal<HTMLElement[]>([])
@@ -160,9 +161,9 @@ export function createFileFind(opts: CreateFileFindOptions) {
   const clearOverlay = () => {
     const el = opts.overlay()
     if (!el) return
-    if (overlayFrame !== undefined) {
-      cancelAnimationFrame(overlayFrame)
-      overlayFrame = undefined
+    if (Option.isSome(overlayFrame)) {
+      cancelAnimationFrame(overlayFrame.value)
+      overlayFrame = Option.none()
     }
     el.innerHTML = ""
   }
@@ -210,12 +211,14 @@ export function createFileFind(opts: CreateFileFindOptions) {
   function scheduleOverlay() {
     if (mode !== "overlay") return
     if (!open()) return
-    if (overlayFrame !== undefined) return
+    if (Option.isSome(overlayFrame)) return
 
-    overlayFrame = requestAnimationFrame(() => {
-      overlayFrame = undefined
-      renderOverlay()
-    })
+    overlayFrame = Option.some(
+      requestAnimationFrame(() => {
+        overlayFrame = Option.none()
+        renderOverlay()
+      }),
+    )
   }
 
   const syncOverlayScroll = () => {
@@ -370,13 +373,14 @@ export function createFileFind(opts: CreateFileFindOptions) {
     setState("open", false)
     setState("query", "")
     clearFind()
-    if (current === host) current = undefined
+    if (isThisHost(current)) current = Option.none()
   }
 
   const focus = () => {
-    if (current && current !== host) current.close()
-    current = host
-    target = host
+    const previous = current
+    if (Option.isSome(previous) && previous.value !== host) previous.value.close()
+    current = Option.some(host)
+    target = Option.some(host)
     if (!open()) setState("open", true)
     requestAnimationFrame(() => {
       apply({ scroll: true })
@@ -420,6 +424,8 @@ export function createFileFind(opts: CreateFileFindOptions) {
     close,
   }
 
+  const isThisHost = (slot: Option.Option<FindHost>) => Option.exists(slot, (item) => item === host)
+
   createEffect(() => {
     for (const el of overlayScroll()) makeEventListener(el, "scroll", scheduleOverlay, { passive: true })
   })
@@ -428,15 +434,15 @@ export function createFileFind(opts: CreateFileFindOptions) {
     mode = supportsHighlights() ? "highlights" : "overlay"
     installShortcuts()
     hosts = Arr.append(hosts, host)
-    if (!target) target = host
+    if (Option.isNone(target)) target = Option.some(host)
 
     onCleanup(() => {
       hosts = hosts.filter((item) => item !== host)
-      if (current === host) {
-        current = undefined
+      if (isThisHost(current)) {
+        current = Option.none()
         clearHighlightFind()
       }
-      if (target === host) target = undefined
+      if (isThisHost(target)) target = Option.none()
     })
   })
 
@@ -456,8 +462,8 @@ export function createFileFind(opts: CreateFileFindOptions) {
   onCleanup(() => {
     clearOverlayScroll()
     clearOverlay()
-    if (current === host) {
-      current = undefined
+    if (isThisHost(current)) {
+      current = Option.none()
       clearHighlightFind()
     }
   })
@@ -481,11 +487,11 @@ export function createFileFind(opts: CreateFileFindOptions) {
     next,
     refresh: (args?: { reset?: boolean; scroll?: boolean }) => apply(args),
     onPointerDown: () => {
-      target = host
+      target = Option.some(host)
       opts.wrapper()?.focus({ preventScroll: true })
     },
     onFocus: () => {
-      target = host
+      target = Option.some(host)
     },
     onInputKeyDown: (event: KeyboardEvent) => {
       if (event.key === "Escape") {
