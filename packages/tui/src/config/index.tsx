@@ -3,6 +3,7 @@ export * as TuiConfig from "."
 import { createBindingLookup } from "@opentui/keymap/extras"
 import { Schema } from "effect"
 import { createContext, type JSX, useContext } from "solid-js"
+import { MissingProviderError } from "../context/errors"
 import { TuiKeybind } from "./keybind"
 
 export const AttentionSoundName = Schema.Literals([
@@ -143,6 +144,9 @@ export function TuiConfigProvider(props: { config: Resolved; children: JSX.Eleme
 
 export function useTuiConfig() {
   const value = useContext(ConfigContext)
-  if (!value) throw new Error("TuiConfigProvider is missing")
+  if (!value) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "TuiConfigProvider is missing" })
+  }
   return value
 }
