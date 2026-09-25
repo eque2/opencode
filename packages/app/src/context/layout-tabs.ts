@@ -1,3 +1,5 @@
+import { Predicate } from "effect"
+
 export const SESSION_OPEN_FILE_TAB = "open-file"
 
 export type SessionTabs = {
@@ -10,8 +12,12 @@ export type SessionTabState = {
   preview?: string
 }
 
-const sessionTabPreview = (current: SessionTabState) =>
-  current.preview ?? (current.tabs.all.includes(SESSION_OPEN_FILE_TAB) ? SESSION_OPEN_FILE_TAB : undefined)
+// The preview tab: the stored one, else the open-file tab when it is open.
+const sessionTabPreview = (current: SessionTabState) => {
+  if (Predicate.isNotNullish(current.preview)) return current.preview
+  if (current.tabs.all.includes(SESSION_OPEN_FILE_TAB)) return SESSION_OPEN_FILE_TAB
+  return undefined
+}
 
 export function previewSessionTab(current: SessionTabState, tab: string): SessionTabState {
   const preview = sessionTabPreview(current)
@@ -20,7 +26,7 @@ export function previewSessionTab(current: SessionTabState, tab: string): Sessio
 
   if (existingIndex !== -1) {
     if (previewIndex === -1 || preview === tab) {
-      return { tabs: { all: current.tabs.all, active: tab }, preview: preview === tab ? tab : undefined }
+      return { tabs: { all: current.tabs.all, active: tab }, ...(preview === tab ? { preview: tab } : {}) }
     }
     return {
       tabs: { all: current.tabs.all.filter((item) => item !== preview), active: tab },
@@ -89,8 +95,9 @@ export function closeSessionTab(current: SessionTabState, tab: string): SessionT
   }
 
   const all = current.tabs.all.filter((item) => item !== tab)
-  const preview = current.preview === tab ? undefined : current.preview
-  if (current.tabs.active !== tab) return { tabs: { ...current.tabs, all }, preview }
+  // Closing the preview tab clears the preview.
+  const preview = current.preview === tab ? {} : { preview: current.preview }
+  if (current.tabs.active !== tab) return { tabs: { ...current.tabs, all }, ...preview }
 
   const index = current.tabs.all.indexOf(tab)
   return {
@@ -98,6 +105,6 @@ export function closeSessionTab(current: SessionTabState, tab: string): SessionT
       all,
       active: current.tabs.all[index - 1] ?? current.tabs.all[index + 1] ?? all[0],
     },
-    preview,
+    ...preview,
   }
 }

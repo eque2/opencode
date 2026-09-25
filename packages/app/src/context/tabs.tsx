@@ -97,19 +97,29 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
 
     const closing = MutableHashSet.empty<string>()
     let recentWrite = 0
-    let recentValue: string | undefined
+    let recentValue = Option.none<string>()
 
-    const recentKey = () => (recentWrite ? recentValue : recent.key)
+    // After the first write, the written key wins over the persisted store, which may still be loading.
+    const recentKey = () => (recentWrite ? recentValue : Option.fromNullishOr(recent.key))
 
-    const setRecentKey = (key: string | undefined) => {
+    // Stores the key, or deletes it for none.
+    const writeRecent = (key: Option.Option<string>) =>
+      setRecent(
+        produce((draft) => {
+          if (Option.isSome(key)) draft.key = key.value
+          else delete draft.key
+        }),
+      )
+
+    const setRecentKey = (key: Option.Option<string>) => {
       const write = ++recentWrite
       recentValue = key
       if (recentReady()) {
-        setRecent("key", key)
+        writeRecent(key)
         return
       }
       void recentReady.promise?.then(() => {
-        if (write === recentWrite) setRecent("key", key)
+        if (write === recentWrite) writeRecent(key)
       })
     }
 
@@ -154,7 +164,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         }
         setStore(() => next)
       }
-      if (recent.key && !next.some((tab) => tabKey(tab) === recent.key)) setRecentKey(undefined)
+      if (recent.key && !next.some((tab) => tabKey(tab) === recent.key)) setRecentKey(Option.none())
       const keys = HashSet.fromIterable(next.map(tabKey))
       for (const key of Object.keys(info)) {
         if (!HashSet.has(keys, key)) removeInfo(key)
@@ -170,7 +180,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
 
     const navigateTab = (tab: Tab) => {
       const href = tabHref(tab)
-      setRecentKey(tabKey(tab))
+      setRecentKey(Option.some(tabKey(tab)))
       navigate(href)
     }
 
@@ -178,15 +188,14 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       const tab = store[index]
       if (!tab) return
       const key = tabKey(tab)
-      const draftID = tab.type === "draft" ? tab.draftID : undefined
-      const nextTab = nextTabAfterClose(store, index, recentKey() === key && location.pathname !== "/")
+      const nextTab = nextTabAfterClose(store, index, Option.contains(recentKey(), key) && location.pathname !== "/")
       MutableHashSet.add(closing, key)
       void startTransition(() => {
         setStore((tabs) => Arr.remove(tabs, index))
         CloseNavigation.$match(nextTab, {
           Stay: constVoid,
           Home: () => {
-            setRecentKey(undefined)
+            setRecentKey(Option.none())
             navigate("/")
           },
           Select: ({ tab }) => navigateTab(tab),
@@ -194,7 +203,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       }).finally(() => MutableHashSet.remove(closing, key))
       memory.remove(key)
       removeInfo(key)
-      if (draftID) removeDraftPersisted(draftID)
+      if (tab.type === "draft" && tab.draftID) removeDraftPersisted(tab.draftID)
     }
 
     const actions = {
@@ -251,7 +260,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
               if (index !== -1) tabs[index] = next
             }),
           )
-          if (recent.key === `draft:${draftID}`) setRecentKey(tabKey(next))
+          if (recent.key === `draft:${draftID}`) setRecentKey(Option.some(tabKey(next)))
           if (active) navigateTab(next)
         })
         memory.remove(`draft:${draftID}`)
@@ -302,7 +311,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         setStore((tabs) => tabs.filter((tab) => tab.server !== key))
         for (const key of removed) memory.remove(key)
         for (const key of removed) removeInfo(key)
-        if (recent.key && removed.includes(recent.key)) setRecentKey(undefined)
+        if (recent.key && removed.includes(recent.key)) setRecentKey(Option.none())
         for (const draftID of drafts) removeDraftPersisted(draftID)
         if (server.key === key) navigate("/")
       },
@@ -344,7 +353,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
             if (Option.isSome(nextTab)) navigateTab(nextTab.value)
             else navigate("/")
           }
-          if (recent.key && removed.includes(recent.key)) setRecentKey(undefined)
+          if (recent.key && removed.includes(recent.key)) setRecentKey(Option.none())
         })
         for (const key of removed) memory.remove(key)
         for (const key of removed) removeInfo(key)
@@ -359,16 +368,16 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       select: navigateTab,
       remember(tab: Tab) {
         const key = tabKey(tab)
-        if (recentKey() !== key) setRecentKey(key)
+        if (!Option.contains(recentKey(), key)) setRecentKey(Option.some(key))
       },
       toggleHome(input: { home: boolean; current?: Tab }) {
         if (input.home) {
-          const tab = store.find((tab) => tabKey(tab) === recentKey())
-          if (tab) navigateTab(tab)
+          const tab = Option.flatMap(recentKey(), (key) => Arr.findFirst(store, (item) => tabKey(item) === key))
+          if (Option.isSome(tab)) navigateTab(tab.value)
           return
         }
         if (input.current) {
-          setRecentKey(tabKey(input.current))
+          setRecentKey(Option.some(tabKey(input.current)))
           navigate("/")
           return
         }
