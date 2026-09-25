@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import type { FileSelection } from "@/context/file"
 
 export type PromptComment = {
@@ -9,19 +9,24 @@ export type PromptComment = {
   origin?: "review" | "file"
 }
 
-function selection(selection: unknown) {
-  if (!selection || typeof selection !== "object") return undefined
-  const startLine = Number((selection as FileSelection).startLine)
-  const startChar = Number((selection as FileSelection).startChar)
-  const endLine = Number((selection as FileSelection).endLine)
-  const endChar = Number((selection as FileSelection).endChar)
-  if (![startLine, startChar, endLine, endChar].every(Number.isFinite)) return undefined
-  return {
+/** Reads one coordinate of stored comment metadata with Number() coercion; a missing key reads as NaN. */
+function coordinate(value: object, key: keyof FileSelection) {
+  return Number(Predicate.hasProperty(value, key) ? value[key] : Number.NaN)
+}
+
+function selection(selection: unknown): Option.Option<FileSelection> {
+  if (!selection || typeof selection !== "object") return Option.none()
+  const startLine = coordinate(selection, "startLine")
+  const startChar = coordinate(selection, "startChar")
+  const endLine = coordinate(selection, "endLine")
+  const endChar = coordinate(selection, "endChar")
+  if (![startLine, startChar, endLine, endChar].every(Number.isFinite)) return Option.none()
+  return Option.some({
     startLine,
     startChar,
     endLine,
     endChar,
-  } satisfies FileSelection
+  })
 }
 
 export function createCommentMetadata(input: PromptComment) {
@@ -49,7 +54,7 @@ export function readCommentMetadata(value: unknown) {
   return {
     path,
     comment,
-    ...(range ? { selection: range } : {}),
+    ...Option.match(range, { onNone: () => ({}), onSome: (selection) => ({ selection }) }),
     ...(typeof preview === "string" ? { preview } : {}),
     ...(origin === "review" || origin === "file" ? { origin } : {}),
   } satisfies PromptComment

@@ -9,8 +9,8 @@ describe("prompt-input editor dom", () => {
 
     expect(container.childNodes.length).toBe(4)
     expect(container.childNodes[0]?.textContent).toBe("foo")
-    expect((container.childNodes[1] as HTMLElement).tagName).toBe("BR")
-    expect((container.childNodes[2] as HTMLElement).tagName).toBe("BR")
+    expect(container.childNodes[1]?.nodeName).toBe("BR")
+    expect(container.childNodes[2]?.nodeName).toBe("BR")
     expect(container.childNodes[3]?.textContent).toBe("bar")
   })
 
@@ -21,7 +21,7 @@ describe("prompt-input editor dom", () => {
 
     expect(container.childNodes.length).toBe(2)
     expect(container.childNodes[0]?.textContent).toBe("foo")
-    expect((container.childNodes[1] as HTMLElement).tagName).toBe("BR")
+    expect(container.childNodes[1]?.nodeName).toBe("BR")
   })
 
   test("createTextFragment avoids break-node explosion for large multiline content", () => {
@@ -43,7 +43,7 @@ describe("prompt-input editor dom", () => {
 
     expect(container.childNodes.length).toBe(2)
     expect(container.childNodes[0]?.textContent).toBe(content.slice(0, -1))
-    expect((container.childNodes[1] as HTMLElement).tagName).toBe("BR")
+    expect(container.childNodes[1]?.nodeName).toBe("BR")
   })
 
   test("length helpers treat breaks as one char and ignore zero-width chars", () => {
