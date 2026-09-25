@@ -1,12 +1,16 @@
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useMutation } from "@tanstack/solid-query"
+import { Data, Effect } from "effect"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { createMemo } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useGlobal } from "@/context/global"
 import { type LocalProject } from "@/context/layout"
 import { ServerConnection } from "@/context/server"
+
+// Wraps a rejected project update, so the save mutation fails with a typed error.
+class ProjectUpdateError extends Data.TaggedError("App.ProjectUpdateError")<{ readonly cause: unknown }> {}
 
 export function createEditProjectModel(props: { project: LocalProject; server: ServerConnection.Any }) {
   const dialog = useDialog()
@@ -66,44 +70,50 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
     iconInput?.click()
   }
 
-  const save = useMutation(() => ({
-    mutationFn: async () => {
-      const name = store.name.trim() === folderName() ? "" : store.name.trim()
-      const start = store.startup.trim()
+  const saveProject = Effect.gen(function* () {
+    const name = store.name.trim() === folderName() ? "" : store.name.trim()
+    const start = store.startup.trim()
 
-      if (props.project.id && props.project.id !== "global") {
-        if ((await serverCtx().sdk.protocol) !== "v1") return
-        const project = await serverCtx()
-          .sdk.client.project.update({
-            projectID: props.project.id,
+    if (props.project.id && props.project.id !== "global") {
+      const projectID = props.project.id
+      const protocol = yield* Effect.promise(() => serverCtx().sdk.protocol)
+      if (protocol !== "v1") return
+      const project = yield* Effect.tryPromise({
+        try: () =>
+          serverCtx().sdk.client.project.update({
+            projectID,
             directory: props.project.worktree,
             name,
             icon: { color: store.color || "", override: store.iconOverride || "" },
             commands: { start },
-          })
-          .then((result) => result.data)
-        if (!project) return
-        // const project = await serverCtx().sdk.api.project.update({
-        //   projectID: props.project.id,
-        //   name,
-        //   icon: { color: store.color || "", override: store.iconOverride || "" },
-        //   commands: { start },
-        // })
-        serverCtx().sync.set("project", (items) =>
-          items.map((item) => (item.id === project.id ? normalizeProjectInfo(project) : item)),
-        )
-        serverCtx().sync.project.icon(props.project.worktree, store.iconOverride || undefined)
-        dialog.close()
-        return
-      }
-
-      serverCtx().sync.project.meta(props.project.worktree, {
-        name,
-        icon: { color: store.color || undefined, override: store.iconOverride || undefined },
-        commands: { start: start || undefined },
-      })
+          }),
+        catch: (cause) => new ProjectUpdateError({ cause }),
+      }).pipe(Effect.map((result) => result.data))
+      if (!project) return
+      // const project = await serverCtx().sdk.api.project.update({
+      //   projectID: props.project.id,
+      //   name,
+      //   icon: { color: store.color || "", override: store.iconOverride || "" },
+      //   commands: { start },
+      // })
+      serverCtx().sync.set("project", (items) =>
+        items.map((item) => (item.id === project.id ? normalizeProjectInfo(project) : item)),
+      )
+      serverCtx().sync.project.icon(props.project.worktree, store.iconOverride || undefined)
       dialog.close()
-    },
+      return
+    }
+
+    serverCtx().sync.project.meta(props.project.worktree, {
+      name,
+      icon: { color: store.color || undefined, override: store.iconOverride || undefined },
+      commands: { start: start || undefined },
+    })
+    dialog.close()
+  })
+
+  const save = useMutation(() => ({
+    mutationFn: () => Effect.runPromise(saveProject),
   }))
 
   function submit(event: SubmitEvent) {
