@@ -127,17 +127,17 @@ export function ModelSelectorPopover(props: {
 }) {
   const [store, setStore] = createStore<{
     open: boolean
-    dismiss: Dismiss | null
+    dismiss: Option.Option<Dismiss>
   }>({
     open: false,
-    dismiss: null,
+    dismiss: Option.none(),
   })
   const dialog = useDialog()
   const local = useLocal()
   const directory = () => decode64(local.slug())
 
   const close = (dismiss: Dismiss) => {
-    setStore("dismiss", dismiss)
+    setStore("dismiss", Option.some(dismiss))
     setStore("open", false)
   }
 
@@ -160,7 +160,7 @@ export function ModelSelectorPopover(props: {
     <Kobalte
       open={store.open}
       onOpenChange={(next) => {
-        if (next) setStore("dismiss", null)
+        if (next) setStore("dismiss", Option.none())
         setStore("open", next)
       }}
       modal={false}
@@ -180,12 +180,15 @@ export function ModelSelectorPopover(props: {
           onFocusOutside={() => close("outside")}
           onCloseAutoFocus={(event) => {
             const dismiss = store.dismiss
-            if (dismiss === "outside") event.preventDefault()
-            if (dismiss === "escape" || dismiss === "select") {
-              event.preventDefault()
-              props.onClose?.(dismiss)
+            if (Option.isSome(dismiss)) {
+              const cause = dismiss.value
+              if (cause === "outside") event.preventDefault()
+              if (cause === "escape" || cause === "select") {
+                event.preventDefault()
+                props.onClose?.(cause)
+              }
             }
-            setStore("dismiss", null)
+            setStore("dismiss", Option.none())
           }}
         >
           <Kobalte.Title class="sr-only">{language.t("dialog.model.select.title")}</Kobalte.Title>
