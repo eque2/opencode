@@ -86,12 +86,9 @@ export const EditTool = Tool.define(
             : path.join(instance.directory, params.filePath)
           yield* assertExternalDirectoryEffect(ctx, filePath)
 
-          let diff = ""
-          let contentOld = ""
-          let contentNew = ""
           // Lock on the canonical real path, so two spellings of one file share a lock.
           const resolvedFilePath = yield* afs.resolve(filePath).pipe(Effect.flatMap(afs.normalizePath))
-          yield* lock(resolvedFilePath).withPermits(1)(
+          const { diff, contentOld, contentNew } = yield* lock(resolvedFilePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
                 const existed = yield* afs.existsSafe(filePath)
@@ -103,9 +100,7 @@ export const EditTool = Tool.define(
                 }
                 const next = Bom.split(params.newString)
                 const desiredBom = next.bom
-                contentOld = ""
-                contentNew = next.text
-                diff = trimDiff(createTwoFilesPatch(filePath, filePath, contentOld, contentNew))
+                const diff = trimDiff(createTwoFilesPatch(filePath, filePath, "", next.text))
                 yield* ctx.ask({
                   permission: "edit",
                   patterns: [path.relative(instance.worktree, filePath)],
@@ -115,16 +110,16 @@ export const EditTool = Tool.define(
                     diff,
                   },
                 })
-                yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
-                if (yield* format.file(filePath)) {
-                  contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
-                }
+                yield* afs.writeWithDirs(filePath, Bom.join(next.text, desiredBom))
+                const contentNew = (yield* format.file(filePath))
+                  ? yield* Bom.syncFile(afs, filePath, desiredBom)
+                  : next.text
                 yield* events.publish(FileSystem.Event.Edited, { file: filePath })
                 yield* events.publish(Watcher.Event.Updated, {
                   file: filePath,
                   event: "add",
                 })
-                return
+                return { diff, contentOld: "", contentNew }
               }
 
               const info = yield* afs.stat(filePath).pipe(Effect.catch(() => Effect.succeed(undefined)))
@@ -133,7 +128,7 @@ export const EditTool = Tool.define(
                 return yield* new EditError({ message: `Path is a directory, not a file: ${filePath}` })
               }
               const source = yield* Bom.readFile(afs, filePath)
-              contentOld = source.text
+              const contentOld = source.text
 
               const ending = detectLineEnding(contentOld)
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
@@ -141,36 +136,35 @@ export const EditTool = Tool.define(
 
               const next = Bom.split(yield* Effect.fromResult(replace(contentOld, old, replacement, params.replaceAll)))
               const desiredBom = source.bom || next.bom
-              contentNew = next.text
 
-              diff = trimDiff(
-                createTwoFilesPatch(
-                  filePath,
-                  filePath,
-                  normalizeLineEndings(contentOld),
-                  normalizeLineEndings(contentNew),
-                ),
-              )
               yield* ctx.ask({
                 permission: "edit",
                 patterns: [path.relative(instance.worktree, filePath)],
                 always: ["*"],
                 metadata: {
                   filepath: filePath,
-                  diff,
+                  diff: trimDiff(
+                    createTwoFilesPatch(
+                      filePath,
+                      filePath,
+                      normalizeLineEndings(contentOld),
+                      normalizeLineEndings(next.text),
+                    ),
+                  ),
                 },
               })
 
-              yield* afs.writeWithDirs(filePath, Bom.join(contentNew, desiredBom))
-              if (yield* format.file(filePath)) {
-                contentNew = yield* Bom.syncFile(afs, filePath, desiredBom)
-              }
+              yield* afs.writeWithDirs(filePath, Bom.join(next.text, desiredBom))
+              const contentNew = (yield* format.file(filePath))
+                ? yield* Bom.syncFile(afs, filePath, desiredBom)
+                : next.text
               yield* events.publish(FileSystem.Event.Edited, { file: filePath })
               yield* events.publish(Watcher.Event.Updated, {
                 file: filePath,
                 event: "change",
               })
-              diff = trimDiff(
+              // The formatter may have changed the file, so the result diff is taken after it ran.
+              const diff = trimDiff(
                 createTwoFilesPatch(
                   filePath,
                   filePath,
@@ -178,6 +172,7 @@ export const EditTool = Tool.define(
                   normalizeLineEndings(contentNew),
                 ),
               )
+              return { diff, contentOld, contentNew }
             }).pipe(Effect.orDie),
           )
 
