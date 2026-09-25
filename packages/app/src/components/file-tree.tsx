@@ -102,12 +102,13 @@ const buildDragImage = (target: HTMLElement): Option.Option<HTMLDivElement> => {
     "flex items-center gap-x-2 px-2 py-1 bg-surface-raised-base rounded-md border border-border-base text-12-regular text-text-strong"
   image.style.position = "absolute"
   image.style.top = "-1000px"
-  image.innerHTML = (icon as SVGElement).outerHTML + (text as HTMLSpanElement).outerHTML
+  image.innerHTML = icon.outerHTML + text.outerHTML
   return Option.some(image)
 }
 
 export const withFileDragImage = (event: DragEvent) => {
-  const built = buildDragImage(event.currentTarget as HTMLElement)
+  if (!(event.currentTarget instanceof HTMLElement)) return
+  const built = buildDragImage(event.currentTarget)
   if (Option.isNone(built)) return
   const image = built.value
   document.body.appendChild(image)
@@ -280,10 +281,10 @@ export default function FileTree(props: {
       push(root, level - 1)
 
       while (stack.length > 0) {
-        const top = stack[stack.length - 1]!
+        const top = stack[stack.length - 1]
 
         if (top.i < top.kids.length) {
-          const next = top.kids[top.i]!
+          const next = top.kids[top.i]
           top.i++
           push(next, top.lvl + 1)
           continue

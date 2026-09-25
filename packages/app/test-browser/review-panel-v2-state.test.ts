@@ -34,7 +34,7 @@ test("enables sidebar motion only after custom width hydration", async () => {
       const state = createReviewPanelV2State()
       const transition =
         "sidebarTransition" in state && typeof state.sidebarTransition === "function"
-          ? (state.sidebarTransition as () => boolean)
+          ? state.sidebarTransition
           : undefined
 
       try {

@@ -23,7 +23,7 @@ export function applyFileListKeyDown(
     const delta = event.key === "ArrowDown" ? 1 : -1
     const start = currentIndex === -1 ? (delta > 0 ? 0 : files.length - 1) : currentIndex + delta
     const index = Math.max(0, Math.min(files.length - 1, start))
-    options.onHighlight(files[index]!)
+    options.onHighlight(files[index])
     event.preventDefault()
     return
   }
@@ -87,7 +87,10 @@ export function SessionFileListV2(props: {
   const virtualItemByKey = createMemo(() =>
     HashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
-  const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key))
+  // getItemKey returns the file path for every row in range.
+  const virtualRowKeys = createMemo(() =>
+    virtualizer.getVirtualItems().flatMap((item) => (typeof item.key === "string" ? [item.key] : [])),
+  )
 
   return (
     <div
@@ -99,8 +102,7 @@ export function SessionFileListV2(props: {
       style={{ position: "relative", height: `${virtualizer.getTotalSize()}px` }}
     >
       <For each={virtualRowKeys()}>
-        {(key) => {
-          const path = key as string
+        {(path) => {
           const value = normalizePath(path)
           const selected = () => (highlighted() ? highlighted() === value : active() === value)
           const highlightedRow = () => highlighted() === value
@@ -112,7 +114,7 @@ export function SessionFileListV2(props: {
             )
           const filename = () => getFilename(value)
           return (
-            <Show when={Option.getOrUndefined(HashMap.get(virtualItemByKey(), key))}>
+            <Show when={Option.getOrUndefined(HashMap.get(virtualItemByKey(), path))}>
               {(item) => (
                 <div
                   style={{

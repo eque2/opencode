@@ -29,7 +29,7 @@ export function unquoteGitPath(input: string) {
   let bytes = Chunk.empty<number>()
 
   for (let i = 0; i < body.length; i++) {
-    const char = body[i]!
+    const char = body[i]
     if (char !== "\\") {
       bytes = Chunk.append(bytes, char.charCodeAt(0))
       continue

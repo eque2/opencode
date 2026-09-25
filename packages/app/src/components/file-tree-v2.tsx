@@ -218,7 +218,10 @@ export default function FileTreeV2(props: {
   const virtualItemByKey = createMemo(() =>
     HashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
-  const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key))
+  // getItemKey returns the row path for every row in range.
+  const virtualRowKeys = createMemo(() =>
+    virtualizer.getVirtualItems().flatMap((item) => (typeof item.key === "string" ? [item.key] : [])),
+  )
 
   return (
     <div
@@ -242,7 +245,7 @@ export default function FileTreeV2(props: {
                   transform: `translateY(${item().start}px)`,
                 }}
               >
-                <Show when={Option.getOrUndefined(HashMap.get(rowByKey(), key as string))}>
+                <Show when={Option.getOrUndefined(HashMap.get(rowByKey(), key))}>
                   {(row) => (
                     <Show
                       when={row().node.type === "directory"}
