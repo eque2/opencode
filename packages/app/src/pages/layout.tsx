@@ -1325,7 +1325,7 @@ export default function LegacyLayout(props: ParentProps) {
       (item) =>
         listAllSessions(serverSDK().api.session, {
           directory: item,
-          // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+          // eslint-disable-next-line effect/no-null-use-option -- (b) wire-protocol literal: @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
           parentID: null,
           order: "desc",
         }).pipe(
