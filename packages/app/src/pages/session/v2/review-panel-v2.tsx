@@ -1,4 +1,5 @@
 import { createMemo, createResource, createSignal, Show, type JSX } from "solid-js"
+import { Option } from "effect"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import {
@@ -51,7 +52,7 @@ export type ReviewPanelV2Props = {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
 }
 
 export function ReviewPanelV2(props: ReviewPanelV2Props) {

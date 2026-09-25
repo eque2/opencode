@@ -1,4 +1,5 @@
 import { createEffect, onCleanup, type JSX } from "solid-js"
+import { Option } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
@@ -7,6 +8,7 @@ import type {
   SessionReviewCommentActions,
   SessionReviewCommentDelete,
   SessionReviewCommentUpdate,
+  SessionReviewFocus,
 } from "@opencode-ai/session-ui/session-review"
 import type { SelectedLineRange } from "@/context/file"
 import { useSDK } from "@/context/sdk"
@@ -31,7 +33,7 @@ export interface SessionReviewTabProps {
   lineCommentActions?: SessionReviewCommentActions
   comments?: LineComment[]
   focusedComment?: { file: string; id: string } | null
-  onFocusedCommentChange?: (focus: { file: string; id: string } | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
   focusedFile?: string
   onScrollRef?: (el: HTMLDivElement | undefined) => void
   commentMentions?: {
