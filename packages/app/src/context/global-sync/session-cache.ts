@@ -1,6 +1,7 @@
 import type { Message, Part, PermissionRequest, QuestionRequest, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
+import { HashSet, MutableHashSet } from "effect"
 
 export const SESSION_CACHE_LIMIT = 40
 
@@ -17,12 +18,12 @@ type SessionCache = {
 }
 
 export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<string>) {
-  const stale = new Set(Array.from(sessionIDs).filter(Boolean))
-  if (stale.size === 0) return
+  const stale = HashSet.fromIterable(Array.from(sessionIDs).filter(Boolean))
+  if (HashSet.size(stale) === 0) return
 
   for (const key of Object.keys(store.part)) {
     const parts = store.part[key]
-    if (!parts?.some((part) => stale.has(part?.sessionID ?? ""))) continue
+    if (!parts?.some((part) => HashSet.has(stale, part?.sessionID ?? ""))) continue
     for (const part of parts) {
       delete store.part_text_accum_delta[part.id]
     }
@@ -40,23 +41,27 @@ export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<stri
   }
 }
 
+/**
+ * Marks `keep` as the most recent entry of `seen` and removes the oldest entries above `limit`.
+ * `seen` keeps insertion order for string keys, so its first entries are the least recently used.
+ */
 export function pickSessionCacheEvictions(input: {
-  seen: Set<string>
+  seen: MutableHashSet.MutableHashSet<string>
   keep: string
   limit: number
   preserve?: Iterable<string>
 }) {
   const stale: string[] = []
-  const keep = new Set([input.keep, ...Array.from(input.preserve ?? [])])
-  if (input.seen.has(input.keep)) input.seen.delete(input.keep)
-  input.seen.add(input.keep)
+  const keep = HashSet.make(input.keep, ...Array.from(input.preserve ?? []))
+  MutableHashSet.remove(input.seen, input.keep)
+  MutableHashSet.add(input.seen, input.keep)
   for (const id of input.seen) {
-    if (input.seen.size - stale.length <= input.limit) break
-    if (keep.has(id)) continue
+    if (MutableHashSet.size(input.seen) - stale.length <= input.limit) break
+    if (HashSet.has(keep, id)) continue
     stale.push(id)
   }
   for (const id of stale) {
-    input.seen.delete(id)
+    MutableHashSet.remove(input.seen, id)
   }
   return stale
 }

@@ -375,7 +375,7 @@ export function createServerSession(
     }
     delete cache.part[messageID]
   }
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   const infoSeen: IDSet = MutableHashSet.empty()
   const pinned = MutableHashMap.empty<string, number>()
   const generations = MutableHashMap.empty<string, object>()
@@ -1662,7 +1662,7 @@ export function createServerSession(
     },
     evict(sessionID: string) {
       if (protectedSessions().includes(sessionID)) return
-      seen.delete(sessionID)
+      MutableHashSet.remove(seen, sessionID)
       evict([sessionID])
     },
     pin(sessionID: string) {

@@ -717,12 +717,12 @@ export default function LegacyLayout(props: ParentProps) {
   const prefetchQueues = MutableHashMap.empty<string, PrefetchQueue>()
 
   const PREFETCH_MAX_SESSIONS_PER_DIR = 10
-  const prefetchedByDir = MutableHashMap.empty<string, Set<string>>()
+  const prefetchedByDir = MutableHashMap.empty<string, MutableHashSet.MutableHashSet<string>>()
 
   const lruFor = (directory: string) => {
     const existing = MutableHashMap.get(prefetchedByDir, directory)
     if (Option.isSome(existing)) return existing.value
-    const created = new Set<string>()
+    const created = MutableHashSet.empty<string>()
     MutableHashMap.set(prefetchedByDir, directory, created)
     return created
   }
@@ -829,8 +829,8 @@ export default function LegacyLayout(props: ParentProps) {
     }
 
     const lru = lruFor(directory)
-    const known = lru.has(session.id)
-    if (!known && lru.size >= PREFETCH_MAX_SESSIONS_PER_DIR && priority !== "high") return
+    const known = MutableHashSet.has(lru, session.id)
+    if (!known && MutableHashSet.size(lru) >= PREFETCH_MAX_SESSIONS_PER_DIR && priority !== "high") return
 
     if (priority === "high") q.pending.unshift(session.id)
     if (priority !== "high") q.pending.push(session.id)
