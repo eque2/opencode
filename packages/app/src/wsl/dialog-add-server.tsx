@@ -6,15 +6,23 @@ import { DividerV2 } from "@opencode-ai/ui/v2/divider-v2"
 import { LoaderV2 } from "@opencode-ai/ui/v2/loader-v2"
 import { RadioGroupV2, RadioItemV2 } from "@opencode-ai/ui/v2/radio-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
-import { Array as Arr, HashMap, Option } from "effect"
+import { Array as Arr, Effect, HashMap, Option } from "effect"
 import { createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useWslAddServerProbes } from "./add-server-probes"
 import { useWslServers } from "./context"
-import { addServerViewModel, type AddServerText } from "./settings-model"
+import { addServerViewModel, WslRequestError, wslRequest, wslRequestError, type AddServerText } from "./settings-model"
 import "./dialog-add-wsl-server.css"
+
+/**
+ * Runs a dialog action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 function isWslRuntimeMissing(error: Option.Option<string>) {
   return Option.match(error, {
@@ -285,7 +293,7 @@ function useWslAddServerController(props: DialogWslServerProps) {
     busy: () => baseModel().busy,
     selectedDistro: () => baseModel().selectedDistro,
     addableInstalledDistros: () => baseModel().addableInstalledDistros,
-    onError: (error) => requestError(language, error),
+    onError: (error) => runDetached(requestError(language, error)),
   })
   const model = createMemo(() => viewModel(probes.probingAddable()))
 
@@ -297,27 +305,30 @@ function useWslAddServerController(props: DialogWslServerProps) {
     })
   }
 
-  const run = async (action: () => Promise<unknown>) => {
-    try {
-      await action()
-    } catch (err) {
-      requestError(language, err)
-    }
-  }
+  /** Reports a failed request with a log line and a toast. */
+  const run = <A, E>(action: Effect.Effect<A, E>) => action.pipe(Effect.catch((error) => requestError(language, error)))
 
   const refreshDistros = () => {
-    void run(async () => {
-      probes.resetProbeFailure()
-      await api.refreshDistros()
-    })
+    runDetached(
+      run(
+        Effect.gen(function* () {
+          probes.resetProbeFailure()
+          yield* wslRequest(() => api.refreshDistros())
+        }),
+      ),
+    )
   }
 
   const installDistro = (name: string) => {
-    void run(async () => {
-      probes.resetProbeFailure()
-      await api.installDistro(name)
-      setStore("view", "main")
-    })
+    runDetached(
+      run(
+        Effect.gen(function* () {
+          probes.resetProbeFailure()
+          yield* wslRequest(() => api.installDistro(name))
+          setStore("view", "main")
+        }),
+      ),
+    )
   }
 
   const installCatalogDistro = () => {
@@ -332,29 +343,30 @@ function useWslAddServerController(props: DialogWslServerProps) {
     setStore({ view: "main", catalogSearch: "", catalogTarget: Option.none() })
   }
 
-  const runPrimary = async () => {
+  const addServer = (distro: string) =>
+    Effect.gen(function* () {
+      yield* wslRequest(() => api.addServer(distro))
+      const onAdded = props.onAdded
+      if (!onAdded) {
+        dialog.close()
+        return
+      }
+      const pending = yield* Effect.try({ try: () => onAdded(distro), catch: wslRequestError })
+      if (pending instanceof Promise) yield* wslRequest(() => pending)
+    })
+
+  const runPrimary = () => {
     const button = model().primaryButton
     if (button.loading) return
     const target = Option.all({ distro: model().selectedDistro, action: button.action })
     if (Option.isNone(target)) return
     const { distro, action } = target.value
     if (action === "install-opencode") {
-      await run(() => api.installOpencode(distro))
+      runDetached(run(wslRequest(() => api.installOpencode(distro))))
       return
     }
     setStore("adding", true)
-    try {
-      await api.addServer(distro)
-      if (props.onAdded) {
-        await props.onAdded(distro)
-      } else {
-        dialog.close()
-      }
-    } catch (err) {
-      requestError(language, err)
-    } finally {
-      setStore("adding", false)
-    }
+    runDetached(run(addServer(distro)).pipe(Effect.ensuring(Effect.sync(() => setStore("adding", false)))))
   }
 
   const loadError = () => {
@@ -378,8 +390,8 @@ function useWslAddServerController(props: DialogWslServerProps) {
     closeCatalog,
     refreshDistros,
     installCatalogDistro,
-    installWsl: () => void run(() => api.installWsl()),
-    runPrimary: () => void runPrimary(),
+    installWsl: () => runDetached(run(wslRequest(() => api.installWsl()))),
+    runPrimary,
     close: () => dialog.close(),
   }
 }
@@ -455,11 +467,24 @@ function DialogWslSetup(props: {
   )
 }
 
+/**
+ * Logs a failed WSL request and shows its message in a toast. For a
+ * WslRequestError, the log and the toast report the failure it wraps.
+ */
 function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
-  console.error("WSL servers request failed", err instanceof Error ? (err.stack ?? err.message) : String(err))
-  showToast({
-    variant: "error",
-    title: language.t("common.requestFailed"),
-    description: err instanceof Error ? err.message : String(err),
-  })
+  const failure = err instanceof WslRequestError ? err.cause : err
+  return Effect.logError(
+    "WSL servers request failed",
+    failure instanceof Error ? (failure.stack ?? failure.message) : String(failure),
+  ).pipe(
+    Effect.andThen(
+      Effect.sync(() =>
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: failure instanceof Error ? failure.message : String(failure),
+        }),
+      ),
+    ),
+  )
 }

@@ -1,5 +1,5 @@
 import fuzzysort from "fuzzysort"
-import { Array as Arr, HashMap, HashSet, Option } from "effect"
+import { Array as Arr, Data, Effect, HashMap, HashSet, Option } from "effect"
 import type {
   WslInstalledDistro,
   WslOnlineDistro,
@@ -369,9 +369,22 @@ export function createProbeFailureGate() {
   }
 }
 
-export async function runAddableProbePlan(input: {
-  plan: AddableProbePlan
-  api: Pick<WslServersPlatform, "probeAddable">
-}) {
-  await input.api.probeAddable(input.plan.distros)
+/**
+ * A WSL server request that failed: a desktop bridge call that rejected, or
+ * the dialog's onAdded callback. The message is the failure's own message,
+ * and `cause` holds the original value.
+ */
+export class WslRequestError extends Data.TaggedError("App.WslRequestError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+export const wslRequestError = (cause: unknown) =>
+  new WslRequestError({ message: cause instanceof Error ? cause.message : String(cause), cause })
+
+/** Runs one desktop WSL bridge call. A rejection becomes a WslRequestError. */
+export const wslRequest = <A>(request: () => Promise<A>) => Effect.tryPromise({ try: request, catch: wslRequestError })
+
+export function runAddableProbePlan(input: { plan: AddableProbePlan; api: Pick<WslServersPlatform, "probeAddable"> }) {
+  return wslRequest(() => input.api.probeAddable(input.plan.distros))
 }

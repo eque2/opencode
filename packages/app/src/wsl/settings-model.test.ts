@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { HashMap, Option } from "effect"
+import { Chunk, Effect, HashMap, Option } from "effect"
 import {
   addableProbePlan,
   addServerProbePlan,
@@ -8,6 +8,7 @@ import {
   createProbeFailureGate,
   runAddableProbePlan,
   wslOpencodeAction,
+  wslRequestError,
   wslRuntimeRetryable,
 } from "./settings-model"
 import type {
@@ -204,7 +205,7 @@ describe("WSL server settings presentation", () => {
     const gate = createProbeFailureGate()
 
     expect(gate.accepts("addable:distro:Debian")).toBe(true)
-    gate.settle("addable:distro:Debian", new Error("wsl failed"))
+    gate.settle("addable:distro:Debian", wslRequestError("wsl failed"))
     expect(gate.accepts("addable:distro:Debian")).toBe(false)
     expect(gate.accepts("addable:distro:Ubuntu")).toBe(true)
     gate.reset()
@@ -285,18 +286,24 @@ describe("WSL server settings presentation", () => {
     expect(model.primaryButton.action).toEqual(Option.some("install-opencode"))
   })
 
-  test("delegates addable probe plans to one batch command", async () => {
-    const calls: string[][] = []
+  test("delegates addable probe plans to one batch command", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = Chunk.empty<string[]>()
 
-    await runAddableProbePlan({
-      plan: { key: "distro:Debian|distro:Ubuntu", distros: ["Debian", "Ubuntu"] },
-      api: {
-        probeAddable: async (distros) => {
-          calls.push(distros)
-        },
-      },
-    })
+        yield* runAddableProbePlan({
+          plan: { key: "distro:Debian|distro:Ubuntu", distros: ["Debian", "Ubuntu"] },
+          api: {
+            probeAddable: (distros) =>
+              Effect.runPromise(
+                Effect.sync(() => {
+                  calls = Chunk.append(calls, distros)
+                }),
+              ),
+          },
+        })
 
-    expect(calls).toEqual([["Debian", "Ubuntu"]])
-  })
+        expect(Chunk.toReadonlyArray(calls)).toEqual([["Debian", "Ubuntu"]])
+      }),
+    ))
 })
