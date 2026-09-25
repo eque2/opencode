@@ -7,7 +7,7 @@ import { useSessionLayout } from "./session-layout"
 import { useDialog } from "@opencode-ai/ui/context"
 import { DialogUsageExceeded } from "@/components/dialog-usage-exceeded"
 import { useI18n } from "@opencode-ai/ui/context"
-import { HashSet } from "effect"
+import { DateTime, HashSet } from "effect"
 
 const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
 const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
@@ -66,7 +66,7 @@ export function useUsageExceededDialogs() {
       if (!keys) return
 
       const seen = goUpsellState[keys.lastSeenAt]
-      if (seen && Date.now() - seen < GO_UPSELL_WINDOW) return
+      if (seen && DateTime.toEpochMillis(DateTime.nowUnsafe()) - seen < GO_UPSELL_WINDOW) return
       if (goUpsellState[keys.dontShow]) return
 
       if (action.reason === "free_tier_limit") {
@@ -77,8 +77,8 @@ export function useUsageExceededDialogs() {
             actionLabel={isEnglish() ? action.label : t("dialog.usageExceeded.freeTier.actionLabel")}
             link={action.link}
             onClose={(dontShowAgain) => {
-              setGoUpsellState(keys.lastSeenAt, Date.now())
-              if (dontShowAgain) setGoUpsellState(keys.dontShow, Date.now())
+              setGoUpsellState(keys.lastSeenAt, DateTime.toEpochMillis(DateTime.nowUnsafe()))
+              if (dontShowAgain) setGoUpsellState(keys.dontShow, DateTime.toEpochMillis(DateTime.nowUnsafe()))
               else {
                 void import("../../components/dialog-connect-provider").then((x) => {
                   const controller = x.useProviderConnectController()
@@ -97,8 +97,8 @@ export function useUsageExceededDialogs() {
             actionLabel={isEnglish() ? action.label : t("dialog.usageExceeded.accountRateLimit.actionLabel")}
             link={action.link}
             onClose={(dontShowAgain) => {
-              setGoUpsellState(keys.lastSeenAt, Date.now())
-              if (dontShowAgain) setGoUpsellState(keys.dontShow, Date.now())
+              setGoUpsellState(keys.lastSeenAt, DateTime.toEpochMillis(DateTime.nowUnsafe()))
+              if (dontShowAgain) setGoUpsellState(keys.dontShow, DateTime.toEpochMillis(DateTime.nowUnsafe()))
             }}
           />
         ))
