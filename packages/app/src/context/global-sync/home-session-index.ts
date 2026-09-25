@@ -1,6 +1,6 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
-import { Effect } from "effect"
+import { Chunk, Effect } from "effect"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
@@ -34,7 +34,7 @@ export function loadHomeSessionIndex(
 ): Promise<HomeSessionIndex> {
   return Effect.runPromise(
     Effect.gen(function* () {
-      const data: SessionV2Info[] = []
+      let data = Chunk.empty<SessionV2Info>()
       let cursor: string | undefined
 
       for (;;) {
@@ -50,9 +50,9 @@ export function loadHomeSessionIndex(
           ),
         )
         const page = response.data!
-        data.push(...page.data)
+        data = Chunk.appendAll(data, Chunk.fromIterable(page.data))
         if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
-          return { sessions: parseHomeSessionIndex(data), eventSequence }
+          return { sessions: parseHomeSessionIndex(Chunk.toReadonlyArray(data)), eventSequence }
         cursor = page.cursor.next
       }
     }),
@@ -150,7 +150,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
 // multiple directories. A bounded page could omit an old session updated today.
 // Once released, use client.v2.project.list() and client.v2.session.list({
 // parentID: null, order: "desc" }), then remove this adapter and its V1 fields.
-export function parseHomeSessionIndex(sessions: SessionV2Info[]): Session[] {
+export function parseHomeSessionIndex(sessions: ReadonlyArray<SessionV2Info>): Session[] {
   return sessions.flatMap((item) => {
     if (item.parentID || typeof item.time.archived === "number") return []
     return [toLegacySummary(item)]

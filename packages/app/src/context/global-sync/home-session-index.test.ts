@@ -35,12 +35,12 @@ describe("Home V2 session index", () => {
   test("loads the Home index with one global V2 request", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const result = yield* Effect.promise(() =>
           loadHomeSessionIndex((input) =>
             Effect.runPromise(
               Effect.sync(() => {
-                calls.push(input)
+                calls = [...calls, input]
                 return { data: { data: [session({ id: "root" })], cursor: {} } }
               }),
             ),
@@ -55,14 +55,14 @@ describe("Home V2 session index", () => {
   test("loads subsequent pages until the session index is complete", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: unknown[] = []
         const controller = new AbortController()
         const result = yield* Effect.promise(() =>
           loadHomeSessionIndex(
             (input, options) =>
               Effect.runPromise(
                 Effect.sync(() => {
-                  calls.push({ input, signal: options.signal })
+                  calls = [...calls, { input, signal: options.signal }]
                   if (!("cursor" in input)) {
                     return {
                       data: {
