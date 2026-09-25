@@ -94,9 +94,11 @@ type ScrollPos = { x: number; y: number }
 
 function createScrollSync(input: { tab: () => string; view: ReturnType<typeof useSessionLayout>["view"] }) {
   let scroll: HTMLDivElement | undefined
-  let scrollFrame: number | undefined
-  let restoreFrame: number | undefined
-  let pending: ScrollPos | undefined
+  let scrollFrame: Option.Option<number> = Option.none()
+  let restoreFrame: Option.Option<number> = Option.none()
+  // The latest position to save. `save` sets it before it schedules a frame,
+  // so the frame callback always has a position to write.
+  let pending: ScrollPos = { x: 0, y: 0 }
   const [code, setCode] = createSignal<HTMLElement[]>([])
 
   const getCode = () => {
@@ -116,17 +118,14 @@ function createScrollSync(input: { tab: () => string; view: ReturnType<typeof us
 
   const save = (next: ScrollPos) => {
     pending = next
-    if (scrollFrame !== undefined) return
+    if (Option.isSome(scrollFrame)) return
 
-    scrollFrame = requestAnimationFrame(() => {
-      scrollFrame = undefined
-
-      const out = pending
-      pending = undefined
-      if (!out) return
-
-      input.view().setScroll(input.tab(), out)
-    })
+    scrollFrame = Option.some(
+      requestAnimationFrame(() => {
+        scrollFrame = Option.none()
+        input.view().setScroll(input.tab(), pending)
+      }),
+    )
   }
 
   const onCodeScroll = (event: Event) => {
@@ -170,12 +169,14 @@ function createScrollSync(input: { tab: () => string; view: ReturnType<typeof us
   }
 
   const queueRestore = () => {
-    if (restoreFrame !== undefined) return
+    if (Option.isSome(restoreFrame)) return
 
-    restoreFrame = requestAnimationFrame(() => {
-      restoreFrame = undefined
-      restore()
-    })
+    restoreFrame = Option.some(
+      requestAnimationFrame(() => {
+        restoreFrame = Option.none()
+        restore()
+      }),
+    )
   }
 
   const handleScroll: JSX.EventHandler<HTMLDivElement, Event> = (event) => {
@@ -197,8 +198,8 @@ function createScrollSync(input: { tab: () => string; view: ReturnType<typeof us
   }
 
   onCleanup(() => {
-    if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
-    if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame)
+    if (Option.isSome(scrollFrame)) cancelAnimationFrame(scrollFrame.value)
+    if (Option.isSome(restoreFrame)) cancelAnimationFrame(restoreFrame.value)
   })
 
   return {
@@ -277,10 +278,10 @@ function SessionFileViewV1(props: { tab: string }) {
     })
   }
 
-  const buildPreview = (filePath: string, selection: FileSelection) => {
+  const buildPreview = (filePath: string, selection: FileSelection): Option.Option<string> => {
     const source = filePath === path() ? contents() : file.get(filePath)?.content?.content
-    if (!source) return undefined
-    return selectionPreview(source, selection)
+    if (!source) return Option.none()
+    return Option.fromUndefinedOr(selectionPreview(source, selection))
   }
 
   const addCommentToContext = (input: {
@@ -291,7 +292,7 @@ function SessionFileViewV1(props: { tab: string }) {
     origin?: "review" | "file"
   }) => {
     const selection = selectionFromLines(input.selection)
-    const preview = input.preview ?? buildPreview(input.file, selection)
+    const preview = Option.orElse(Option.fromUndefinedOr(input.preview), () => buildPreview(input.file, selection))
 
     const saved = comments.add({
       file: input.file,
@@ -305,7 +306,7 @@ function SessionFileViewV1(props: { tab: string }) {
       comment: input.comment,
       commentID: saved.id,
       commentOrigin: input.origin,
-      preview,
+      preview: Option.getOrUndefined(preview),
     })
   }
 
@@ -316,10 +317,11 @@ function SessionFileViewV1(props: { tab: string }) {
     comment: string
   }) => {
     comments.update(input.file, input.id, input.comment)
-    const preview = input.file === path() ? buildPreview(input.file, selectionFromLines(input.selection)) : undefined
+    const preview =
+      input.file === path() ? buildPreview(input.file, selectionFromLines(input.selection)) : Option.none<string>()
     prompt.context.updateComment(input.file, input.id, {
       comment: input.comment,
-      ...(preview ? { preview } : {}),
+      ...(Option.isSome(preview) && preview.value ? { preview: preview.value } : {}),
     })
   }
 
@@ -566,10 +568,10 @@ function SessionFileViewV2(props: { tab: string }) {
     })
   }
 
-  const buildPreview = (filePath: string, lines: SelectedLineRange) => {
+  const buildPreview = (filePath: string, lines: SelectedLineRange): Option.Option<string> => {
     const source = filePath === path() ? contents() : file.get(filePath)?.content?.content
-    if (!source) return undefined
-    return selectionPreview(source, selectionFromLines(lines))
+    if (!source) return Option.none()
+    return Option.fromUndefinedOr(selectionPreview(source, selectionFromLines(lines)))
   }
 
   const addCommentToContext = (input: {
@@ -580,7 +582,7 @@ function SessionFileViewV2(props: { tab: string }) {
     origin?: "review" | "file"
   }) => {
     const selection = selectionFromLines(input.selection)
-    const preview = input.preview ?? buildPreview(input.file, input.selection)
+    const preview = Option.orElse(Option.fromUndefinedOr(input.preview), () => buildPreview(input.file, input.selection))
 
     const saved = comments.add({
       file: input.file,
@@ -594,7 +596,7 @@ function SessionFileViewV2(props: { tab: string }) {
       comment: input.comment,
       commentID: saved.id,
       commentOrigin: input.origin,
-      preview,
+      preview: Option.getOrUndefined(preview),
     })
   }
 
@@ -605,10 +607,10 @@ function SessionFileViewV2(props: { tab: string }) {
     comment: string
   }) => {
     comments.update(input.file, input.id, input.comment)
-    const preview = input.file === path() ? buildPreview(input.file, input.selection) : undefined
+    const preview = input.file === path() ? buildPreview(input.file, input.selection) : Option.none<string>()
     prompt.context.updateComment(input.file, input.id, {
       comment: input.comment,
-      ...(preview ? { preview } : {}),
+      ...(Option.isSome(preview) && preview.value ? { preview: preview.value } : {}),
     })
   }
 

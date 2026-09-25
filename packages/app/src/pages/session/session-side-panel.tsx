@@ -245,13 +245,13 @@ export function SessionSidePanel(props: {
   const openFileKeybind = createMemo(() => command.keybindParts("file.open"))
   const closeTabKeybind = createMemo(() => command.keybindParts("tab.close"))
   const [store, setStore] = createStore({
-    activeDraggable: undefined as string | undefined,
+    activeDraggable: Option.none<string>(),
   })
 
   const handleDragStart = (event: unknown) => {
     const id = getDraggableId(event)
     if (!id) return
-    setStore("activeDraggable", id)
+    setStore("activeDraggable", Option.some(id))
   }
 
   const handleDragOver = (event: DragEvent) => {
@@ -265,7 +265,7 @@ export function SessionSidePanel(props: {
   }
 
   const handleDragEnd = () => {
-    setStore("activeDraggable", undefined)
+    setStore("activeDraggable", Option.none())
   }
 
   createEffect(() => {
@@ -351,7 +351,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
-                                  aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                  {...(activeTab() === "review" ? { "aria-controls": reviewTabPanelID } : {})}
                                 >
                                   <div class="flex items-center gap-1.5">
                                     <div>{language.t("session.tab.review")}</div>
@@ -399,7 +399,7 @@ export function SessionSidePanel(props: {
                                           tab={tab}
                                           temporary={temporaryTab() === tab}
                                           onTabClose={tabs().close}
-                                          onTabDoubleClick={temporaryTab() === tab ? openTab : undefined}
+                                          {...(temporaryTab() === tab ? { onTabDoubleClick: openTab } : {})}
                                         />
                                       }
                                     >
@@ -467,7 +467,7 @@ export function SessionSidePanel(props: {
                               id={reviewTabPanelID}
                               role="tabpanel"
                               aria-labelledby={reviewTabID}
-                              tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
+                              {...(props.reviewHasFocusableContent() ? {} : { tabIndex: 0 })}
                               data-slot="tabs-content"
                               class="flex flex-col h-full overflow-hidden contain-strict"
                             >
@@ -501,7 +501,7 @@ export function SessionSidePanel(props: {
                           </Show>
                         </Tabs>
                         <DragOverlay>
-                          <Show when={store.activeDraggable} keyed>
+                          <Show when={Option.getOrUndefined(store.activeDraggable)} keyed>
                             {(tab) => {
                               const path = file.pathFromTab(tab)
                               return (
@@ -563,7 +563,7 @@ export function SessionSidePanel(props: {
                               <Tabs.Trigger
                                 value="review"
                                 id={reviewTabID}
-                                aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                {...(activeTab() === "review" ? { "aria-controls": reviewTabPanelID } : {})}
                               >
                                 {props.hasReview()
                                   ? language.t("session.review.filesChanged", { count: props.reviewCount() })
@@ -614,7 +614,7 @@ export function SessionSidePanel(props: {
                                       index={() => tabs().all().indexOf(tab)}
                                       temporary={temporaryTab() === tab}
                                       onTabClose={tabs().close}
-                                      onTabDoubleClick={temporaryTab() === tab ? openTab : undefined}
+                                      {...(temporaryTab() === tab ? { onTabDoubleClick: openTab } : {})}
                                     />
                                   }
                                 >
@@ -696,7 +696,7 @@ export function SessionSidePanel(props: {
                             id={reviewTabPanelID}
                             role="tabpanel"
                             aria-labelledby={reviewTabID}
-                            tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
+                            {...(props.reviewHasFocusableContent() ? {} : { tabIndex: 0 })}
                             data-slot="tabs-content"
                             class="flex flex-col h-full overflow-hidden contain-strict"
                           >
@@ -732,7 +732,7 @@ export function SessionSidePanel(props: {
                             data-slot="tabs-content"
                             class="h-full min-h-0 overflow-hidden"
                             classList={{ hidden: !fileBrowserVisible() }}
-                            inert={!fileBrowserVisible() || undefined}
+                            inert={!fileBrowserVisible()}
                           >
                             <SessionFileBrowserTab
                               tab={browserTab() ?? activeFileTab() ?? SESSION_OPEN_FILE_TAB}

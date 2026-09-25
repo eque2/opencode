@@ -1,4 +1,5 @@
-import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component } from "solid-js"
+import { For, Show, createEffect, createMemo, onCleanup, onMount, type Component, type JSX } from "solid-js"
+import { Option } from "effect"
 import { createStore } from "solid-js/store"
 import { useMutation } from "@tanstack/solid-query"
 import { Button } from "@opencode-ai/ui/button"
@@ -13,6 +14,14 @@ import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
+
+// Clamps the question text to three lines while the dock is minimized.
+const minimizedQuestionText = {
+  display: "-webkit-box",
+  "-webkit-line-clamp": "3",
+  "-webkit-box-orient": "vertical",
+  overflow: "hidden",
+} satisfies JSX.CSSProperties
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
 
@@ -87,7 +96,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   let customRef: HTMLButtonElement | undefined
   let optsRef: HTMLButtonElement[] = []
   let replied = false
-  let focusFrame: number | undefined
+  let focusFrame: Option.Option<number> = Option.none()
 
   const question = createMemo(() => questions()[store.tab])
   const options = createMemo(() => question()?.options ?? [])
@@ -128,13 +137,17 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     setStore("answers", store.tab, next ? [next] : [])
   }
 
+  const stickyHeaderBottom = () => {
+    const scroller = document.querySelector(".scroll-view__viewport")
+    if (!(scroller instanceof HTMLElement)) return 0
+    const head = scroller.firstElementChild
+    return head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
+  }
+
   const measure = () => {
     if (!root) return
 
-    const scroller = document.querySelector(".scroll-view__viewport")
-    const head = scroller instanceof HTMLElement ? scroller.firstElementChild : undefined
-    const top =
-      head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
+    const top = stickyHeaderBottom()
     if (!top) {
       root.style.removeProperty("--question-prompt-max-height")
       return
@@ -165,22 +178,26 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     const next = clamp(i)
     setStore("focus", next)
     if (store.editing) return
-    if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
-    focusFrame = requestAnimationFrame(() => {
-      focusFrame = undefined
-      const el = next === options().length ? customRef : optsRef[next]
-      el?.focus()
-    })
+    if (Option.isSome(focusFrame)) cancelAnimationFrame(focusFrame.value)
+    focusFrame = Option.some(
+      requestAnimationFrame(() => {
+        focusFrame = Option.none()
+        const el = next === options().length ? customRef : optsRef[next]
+        el?.focus()
+      }),
+    )
   }
 
   onMount(() => {
-    let raf: number | undefined
+    let raf: Option.Option<number> = Option.none()
     const update = () => {
-      if (raf !== undefined) cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        raf = undefined
-        measure()
-      })
+      if (Option.isSome(raf)) cancelAnimationFrame(raf.value)
+      raf = Option.some(
+        requestAnimationFrame(() => {
+          raf = Option.none()
+          measure()
+        }),
+      )
     }
 
     update()
@@ -192,7 +209,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     createResizeObserver([dock, scroller], update)
 
     onCleanup(() => {
-      if (raf !== undefined) cancelAnimationFrame(raf)
+      if (Option.isSome(raf)) cancelAnimationFrame(raf.value)
     })
 
     focus(pickFocus())
@@ -207,7 +224,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   })
 
   onCleanup(() => {
-    if (focusFrame !== undefined) cancelAnimationFrame(focusFrame)
+    if (Option.isSome(focusFrame)) cancelAnimationFrame(focusFrame.value)
     if (replied) return
     cache.set(cacheKey, {
       tab: store.tab,
@@ -337,10 +354,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       return
     }
 
-    const target =
-      event.target instanceof HTMLElement ? event.target.closest('[data-slot="question-options"]') : undefined
     if (store.editing) return
-    if (!(target instanceof HTMLElement)) return
+    if (!(event.target instanceof HTMLElement)) return
+    if (!(event.target.closest('[data-slot="question-options"]') instanceof HTMLElement)) return
     if (event.altKey || event.ctrlKey || event.metaKey) return
 
     if (event.key === "ArrowDown" || event.key === "ArrowRight") {
@@ -518,15 +534,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
           </>
         }
       >
-        <div
-          data-slot="question-text"
-          style={{
-            display: store.minimized ? "-webkit-box" : undefined,
-            "-webkit-line-clamp": store.minimized ? "3" : undefined,
-            "-webkit-box-orient": store.minimized ? "vertical" : undefined,
-            overflow: store.minimized ? "hidden" : undefined,
-          }}
-        >
+        <div data-slot="question-text" style={store.minimized ? minimizedQuestionText : {}}>
           {question()?.question}
         </div>
         <Show when={!store.minimized}>
@@ -537,7 +545,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         <div
           ref={(el) => (optionsRef = el)}
           data-slot="question-options"
-          aria-hidden={store.minimized || optionsOff() ? "true" : undefined}
+          {...(store.minimized || optionsOff() ? { "aria-hidden": "true" } : {})}
           classList={{ "pointer-events-none": hidden() > 0.1 }}
           style={{
             "max-height": `${Math.max(0, store.optionsHeight * (1 - hidden()))}px`,

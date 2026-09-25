@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createMemo, createRoot } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Option } from "effect"
 import {
   SESSION_OPEN_FILE_TAB,
   createOpenReviewFile,
@@ -107,17 +108,29 @@ describe("getTabReorderIndex", () => {
   })
 })
 
+type TabsState = { active?: string; all: string[] }
+
+const FILE_TAB_PREFIX = "file://"
+
+// The tab input takes file.pathFromTab, which returns `string | undefined`.
+const fileTabPath = (tab: string) =>
+  Option.getOrUndefined(
+    Option.map(
+      Option.liftPredicate(tab, (value: string) => value.startsWith(FILE_TAB_PREFIX)),
+      (value) => value.slice(FILE_TAB_PREFIX.length),
+    ),
+  )
+
 describe("createSessionTabs", () => {
   test("normalizes the effective file tab", () => {
     createRoot((dispose) => {
-      const [state] = createStore({
-        active: undefined as string | undefined,
+      const [state] = createStore<TabsState>({
         all: ["file://src/a.ts", "context"],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
-        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        pathFromTab: fileTabPath,
         normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
       })
 
@@ -130,14 +143,13 @@ describe("createSessionTabs", () => {
 
   test("prefers context and review fallbacks when no file tab is active", () => {
     createRoot((dispose) => {
-      const [state] = createStore({
-        active: undefined as string | undefined,
+      const [state] = createStore<TabsState>({
         all: ["context"],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
-        pathFromTab: () => undefined,
+        pathFromTab: fileTabPath,
         normalizeTab: (tab) => tab,
         review: () => true,
         hasReview: () => true,
@@ -149,14 +161,13 @@ describe("createSessionTabs", () => {
     })
 
     createRoot((dispose) => {
-      const [state] = createStore({
-        active: undefined as string | undefined,
+      const [state] = createStore<TabsState>({
         all: [],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
-        pathFromTab: () => undefined,
+        pathFromTab: fileTabPath,
         normalizeTab: (tab) => tab,
         review: () => true,
         hasReview: () => true,
@@ -171,14 +182,14 @@ describe("createSessionTabs", () => {
 
   test("exposes the Open File tab without treating it as a file tab", () => {
     createRoot((dispose) => {
-      const [state] = createStore({
-        active: SESSION_OPEN_FILE_TAB as string | undefined,
+      const [state] = createStore<TabsState>({
+        active: SESSION_OPEN_FILE_TAB,
         all: ["file://src/a.ts", SESSION_OPEN_FILE_TAB],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
-        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        pathFromTab: fileTabPath,
         normalizeTab: (tab) => tab,
         fileBrowser: () => true,
       })
@@ -195,14 +206,14 @@ describe("createSessionTabs", () => {
 
   test("hides the Open File placeholder when the file browser is unavailable", () => {
     createRoot((dispose) => {
-      const [state] = createStore({
-        active: SESSION_OPEN_FILE_TAB as string | undefined,
+      const [state] = createStore<TabsState>({
+        active: SESSION_OPEN_FILE_TAB,
         all: ["file://src/a.ts", SESSION_OPEN_FILE_TAB],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
-        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        pathFromTab: fileTabPath,
         normalizeTab: (tab) => tab,
         fileBrowser: () => false,
       })
