@@ -1,5 +1,6 @@
 import { Message, Model, Part, Session, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import { iife } from "@opencode-ai/core/util/iife"
+import { Array, HashMap, Order, String } from "effect"
 import z from "zod"
 import { Storage } from "./storage"
 
@@ -63,16 +64,13 @@ export namespace Share {
     }
   }
 
+  // Keys sort with localeCompare, as the stored snapshots always did.
+  const byKey = Order.make<string>((self, that) => String.localeCompare(that)(self))
+
+  // A later item replaces an earlier one with the same key.
   function merge(...items: Data[][]) {
-    const map = new Map<string, Data>()
-    for (const list of items) {
-      for (const item of list) {
-        map.set(key(item), item)
-      }
-    }
-    return Array.from(map.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([, item]) => item)
+    const latest = HashMap.fromIterable(items.flat().map((item): [string, Data] => [key(item), item]))
+    return Array.sortWith(HashMap.toEntries(latest), ([id]) => id, byKey).map(([, item]) => item)
   }
 
   async function readSnapshot(shareID: string) {
