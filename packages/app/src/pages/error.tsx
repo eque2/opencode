@@ -269,9 +269,10 @@ export const ErrorPage: Component<ErrorPageProps> = (props) => {
     runDetached(showActionResult(platformAction(() => updater.install())))
   }
 
+  // The version of a downloaded update, for <Show>; undefined while no update is ready.
   const updateVersion = () => {
     const state = platform.updater?.state()
-    if (state?.status !== "ready") return
+    if (state?.status !== "ready") return undefined
     return state.version
   }
 
