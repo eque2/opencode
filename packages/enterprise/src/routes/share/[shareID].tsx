@@ -223,7 +223,7 @@ export default function () {
                         <DataProvider data={data()} directory={info().directory}>
                           {iife(() => {
                             const [store, setStore] = createStore({
-                              messageId: undefined as string | undefined,
+                              messageId: Option.none<string>(),
                             })
                             const messages = createMemo(() =>
                               data().sessionID
@@ -234,14 +234,15 @@ export default function () {
                             )
                             const firstUserMessage = createMemo(() => messages().at(0))
                             const activeMessage = createMemo(
-                              () => messages().find((m) => m.id === store.messageId) ?? firstUserMessage(),
+                              () =>
+                                messages().find((m) => Option.contains(store.messageId, m.id)) ?? firstUserMessage(),
                             )
+                            // MessageNav passes undefined to clear the selection.
                             function setActiveMessage(message: UserMessage | undefined) {
-                              if (message) {
-                                setStore("messageId", message.id)
-                              } else {
-                                setStore("messageId", undefined)
-                              }
+                              setStore(
+                                "messageId",
+                                Option.map(Option.fromNullishOr(message), (selected) => selected.id),
+                              )
                             }
                             const provider = createMemo(() => activeMessage()?.model?.providerID)
                             const modelID = createMemo(() => activeMessage()?.model?.modelID)
@@ -366,7 +367,7 @@ export default function () {
                                         </Show>
                                         <SessionTurn
                                           sessionID={data().sessionID}
-                                          messageID={store.messageId ?? firstUserMessage()!.id!}
+                                          messageID={Option.getOrElse(store.messageId, () => firstUserMessage()!.id)}
                                           classes={{
                                             root: "grow",
                                             content: "flex flex-col justify-between",
