@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import type { Message } from "@opencode-ai/sdk/v2/client"
-import { diffs, message } from "./diffs"
+import { diffs, message, type RawUserMessage } from "./diffs"
 
 const item = {
   file: "src/app.ts",
@@ -49,7 +48,7 @@ describe("message", () => {
         title: "Edit",
         diffs: { a: item },
       },
-    } as unknown as Message
+    } satisfies RawUserMessage
 
     expect(message(input)).toMatchObject({
       summary: {
@@ -68,8 +67,8 @@ describe("message", () => {
       agent: "build",
       model: { providerID: "openai", modelID: "gpt-5" },
       summary: true,
-    } as unknown as Message
+    } satisfies RawUserMessage
 
-    expect(message(input)).toMatchObject({ summary: undefined })
+    expect(message(input)).not.toHaveProperty("summary")
   })
 })
