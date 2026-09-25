@@ -9,7 +9,7 @@ import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { useTheme, type ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useParams } from "@solidjs/router"
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, MutableHashMap, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { usePlatform, type DisplayBackend } from "@/context/platform"
@@ -204,15 +204,16 @@ export const SettingsGeneral: Component = () => {
     const list = shells.latest
     const current = serverSync().data.config.shell
 
-    const nameCounts = new Map<string, number>()
+    const nameCounts = MutableHashMap.empty<string, number>()
+    const countOf = (name: string) => Option.getOrElse(MutableHashMap.get(nameCounts, name), () => 0)
     for (const s of list) {
-      nameCounts.set(s.name, (nameCounts.get(s.name) || 0) + 1)
+      MutableHashMap.set(nameCounts, s.name, countOf(s.name) + 1)
     }
 
     const options = [
       autoOption,
       ...list.map((s) => {
-        const ambiguousName = (nameCounts.get(s.name) || 0) > 1
+        const ambiguousName = countOf(s.name) > 1
         const text = ambiguousName ? s.path : s.name
         const label = s.acceptable ? text : `${text} (${language.t("settings.general.row.shell.terminalOnly")})`
         return {
