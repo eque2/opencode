@@ -1,3 +1,5 @@
+import { MutableHashMap } from "effect"
+
 type QueueInput = {
   paused: () => boolean
   bootstrap: () => Promise<void>
@@ -6,7 +8,7 @@ type QueueInput = {
 }
 
 export function createRefreshQueue(input: QueueInput) {
-  const queued = new Map<string, string>()
+  const queued = MutableHashMap.empty<string, string>()
   let root = false
   let running = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -16,10 +18,10 @@ export function createRefreshQueue(input: QueueInput) {
   const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
   const take = (count: number) => {
-    if (queued.size === 0) return [] as string[]
+    if (MutableHashMap.isEmpty(queued)) return [] as string[]
     const items: string[] = []
     for (const [id, directory] of queued) {
-      queued.delete(id)
+      MutableHashMap.remove(queued, id)
       items.push(directory)
       if (items.length >= count) break
     }
@@ -36,7 +38,7 @@ export function createRefreshQueue(input: QueueInput) {
 
   const push = (directory: string) => {
     if (!directory) return
-    queued.set(key(directory), directory)
+    MutableHashMap.set(queued, key(directory), directory)
     if (input.paused()) return
     schedule()
   }
@@ -68,7 +70,7 @@ export function createRefreshQueue(input: QueueInput) {
       running = false
       // oxlint-disable-next-line no-unsafe-finally -- intentional: early return skips schedule() when paused
       if (input.paused()) return
-      if (root || queued.size) schedule()
+      if (root || !MutableHashMap.isEmpty(queued)) schedule()
     }
   }
 
@@ -76,7 +78,7 @@ export function createRefreshQueue(input: QueueInput) {
     push,
     refresh,
     clear(directory: string) {
-      queued.delete(key(directory))
+      MutableHashMap.remove(queued, key(directory))
     },
     dispose() {
       if (!timer) return

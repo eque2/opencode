@@ -11,7 +11,7 @@ import type {
   SessionListInput,
 } from "@opencode-ai/client/promise"
 import { QueryClient } from "@tanstack/solid-query"
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, MutableHashMap, Option } from "effect"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./global-sync/eviction"
 import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/session-load"
 import { loadActiveSessionsQuery, loadMcpQuery, loadMcpResourcesQuery, seedActiveSessionStatuses } from "./server-sync"
@@ -132,12 +132,12 @@ describe("pickDirectoriesToEvict", () => {
     const now = 5_000
     const picks = pickDirectoriesToEvict({
       stores: ["a", "b", "c", "d"],
-      state: new Map([
+      state: MutableHashMap.make(
         ["a", { lastAccessAt: 1_000 }],
         ["b", { lastAccessAt: 4_900 }],
         ["c", { lastAccessAt: 4_800 }],
         ["d", { lastAccessAt: 3_000 }],
-      ]),
+      ),
       pins: new Set(["a"]),
       max: 2,
       ttl: 1_500,

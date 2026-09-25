@@ -60,7 +60,7 @@ export function createChildStoreManager(input: {
   const vcsCache = MutableHashMap.empty<string, VcsCache>()
   const metaCache = MutableHashMap.empty<string, MetaCache>()
   const iconCache = MutableHashMap.empty<string, IconCache>()
-  const lifecycle = new Map<string, DirState>()
+  const lifecycle = MutableHashMap.empty<string, DirState>()
   const pins = MutableHashMap.empty<string, number>()
   const ownerPins = new WeakMap<object, MutableHashSet.MutableHashSet<string>>()
   const disposers = MutableHashMap.empty<string, () => void>()
@@ -80,7 +80,7 @@ export function createChildStoreManager(input: {
 
   const markKey = (key: DirectoryKey) => {
     if (!key) return
-    lifecycle.set(key, { lastAccessAt: DateTime.toEpochMillis(DateTime.nowUnsafe()) })
+    MutableHashMap.set(lifecycle, key, { lastAccessAt: DateTime.toEpochMillis(DateTime.nowUnsafe()) })
     runEviction(key)
   }
 
@@ -147,7 +147,7 @@ export function createChildStoreManager(input: {
     MutableHashMap.remove(vcsCache, key)
     MutableHashMap.remove(metaCache, key)
     MutableHashMap.remove(iconCache, key)
-    lifecycle.delete(key)
+    MutableHashMap.remove(lifecycle, key)
     MutableHashSet.remove(mcpDirectories, key)
     MutableHashMap.remove(mcpToggles, key)
     MutableHashSet.remove(activeDirectories, key)
