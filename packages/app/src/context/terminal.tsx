@@ -2,6 +2,7 @@ import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { batch, createEffect, createMemo, createRoot, on, onCleanup } from "solid-js"
 import { useParams } from "@solidjs/router"
+import { HashSet, Iterable, MutableHashMap, Option } from "effect"
 import { useSDK, type DirectorySDK } from "./sdk"
 import type { Platform } from "./platform"
 import { useServerSDK } from "./server-sdk"
@@ -69,18 +70,18 @@ function pty(value: unknown): LocalPTY | undefined {
 export function migrateTerminalState(value: unknown) {
   if (!record(value)) return value
 
-  const seen = new Set<string>()
+  let seen = HashSet.empty<string>()
   const all = (Array.isArray(value.all) ? value.all : []).flatMap((item) => {
     const next = pty(item)
-    if (!next || seen.has(next.id)) return []
-    seen.add(next.id)
+    if (!next || HashSet.has(seen, next.id)) return []
+    seen = HashSet.add(seen, next.id)
     return [next]
   })
 
   const active = text(value.active)
 
   return {
-    active: active && seen.has(active) ? active : all[0]?.id,
+    active: active && HashSet.has(seen, active) ? active : all[0]?.id,
     all,
   }
 }
@@ -101,7 +102,10 @@ type TerminalCacheEntry = {
   dispose: VoidFunction
 }
 
-const caches = new Set<Map<string, TerminalCacheEntry>>()
+type TerminalCache = MutableHashMap.MutableHashMap<ScopedKey, TerminalCacheEntry>
+
+// The registry compares caches by identity. A HashSet compares by structure, so it would treat two empty caches as one.
+let caches: ReadonlyArray<TerminalCache> = []
 
 const trimTerminal = (pty: LocalPTY) => {
   if (!pty.buffer && pty.cursor === undefined && pty.scrollY === undefined) return pty
@@ -125,19 +129,17 @@ export function clearWorkspaceTerminals(
 ) {
   const key = getWorkspaceTerminalCacheKey(dir, scope)
   for (const cache of caches) {
-    const entry = cache.get(key)
-    entry?.value.clear()
+    const entry = MutableHashMap.get(cache, key)
+    if (Option.isSome(entry)) entry.value.value.clear()
   }
 
   removePersisted(terminalPersistTarget(scope, dir), platform)
 
   if (scope !== ServerScope.local) return
-  const legacy = new Set(getLegacyTerminalStorageKeys(dir))
-  for (const id of sessionIDs ?? []) {
-    for (const key of getLegacyTerminalStorageKeys(dir, id)) {
-      legacy.add(key)
-    }
-  }
+  const legacy = HashSet.fromIterable([
+    ...getLegacyTerminalStorageKeys(dir),
+    ...(sessionIDs ?? []).flatMap((id) => getLegacyTerminalStorageKeys(dir, id)),
+  ])
   for (const key of legacy) {
     removePersisted({ key }, platform)
   }
@@ -203,7 +205,7 @@ function createWorkspaceTerminalSession(
   }
 
   const pickNextTerminalNumber = () => {
-    const existingTitleNumbers = new Set(
+    const existingTitleNumbers = HashSet.fromIterable(
       store.all.flatMap((pty) => {
         const direct = Number.isFinite(pty.titleNumber) && pty.titleNumber > 0 ? pty.titleNumber : undefined
         if (direct !== undefined) return [direct]
@@ -214,8 +216,8 @@ function createWorkspaceTerminalSession(
     )
 
     return (
-      Array.from({ length: existingTitleNumbers.size + 1 }, (_, index) => index + 1).find(
-        (number) => !existingTitleNumbers.has(number),
+      Array.from({ length: HashSet.size(existingTitleNumbers) + 1 }, (_, index) => index + 1).find(
+        (number) => !HashSet.has(existingTitleNumbers, number),
       ) ?? 1
     )
   }
@@ -461,40 +463,43 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
     const sdk = useSDK()
     const serverSDK = useServerSDK()
     const params = useParams()
-    const cache = new Map<string, TerminalCacheEntry>()
+    // String keys keep insertion order in a MutableHashMap, so the first key is the least recently used.
+    const cache: TerminalCache = MutableHashMap.empty()
     const scope = () => serverSDK().scope
     const directory = createMemo(() => base64Encode(sdk().directory))
 
-    caches.add(cache)
-    onCleanup(() => caches.delete(cache))
+    caches = [...caches, cache]
+    onCleanup(() => {
+      caches = caches.filter((item) => item !== cache)
+    })
 
     const disposeAll = () => {
-      for (const entry of cache.values()) {
+      for (const entry of MutableHashMap.values(cache)) {
         entry.dispose()
       }
-      cache.clear()
+      MutableHashMap.clear(cache)
     }
 
     onCleanup(disposeAll)
 
     const prune = () => {
-      while (cache.size > MAX_TERMINAL_SESSIONS) {
-        const first = cache.keys().next().value
-        if (!first) return
-        const entry = cache.get(first)
-        entry?.dispose()
-        cache.delete(first)
+      while (MutableHashMap.size(cache) > MAX_TERMINAL_SESSIONS) {
+        const first = Iterable.head(MutableHashMap.keys(cache))
+        if (Option.isNone(first) || !first.value) return
+        const entry = MutableHashMap.get(cache, first.value)
+        if (Option.isSome(entry)) entry.value.dispose()
+        MutableHashMap.remove(cache, first.value)
       }
     }
 
     const loadWorkspace = (dir: string, legacySessionID: string | undefined, serverScope: ServerScopeValue) => {
       // Terminals are workspace-scoped so tabs persist while switching sessions in the same directory.
       const key = getWorkspaceTerminalCacheKey(dir, serverScope)
-      const existing = cache.get(key)
-      if (existing) {
-        cache.delete(key)
-        cache.set(key, existing)
-        return existing.value
+      const existing = MutableHashMap.get(cache, key)
+      if (Option.isSome(existing)) {
+        MutableHashMap.remove(cache, key)
+        MutableHashMap.set(cache, key, existing.value)
+        return existing.value.value
       }
 
       const entry = createRoot((dispose) => ({
@@ -502,7 +507,7 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
         dispose,
       }))
 
-      cache.set(key, entry)
+      MutableHashMap.set(cache, key, entry)
       prune()
       return entry.value
     }
