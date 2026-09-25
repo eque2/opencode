@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Effect } from "effect"
+import { Chunk, Effect, Option } from "effect"
 import { createApiForServer, createSdkForServer } from "./server"
 import { createCompatibleApi } from "./server-compat"
+
+/** A 204 response. The Response constructor takes null for an absent body. */
+const noContent = () => new Response(Option.getOrNull(Option.none<BodyInit>()), { status: 204 })
 
 function setup(
   protocol: "v1" | "v2" | Promise<"v1" | "v2">,
@@ -23,8 +26,7 @@ function setup(
           time: { created: 1, updated: 1 },
         })
       }
-      if (request.method === "POST" && request.url.endsWith("/prompt_async"))
-        return new Response(undefined, { status: 204 })
+      if (request.method === "POST" && request.url.endsWith("/prompt_async")) return noContent()
       if (request.method === "POST" && request.url.endsWith("/prompt")) {
         return Response.json({
           admittedSeq: 1,
@@ -39,7 +41,7 @@ function setup(
       if (request.method === "GET" && new URL(request.url).pathname === "/vcs")
         return Response.json(responses?.vcs ?? {})
       if (request.method === "GET") return Response.json([])
-      return new Response(undefined, { status: 204 })
+      return noContent()
     },
     { preconnect: globalThis.fetch.preconnect },
   )
@@ -162,7 +164,7 @@ describe("createCompatibleApi", () => {
 
   test("uses the global V1 session search endpoint", async () => {
     const { api, sent } = setup("v1")
-    await api.session.list({ parentID: null, search: "session", limit: 50 })
+    await api.session.list({ parentID: Option.getOrNull(Option.none<string>()), search: "session", limit: 50 })
 
     const requests = sent()
     expect(new URL(requests[0].url).pathname).toBe("/experimental/session")
