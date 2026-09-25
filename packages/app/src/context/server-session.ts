@@ -12,7 +12,7 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { HashSet, MutableHashSet } from "effect"
+import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -33,36 +33,39 @@ const historyMessagePageSize = 200
 const sessionInfoLimit = 2_048
 
 type IDSet = MutableHashSet.MutableHashSet<string>
+type IDIndex = MutableHashMap.MutableHashMap<string, IDSet>
 
-const hasID = (ids: IDSet | undefined, id: string) => ids !== undefined && MutableHashSet.has(ids, id)
+const idsOf = (ids: Option.Option<IDSet>): Iterable<string> => Option.getOrElse(ids, (): Iterable<string> => [])
 
-const removeID = (ids: IDSet | undefined, id: string) => {
-  if (ids) MutableHashSet.remove(ids, id)
+const hasID = (ids: Option.Option<IDSet>, id: string) => Option.exists(ids, (set) => MutableHashSet.has(set, id))
+
+const removeID = (ids: Option.Option<IDSet>, id: string) => {
+  if (Option.isSome(ids)) MutableHashSet.remove(ids.value, id)
 }
 
 // Adds `id` to the set held under `key`, and creates that set on first use.
-const addToIndex = (index: Map<string, IDSet>, key: string, id: string) => {
-  const ids = index.get(key)
-  if (ids) {
-    MutableHashSet.add(ids, id)
+const addToIndex = (index: IDIndex, key: string, id: string) => {
+  const ids = MutableHashMap.get(index, key)
+  if (Option.isSome(ids)) {
+    MutableHashSet.add(ids.value, id)
     return
   }
-  index.set(key, MutableHashSet.make(id))
+  MutableHashMap.set(index, key, MutableHashSet.make(id))
 }
 
 // Adds every id in `ids` to the set held under `key`, and creates that set on first use.
-const mergeIntoIndex = (index: Map<string, IDSet>, key: string, ids: Iterable<string>) => {
-  const target = index.get(key) ?? MutableHashSet.empty<string>()
+const mergeIntoIndex = (index: IDIndex, key: string, ids: Iterable<string>) => {
+  const target = Option.getOrElse(MutableHashMap.get(index, key), () => MutableHashSet.empty<string>())
   for (const id of ids) MutableHashSet.add(target, id)
-  index.set(key, target)
+  MutableHashMap.set(index, key, target)
 }
 
 // Removes `id` from the set held under `key`, and drops that set when it becomes empty.
-const removeFromIndex = (index: Map<string, IDSet> | undefined, key: string, id: string) => {
-  const ids = index?.get(key)
-  if (!ids) return
-  MutableHashSet.remove(ids, id)
-  if (MutableHashSet.size(ids) === 0) index?.delete(key)
+const removeFromIndex = (index: IDIndex, key: string, id: string) => {
+  const ids = MutableHashMap.get(index, key)
+  if (Option.isNone(ids)) return
+  MutableHashSet.remove(ids.value, id)
+  if (MutableHashSet.size(ids.value) === 0) MutableHashMap.remove(index, key)
 }
 
 function needsOlderTurnRoot(source: readonly SessionMessageInfo[]) {
@@ -122,11 +125,11 @@ type MessageLoadState = {
   touchedMessages: IDSet
   removedMessages: IDSet
   retainedMessages: IDSet
-  touchedParts: Map<string, IDSet>
-  deltaParts: Map<string, IDSet>
-  carriedDeltaParts: Map<string, IDSet>
-  removedParts: Map<string, IDSet>
-  optimisticParts: Map<string, IDSet>
+  touchedParts: IDIndex
+  deltaParts: IDIndex
+  carriedDeltaParts: IDIndex
+  removedParts: IDIndex
+  optimisticParts: IDIndex
   orphanParents: IDSet
   clearedMessageParts: IDSet
   touchedSource: IDSet
@@ -140,19 +143,20 @@ type MessageLoadBaseline = Pick<
 function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   if (items.length === 0) return { ...page, observed: [] as { messageID: string; parts: Part[] }[] }
   const session = [...page.session]
-  const part = new Map(page.part.map((item) => [item.id, item.part]))
+  const part = MutableHashMap.fromIterable(page.part.map((item) => [item.id, item.part] as const))
   const observed: { messageID: string; parts: Part[] }[] = []
   for (const item of items) {
     const result = Binary.search(session, messageKey(item.message), messageKey)
     const found = result.found
     if (!found) session.splice(result.index, 0, item.message)
-    const current = part.get(item.message.id)
-    const confirmed = found ? item.parts.filter((part) => current?.some((value) => value.id === part.id)) : []
+    const current = Option.getOrElse(MutableHashMap.get(part, item.message.id), (): Part[] => [])
+    const confirmed = found ? item.parts.filter((part) => current.some((value) => value.id === part.id)) : []
     if (found) observed.push({ messageID: item.message.id, parts: confirmed })
-    part.set(
+    MutableHashMap.set(
+      part,
       item.message.id,
       merge(
-        found ? (current ?? []) : merge(item.confirmedParts ?? [], current ?? []),
+        found ? current : merge(item.confirmedParts ?? [], current),
         item.parts.filter((part) => !confirmed.includes(part)),
       ),
     )
@@ -160,25 +164,29 @@ function mergeOptimisticPage(page: MessagePage, items: OptimisticItem[]) {
   return {
     ...page,
     session,
-    part: [...part.entries()].sort((a, b) => cmp(a[0], b[0])).map(([id, parts]) => ({ id, part: parts })),
+    part: [...part].sort((a, b) => cmp(a[0], b[0])).map(([id, parts]) => ({ id, part: parts })),
     observed,
   }
 }
 
-function runInflight(map: Map<string, Promise<void>>, key: string, task: () => Promise<void>) {
-  const pending = map.get(key)
-  if (pending) return pending
+function runInflight(
+  map: MutableHashMap.MutableHashMap<string, Promise<void>>,
+  key: string,
+  task: () => Promise<void>,
+) {
+  const pending = MutableHashMap.get(map, key)
+  if (Option.isSome(pending)) return pending.value
   const promise = task().finally(() => {
-    if (map.get(key) === promise) map.delete(key)
+    if (Option.exists(MutableHashMap.get(map, key), (value) => value === promise)) MutableHashMap.remove(map, key)
   })
-  map.set(key, promise)
+  MutableHashMap.set(map, key, promise)
   return promise
 }
 
 function merge<T extends { id: string }>(a: readonly T[], b: readonly T[]) {
-  const items = new Map(a.map((item) => [item.id, item] as const))
-  for (const item of b) items.set(item.id, item)
-  return [...items.values()].sort((x, y) => cmp(x.id, y.id))
+  const items = MutableHashMap.fromIterable(a.map((item) => [item.id, item] as const))
+  for (const item of b) MutableHashMap.set(items, item.id, item)
+  return [...MutableHashMap.values(items)].sort((x, y) => cmp(x.id, y.id))
 }
 
 function reconcileFetched<T extends { id: string }>(
@@ -192,27 +200,30 @@ function reconcileFetched<T extends { id: string }>(
     compare?: (a: T, b: T) => number
   } = {},
 ) {
-  const result = new Map(fetched.map((item) => [item.id, item]))
-  const live = new Map(current.map((item) => [item.id, item]))
+  const result = MutableHashMap.fromIterable(fetched.map((item) => [item.id, item] as const))
+  const live = MutableHashMap.fromIterable(current.map((item) => [item.id, item] as const))
   if (options.preserveUnfetched) {
     for (const item of current) {
-      if (!result.has(item.id) && (options.preserveUnfetched === true || options.preserveUnfetched(item)))
-        result.set(item.id, item)
+      if (
+        !MutableHashMap.has(result, item.id) &&
+        (options.preserveUnfetched === true || options.preserveUnfetched(item))
+      )
+        MutableHashMap.set(result, item.id, item)
     }
   }
   for (const id of options.retained ?? []) {
-    if (result.has(id)) continue
-    const item = live.get(id)
-    if (item) result.set(id, item)
+    if (MutableHashMap.has(result, id)) continue
+    const item = MutableHashMap.get(live, id)
+    if (Option.isSome(item)) MutableHashMap.set(result, id, item.value)
   }
   // Events observed while the request is pending are the freshest client state for those identities.
   for (const id of options.touched ?? []) {
-    const item = live.get(id)
-    if (item) result.set(id, item)
-    if (!item) result.delete(id)
+    const item = MutableHashMap.get(live, id)
+    if (Option.isSome(item)) MutableHashMap.set(result, id, item.value)
+    if (Option.isNone(item)) MutableHashMap.remove(result, id)
   }
-  for (const id of options.removed ?? []) result.delete(id)
-  const items = [...result.values()]
+  for (const id of options.removed ?? []) MutableHashMap.remove(result, id)
+  const items = [...MutableHashMap.values(result)]
   return options.compare ? items.sort(options.compare) : items
 }
 
@@ -241,37 +252,41 @@ export function createServerSession(
       return (this.session_status[id]?.type ?? "idle") !== "idle"
     },
   })
-  const requests = new Map<string, Promise<Session>>()
-  const inflight = new Map<string, Promise<void>>()
-  const inflightTodo = new Map<string, Promise<void>>()
-  const optimistic = new Map<string, Map<string, OptimisticItem>>()
+  const requests = MutableHashMap.empty<string, Promise<Session>>()
+  const inflight = MutableHashMap.empty<string, Promise<void>>()
+  const inflightTodo = MutableHashMap.empty<string, Promise<void>>()
+  const optimistic = MutableHashMap.empty<string, MutableHashMap.MutableHashMap<string, OptimisticItem>>()
   const v2 = createV2SessionReducer()
-  const messageLoads = new Map<string, MessageLoadState>()
-  const pendingParts = new Map<string, Map<string, IDSet>>()
-  const orphanParts = new Map<string, IDSet>()
-  const removedMessages = new Map<string, IDSet>()
-  const deltaBases = new Map<string, { base: string; sessionID: string }>()
+  const messageLoads = MutableHashMap.empty<string, MessageLoadState>()
+  const pendingParts = MutableHashMap.empty<string, IDIndex>()
+  const orphanParts: IDIndex = MutableHashMap.empty()
+  const removedMessages: IDIndex = MutableHashMap.empty()
+  const deltaBases = MutableHashMap.empty<string, { base: string; sessionID: string }>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
     messageID: string,
   ) => {
     for (const part of cache.part[messageID] ?? []) {
       delete cache.part_text_accum_delta[part.id]
-      deltaBases.delete(part.id)
+      MutableHashMap.remove(deltaBases, part.id)
     }
     delete cache.part[messageID]
   }
   const seen = new Set<string>()
   const infoSeen: IDSet = MutableHashSet.empty()
-  const pinned = new Map<string, number>()
-  const generations = new Map<string, object>()
+  const pinned = MutableHashMap.empty<string, number>()
+  const generations = MutableHashMap.empty<string, object>()
   const generation = (sessionID: string) => {
-    const current = generations.get(sessionID)
-    if (current) return current
+    const current = MutableHashMap.get(generations, sessionID)
+    if (Option.isSome(current)) return current.value
     const created = {}
-    generations.set(sessionID, created)
+    MutableHashMap.set(generations, sessionID, created)
     return created
   }
+  const isGeneration = (sessionID: string, active: object) =>
+    Option.exists(MutableHashMap.get(generations, sessionID), (current) => current === active)
+  const isLoad = (sessionID: string, load: MessageLoadState) =>
+    Option.exists(MutableHashMap.get(messageLoads, sessionID), (current) => current === load)
   const [meta, setMeta] = createStore({
     limit: {} as Record<string, number | undefined>,
     cursor: {} as Record<string, string | undefined>,
@@ -296,12 +311,12 @@ export function createServerSession(
     MutableHashSet.add(infoSeen, session.id)
     if (MutableHashSet.size(infoSeen) > sessionInfoLimit) {
       const preserve = MutableHashSet.fromIterable([
-        ...pinned.keys(),
-        ...requests.keys(),
-        ...inflight.keys(),
-        ...inflightTodo.keys(),
-        ...messageLoads.keys(),
-        ...optimistic.keys(),
+        ...MutableHashMap.keys(pinned),
+        ...MutableHashMap.keys(requests),
+        ...MutableHashMap.keys(inflight),
+        ...MutableHashMap.keys(inflightTodo),
+        ...MutableHashMap.keys(messageLoads),
+        ...MutableHashMap.keys(optimistic),
         ...Object.entries(data.permission)
           .filter(([, items]) => items.length > 0)
           .map(([sessionID]) => sessionID),
@@ -325,7 +340,7 @@ export function createServerSession(
         if (!MutableHashSet.has(preserve, sessionID)) stale.push(sessionID)
       }
       stale.forEach((sessionID) => MutableHashSet.remove(infoSeen, sessionID))
-      stale.forEach((sessionID) => generations.delete(sessionID))
+      stale.forEach((sessionID) => MutableHashMap.remove(generations, sessionID))
       setData(
         "info",
         produce((draft) => stale.forEach((sessionID) => delete draft[sessionID])),
@@ -337,8 +352,8 @@ export function createServerSession(
   const resolve = (sessionID: string, options?: { force?: boolean }) => {
     const cached = data.info[sessionID]
     if (cached && !options?.force) return Promise.resolve(cached)
-    const pending = requests.get(sessionID)
-    if (pending) return pending
+    const pending = MutableHashMap.get(requests, sessionID)
+    if (Option.isSome(pending)) return pending.value
     const active = generation(sessionID)
     const request = sessionApi
       ? sessionApi.get({ sessionID }).then(normalizeSessionInfo)
@@ -347,21 +362,22 @@ export function createServerSession(
           return result.data
         })
     const resolved = request.then((result) => {
-      if (generations.get(sessionID) !== active) return result
+      if (!isGeneration(sessionID, active)) return result
       return remember(result)
     })
-    requests.set(sessionID, resolved)
+    MutableHashMap.set(requests, sessionID, resolved)
     const cleanup = () => {
-      if (requests.get(sessionID) === resolved) requests.delete(sessionID)
+      if (Option.exists(MutableHashMap.get(requests, sessionID), (value) => value === resolved))
+        MutableHashMap.remove(requests, sessionID)
       if (
-        generations.get(sessionID) === active &&
+        isGeneration(sessionID, active) &&
         !data.info[sessionID] &&
-        !requests.has(sessionID) &&
-        !messageLoads.has(sessionID) &&
-        !inflight.has(sessionID) &&
-        !inflightTodo.has(sessionID)
+        !MutableHashMap.has(requests, sessionID) &&
+        !MutableHashMap.has(messageLoads, sessionID) &&
+        !MutableHashMap.has(inflight, sessionID) &&
+        !MutableHashMap.has(inflightTodo, sessionID)
       )
-        generations.delete(sessionID)
+        MutableHashMap.remove(generations, sessionID)
     }
     void resolved.then(cleanup, cleanup)
     return resolved
@@ -384,85 +400,91 @@ export function createServerSession(
 
   const clearOptimistic = (sessionID: string, messageID?: string) => {
     if (!messageID) {
-      optimistic.delete(sessionID)
+      MutableHashMap.remove(optimistic, sessionID)
       return
     }
-    const items = optimistic.get(sessionID)
-    if (!items) return
-    items.delete(messageID)
-    if (items.size === 0) optimistic.delete(sessionID)
+    const items = MutableHashMap.get(optimistic, sessionID)
+    if (Option.isNone(items)) return
+    MutableHashMap.remove(items.value, messageID)
+    if (MutableHashMap.size(items.value) === 0) MutableHashMap.remove(optimistic, sessionID)
+  }
+
+  const optimisticItem = (sessionID: string, messageID: string) =>
+    Option.flatMap(MutableHashMap.get(optimistic, sessionID), (items) => MutableHashMap.get(items, messageID))
+
+  const setOptimisticItem = (sessionID: string, messageID: string, item: OptimisticItem) => {
+    const items = MutableHashMap.get(optimistic, sessionID)
+    if (Option.isSome(items)) MutableHashMap.set(items.value, messageID, item)
   }
 
   const clearOptimisticPart = (sessionID: string, messageID: string, partID: string) => {
-    const items = optimistic.get(sessionID)
-    const item = items?.get(messageID)
-    if (!items || !item) return
-    const parts = item.parts.filter((part) => part.id !== partID)
-    const confirmedParts = item.confirmedParts?.filter((part) => part.id !== partID)
+    const item = optimisticItem(sessionID, messageID)
+    if (Option.isNone(item)) return
+    const parts = item.value.parts.filter((part) => part.id !== partID)
+    const confirmedParts = item.value.confirmedParts?.filter((part) => part.id !== partID)
     if (parts.length === 0) {
       clearOptimistic(sessionID, messageID)
       return
     }
-    items.set(messageID, { ...item, parts, confirmedParts, confirmedMessage: true })
+    setOptimisticItem(sessionID, messageID, { ...item.value, parts, confirmedParts, confirmedMessage: true })
   }
 
   const confirmOptimisticPart = (sessionID: string, messageID: string, part: Part) => {
-    const items = optimistic.get(sessionID)
-    const item = items?.get(messageID)
-    if (!items || !item) return
-    const parts = item.parts.filter((value) => value.id !== part.id)
+    const item = optimisticItem(sessionID, messageID)
+    if (Option.isNone(item)) return
+    const parts = item.value.parts.filter((value) => value.id !== part.id)
     if (parts.length === 0) {
       clearOptimistic(sessionID, messageID)
       return
     }
-    items.set(messageID, {
-      ...item,
+    setOptimisticItem(sessionID, messageID, {
+      ...item.value,
       parts,
-      confirmedParts: merge(item.confirmedParts ?? [], [part]),
+      confirmedParts: merge(item.value.confirmedParts ?? [], [part]),
       confirmedMessage: true,
     })
   }
 
   const confirmOptimistic = (sessionID: string, messageID: string, confirmedParts: Part[]) => {
-    const items = optimistic.get(sessionID)
-    const item = items?.get(messageID)
-    if (!items || !item) return
+    const item = optimisticItem(sessionID, messageID)
+    if (Option.isNone(item)) return
     const confirmed = MutableHashSet.fromIterable(confirmedParts.map((part) => part.id))
-    const parts = item.parts.filter((part) => !MutableHashSet.has(confirmed, part.id))
+    const parts = item.value.parts.filter((part) => !MutableHashSet.has(confirmed, part.id))
     if (parts.length === 0) {
       clearOptimistic(sessionID, messageID)
       return
     }
-    items.set(messageID, {
-      ...item,
+    setOptimisticItem(sessionID, messageID, {
+      ...item.value,
       parts,
-      confirmedParts: merge(item.confirmedParts ?? [], confirmedParts),
+      confirmedParts: merge(item.value.confirmedParts ?? [], confirmedParts),
       confirmedMessage: true,
     })
   }
 
   const trackPartChange = (sessionID: string, messageID: string, partID: string) => {
-    const load = messageLoads.get(sessionID)
-    if (!load) return
+    const load = MutableHashMap.get(messageLoads, sessionID)
+    if (Option.isNone(load)) return
     // A part event keeps an existing parent when the fetched page omits it without overriding fetched metadata.
     const messages = data.message[sessionID]
-    if (messages?.some((message) => message.id === messageID)) MutableHashSet.add(load.retainedMessages, messageID)
-    addToIndex(load.touchedParts, messageID, partID)
+    if (messages?.some((message) => message.id === messageID))
+      MutableHashSet.add(load.value.retainedMessages, messageID)
+    addToIndex(load.value.touchedParts, messageID, partID)
   }
 
   const resetMessageLoad = (sessionID: string, load: MessageLoadState, baseline?: MessageLoadBaseline) => {
     MutableHashSet.clear(load.touchedMessages)
     MutableHashSet.clear(load.retainedMessages)
-    load.touchedParts.clear()
-    load.carriedDeltaParts.clear()
+    MutableHashMap.clear(load.touchedParts)
+    MutableHashMap.clear(load.carriedDeltaParts)
     MutableHashSet.clear(load.clearedMessageParts)
     for (const messageID of load.removedMessages) {
       MutableHashSet.add(load.touchedMessages, messageID)
       MutableHashSet.add(load.clearedMessageParts, messageID)
     }
     for (const [messageID, parts] of load.deltaParts) {
-      load.touchedParts.set(messageID, MutableHashSet.fromIterable(parts))
-      load.carriedDeltaParts.set(messageID, MutableHashSet.fromIterable(parts))
+      MutableHashMap.set(load.touchedParts, messageID, MutableHashSet.fromIterable(parts))
+      MutableHashMap.set(load.carriedDeltaParts, messageID, MutableHashSet.fromIterable(parts))
       const messages = data.message[sessionID]
       if (messages?.some((message) => message.id === messageID)) MutableHashSet.add(load.retainedMessages, messageID)
     }
@@ -481,7 +503,7 @@ export function createServerSession(
     for (const messageID of baseline.touchedMessages) MutableHashSet.add(load.touchedMessages, messageID)
     for (const messageID of baseline.retainedMessages) MutableHashSet.add(load.retainedMessages, messageID)
     for (const messageID of baseline.clearedMessageParts) MutableHashSet.add(load.clearedMessageParts, messageID)
-    baseline.touchedParts.forEach((parts, messageID) => mergeIntoIndex(load.touchedParts, messageID, parts))
+    for (const [messageID, parts] of baseline.touchedParts) mergeIntoIndex(load.touchedParts, messageID, parts)
   }
 
   const messageLoadBaseline = (load: MessageLoadState, exclude: string): MessageLoadBaseline => ({
@@ -491,10 +513,10 @@ export function createServerSession(
     retainedMessages: MutableHashSet.fromIterable(
       [...load.retainedMessages].filter((messageID) => messageID !== exclude),
     ),
-    touchedParts: new Map(
+    touchedParts: MutableHashMap.fromIterable(
       [...load.touchedParts]
         .filter(([messageID]) => messageID !== exclude)
-        .map(([messageID, parts]) => [messageID, MutableHashSet.fromIterable(parts)]),
+        .map(([messageID, parts]) => [messageID, MutableHashSet.fromIterable(parts)] as const),
     ),
     clearedMessageParts: MutableHashSet.fromIterable(
       [...load.clearedMessageParts].filter((messageID) => messageID !== exclude),
@@ -505,19 +527,19 @@ export function createServerSession(
     if (sessionIDs.length === 0) return
     const evicted = MutableHashSet.fromIterable(sessionIDs)
     for (const [partID, item] of deltaBases) {
-      if (MutableHashSet.has(evicted, item.sessionID)) deltaBases.delete(partID)
+      if (MutableHashSet.has(evicted, item.sessionID)) MutableHashMap.remove(deltaBases, partID)
     }
     sessionIDs.forEach((sessionID) => {
-      generations.delete(sessionID)
+      MutableHashMap.remove(generations, sessionID)
       clearOptimistic(sessionID)
-      requests.delete(sessionID)
-      inflight.delete(sessionID)
-      inflightTodo.delete(sessionID)
-      messageLoads.delete(sessionID)
+      MutableHashMap.remove(requests, sessionID)
+      MutableHashMap.remove(inflight, sessionID)
+      MutableHashMap.remove(inflightTodo, sessionID)
+      MutableHashMap.remove(messageLoads, sessionID)
       v2.clear(sessionID)
-      pendingParts.delete(sessionID)
-      orphanParts.delete(sessionID)
-      removedMessages.delete(sessionID)
+      MutableHashMap.remove(pendingParts, sessionID)
+      MutableHashMap.remove(orphanParts, sessionID)
+      MutableHashMap.remove(removedMessages, sessionID)
     })
     setData(
       produce((draft) => {
@@ -539,12 +561,12 @@ export function createServerSession(
 
   // Duplicates are harmless: callers only test membership.
   const protectedSessions = () => [
-    ...pinned.keys(),
-    ...requests.keys(),
-    ...inflight.keys(),
-    ...inflightTodo.keys(),
-    ...messageLoads.keys(),
-    ...optimistic.keys(),
+    ...MutableHashMap.keys(pinned),
+    ...MutableHashMap.keys(requests),
+    ...MutableHashMap.keys(inflight),
+    ...MutableHashMap.keys(inflightTodo),
+    ...MutableHashMap.keys(messageLoads),
+    ...MutableHashMap.keys(optimistic),
     ...Object.entries(data.permission)
       .filter(([, items]) => items.length > 0)
       .map(([sessionID]) => sessionID),
@@ -642,36 +664,43 @@ export function createServerSession(
     return messageIDs
   }
 
-  const replaceParts = (sessionID: string, items: MessagePage["part"], messageIDs: IDSet, load?: MessageLoadState) => {
+  const replaceParts = (
+    sessionID: string,
+    items: MessagePage["part"],
+    messageIDs: IDSet,
+    load: Option.Option<MessageLoadState>,
+  ) => {
     for (const item of items) {
       if (!MutableHashSet.has(messageIDs, item.id)) continue
-      const fetched = hasID(load?.clearedMessageParts, item.id)
-        ? []
-        : item.part.filter((part) => !HashSet.has(SKIP_PARTS, part.type))
+      const cleared = Option.exists(load, (value) => MutableHashSet.has(value.clearedMessageParts, item.id))
+      const fetched = cleared ? [] : item.part.filter((part) => !HashSet.has(SKIP_PARTS, part.type))
       const fetchedIDs = MutableHashSet.fromIterable(fetched.map((part) => part.id))
-      const pending = pendingParts.get(sessionID)?.get(item.id)
-      const touched = MutableHashSet.fromIterable([...(load?.touchedParts.get(item.id) ?? []), ...(pending ?? [])])
+      const pending = Option.flatMap(MutableHashMap.get(pendingParts, sessionID), (index) =>
+        MutableHashMap.get(index, item.id),
+      )
+      const loadTouched = Option.flatMap(load, (value) => MutableHashMap.get(value.touchedParts, item.id))
+      const carried = Option.flatMap(load, (value) => MutableHashMap.get(value.carriedDeltaParts, item.id))
+      const touched = MutableHashSet.fromIterable([...idsOf(loadTouched), ...idsOf(pending)])
       for (const part of fetched) {
         const accumulated = data.part_text_accum_delta[part.id]
-        const base = deltaBases.get(part.id)?.base
+        const base = Option.map(MutableHashMap.get(deltaBases, part.id), (value) => value.base)
         const preserveDelta =
-          base !== undefined &&
+          Option.isSome(base) &&
           accumulated !== undefined &&
           "text" in part &&
           typeof part.text === "string" &&
-          part.text.startsWith(base) &&
+          part.text.startsWith(base.value) &&
           accumulated.startsWith(part.text) &&
           accumulated !== part.text
         if (preserveDelta) MutableHashSet.add(touched, part.id)
-        if (hasID(load?.carriedDeltaParts.get(item.id), part.id) && !preserveDelta)
-          MutableHashSet.remove(touched, part.id)
+        if (hasID(carried, part.id) && !preserveDelta) MutableHashSet.remove(touched, part.id)
       }
-      for (const partID of load?.carriedDeltaParts.get(item.id) ?? []) {
+      for (const partID of idsOf(carried)) {
         if (!MutableHashSet.has(fetchedIDs, partID)) MutableHashSet.remove(touched, partID)
       }
       const parts = reconcileFetched(fetched, data.part[item.id] ?? [], { touched })
       if (!parts.length) {
-        removeID(orphanParts.get(sessionID), item.id)
+        removeID(MutableHashMap.get(orphanParts, sessionID), item.id)
         setData(produce((draft) => deleteMessageParts(draft, item.id)))
         continue
       }
@@ -682,31 +711,35 @@ export function createServerSession(
           for (const part of data.part[item.id] ?? []) {
             if (!MutableHashSet.has(partIDs, part.id) || !MutableHashSet.has(touched, part.id)) {
               delete draft[part.id]
-              deltaBases.delete(part.id)
+              MutableHashMap.remove(deltaBases, part.id)
             }
           }
         }),
       )
       setData("part", item.id, reconcile(parts, { key: "id" }))
-      removeID(orphanParts.get(sessionID), item.id)
+      removeID(MutableHashMap.get(orphanParts, sessionID), item.id)
     }
   }
 
   const applyMessagePage = (
     sessionID: string,
     page: MessagePage,
-    load: MessageLoadState | undefined,
+    load: Option.Option<MessageLoadState>,
     preserveUnfetched: boolean | ((message: Message) => boolean),
     cleanupOrphans: boolean,
   ) => {
+    const touchedSource = Option.map(load, (value) => value.touchedSource)
     const source = page.source
       ? (() => {
-          const incoming = new Map(page.source.map((message) => [message.id, message]))
+          const incoming = MutableHashSet.fromIterable(page.source.map((message) => message.id))
           const existing = data.session_message[sessionID] ?? []
-          const current = existing.filter((message) => !incoming.has(message.id))
-          const live = new Map(existing.map((message) => [message.id, message]))
+          const current = existing.filter((message) => !MutableHashSet.has(incoming, message.id))
+          const live = MutableHashMap.fromIterable(existing.map((message) => [message.id, message] as const))
           return (page.sourceMode === "older" ? [...page.source, ...current] : [...current, ...page.source]).map(
-            (message) => (hasID(load?.touchedSource, message.id) ? (live.get(message.id) ?? message) : message),
+            (message) =>
+              hasID(touchedSource, message.id)
+                ? Option.getOrElse(MutableHashMap.get(live, message.id), () => message)
+                : message,
           )
         })()
       : undefined
@@ -723,15 +756,23 @@ export function createServerSession(
             }
           })()
         : page
-    const merged = mergeOptimisticPage(projected, [...(optimistic.get(sessionID)?.values() ?? [])])
+    const optimisticItems = Option.match(MutableHashMap.get(optimistic, sessionID), {
+      onNone: (): OptimisticItem[] => [],
+      onSome: (items) => [...MutableHashMap.values(items)],
+    })
+    const merged = mergeOptimisticPage(projected, optimisticItems)
+    const cleared = Option.map(load, (value) => value.clearedMessageParts)
     merged.observed.forEach((item) => {
-      if (!hasID(load?.clearedMessageParts, item.messageID)) confirmOptimistic(sessionID, item.messageID, item.parts)
+      if (!hasID(cleared, item.messageID)) confirmOptimistic(sessionID, item.messageID, item.parts)
     })
     const messages = reconcileFetched(merged.session, data.message[sessionID] ?? [], {
       // Duplicate ids are harmless: reconcileFetched applies each touched id idempotently.
-      touched: [...(load?.touchedMessages ?? []), ...(removedMessages.get(sessionID) ?? [])],
-      retained: load?.retainedMessages,
-      removed: load?.removedMessages,
+      touched: [
+        ...idsOf(Option.map(load, (value) => value.touchedMessages)),
+        ...idsOf(MutableHashMap.get(removedMessages, sessionID)),
+      ],
+      retained: idsOf(Option.map(load, (value) => value.retainedMessages)),
+      removed: idsOf(Option.map(load, (value) => value.removedMessages)),
       preserveUnfetched,
       compare: compareMessages,
     })
@@ -739,13 +780,13 @@ export function createServerSession(
       if (source) setData("session_message", sessionID, reconcile(source))
       const messageIDs = replaceMessages(sessionID, messages)
       replaceParts(sessionID, merged.part, messageIDs, load)
-      const orphans = orphanParts.get(sessionID)
-      if (cleanupOrphans && page.complete && orphans) {
-        for (const messageID of orphans) {
+      const orphans = MutableHashMap.get(orphanParts, sessionID)
+      if (cleanupOrphans && page.complete && Option.isSome(orphans)) {
+        for (const messageID of orphans.value) {
           if (!MutableHashSet.has(messageIDs, messageID))
             setData(produce((draft) => deleteMessageParts(draft, messageID)))
         }
-        orphanParts.delete(sessionID)
+        MutableHashMap.remove(orphanParts, sessionID)
       }
       setMeta("limit", sessionID, messages.length)
       setMeta("cursor", sessionID, merged.cursor)
@@ -761,16 +802,16 @@ export function createServerSession(
       touchedMessages: MutableHashSet.empty(),
       removedMessages: MutableHashSet.empty(),
       retainedMessages: MutableHashSet.empty(),
-      touchedParts: new Map(),
-      deltaParts: new Map(),
-      carriedDeltaParts: new Map(),
-      removedParts: new Map(),
-      optimisticParts: new Map(),
+      touchedParts: MutableHashMap.empty(),
+      deltaParts: MutableHashMap.empty(),
+      carriedDeltaParts: MutableHashMap.empty(),
+      removedParts: MutableHashMap.empty(),
+      optimisticParts: MutableHashMap.empty(),
       orphanParents: MutableHashSet.empty(),
       clearedMessageParts: MutableHashSet.empty(),
       touchedSource: MutableHashSet.empty(),
     }
-    messageLoads.set(sessionID, load)
+    MutableHashMap.set(messageLoads, sessionID, load)
     setMeta("loading", sessionID, true)
     let applied = false
     try {
@@ -779,7 +820,7 @@ export function createServerSession(
         (oldest, message) => (!oldest || compareMessages(message, oldest) < 0 ? message : oldest),
         undefined,
       )
-      if (generations.get(sessionID) !== active) return
+      if (!isGeneration(sessionID, active)) return
 
       const parents = [] as Awaited<ReturnType<typeof fetchMessage>>[]
       if (mode !== "prepend") {
@@ -788,8 +829,11 @@ export function createServerSession(
           ...(data.message[sessionID] ?? [])
             .filter((message) => {
               if (message.role !== "user") return false
-              const item = optimistic.get(sessionID)?.get(message.id)
-              return MutableHashSet.has(load.touchedMessages, message.id) && (!item || item.confirmedMessage === true)
+              const item = optimisticItem(sessionID, message.id)
+              return (
+                MutableHashSet.has(load.touchedMessages, message.id) &&
+                (Option.isNone(item) || item.value.confirmedMessage === true)
+              )
             })
             .map((message) => message.id),
         ])
@@ -799,7 +843,7 @@ export function createServerSession(
           ),
         )
         for (const parentID of parentIDs) {
-          if (generations.get(sessionID) !== active) break
+          if (!isGeneration(sessionID, active)) break
           const parent = await fetchMessage(sessionID, parentID, () =>
             resetMessageLoad(sessionID, load, messageLoadBaseline(load, parentID)),
           ).catch((error) => {
@@ -815,7 +859,7 @@ export function createServerSession(
           parents.push(parent)
         }
       }
-      if (generations.get(sessionID) !== active) return
+      if (!isGeneration(sessionID, active)) return
       const result =
         mode === "prepend"
           ? page
@@ -836,23 +880,24 @@ export function createServerSession(
       applyMessagePage(
         sessionID,
         result,
-        messageLoads.get(sessionID) === load ? load : undefined,
+        isLoad(sessionID, load) ? Option.some(load) : Option.none(),
         preserveUnfetched,
         mode !== "prepend",
       )
       applied = true
     } finally {
-      if (!applied && generations.get(sessionID) === active && messageLoads.get(sessionID) === load) {
+      if (!applied && isGeneration(sessionID, active) && isLoad(sessionID, load)) {
         for (const messageID of load.orphanParents) {
-          if (!hasID(orphanParts.get(sessionID), messageID)) continue
+          if (!hasID(MutableHashMap.get(orphanParts, sessionID), messageID)) continue
           setData(produce((draft) => deleteMessageParts(draft, messageID)))
-          removeID(orphanParts.get(sessionID), messageID)
+          removeID(MutableHashMap.get(orphanParts, sessionID), messageID)
         }
-        const orphans = orphanParts.get(sessionID)
-        if (orphans && MutableHashSet.size(orphans) === 0) orphanParts.delete(sessionID)
+        const orphans = MutableHashMap.get(orphanParts, sessionID)
+        if (Option.isSome(orphans) && MutableHashSet.size(orphans.value) === 0)
+          MutableHashMap.remove(orphanParts, sessionID)
       }
-      if (messageLoads.get(sessionID) === load) messageLoads.delete(sessionID)
-      if (generations.get(sessionID) === active) setMeta("loading", sessionID, false)
+      if (isLoad(sessionID, load)) MutableHashMap.remove(messageLoads, sessionID)
+      if (isGeneration(sessionID, active)) setMeta("loading", sessionID, false)
     }
   }
 
@@ -872,7 +917,8 @@ export function createServerSession(
 
   const prefetch = async (sessionID: string, limit: number) => {
     touch(sessionID)
-    await inflight.get(sessionID)
+    const pending = MutableHashMap.get(inflight, sessionID)
+    if (Option.isSome(pending)) await pending.value
     if (
       Date.now() - (meta.at[sessionID] ?? 0) <= 15_000 &&
       (meta.complete[sessionID] || (data.message[sessionID]?.length ?? 0) >= limit)
@@ -904,8 +950,9 @@ export function createServerSession(
   }
 
   const projectV2 = (reduction: V2SessionReduction) => {
-    const load = messageLoads.get(reduction.sessionID)
-    if (load) reduction.touched.forEach((messageID) => MutableHashSet.add(load.touchedSource, messageID))
+    const load = MutableHashMap.get(messageLoads, reduction.sessionID)
+    if (Option.isSome(load))
+      reduction.touched.forEach((messageID) => MutableHashSet.add(load.value.touchedSource, messageID))
     setData("session_message", reduction.sessionID, reconcile(reduction.messages))
     if (reduction.touched.length === 0) return
 
@@ -1056,16 +1103,16 @@ export function createServerSession(
       case "message.updated": {
         const info = cleanMessage((event.properties as { info: Message }).info)
         indexLegacyMessage(info)
-        const load = messageLoads.get(info.sessionID)
-        if (load) {
-          MutableHashSet.add(load.touchedMessages, info.id)
-          MutableHashSet.remove(load.removedMessages, info.id)
+        const load = MutableHashMap.get(messageLoads, info.sessionID)
+        if (Option.isSome(load)) {
+          MutableHashSet.add(load.value.touchedMessages, info.id)
+          MutableHashSet.remove(load.value.removedMessages, info.id)
         }
-        const items = optimistic.get(info.sessionID)
-        const item = items?.get(info.id)
-        if (items && item) {
-          if (item.parts.length === 0) clearOptimistic(info.sessionID, info.id)
-          if (item.parts.length > 0) items.set(info.id, { ...item, confirmedMessage: true })
+        const item = optimisticItem(info.sessionID, info.id)
+        if (Option.isSome(item)) {
+          if (item.value.parts.length === 0) clearOptimistic(info.sessionID, info.id)
+          if (item.value.parts.length > 0)
+            setOptimisticItem(info.sessionID, info.id, { ...item.value, confirmedMessage: true })
         }
         removeFromIndex(orphanParts, info.sessionID, info.id)
         removeFromIndex(removedMessages, info.sessionID, info.id)
@@ -1089,18 +1136,21 @@ export function createServerSession(
         setData("session_message", props.sessionID, (messages) =>
           messages?.filter((message) => message.id !== props.messageID),
         )
-        const load = messageLoads.get(props.sessionID)
-        if (load) {
-          MutableHashSet.add(load.touchedMessages, props.messageID)
-          MutableHashSet.add(load.removedMessages, props.messageID)
-          MutableHashSet.add(load.clearedMessageParts, props.messageID)
-          load.deltaParts.delete(props.messageID)
-          load.carriedDeltaParts.delete(props.messageID)
-          load.removedParts.delete(props.messageID)
-          load.optimisticParts.delete(props.messageID)
+        const load = MutableHashMap.get(messageLoads, props.sessionID)
+        if (Option.isSome(load)) {
+          MutableHashSet.add(load.value.touchedMessages, props.messageID)
+          MutableHashSet.add(load.value.removedMessages, props.messageID)
+          MutableHashSet.add(load.value.clearedMessageParts, props.messageID)
+          MutableHashMap.remove(load.value.deltaParts, props.messageID)
+          MutableHashMap.remove(load.value.carriedDeltaParts, props.messageID)
+          MutableHashMap.remove(load.value.removedParts, props.messageID)
+          MutableHashMap.remove(load.value.optimisticParts, props.messageID)
         }
-        pendingParts.get(props.sessionID)?.delete(props.messageID)
-        if (pendingParts.get(props.sessionID)?.size === 0) pendingParts.delete(props.sessionID)
+        const pending = MutableHashMap.get(pendingParts, props.sessionID)
+        if (Option.isSome(pending)) {
+          MutableHashMap.remove(pending.value, props.messageID)
+          if (MutableHashMap.size(pending.value) === 0) MutableHashMap.remove(pendingParts, props.sessionID)
+        }
         addToIndex(removedMessages, props.sessionID, props.messageID)
         clearOptimistic(props.sessionID, props.messageID)
         setData(
@@ -1119,27 +1169,32 @@ export function createServerSession(
         const part = (event.properties as { part: Part }).part
         if (HashSet.has(SKIP_PARTS, part.type)) return
         const messages = data.message[part.sessionID]
-        const load = messageLoads.get(part.sessionID)
+        const load = MutableHashMap.get(messageLoads, part.sessionID)
         const missing = !messages?.some((message) => message.id === part.messageID)
         // Outside a page load, accepting a part without its ordered parent event would create an unbounded orphan.
         if (
           missing &&
-          (!load ||
-            MutableHashSet.has(load.clearedMessageParts, part.messageID) ||
-            hasID(removedMessages.get(part.sessionID), part.messageID))
+          (Option.isNone(load) ||
+            MutableHashSet.has(load.value.clearedMessageParts, part.messageID) ||
+            hasID(MutableHashMap.get(removedMessages, part.sessionID), part.messageID))
         )
           return
         if (missing) {
           addToIndex(orphanParts, part.sessionID, part.messageID)
-          if (load) MutableHashSet.add(load.orphanParents, part.messageID)
+          if (Option.isSome(load)) MutableHashSet.add(load.value.orphanParents, part.messageID)
         }
-        removeFromIndex(load?.deltaParts, part.messageID, part.id)
-        removeFromIndex(load?.carriedDeltaParts, part.messageID, part.id)
-        removeFromIndex(load?.removedParts, part.messageID, part.id)
-        removeFromIndex(pendingParts.get(part.sessionID), part.messageID, part.id)
-        if (pendingParts.get(part.sessionID)?.size === 0) pendingParts.delete(part.sessionID)
-        removeFromIndex(load?.optimisticParts, part.messageID, part.id)
-        deltaBases.delete(part.id)
+        if (Option.isSome(load)) {
+          removeFromIndex(load.value.deltaParts, part.messageID, part.id)
+          removeFromIndex(load.value.carriedDeltaParts, part.messageID, part.id)
+          removeFromIndex(load.value.removedParts, part.messageID, part.id)
+          removeFromIndex(load.value.optimisticParts, part.messageID, part.id)
+        }
+        const pending = MutableHashMap.get(pendingParts, part.sessionID)
+        if (Option.isSome(pending)) {
+          removeFromIndex(pending.value, part.messageID, part.id)
+          if (MutableHashMap.size(pending.value) === 0) MutableHashMap.remove(pendingParts, part.sessionID)
+        }
+        MutableHashMap.remove(deltaBases, part.id)
         trackPartChange(part.sessionID, part.messageID, part.id)
         confirmOptimisticPart(part.sessionID, part.messageID, part)
         setData(
@@ -1164,22 +1219,25 @@ export function createServerSession(
       case "message.part.removed": {
         const props = event.properties as { sessionID: string; messageID: string; partID: string }
         // Part removal is event-only on the server, so its tombstone lasts until a later update or eviction.
-        const pending = pendingParts.get(props.sessionID) ?? new Map<string, IDSet>()
+        const pending = Option.getOrElse(
+          MutableHashMap.get(pendingParts, props.sessionID),
+          (): IDIndex => MutableHashMap.empty(),
+        )
         addToIndex(pending, props.messageID, props.partID)
-        pendingParts.set(props.sessionID, pending)
-        const load = messageLoads.get(props.sessionID)
-        removeFromIndex(load?.deltaParts, props.messageID, props.partID)
-        removeFromIndex(load?.carriedDeltaParts, props.messageID, props.partID)
-        if (load) {
-          addToIndex(load.removedParts, props.messageID, props.partID)
-          removeFromIndex(load.optimisticParts, props.messageID, props.partID)
+        MutableHashMap.set(pendingParts, props.sessionID, pending)
+        const load = MutableHashMap.get(messageLoads, props.sessionID)
+        if (Option.isSome(load)) {
+          removeFromIndex(load.value.deltaParts, props.messageID, props.partID)
+          removeFromIndex(load.value.carriedDeltaParts, props.messageID, props.partID)
+          addToIndex(load.value.removedParts, props.messageID, props.partID)
+          removeFromIndex(load.value.optimisticParts, props.messageID, props.partID)
         }
         trackPartChange(props.sessionID, props.messageID, props.partID)
         clearOptimisticPart(props.sessionID, props.messageID, props.partID)
         setData(
           produce((draft) => {
             delete draft.part_text_accum_delta[props.partID]
-            deltaBases.delete(props.partID)
+            MutableHashMap.remove(deltaBases, props.partID)
             const parts = draft.part[props.messageID]
             if (!parts) return
             const result = Binary.search(parts, props.partID, (part) => part.id)
@@ -1202,15 +1260,15 @@ export function createServerSession(
         const result = Binary.search(parts, props.partID, (part) => part.id)
         if (!result.found) return
         trackPartChange(props.sessionID, props.messageID, props.partID)
-        const load = messageLoads.get(props.sessionID)
-        if (load) {
-          addToIndex(load.deltaParts, props.messageID, props.partID)
-          removeFromIndex(load.carriedDeltaParts, props.messageID, props.partID)
+        const load = MutableHashMap.get(messageLoads, props.sessionID)
+        if (Option.isSome(load)) {
+          addToIndex(load.value.deltaParts, props.messageID, props.partID)
+          removeFromIndex(load.value.carriedDeltaParts, props.messageID, props.partID)
         }
         const field = props.field as keyof (typeof parts)[number]
         const current = parts[result.index]?.[field]
-        if (!deltaBases.has(props.partID) && typeof current === "string")
-          deltaBases.set(props.partID, { base: current, sessionID: props.sessionID })
+        if (!MutableHashMap.has(deltaBases, props.partID) && typeof current === "string")
+          MutableHashMap.set(deltaBases, props.partID, { base: current, sessionID: props.sessionID })
         setData(
           "part_text_accum_delta",
           props.partID,
@@ -1321,38 +1379,45 @@ export function createServerSession(
         const parts = input.parts
           .filter((part) => !!part?.id && !HashSet.has(SKIP_PARTS, part.type))
           .sort((a, b) => cmp(a.id, b.id))
-        const load = messageLoads.get(input.sessionID)
-        if (load && MutableHashSet.has(load.clearedMessageParts, input.message.id))
-          mergeIntoIndex(
-            load.touchedParts,
+        const load = MutableHashMap.get(messageLoads, input.sessionID)
+        if (Option.isSome(load)) {
+          if (MutableHashSet.has(load.value.clearedMessageParts, input.message.id))
+            mergeIntoIndex(
+              load.value.touchedParts,
+              input.message.id,
+              parts.map((part) => part.id),
+            )
+          MutableHashSet.remove(load.value.removedMessages, input.message.id)
+          MutableHashMap.set(
+            load.value.optimisticParts,
             input.message.id,
-            parts.map((part) => part.id),
+            MutableHashSet.fromIterable(parts.map((part) => part.id)),
           )
-        if (load) {
-          MutableHashSet.remove(load.removedMessages, input.message.id)
-          load.optimisticParts.set(input.message.id, MutableHashSet.fromIterable(parts.map((part) => part.id)))
         }
-        const items = optimistic.get(input.sessionID)
+        const items = MutableHashMap.get(optimistic, input.sessionID)
         removeFromIndex(removedMessages, input.sessionID, input.message.id)
-        if (items) items.set(input.message.id, { ...input, parts, confirmedParts: [] })
-        if (!items)
-          optimistic.set(input.sessionID, new Map([[input.message.id, { ...input, parts, confirmedParts: [] }]]))
+        const item: OptimisticItem = { ...input, parts, confirmedParts: [] }
+        if (Option.isSome(items)) MutableHashMap.set(items.value, input.message.id, item)
+        if (Option.isNone(items))
+          MutableHashMap.set(optimistic, input.sessionID, MutableHashMap.make([input.message.id, item]))
         setData("message", input.sessionID, (messages = []) => merge(messages, [input.message]).sort(compareMessages))
         setData(
           "part_text_accum_delta",
           produce((draft) => {
             for (const part of [...(data.part[input.message.id] ?? []), ...parts]) {
               delete draft[part.id]
-              deltaBases.delete(part.id)
+              MutableHashMap.remove(deltaBases, part.id)
             }
           }),
         )
         setData("part", input.message.id, parts)
       },
       remove(input: { sessionID: string; messageID: string }) {
-        const item = optimistic.get(input.sessionID)?.get(input.messageID)
-        if (!item) return
-        messageLoads.get(input.sessionID)?.optimisticParts.delete(input.messageID)
+        const found = optimisticItem(input.sessionID, input.messageID)
+        if (Option.isNone(found)) return
+        const item = found.value
+        const load = MutableHashMap.get(messageLoads, input.sessionID)
+        if (Option.isSome(load)) MutableHashMap.remove(load.value.optimisticParts, input.messageID)
         clearOptimistic(input.sessionID, input.messageID)
         if (item.confirmedMessage) {
           const partIDs = MutableHashSet.fromIterable(item.parts.map((part) => part.id))
@@ -1360,7 +1425,7 @@ export function createServerSession(
             produce((draft) => {
               for (const part of item.parts) {
                 delete draft.part_text_accum_delta[part.id]
-                deltaBases.delete(part.id)
+                MutableHashMap.remove(deltaBases, part.id)
               }
               const parts = draft.part[input.messageID]
               if (!parts) return
@@ -1384,7 +1449,7 @@ export function createServerSession(
       return runInflight(inflightTodo, sessionID, () => {
         const active = generation(sessionID)
         return (options?.retry ?? retry)(() => client.session.todo({ sessionID })).then((result) => {
-          if (generations.get(sessionID) !== active) return
+          if (!isGeneration(sessionID, active)) return
           setData("todo", sessionID, reconcile(result.data ?? [], { key: "id" }))
         })
       })
@@ -1408,13 +1473,13 @@ export function createServerSession(
       evict([sessionID])
     },
     pin(sessionID: string) {
-      pinned.set(sessionID, (pinned.get(sessionID) ?? 0) + 1)
+      MutableHashMap.set(pinned, sessionID, Option.getOrElse(MutableHashMap.get(pinned, sessionID), () => 0) + 1)
       touch(sessionID)
     },
     unpin(sessionID: string) {
-      const count = pinned.get(sessionID)
-      if (!count || count === 1) pinned.delete(sessionID)
-      if (count && count > 1) pinned.set(sessionID, count - 1)
+      const count = Option.getOrElse(MutableHashMap.get(pinned, sessionID), () => 0)
+      if (count <= 1) MutableHashMap.remove(pinned, sessionID)
+      if (count > 1) MutableHashMap.set(pinned, sessionID, count - 1)
     },
     apply,
     applyV2,
