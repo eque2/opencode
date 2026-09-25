@@ -29,40 +29,40 @@ function getText(value: unknown): string | undefined {
   }
 
   if (typeof value === "number") return String(value)
-  return
+  return undefined
 }
 
 function normalizeVersion(value: string | undefined) {
   const text = value?.trim()
-  if (!text) return
+  if (!text) return undefined
   return text.startsWith("v") || text.startsWith("V") ? text.slice(1) : text
 }
 
 function parseMedia(value: unknown, alt: string): Highlight["media"] | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const type = getText(value.type)?.toLowerCase()
   const src = getText(value.src) ?? getText(value.url)
-  if (!src) return
-  if (type !== "image" && type !== "video") return
+  if (!src) return undefined
+  if (type !== "image" && type !== "video") return undefined
 
   return { type, src, alt }
 }
 
 function parseHighlight(value: unknown): Highlight | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
 
   const title = getText(value.title)
-  if (!title) return
+  if (!title) return undefined
 
   const description = getText(value.description) ?? getText(value.shortDescription)
-  if (!description) return
+  if (!description) return undefined
 
   const media = parseMedia(value.media, title)
   return { title, description, media }
 }
 
 function parseRelease(value: unknown): ParsedRelease | undefined {
-  if (!isRecord(value)) return
+  if (!isRecord(value)) return undefined
   const tag = getText(value.tag) ?? getText(value.tag_name) ?? getText(value.name)
 
   if (!Array.isArray(value.highlights)) {
@@ -93,8 +93,8 @@ function parseChangelog(value: unknown): ParsedRelease[] | undefined {
     return value.map(parseRelease).filter((release): release is ParsedRelease => release !== undefined)
   }
 
-  if (!isRecord(value)) return
-  if (!Array.isArray(value.releases)) return
+  if (!isRecord(value)) return undefined
+  if (!Array.isArray(value.releases)) return undefined
 
   return value.releases.map(parseRelease).filter((release): release is ParsedRelease => release !== undefined)
 }
