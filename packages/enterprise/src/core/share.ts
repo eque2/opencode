@@ -1,6 +1,7 @@
 import { Message, Model, Part, Session, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
-import { Array, Config, Effect, HashMap, Match, Option, Order, Predicate, Schema, String } from "effect"
+import { Array, Config, Crypto, Effect, HashMap, Match, Option, Order, Predicate, Schema, String } from "effect"
+import { WebCrypto } from "./crypto"
 import { Storage } from "./storage"
 
 export namespace Share {
@@ -164,12 +165,13 @@ export namespace Share {
 
   export const create = Effect.fn("Share.create")(function* (input: typeof CreateInput.Encoded) {
     const body = yield* Schema.decodeUnknownEffect(CreateInput)(input)
+    const random = yield* Crypto.Crypto
     const nodeEnv = yield* readEnvSnapshot(Config.option(Config.String("NODE_ENV")))
     const isTest = Option.contains(nodeEnv, "test") || body.sessionID.startsWith("test_")
     const info: Info = {
       id: ID.make((isTest ? "test_" : "") + body.sessionID.slice(-8)),
       sessionID: body.sessionID,
-      secret: crypto.randomUUID(),
+      secret: yield* random.randomUUIDv4,
     }
     const exists = yield* get(info.id)
     if (Option.isSome(exists)) return yield* new AlreadyExistsError({ id: info.id })
@@ -178,7 +180,7 @@ export namespace Share {
       discard: true,
     })
     return info
-  })
+  }, Effect.provide(WebCrypto.layer))
 
   export const get = Effect.fn("Share.get")(function* (id: string) {
     return yield* Storage.read(Info, ["share", id])
