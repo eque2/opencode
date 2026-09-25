@@ -186,8 +186,8 @@ describe("persist localStorage resilience", () => {
 
   test("server workspace target preserves local storage and isolates remote storage", () => {
     const local = Persist.serverWorkspace(ServerScope.local, "/home/luke/repo", "prompt")
-    const windows = Persist.serverWorkspace("https://windows.example" as ServerScope, "/home/luke/repo", "prompt")
-    const debian = Persist.serverWorkspace("https://debian.example" as ServerScope, "/home/luke/repo", "prompt")
+    const windows = Persist.serverWorkspace(ServerScope.make("https://windows.example"), "/home/luke/repo", "prompt")
+    const debian = Persist.serverWorkspace(ServerScope.make("https://debian.example"), "/home/luke/repo", "prompt")
 
     expect(local).toEqual(Persist.workspace("/home/luke/repo", "prompt"))
     expect(windows.storage).not.toBe(local.storage)
@@ -199,13 +199,13 @@ describe("persist localStorage resilience", () => {
 
   test("server global target preserves local key and isolates remote keys", () => {
     expect(Persist.serverGlobal(ServerScope.local, "notification")).toEqual(Persist.global("notification"))
-    expect(Persist.serverGlobal("https://debian.example" as ServerScope, "notification")).toEqual({
+    expect(Persist.serverGlobal(ServerScope.make("https://debian.example"), "notification")).toEqual({
       storage: "opencode.global.dat",
       key: "https://debian.example\0notification",
     })
   })
 
   test("server global target cannot collide when scope and key contain colons", () => {
-    expect(Persist.serverGlobal("a:b" as ServerScope, "c")).not.toEqual(Persist.serverGlobal("a" as ServerScope, "b:c"))
+    expect(Persist.serverGlobal(ServerScope.make("a:b"), "c")).not.toEqual(Persist.serverGlobal(ServerScope.make("a"), "b:c"))
   })
 })

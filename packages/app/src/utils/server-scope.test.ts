@@ -1,21 +1,20 @@
 import { describe, expect, test } from "bun:test"
+import { ServerConnection } from "@/context/server"
 import { ScopedKey, ServerScope, SessionRouteKey, SessionStateKey, migrateLegacySessionStateKeys } from "./server-scope"
 
 describe("ServerScope", () => {
   test("uses a stable local scope for the canonical sidecar", () => {
-    expect(String(ServerScope.fromServerKey("sidecar" as Parameters<typeof ServerScope.fromServerKey>[0]))).toBe(
-      "local",
-    )
+    expect(String(ServerScope.fromServerKey(ServerConnection.Key.make("sidecar")))).toBe("local")
   })
 
   test("keeps configured loopback servers distinct from the canonical sidecar", () => {
-    expect(
-      String(ServerScope.fromServerKey("http://localhost:4096" as Parameters<typeof ServerScope.fromServerKey>[0])),
-    ).toBe("http://localhost:4096")
+    expect(String(ServerScope.fromServerKey(ServerConnection.Key.make("http://localhost:4096")))).toBe(
+      "http://localhost:4096",
+    )
   })
 
   test("uses a stable local scope for an explicit canonical web server", () => {
-    const key = "http://localhost:4096" as Parameters<typeof ServerScope.fromServerKey>[0]
+    const key = ServerConnection.Key.make("http://localhost:4096")
     expect(String(ServerScope.fromServerKey(key, key))).toBe("local")
   })
 })
@@ -24,11 +23,11 @@ describe("SessionStateKey", () => {
   test("combines local and remote scope with route identity", () => {
     const route = SessionRouteKey.fromRoute("cmVwbw", "session-1")
     expect(String(SessionStateKey.from(ServerScope.local, route))).toBe("local\0cmVwbw/session-1")
-    expect(String(SessionStateKey.from("https://windows.example" as ServerScope, route))).toBe(
+    expect(String(SessionStateKey.from(ServerScope.make("https://windows.example"), route))).toBe(
       "https://windows.example\0cmVwbw/session-1",
     )
-    expect(SessionStateKey.from("https://debian.example" as ServerScope, route)).not.toBe(
-      SessionStateKey.from("https://windows.example" as ServerScope, route),
+    expect(SessionStateKey.from(ServerScope.make("https://debian.example"), route)).not.toBe(
+      SessionStateKey.from(ServerScope.make("https://windows.example"), route),
     )
   })
 
