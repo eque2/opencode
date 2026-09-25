@@ -106,6 +106,7 @@ describe("Home V2 session index", () => {
   test("maps visible roots to Home session summaries", () => {
     const activeNull: HomeSessionWire = {
       ...session({ id: "active-null", updated: 20 }),
+      // eslint-disable-next-line effect/no-null-use-option -- (b) the V2 server sends archived: null for an active session; this wire literal is the case under test
       time: { created: 1, updated: 20, archived: null },
     }
     const result = parseHomeSessionIndex([
