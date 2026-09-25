@@ -8,7 +8,7 @@ import { createMemo, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerProtocol, useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
-import { HashSet } from "effect"
+import { Data, Effect, HashSet } from "effect"
 import { DialogConnectProvider, useProviderConnectController } from "./dialog-connect-provider"
 import { DialogCustomProvider } from "./dialog-custom-provider"
 import { SettingsList } from "./settings-list"
@@ -27,6 +27,21 @@ const PROVIDER_NOTES = [
   { match: (id: string) => id === "openrouter", key: "dialog.provider.openrouter.note" },
   { match: (id: string) => id === "vercel", key: "dialog.provider.vercel.note" },
 ] as const
+
+/** A provider request that rejected. `message` is the text the failure toast shows. */
+class ProviderRequestError extends Data.TaggedError("ProviderRequestError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+/** Runs one SDK request. The failure keeps the rejection's own message, which the toast shows. */
+function request<A>(run: () => Promise<A>) {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new ProviderRequestError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  })
+}
 
 export const SettingsProviders: Component<{ onBack?: () => void }> = (props) => {
   return (
@@ -98,53 +113,49 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
     return true
   }
 
-  const disableProvider = async (providerID: string, name: string) => {
-    if (protocol() !== "v1") return
-    const before = serverSync().data.config.disabled_providers ?? []
-    const next = before.includes(providerID) ? before : [...before, providerID]
-    serverSync().set("config", "disabled_providers", next)
+  const disconnected = (name: string) =>
+    Effect.sync(() =>
+      showToast({
+        variant: "success",
+        icon: "circle-check",
+        title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
+        description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
+      }),
+    )
 
-    await serverSync()
-      .updateConfig({ disabled_providers: next })
-      .then(() => {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        serverSync().set("config", "disabled_providers", before)
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
+  const failed = (error: ProviderRequestError) =>
+    Effect.sync(() => showToast({ title: language.t("common.requestFailed"), description: error.message }))
 
-  const disconnect = async (providerID: string, name: string) => {
-    if (isConfigCustom(providerID)) {
-      await serverSDK()
-        .client.auth.remove({ providerID })
-        .catch(() => undefined)
-      await disableProvider(providerID, name)
-      return
-    }
-    await serverSDK()
-      .client.auth.remove({ providerID })
-      .then(async () => {
-        await serverSDK().client.global.dispose()
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("provider.disconnect.toast.disconnected.title", { provider: name }),
-          description: language.t("provider.disconnect.toast.disconnected.description", { provider: name }),
-        })
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
-        showToast({ title: language.t("common.requestFailed"), description: message })
-      })
-  }
+  const disableProvider = (providerID: string, name: string) =>
+    Effect.gen(function* () {
+      if (protocol() !== "v1") return
+      const before = serverSync().data.config.disabled_providers ?? []
+      const next = before.includes(providerID) ? before : [...before, providerID]
+      serverSync().set("config", "disabled_providers", next)
+
+      yield* request(() => serverSync().updateConfig({ disabled_providers: next })).pipe(
+        Effect.matchEffect({
+          onSuccess: () => disconnected(name),
+          onFailure: (error) =>
+            Effect.sync(() => serverSync().set("config", "disabled_providers", before)).pipe(
+              Effect.andThen(failed(error)),
+            ),
+        }),
+      )
+    })
+
+  const disconnect = (providerID: string, name: string) =>
+    Effect.gen(function* () {
+      if (isConfigCustom(providerID)) {
+        yield* request(() => serverSDK().client.auth.remove({ providerID })).pipe(Effect.ignore)
+        yield* disableProvider(providerID, name)
+        return
+      }
+      yield* request(() => serverSDK().client.auth.remove({ providerID })).pipe(
+        Effect.andThen(request(() => serverSDK().client.global.dispose())),
+        Effect.matchEffect({ onSuccess: () => disconnected(name), onFailure: failed }),
+      )
+    }).pipe(Effect.tapDefect((defect) => Effect.logError(defect)))
 
   return (
     <div class="flex flex-col h-full overflow-y-auto no-scrollbar px-4 pb-10 sm:px-10 sm:pb-10">
@@ -183,7 +194,11 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
                         </span>
                       }
                     >
-                      <Button size="large" variant="ghost" onClick={() => void disconnect(item.id, item.name)}>
+                      <Button
+                        size="large"
+                        variant="ghost"
+                        onClick={() => Effect.runFork(disconnect(item.id, item.name))}
+                      >
                         {language.t("common.disconnect")}
                       </Button>
                     </Show>
