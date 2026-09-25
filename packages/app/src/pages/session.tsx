@@ -27,7 +27,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { debounce } from "@solid-primitives/scheduled"
 import { useLocal } from "@/context/local"
 import { FileProvider, selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import type { SessionReviewFocus, SessionReviewLineComment } from "@opencode-ai/session-ui/session-review"
 import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Select } from "@opencode-ai/ui/select"
@@ -113,9 +113,13 @@ const emptyFollowups: FollowupItem[] = []
 type ChangeMode = "git" | "branch" | "turn"
 type VcsMode = "git" | "branch"
 
-const sessionViewState = () => ({
-  messageId: undefined as string | undefined,
-  mobileTab: "session" as "session" | "changes",
+type SessionViewState = {
+  messageId?: string
+  mobileTab: "session" | "changes"
+}
+
+const sessionViewState = (): SessionViewState => ({
+  mobileTab: "session",
 })
 
 function isCurrentSessionNotFoundError(error: unknown, sessionID: string | undefined) {
@@ -389,12 +393,17 @@ export default function Page() {
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
-      setSearchParams({ ...searchParams, prompt: undefined })
+      // Solid Router removes a search param whose value is undefined.
+      setSearchParams({ ...searchParams, prompt: Option.getOrUndefined(Option.none()) })
     })
   })
 
-  const [ui, setUi] = createStore({
-    pendingMessage: undefined as string | undefined,
+  const [ui, setUi] = createStore<{
+    pendingMessage?: string
+    reviewSnap: boolean
+    scrollGesture: number
+    scroll: { overflow: boolean; bottom: boolean; jump: boolean }
+  }>({
     reviewSnap: false,
     scrollGesture: 0,
     scroll: {
@@ -412,7 +421,11 @@ export default function Page() {
   })
 
   const workspaceTabs = createMemo(() => layout.tabs(workspaceKey))
-  const sessionPanelKey = createMemo(() => (params.id ? `${serverSDK().scope}\0${params.id}` : undefined))
+  const sessionPanelKey = createMemo(() => {
+    const id = params.id
+    if (!id) return undefined
+    return `${serverSDK().scope}\0${id}`
+  })
 
   createEffect(
     on(
@@ -440,12 +453,17 @@ export default function Page() {
         if (current.all.length > 0 || current.active) return
 
         const all = normalizeTabs(from.all)
-        const active = from.active ? normalizeTab(from.active) : undefined
+        const active = Option.fromNullishOr(from.active).pipe(
+          Option.filter((tab) => tab.length > 0),
+          Option.map(normalizeTab),
+          Option.filter((tab) => tab.length > 0 && all.includes(tab)),
+        )
         tabs().setAll(all)
-        tabs().setActive(active && all.includes(active) ? active : all[0])
+        tabs().setActive(Option.getOrElse(active, () => all[0]))
 
         workspaceTabs().setAll([])
-        workspaceTabs().setActive(undefined)
+        // The layout tab API clears the active tab with undefined.
+        workspaceTabs().setActive(Option.getOrUndefined(Option.none()))
       },
       { defer: true },
     ),
@@ -537,7 +555,11 @@ export default function Page() {
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
   }
 
-  const info = createMemo(() => (params.id ? sync().session.get(params.id) : undefined))
+  const info = createMemo(() => {
+    const id = params.id
+    if (!id) return undefined
+    return sync().session.get(id)
+  })
   const isChildSession = createMemo(() => !!info()?.parentID)
   const canReview = createMemo(() => !!sync().project)
   const reviewTab = createMemo(() => isDesktop())
@@ -603,11 +625,17 @@ export default function Page() {
     ),
   )
 
-  const [store, setStore] = createStore({
+  const [store, setStore] = createStore<SessionViewState & { newSessionWorktree: string; deferRender: boolean }>({
     ...sessionViewState(),
     newSessionWorktree: "main",
     deferRender: false,
   })
+  const clearMessageId = () =>
+    setStore(
+      produce((draft) => {
+        delete draft.messageId
+      }),
+    )
 
   const [followup, setFollowup] = persisted(
     Persist.serverWorkspace(serverSDK().scope, sdk().directory, "followup", ["followup.v1"]),
@@ -623,6 +651,12 @@ export default function Page() {
       edit: {},
     }),
   )
+  const clearFollowup = (key: "failed" | "paused" | "edit", sessionID: string) =>
+    setFollowup(
+      produce((draft) => {
+        delete draft[key][sessionID]
+      }),
+    )
 
   createComputed((prev) => {
     const key = sessionKey()
@@ -636,9 +670,9 @@ export default function Page() {
     return key
   })
 
-  let reviewFrame: number | undefined
-  let todoFrame: number | undefined
-  let todoTimer: number | undefined
+  let reviewFrame = Option.none<number>()
+  let todoFrame = Option.none<number>()
+  let todoTimer = Option.none<number>()
   let diffFrame: number | undefined
   let diffTimer: number | undefined
 
@@ -646,12 +680,14 @@ export default function Page() {
     const open = desktopReviewOpen()
     if (prev === undefined || prev === open) return open
 
-    if (reviewFrame !== undefined) cancelAnimationFrame(reviewFrame)
+    if (Option.isSome(reviewFrame)) cancelAnimationFrame(reviewFrame.value)
     setUi("reviewSnap", true)
-    reviewFrame = requestAnimationFrame(() => {
-      reviewFrame = undefined
-      setUi("reviewSnap", false)
-    })
+    reviewFrame = Option.some(
+      requestAnimationFrame(() => {
+        reviewFrame = Option.none()
+        setUi("reviewSnap", false)
+      }),
+    )
     return open
   }, desktopReviewOpen())
 
@@ -905,9 +941,10 @@ export default function Page() {
     const root = scroller
     if (!root) return
 
-    const el = target instanceof Element ? target : undefined
-    const nested = el?.closest("[data-scrollable]")
-    if (nested && nested !== root) return
+    if (target instanceof Element) {
+      const nested = target.closest("[data-scrollable]")
+      if (nested && nested !== root) return
+    }
 
     setUi("scrollGesture", Date.now())
   }
@@ -926,24 +963,28 @@ export default function Page() {
         ] as const
       },
       ([dir, id, status, blocked]) => {
-        if (todoFrame !== undefined) cancelAnimationFrame(todoFrame)
-        if (todoTimer !== undefined) window.clearTimeout(todoTimer)
-        todoFrame = undefined
-        todoTimer = undefined
+        if (Option.isSome(todoFrame)) cancelAnimationFrame(todoFrame.value)
+        if (Option.isSome(todoTimer)) window.clearTimeout(todoTimer.value)
+        todoFrame = Option.none()
+        todoTimer = Option.none()
         if (!id) return
         if (status === "idle" && !blocked) return
         const cached = untrack(() => sync().data.todo[id] !== undefined)
 
-        todoFrame = requestAnimationFrame(() => {
-          todoFrame = undefined
-          todoTimer = window.setTimeout(() => {
-            todoTimer = undefined
-            if (sdk().directory !== dir || params.id !== id) return
-            untrack(() => {
-              void sync().session.todo(id, cached ? { force: true } : undefined)
-            })
-          }, 0)
-        })
+        todoFrame = Option.some(
+          requestAnimationFrame(() => {
+            todoFrame = Option.none()
+            todoTimer = Option.some(
+              window.setTimeout(() => {
+                todoTimer = Option.none()
+                if (sdk().directory !== dir || params.id !== id) return
+                untrack(() => {
+                  void (cached ? sync().session.todo(id, { force: true }) : sync().session.todo(id))
+                })
+              }, 0),
+            )
+          }),
+        )
       },
       { defer: true },
     ),
@@ -954,7 +995,7 @@ export default function Page() {
       () => visibleUserMessages().at(-1)?.id,
       (lastId, prevLastId) => {
         if (lastId && prevLastId && lastId > prevLastId) {
-          setStore("messageId", undefined)
+          clearMessageId()
         }
       },
       { defer: true },
@@ -965,8 +1006,13 @@ export default function Page() {
     on(
       sessionKey,
       () => {
+        clearMessageId()
         setStore(sessionViewState())
-        setUi("pendingMessage", undefined)
+        setUi(
+          produce((draft) => {
+            delete draft.pendingMessage
+          }),
+        )
       },
       { defer: true },
     ),
@@ -975,12 +1021,9 @@ export default function Page() {
   const stopVcs = sdk().event.listen((evt) => {
     const details = evt.details as { type: string; properties?: unknown }
     if (details.type !== "file.watcher.updated" && details.type !== "filesystem.changed") return
-    const props =
-      typeof details.properties === "object" && details.properties
-        ? (details.properties as Record<string, unknown>)
-        : undefined
-    const file = typeof props?.file === "string" ? props.file : undefined
-    if (!file || file.startsWith(".git/")) return
+    const props = details.properties
+    if (!Predicate.hasProperty(props, "file") || !Predicate.isString(props.file)) return
+    if (!props.file || props.file.startsWith(".git/")) return
     refreshVcs()
   })
   onCleanup(stopVcs)
@@ -1063,7 +1106,7 @@ export default function Page() {
     while (current instanceof HTMLElement && current.shadowRoot?.activeElement) {
       current = current.shadowRoot.activeElement
     }
-    return current instanceof HTMLElement ? current : undefined
+    return Option.liftPredicate(current, (element): element is HTMLElement => element instanceof HTMLElement)
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -1076,14 +1119,14 @@ export default function Page() {
     )
     if (protectedTarget || isEditableTarget(Option.getOrUndefined(target))) return
 
-    if (activeElement) {
-      const isProtected = activeElement.closest("[data-prevent-autofocus]")
-      const isInput = isEditableTarget(activeElement)
+    if (Option.isSome(activeElement)) {
+      const isProtected = activeElement.value.closest("[data-prevent-autofocus]")
+      const isInput = isEditableTarget(activeElement.value)
       if (isProtected || isInput) return
     }
     if (dialog.active) return
 
-    if (activeElement === inputRef) {
+    if (Option.getOrUndefined(activeElement) === inputRef) {
       if (event.key === "Escape") inputRef?.blur()
       return
     }
@@ -1131,19 +1174,26 @@ export default function Page() {
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
 
-  const [tree, setTree] = createStore({
-    reviewScroll: undefined as HTMLDivElement | undefined,
-    pendingDiff: undefined as string | undefined,
+  const [tree, setTree] = createStore<{ reviewScroll: Option.Option<HTMLDivElement>; pendingDiff?: string }>({
+    reviewScroll: Option.none(),
   })
+  const clearPendingDiff = () =>
+    setTree(
+      produce((draft) => {
+        delete draft.pendingDiff
+      }),
+    )
 
   createEffect(
     on(
       sessionKey,
       () => {
-        setTree({
-          reviewScroll: undefined,
-          pendingDiff: undefined,
-        })
+        setTree(
+          produce((draft) => {
+            draft.reviewScroll = Option.none()
+            delete draft.pendingDiff
+          }),
+        )
       },
       { defer: true },
     ),
@@ -1416,31 +1466,33 @@ export default function Page() {
     return `session-review-diff-${sum}`
   }
 
-  const reviewDiffTop = (path: string) => {
-    const root = tree.reviewScroll
-    if (!root) return
+  const reviewDiffTop = (path: string): Option.Option<number> => {
+    const scroll = tree.reviewScroll
+    if (Option.isNone(scroll)) return Option.none()
+    const root = scroll.value
 
     const id = reviewDiffId(path)
-    if (!id) return
+    if (!id) return Option.none()
 
     const el = document.getElementById(id)
-    if (!(el instanceof HTMLElement)) return
-    if (!root.contains(el)) return
+    if (!(el instanceof HTMLElement)) return Option.none()
+    if (!root.contains(el)) return Option.none()
 
     const a = el.getBoundingClientRect()
     const b = root.getBoundingClientRect()
-    return a.top - b.top + root.scrollTop
+    return Option.some(a.top - b.top + root.scrollTop)
   }
 
   const scrollToReviewDiff = (path: string) => {
-    const root = tree.reviewScroll
-    if (!root) return false
+    const scroll = tree.reviewScroll
+    if (Option.isNone(scroll)) return false
+    const root = scroll.value
 
     const top = reviewDiffTop(path)
-    if (top === undefined) return false
+    if (Option.isNone(top)) return false
 
-    view().setScroll("review", { x: root.scrollLeft, y: top })
-    root.scrollTo({ top, behavior: "auto" })
+    view().setScroll("review", { x: root.scrollLeft, y: top.value })
+    root.scrollTo({ top: top.value, behavior: "auto" })
     return true
   }
 
@@ -1454,18 +1506,18 @@ export default function Page() {
   createEffect(() => {
     const pending = tree.pendingDiff
     if (!pending) return
-    if (!tree.reviewScroll) return
+    if (Option.isNone(tree.reviewScroll)) return
     if (!reviewReady()) return
 
     const attempt = (count: number) => {
       if (tree.pendingDiff !== pending) return
       if (count > 60) {
-        setTree("pendingDiff", undefined)
+        clearPendingDiff()
         return
       }
 
       const root = tree.reviewScroll
-      if (!root) {
+      if (Option.isNone(root)) {
         requestAnimationFrame(() => attempt(count + 1))
         return
       }
@@ -1476,13 +1528,13 @@ export default function Page() {
       }
 
       const top = reviewDiffTop(pending)
-      if (top === undefined) {
+      if (Option.isNone(top)) {
         requestAnimationFrame(() => attempt(count + 1))
         return
       }
 
-      if (Math.abs(root.scrollTop - top) <= 1) {
-        setTree("pendingDiff", undefined)
+      if (Math.abs(root.value.scrollTop - top.value) <= 1) {
+        clearPendingDiff()
         return
       }
 
@@ -1534,9 +1586,9 @@ export default function Page() {
     ),
   )
 
-  let scrollStateFrame: number | undefined
-  let scrollStateTarget: HTMLDivElement | undefined
-  let fillFrame: number | undefined
+  let scrollStateFrame = Option.none<number>()
+  let scrollStateTarget = Option.none<HTMLDivElement>()
+  let fillFrame = Option.none<number>()
 
   const jumpThreshold = (el: HTMLDivElement) => Math.max(400, el.clientHeight)
 
@@ -1552,22 +1604,25 @@ export default function Page() {
   }
 
   const scheduleScrollState = (el: HTMLDivElement) => {
-    scrollStateTarget = el
-    if (scrollStateFrame !== undefined) return
+    // Reuse the Option for the same element, so repeated scroll events do not allocate.
+    if (Option.isNone(scrollStateTarget) || scrollStateTarget.value !== el) scrollStateTarget = Option.some(el)
+    if (Option.isSome(scrollStateFrame)) return
 
-    scrollStateFrame = requestAnimationFrame(() => {
-      scrollStateFrame = undefined
+    scrollStateFrame = Option.some(
+      requestAnimationFrame(() => {
+        scrollStateFrame = Option.none()
 
-      const target = scrollStateTarget
-      scrollStateTarget = undefined
-      if (!target) return
+        const target = scrollStateTarget
+        scrollStateTarget = Option.none()
+        if (Option.isNone(target)) return
 
-      updateScrollState(target)
-    })
+        updateScrollState(target.value)
+      }),
+    )
   }
 
   const resumeScroll = () => {
-    setStore("messageId", undefined)
+    clearMessageId()
     autoScroll.resume()
     scrollToEnd()
     clearMessageHash()
@@ -1582,7 +1637,7 @@ export default function Page() {
       autoScroll.userScrolled,
       (scrolled) => {
         if (scrolled) return
-        setStore("messageId", undefined)
+        clearMessageId()
         clearMessageHash()
       },
       { defer: true },
@@ -1615,7 +1670,7 @@ export default function Page() {
   let captureHistoryAnchor = () => {}
   let restoreHistoryAnchor = (_done: boolean) => {}
   const historyRequests = new Set<string>()
-  let historyContinuationFrame: number | undefined
+  let historyContinuationFrame = Option.none<number>()
   const loadOlder = () => {
     const owner = sessionOwnership.capture()
     if (historyLoading() || historyRequests.has(owner.key)) return
@@ -1631,11 +1686,13 @@ export default function Page() {
         ).pipe(Effect.ensuring(Effect.sync(() => historyRequests.delete(owner.key))))
         if (!owner.current() || timeline.messages().length <= before) return
         if (!autoScroll.userScrolled() || !scroller || scroller.scrollTop >= 200 || !historyMore()) return
-        if (historyContinuationFrame !== undefined) cancelAnimationFrame(historyContinuationFrame)
-        historyContinuationFrame = requestAnimationFrame(() => {
-          historyContinuationFrame = undefined
-          owner.run(onHistoryScroll)
-        })
+        if (Option.isSome(historyContinuationFrame)) cancelAnimationFrame(historyContinuationFrame.value)
+        historyContinuationFrame = Option.some(
+          requestAnimationFrame(() => {
+            historyContinuationFrame = Option.none()
+            owner.run(onHistoryScroll)
+          }),
+        )
       }).pipe(Effect.tapDefect((defect) => Effect.logError(defect))),
     )
   }
@@ -1652,25 +1709,27 @@ export default function Page() {
   }
 
   onCleanup(() => {
-    if (historyContinuationFrame !== undefined) cancelAnimationFrame(historyContinuationFrame)
+    if (Option.isSome(historyContinuationFrame)) cancelAnimationFrame(historyContinuationFrame.value)
   })
 
   fill = () => {
-    if (fillFrame !== undefined) return
+    if (Option.isSome(fillFrame)) return
 
-    fillFrame = requestAnimationFrame(() => {
-      fillFrame = undefined
+    fillFrame = Option.some(
+      requestAnimationFrame(() => {
+        fillFrame = Option.none()
 
-      if (!params.id || !messagesReady()) return
-      if (autoScroll.userScrolled() || historyLoading()) return
+        if (!params.id || !messagesReady()) return
+        if (autoScroll.userScrolled() || historyLoading()) return
 
-      const el = scroller
-      if (!el) return
-      if (el.scrollHeight > el.clientHeight + 1) return
-      if (!historyMore()) return
+        const el = scroller
+        if (!el) return
+        if (el.scrollHeight > el.clientHeight + 1) return
+        if (!historyMore()) return
 
-      loadOlder()
-    })
+        loadOlder()
+      }),
+    )
   }
 
   createEffect(
@@ -1719,10 +1778,14 @@ export default function Page() {
 
   const merge = (next: NonNullable<ReturnType<typeof info>>, target = sync()) => target.session.remember(next)
 
-  const roll = (sessionID: string, next: NonNullable<ReturnType<typeof info>>["revert"], target = sync()) => {
+  const roll = (
+    sessionID: string,
+    next: Option.Option<NonNullable<NonNullable<ReturnType<typeof info>>["revert"]>>,
+    target = sync(),
+  ) => {
     const session = target.session.get(sessionID)
     if (!session) return
-    target.session.remember({ ...session, revert: next })
+    target.session.remember({ ...session, revert: Option.getOrUndefined(next) })
   }
 
   const busy = (sessionID: string) => sync().data.session_working(sessionID)
@@ -1747,8 +1810,8 @@ export default function Page() {
           const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
           if (!item) return
 
-          if (input.manual) setFollowup("paused", input.sessionID, undefined)
-          setFollowup("failed", input.sessionID, undefined)
+          if (input.manual) clearFollowup("paused", input.sessionID)
+          clearFollowup("failed", input.sessionID)
 
           const ok = yield* Effect.tryPromise({
             try: () =>
@@ -1815,8 +1878,8 @@ export default function Page() {
       ...(items ?? []),
       { id: Identifier.ascending("message"), ...draft },
     ])
-    setFollowup("failed", draft.sessionID, undefined)
-    setFollowup("paused", draft.sessionID, undefined)
+    clearFollowup("failed", draft.sessionID)
+    clearFollowup("paused", draft.sessionID)
   }
 
   const followupDock = createMemo(() => queuedFollowups().map((item) => ({ id: item.id, text: followupText(item) })))
@@ -1840,7 +1903,7 @@ export default function Page() {
     if (!item) return
 
     setFollowup("items", sessionID, (items) => (items ?? []).filter((entry) => entry.id !== id))
-    setFollowup("failed", sessionID, (value) => (value === id ? undefined : value))
+    if (followup.failed[sessionID] === id) clearFollowup("failed", sessionID)
     setFollowup("edit", sessionID, {
       id: item.id,
       prompt: item.prompt,
@@ -1851,7 +1914,7 @@ export default function Page() {
   const clearFollowupEdit = () => {
     const id = params.id
     if (!id) return
-    setFollowup("edit", id, undefined)
+    clearFollowup("edit", id)
   }
 
   const halt = (sessionID: string) =>
@@ -1869,7 +1932,7 @@ export default function Page() {
         runPromptRollbackMutation({
           capturePrompt: prompt.capture,
           optimistic: (prompt) => {
-            roll(input.sessionID, { messageID: input.messageID }, target)
+            roll(input.sessionID, Option.some({ messageID: input.messageID }), target)
             prompt.set(value)
           },
           request: () =>
@@ -1877,7 +1940,7 @@ export default function Page() {
               Effect.andThen(Effect.tryPromise({ try: () => session.revert.stage(input), catch: (error) => error })),
             ),
           complete: () => {},
-          rollback: () => roll(input.sessionID, last, target),
+          rollback: () => roll(input.sessionID, Option.fromNullishOr(last), target),
           fail,
         }),
       )
@@ -1901,7 +1964,11 @@ export default function Page() {
           yield* runPromptRollbackMutation({
             capturePrompt: prompt.capture,
             optimistic: (promptSession) => {
-              roll(sessionID, next ? { messageID: next.id } : undefined, target)
+              roll(
+                sessionID,
+                Option.map(Option.fromNullishOr(next), (message) => ({ messageID: message.id })),
+                target,
+              )
               if (next) {
                 promptSession.set(draft(next.id))
                 return
@@ -1923,7 +1990,7 @@ export default function Page() {
                 ),
               ),
             complete: () => {},
-            rollback: () => roll(sessionID, last, target),
+            rollback: () => roll(sessionID, Option.fromNullishOr(last), target),
             fail,
           })
         }),
@@ -1931,7 +1998,10 @@ export default function Page() {
   }))
 
   const reverting = createMemo(() => revertMutation.isPending || restoreMutation.isPending)
-  const restoring = createMemo(() => (restoreMutation.isPending ? restoreMutation.variables : undefined))
+  const restoring = createMemo(() => {
+    if (!restoreMutation.isPending) return undefined
+    return restoreMutation.variables
+  })
 
   const revert = (input: { sessionID: string; messageID: string }) => {
     if (reverting()) return
@@ -2056,13 +2126,13 @@ export default function Page() {
   })
 
   onCleanup(() => {
-    if (reviewFrame !== undefined) cancelAnimationFrame(reviewFrame)
-    if (todoFrame !== undefined) cancelAnimationFrame(todoFrame)
-    if (todoTimer !== undefined) window.clearTimeout(todoTimer)
+    if (Option.isSome(reviewFrame)) cancelAnimationFrame(reviewFrame.value)
+    if (Option.isSome(todoFrame)) cancelAnimationFrame(todoFrame.value)
+    if (Option.isSome(todoTimer)) window.clearTimeout(todoTimer.value)
     if (diffFrame !== undefined) cancelAnimationFrame(diffFrame)
     if (diffTimer !== undefined) window.clearTimeout(diffTimer)
-    if (scrollStateFrame !== undefined) cancelAnimationFrame(scrollStateFrame)
-    if (fillFrame !== undefined) cancelAnimationFrame(fillFrame)
+    if (Option.isSome(scrollStateFrame)) cancelAnimationFrame(scrollStateFrame.value)
+    if (Option.isSome(fillFrame)) cancelAnimationFrame(fillFrame.value)
   })
 
   useUsageExceededDialogs()
@@ -2134,7 +2204,7 @@ export default function Page() {
             </div>
           </Match>
           <Match when={params.id}>
-            <Show when={messagesReady() ? params.id : undefined} keyed>
+            <Show when={messagesReady() && params.id} keyed>
               {(_id) => (
                 <MessageTimeline
                   actions={actions}
@@ -2194,24 +2264,24 @@ export default function Page() {
               collapsed: () => view().todoCollapsed.get(),
               onToggle: () => view().todoCollapsed.set(!view().todoCollapsed.get()),
             },
-            followup: () =>
-              params.id && !isChildSession()
-                ? {
-                    items: followupDock(),
-                    sending: sendingFollowup(),
-                    onSend: (id) => sendFollowup(params.id!, id, { manual: true }),
-                    onEdit: editFollowup,
-                  }
-                : undefined,
-            revert: () =>
-              rolled().length > 0
-                ? {
-                    items: rolled(),
-                    restoring: restoring(),
-                    disabled: reverting(),
-                    onRestore: restore,
-                  }
-                : undefined,
+            followup: () => {
+              if (!params.id || isChildSession()) return undefined
+              return {
+                items: followupDock(),
+                sending: sendingFollowup(),
+                onSend: (id) => sendFollowup(params.id!, id, { manual: true }),
+                onEdit: editFollowup,
+              }
+            },
+            revert: () => {
+              if (rolled().length === 0) return undefined
+              return {
+                items: rolled(),
+                restoring: restoring(),
+                disabled: reverting(),
+                onRestore: restore,
+              }
+            },
             onResponseSubmit: resumeScroll,
             openParent: () => {
               const id = info()?.parentID

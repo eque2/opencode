@@ -195,11 +195,11 @@ export function createCommentSessionForTest(comments: Record<string, LineComment
   return createCommentSessionState(store, setStore)
 }
 
-function createCommentSession(scope: ServerScope, dir: string, id: string | undefined) {
-  const legacy = `${dir}/comments${id ? "/" + id : ""}.v1`
+function createCommentSession(scope: ServerScope, dir: string, id: Option.Option<string>) {
+  const legacy = `${dir}/comments${Option.match(id, { onNone: () => "", onSome: (value) => "/" + value })}.v1`
 
   const [store, setStore, _, ready] = persisted(
-    Persist.serverScoped(scope, dir, id, "comments", [legacy]),
+    Persist.serverScoped(scope, dir, Option.getOrUndefined(id), "comments", [legacy]),
     createStore<CommentStore>({
       comments: {},
     }),
@@ -238,7 +238,7 @@ export const { use: useComments, provider: CommentsProvider } = createSimpleCont
           value: createCommentSession(
             serverSDK().scope,
             decoded.dir,
-            decoded.id === WORKSPACE_KEY ? undefined : decoded.id,
+            Option.liftPredicate(decoded.id, (id) => id.length > 0 && id !== WORKSPACE_KEY),
           ),
           dispose,
         }))

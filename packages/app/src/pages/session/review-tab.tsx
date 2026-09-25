@@ -35,7 +35,7 @@ export interface SessionReviewTabProps {
   focusedComment?: { file: string; id: string } | null
   onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
   focusedFile?: string
-  onScrollRef?: (el: HTMLDivElement | undefined) => void
+  onScrollRef?: (el: Option.Option<HTMLDivElement>) => void
   commentMentions?: {
     items: (query: string) => string[] | Promise<string[]>
   }
@@ -48,9 +48,9 @@ export interface SessionReviewTabProps {
 
 export function SessionReviewTab(props: SessionReviewTabProps) {
   let scroll: HTMLDivElement | undefined
-  let restoreFrame: number | undefined
+  let restoreFrame = Option.none<number>()
   let userInteracted = false
-  let restored: { x: number; y: number } | undefined
+  let restored = Option.none<{ x: number; y: number }>()
 
   const sdk = useSDK()
   const layout = useLayout()
@@ -69,14 +69,14 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
   const handleInteraction = () => {
     userInteracted = true
 
-    if (restoreFrame !== undefined) {
-      cancelAnimationFrame(restoreFrame)
-      restoreFrame = undefined
+    if (Option.isSome(restoreFrame)) {
+      cancelAnimationFrame(restoreFrame.value)
+      restoreFrame = Option.none()
     }
   }
 
   const doRestore = () => {
-    restoreFrame = undefined
+    restoreFrame = Option.none()
     const el = scroll
     if (!el || !layout.ready() || userInteracted) return
     if (el.clientHeight === 0 || el.clientWidth === 0) return
@@ -94,23 +94,20 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
 
     if (el.scrollTop !== targetY) el.scrollTop = targetY
     if (el.scrollLeft !== targetX) el.scrollLeft = targetX
-    restored = { x: el.scrollLeft, y: el.scrollTop }
+    restored = Option.some({ x: el.scrollLeft, y: el.scrollTop })
   }
 
   const queueRestore = () => {
-    if (userInteracted || restoreFrame !== undefined) return
-    restoreFrame = requestAnimationFrame(doRestore)
+    if (userInteracted || Option.isSome(restoreFrame)) return
+    restoreFrame = Option.some(requestAnimationFrame(doRestore))
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
     const el = event.currentTarget
     const prev = restored
-    if (prev && el.scrollTop === prev.y && el.scrollLeft === prev.x) {
-      restored = undefined
-      return
-    }
+    restored = Option.none()
+    if (Option.isSome(prev) && el.scrollTop === prev.value.y && el.scrollLeft === prev.value.x) return
 
-    restored = undefined
     handleInteraction()
     if (!layout.ready()) return
     if (el.clientHeight === 0 || el.clientWidth === 0) return
@@ -129,8 +126,8 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
   })
 
   onCleanup(() => {
-    if (restoreFrame !== undefined) cancelAnimationFrame(restoreFrame)
-    props.onScrollRef?.(undefined)
+    if (Option.isSome(restoreFrame)) cancelAnimationFrame(restoreFrame.value)
+    props.onScrollRef?.(Option.none())
   })
 
   return (
@@ -144,7 +141,7 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
         makeEventListener(el, "pointerdown", handleInteraction, { passive: true, capture: true })
         makeEventListener(el, "touchstart", handleInteraction, { passive: true, capture: true })
         makeEventListener(el, "keydown", handleInteraction, { capture: true })
-        props.onScrollRef?.(el)
+        props.onScrollRef?.(Option.some(el))
         queueRestore()
       }}
       onScroll={handleScroll}

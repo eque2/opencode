@@ -9,15 +9,15 @@ beforeAll(() =>
   Effect.runPromise(
     Effect.gen(function* () {
       mock.module("@solidjs/router", () => ({
-        useNavigate: () => () => undefined,
+        useNavigate: () => () => {},
         useParams: () => ({}),
         useLocation: () => ({}),
-        useSearchParams: () => [{}, () => undefined],
+        useSearchParams: () => [{}, () => {}],
       }))
       mock.module("@opencode-ai/ui/context", () => ({
         createSimpleContext: () => ({
-          use: () => undefined,
-          provider: () => undefined,
+          use: () => {},
+          provider: () => {},
         }),
       }))
       const mod = yield* Effect.promise(() => import("./comments"))
