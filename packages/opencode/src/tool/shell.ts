@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from "effect"
+import { Array, Effect, HashSet, Option, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -25,30 +25,32 @@ import { BashArity } from "@/permission/arity"
 export { Parameters } from "./shell/prompt"
 
 const MAX_METADATA_LENGTH = 30_000
-const CWD = new Set(["cd", "chdir", "popd", "pushd", "push-location", "set-location"])
-const FILES = new Set([
-  ...CWD,
-  "rm",
-  "cp",
-  "mv",
-  "mkdir",
-  "touch",
-  "chmod",
-  "chown",
-  "cat",
-  // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
-  // already hit the entries above, and alias normalization should happen in one
-  // place later so we do not risk double-prompting.
-  "get-content",
-  "set-content",
-  "add-content",
-  "copy-item",
-  "move-item",
-  "remove-item",
-  "new-item",
-  "rename-item",
-])
-const CMD_FILES = new Set([
+const CWD: HashSet.HashSet<string> = HashSet.make("cd", "chdir", "popd", "pushd", "push-location", "set-location")
+const FILES: HashSet.HashSet<string> = HashSet.union(
+  CWD,
+  HashSet.make(
+    "rm",
+    "cp",
+    "mv",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "cat",
+    // Leave PowerShell aliases out for now. Common ones like cat/cp/mv/rm/mkdir
+    // already hit the entries above, and alias normalization should happen in one
+    // place later so we do not risk double-prompting.
+    "get-content",
+    "set-content",
+    "add-content",
+    "copy-item",
+    "move-item",
+    "remove-item",
+    "new-item",
+    "rename-item",
+  ),
+)
+const CMD_FILES: HashSet.HashSet<string> = HashSet.make(
   "copy",
   "del",
   "dir",
@@ -61,19 +63,28 @@ const CMD_FILES = new Set([
   "rename",
   "rmdir",
   "type",
-])
-const FLAGS = new Set(["-destination", "-literalpath", "-path"])
-const SWITCHES = new Set(["-confirm", "-debug", "-force", "-nonewline", "-recurse", "-verbose", "-whatif"])
+)
+const FLAGS: HashSet.HashSet<string> = HashSet.make("-destination", "-literalpath", "-path")
+const SWITCHES: HashSet.HashSet<string> = HashSet.make(
+  "-confirm",
+  "-debug",
+  "-force",
+  "-nonewline",
+  "-recurse",
+  "-verbose",
+  "-whatif",
+)
 
 type Part = {
   type: string
   text: string
 }
 
+// Each list keeps the first occurrence of a value, in the order the scan found it.
 type Scan = {
-  dirs: Set<string>
-  patterns: Set<string>
-  always: Set<string>
+  dirs: ReadonlyArray<string>
+  patterns: ReadonlyArray<string>
+  always: ReadonlyArray<string>
 }
 
 type Chunk = {
@@ -208,8 +219,8 @@ function pathArgs(list: Part[], ps: boolean, cmd = false) {
     }
     if (item.type === "command_parameter") {
       const flag = item.text.toLowerCase()
-      if (SWITCHES.has(flag)) continue
-      want = FLAGS.has(flag)
+      if (HashSet.has(SWITCHES, flag)) continue
+      want = HashSet.has(FLAGS, flag)
       continue
     }
     out.push(item.text)
@@ -266,9 +277,8 @@ const ask = Effect.fn("ShellTool.ask")(function* (
   scan: Scan,
   input: { command: string },
 ) {
-  if (scan.dirs.size > 0) {
-    const directories = Array.from(scan.dirs)
-    const globs = yield* Effect.forEach(directories, (dir) => {
+  if (scan.dirs.length > 0) {
+    const globs = yield* Effect.forEach(scan.dirs, (dir) => {
       if (process.platform === "win32") return fs.normalizePathPattern(path.join(dir, "*"))
       return Effect.succeed(path.join(dir, "*"))
     })
@@ -278,17 +288,17 @@ const ask = Effect.fn("ShellTool.ask")(function* (
       always: globs,
       metadata: {
         command: input.command,
-        directories,
+        directories: scan.dirs,
         patterns: globs,
       },
     })
   }
 
-  if (scan.patterns.size === 0) return
+  if (scan.patterns.length === 0) return
   yield* ctx.ask({
     permission: ShellID.ToolID,
-    patterns: Array.from(scan.patterns),
-    always: Array.from(scan.always),
+    patterns: scan.patterns,
+    always: scan.always,
     metadata: {
       command: input.command,
     },
@@ -379,6 +389,21 @@ export const ShellTool = Tool.define(
       return Option.some(yield* resolvePath(next.value, cwd, shell))
     })
 
+    // The folder of a path argument outside the instance, or None.
+    const argDir = Effect.fnUntraced(function* (
+      arg: string,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+      instance: InstanceContext,
+    ) {
+      const found = yield* argPath(arg, cwd, ps, shell)
+      const resolved = Option.getOrUndefined(found)
+      yield* Effect.logInfo("resolved path", { arg, resolved })
+      if (Option.isNone(found) || containsPath(found.value, instance)) return Option.none<string>()
+      return Option.some((yield* fs.isDir(found.value)) ? found.value : path.dirname(found.value))
+    })
+
     const collect = Effect.fn("ShellTool.collect")(function* (
       root: Node,
       cwd: string,
@@ -386,36 +411,33 @@ export const ShellTool = Tool.define(
       shell: string,
       instance: InstanceContext,
     ) {
-      const scan: Scan = {
-        dirs: new Set<string>(),
-        patterns: new Set<string>(),
-        always: new Set<string>(),
-      }
       const shellKind = ShellID.toKind(Shell.name(shell))
 
-      for (const node of commands(root)) {
-        const command = parts(node)
-        const tokens = command.map((item) => item.text)
-        const cmd = ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]
-
-        if (cmd && (FILES.has(cmd) || (shellKind === "cmd" && CMD_FILES.has(cmd)))) {
-          for (const arg of pathArgs(command, ps, shellKind === "cmd")) {
-            const found = yield* argPath(arg, cwd, ps, shell)
-            const resolved = Option.getOrUndefined(found)
-            yield* Effect.logInfo("resolved path", { arg, resolved })
-            if (Option.isNone(found) || containsPath(found.value, instance)) continue
-            const dir = (yield* fs.isDir(found.value)) ? found.value : path.dirname(found.value)
-            scan.dirs.add(dir)
+      const found = yield* Effect.forEach(commands(root), (node) =>
+        Effect.gen(function* () {
+          const command = parts(node)
+          const tokens = command.map((item) => item.text)
+          const cmd = (ps || shellKind === "cmd" ? tokens[0]?.toLowerCase() : tokens[0]) ?? ""
+          const files = cmd && (HashSet.has(FILES, cmd) || (shellKind === "cmd" && HashSet.has(CMD_FILES, cmd)))
+          const dirs = files
+            ? yield* Effect.forEach(pathArgs(command, ps, shellKind === "cmd"), (arg) =>
+                argDir(arg, cwd, ps, shell, instance),
+              )
+            : []
+          const asks = tokens.length > 0 && (!cmd || !HashSet.has(CWD, cmd))
+          return {
+            dirs: Array.getSomes(dirs),
+            patterns: asks ? [source(node)] : [],
+            always: asks ? [BashArity.prefix(tokens).join(" ") + " *"] : [],
           }
-        }
+        }),
+      )
 
-        if (tokens.length && (!cmd || !CWD.has(cmd))) {
-          scan.patterns.add(source(node))
-          scan.always.add(BashArity.prefix(tokens).join(" ") + " *")
-        }
-      }
-
-      return scan
+      return {
+        dirs: Array.dedupe(found.flatMap((item) => item.dirs)),
+        patterns: Array.dedupe(found.flatMap((item) => item.patterns)),
+        always: Array.dedupe(found.flatMap((item) => item.always)),
+      } satisfies Scan
     })
 
     const shellEnv = Effect.fn("ShellTool.shellEnv")(function* (ctx: Tool.Context, cwd: string) {
@@ -628,8 +650,12 @@ export const ShellTool = Tool.define(
                     Effect.sync(() => tree.delete()),
                   )
                   const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
-                  if (!containsPath(cwd, instanceCtx)) scan.dirs.add(cwd)
-                  yield* ask(fs, ctx, scan, params)
+                  yield* ask(
+                    fs,
+                    ctx,
+                    containsPath(cwd, instanceCtx) ? scan : { ...scan, dirs: Array.dedupe([...scan.dirs, cwd]) },
+                    params,
+                  )
                 }),
               )
 

@@ -1,11 +1,9 @@
+import { Schema } from "effect"
+
 const kinds = ["bash", "pwsh", "powershell", "cmd"] as const
 export type Kind = (typeof kinds)[number]
 
-const shellKinds = new Set<string>(kinds)
-
-function isKind(value: string): value is Kind {
-  return shellKinds.has(value)
-}
+const isKind = Schema.is(Schema.Literals(kinds))
 
 export function toKind(value: string): Kind {
   return isKind(value) ? value : "bash"
