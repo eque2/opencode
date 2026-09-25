@@ -4,7 +4,7 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { useNavigate, useParams, useSearchParams } from "@solidjs/router"
 import { batch, startTransition, type Accessor } from "solid-js"
-import { Predicate } from "effect"
+import { MutableHashMap, Option, Predicate } from "effect"
 import { useTabs } from "@/context/tabs"
 import { useServerSync, type ServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
@@ -30,7 +30,7 @@ type PendingPrompt = {
   cleanup: VoidFunction
 }
 
-const pending = new Map<string, PendingPrompt>()
+const pending = MutableHashMap.empty<string, PendingPrompt>()
 
 export type FollowupDraft = {
   sessionID: string
@@ -273,11 +273,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     input.onAbort?.()
 
     const key = pendingKey(sessionID)
-    const queued = pending.get(key)
-    if (queued) {
-      queued.abort.abort()
-      queued.cleanup()
-      pending.delete(key)
+    const queued = MutableHashMap.get(pending, key)
+    if (Option.isSome(queued)) {
+      queued.value.abort.abort()
+      queued.value.cleanup()
+      MutableHashMap.remove(pending, key)
       return Promise.resolve()
     }
     return sdk()
@@ -583,7 +583,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         if (restoreInput()) restoreCommentItems(submission.target(), commentItems)
       }
 
-      pending.set(pendingKey(session.id), { abort: controller, cleanup })
+      MutableHashMap.set(pending, pendingKey(session.id), { abort: controller, cleanup })
 
       const abortWait = new Promise<Awaited<ReturnType<typeof WorktreeState.wait>>>((resolve) => {
         if (controller.signal.aborted) {
@@ -618,7 +618,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         if (timer.id === undefined) return
         clearTimeout(timer.id)
       })
-      pending.delete(pendingKey(session.id))
+      MutableHashMap.remove(pending, pendingKey(session.id))
       if (controller.signal.aborted) return false
       if (result.status === "failed") throw new Error(result.message)
       return true
@@ -633,7 +633,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
     }).catch((err) => {
-      pending.delete(pendingKey(session.id))
+      MutableHashMap.remove(pending, pendingKey(session.id))
       if (sessionDirectory === projectDirectory) {
         sync().set("session_status", session.id, { type: "idle" })
       }
