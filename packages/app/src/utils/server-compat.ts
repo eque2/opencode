@@ -148,13 +148,13 @@ function lazyApi<T extends object>(implementation: Effect.Effect<T, CompatError>
             }),
           )
       }
-      if (sample === null || typeof sample !== "object") return sample
+      if (!Predicate.isObjectOrArray(sample)) return sample
       const cached = MutableHashMap.get(cache, property)
       if (Option.isSome(cached)) return cached.value
       const nested = lazyApi(
         Effect.flatMap(implementation, (value) => {
           const result: unknown = Reflect.get(value, property)
-          if (result === null || typeof result !== "object") {
+          if (!Predicate.isObjectOrArray(result)) {
             return Effect.fail(new ApiUnavailableError({ message: `API namespace unavailable: ${String(property)}` }))
           }
           return Effect.succeed(result)
@@ -168,9 +168,9 @@ function lazyApi<T extends object>(implementation: Effect.Effect<T, CompatError>
 }
 
 function createV1Api(input: CompatibleInput): CompatibleApi {
-  const directory = (location?: { directory?: string }) => location?.directory ?? input.directory
-  const legacy = (location?: { directory?: string }) => input.legacy(directory(location))
-  const located = <T>(data: T, value?: { directory?: string }) => ({
+  const directory = (location?: { directory?: string } | null) => location?.directory ?? input.directory
+  const legacy = (location?: { directory?: string } | null) => input.legacy(directory(location))
+  const located = <T>(data: T, value?: { directory?: string } | null) => ({
     location: {
       directory: directory(value) ?? "",
       project: { id: "", directory: directory(value) ?? "" },
@@ -192,7 +192,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
               const result = yield* request(() =>
                 legacy().experimental.session.list(
                   {
-                    roots: value.parentID === null ? true : undefined,
+                    ...(Predicate.isNull(value.parentID) ? { roots: true } : {}),
                     search: value.search,
                     limit: value.limit,
                   },
@@ -204,7 +204,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             const result = yield* request(() =>
               legacy({ directory: value?.directory }).session.list({
                 directory: value?.directory,
-                roots: value?.parentID === null ? true : undefined,
+                ...(Predicate.isNull(value?.parentID) ? { roots: true } : {}),
                 search: value?.search,
                 limit: value?.limit,
               }),
@@ -216,8 +216,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const result = yield* request(() =>
-              legacy(value?.location ?? undefined).session.create({
-                directory: directory(value?.location ?? undefined),
+              legacy(value?.location).session.create({
+                directory: directory(value?.location),
               }),
             )
             if (!result.data) return yield* new LegacyMissingDataError({ message: "Failed to create session" })
@@ -272,7 +272,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             yield* request(() =>
               legacy().session.promptAsync({
                 sessionID: value.sessionID,
-                messageID: value.id ?? undefined,
+                messageID: Option.getOrUndefined(Option.fromNullishOr(value.id)),
                 agent: value.agent,
                 model: value.model,
                 variant: value.variant,
@@ -283,20 +283,22 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                     mime: file.mention ? "text/plain" : mime(file.uri),
                     url: file.uri,
                     filename: file.name,
-                    source: file.mention
+                    ...(file.mention
                       ? {
-                          type: "file" as const,
-                          text: { value: file.mention.text, start: file.mention.start, end: file.mention.end },
-                          path: file.uri,
+                          source: {
+                            type: "file" as const,
+                            text: { value: file.mention.text, start: file.mention.start, end: file.mention.end },
+                            path: file.uri,
+                          },
                         }
-                      : undefined,
+                      : {}),
                   })),
                   ...(value.agents ?? []).map((agent) => ({
                     type: "agent" as const,
                     name: agent.name,
-                    source: agent.mention
-                      ? { value: agent.mention.text, start: agent.mention.start, end: agent.mention.end }
-                      : undefined,
+                    ...(agent.mention
+                      ? { source: { value: agent.mention.text, start: agent.mention.start, end: agent.mention.end } }
+                      : {}),
                   })),
                 ],
               }),
@@ -320,11 +322,11 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             yield* request(() =>
               legacy().session.command({
                 sessionID: value.sessionID,
-                messageID: value.id ?? undefined,
+                messageID: Option.getOrUndefined(Option.fromNullishOr(value.id)),
                 command: value.command,
                 arguments: value.arguments ?? "",
-                agent: value.agent ?? undefined,
-                model: value.model ? `${value.model.providerID}/${value.model.id}` : undefined,
+                agent: Option.getOrUndefined(Option.fromNullishOr(value.agent)),
+                ...(value.model ? { model: `${value.model.providerID}/${value.model.id}` } : {}),
                 variant: value.model?.variant,
                 parts: value.files?.map((file) => ({
                   type: "file" as const,
@@ -474,7 +476,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
           request(() =>
             legacy(value.location).find.files({
               query: value.query,
-              dirs: value.type === undefined ? undefined : value.type === "directory" ? "true" : "false",
+              ...(value.type === undefined ? {} : { dirs: value.type === "directory" ? "true" : "false" }),
               limit: value.limit,
             }),
           ).pipe(
@@ -601,7 +603,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
             const result = yield* request(() =>
               legacy(value?.location).pty.create({
                 command: value?.command,
-                args: value?.args ? [...value.args] : undefined,
+                ...(value?.args ? { args: [...value.args] } : {}),
                 cwd: value?.cwd,
                 title: value?.title,
                 env: value?.env,
