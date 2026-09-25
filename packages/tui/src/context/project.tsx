@@ -1,6 +1,7 @@
 import { batch } from "solid-js"
 import type { Path, Workspace } from "@opencode-ai/sdk/v2"
 import { createStore, reconcile } from "solid-js/store"
+import { Effect, Option, Predicate } from "effect"
 import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
 
@@ -35,37 +36,58 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
       },
     })
 
-    async function sync() {
+    // The SDK resolves HTTP errors as `{ error }` instead of rejecting, so a
+    // rejection here is a defect; Effect.promise keeps it as the rejection
+    // value that callers of `sync()` see.
+    const syncProject = Effect.gen(function* () {
       const workspace = store.workspace.current
-      const [instancePath, project] = await Promise.all([
-        sdk.client.path.get({ workspace }),
-        sdk.client.project.current({ workspace }),
-      ])
-      const directories = project.data?.id
-        ? await sdk.client.project.directories({ projectID: project.data.id, workspace })
-        : undefined
+      const [instancePath, project] = yield* Effect.all(
+        [
+          Effect.promise(() => sdk.client.path.get({ workspace })),
+          Effect.promise(() => sdk.client.project.current({ workspace })),
+        ],
+        { concurrency: "unbounded" },
+      )
+      const mainDir = yield* Option.fromNullishOr(project.data?.id).pipe(
+        Option.filter(Predicate.isTruthy),
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (projectID) =>
+            Effect.promise(() => sdk.client.project.directories({ projectID, workspace })).pipe(
+              Effect.map((directories) =>
+                Option.fromNullishOr(directories.data?.findLast((item) => item.strategy === undefined)?.directory),
+              ),
+            ),
+        }),
+      )
       batch(() => {
         setStore("instance", "path", reconcile(instancePath.data || defaultPath))
         setStore("project", "id", project.data?.id)
         setStore("project", "worktree", project.data?.worktree)
-        setStore("project", "mainDir", directories?.data?.findLast((item) => item.strategy === undefined)?.directory)
+        setStore("project", "mainDir", Option.getOrUndefined(mainDir))
       })
-    }
+    })
 
-    async function syncWorkspace() {
-      const listed = await sdk.client.experimental.workspace.list().catch(() => undefined)
-      if (!listed?.data) return
-      const status = await sdk.client.experimental.workspace.status().catch(() => undefined)
-      const next = Object.fromEntries((status?.data ?? []).map((item) => [item.workspaceID, item.status]))
+    const syncWorkspace = Effect.gen(function* () {
+      const listed = yield* Effect.tryPromise(() => sdk.client.experimental.workspace.list()).pipe(Effect.option)
+      const workspaces = Option.flatMapNullishOr(listed, (response) => response.data)
+      if (Option.isNone(workspaces)) return
+      const status = yield* Effect.tryPromise(() => sdk.client.experimental.workspace.status()).pipe(Effect.option)
+      const next = Object.fromEntries(
+        Option.getOrElse(
+          Option.flatMapNullishOr(status, (response) => response.data),
+          () => [],
+        ).map((item) => [item.workspaceID, item.status]),
+      )
 
       batch(() => {
-        setStore("workspace", "list", reconcile(listed.data))
+        setStore("workspace", "list", reconcile(workspaces.value))
         setStore("workspace", "status", reconcile(next))
-        if (!listed.data.some((item) => item.id === store.workspace.current)) {
+        if (!workspaces.value.some((item) => item.id === store.workspace.current)) {
           setStore("workspace", "current", undefined)
         }
       })
-    }
+    })
 
     sdk.event.on("event", (event) => {
       if (event.payload.type === "workspace.status") {
@@ -91,9 +113,9 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
         get: (workspaceID: string) => store.workspace.list.find((item) => item.id === workspaceID),
         status: (workspaceID: string) => store.workspace.status[workspaceID],
         statuses: () => store.workspace.status,
-        sync: syncWorkspace,
+        sync: () => Effect.runPromise(syncWorkspace),
       },
-      sync,
+      sync: () => Effect.runPromise(syncProject),
     }
   },
 })
