@@ -1,24 +1,34 @@
-import { readFile } from "node:fs/promises"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Effect, FileSystem, Option } from "effect"
 import path from "node:path"
 
 export type LocalFiles = Readonly<{
-  readText(path: string): Promise<string>
-  readBytes(path: string): Promise<Uint8Array>
-  mime(path: string): Promise<string>
+  readText(path: string): Effect.Effect<string, unknown>
+  readBytes(path: string): Effect.Effect<Uint8Array, unknown>
+  mime(path: string): Effect.Effect<string, unknown>
 }>
 
 export type LocalAttachment =
   | Readonly<{ type: "text"; mime: "image/svg+xml"; content: string }>
   | Readonly<{ type: "binary"; mime: string; content: Uint8Array }>
 
-export function readLocalAttachment(file: string) {
-  return readLocalAttachmentWith(
-    {
-      readText: (value) => readFile(value, "utf8"),
-      readBytes: (value) => readFile(value),
-      mime: async (value) => mimeTypes[path.extname(value).toLowerCase()] ?? "application/octet-stream",
-    },
-    file,
+// The prompt paste handler reads an unsupported or unreadable file as undefined.
+export function readLocalAttachment(file: string): Promise<LocalAttachment | undefined> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const attachment = yield* readLocalAttachmentWith(
+        {
+          readText: (value) => fs.readFileString(value, "utf8"),
+          readBytes: (value) => fs.readFile(value),
+          mime: (value) =>
+            Effect.succeed(mimeTypes[path.extname(value).toLowerCase()] ?? "application/octet-stream"),
+        },
+        file,
+      )
+      return Option.getOrUndefined(attachment)
+    }).pipe(Effect.provide(LayerNode.compile(LayerNodePlatform.filesystem))),
   )
 }
 
@@ -33,16 +43,17 @@ const mimeTypes: Record<string, string> = {
   ".webp": "image/webp",
 }
 
-export async function readLocalAttachmentWith(files: LocalFiles, path: string): Promise<LocalAttachment | undefined> {
-  const mime = await files.mime(path).catch(() => undefined)
-  if (!mime) return
-  if (mime === "image/svg+xml") {
-    const content = await files.readText(path).catch(() => undefined)
-    if (!content) return
-    return { type: "text", mime, content }
-  }
-  if (!mime.startsWith("image/") && mime !== "application/pdf") return
-  const content = await files.readBytes(path).catch(() => undefined)
-  if (!content) return
-  return { type: "binary", mime, content }
+// A failed read, an empty MIME type or empty SVG text gives no attachment.
+export function readLocalAttachmentWith(files: LocalFiles, file: string): Effect.Effect<Option.Option<LocalAttachment>> {
+  return Effect.gen(function* () {
+    const mime = Option.filter(yield* Effect.option(files.mime(file)), (value) => value.length > 0)
+    if (Option.isNone(mime)) return Option.none()
+    if (mime.value === "image/svg+xml") {
+      const text = Option.filter(yield* Effect.option(files.readText(file)), (value) => value.length > 0)
+      return Option.map(text, (content): LocalAttachment => ({ type: "text", mime: "image/svg+xml", content }))
+    }
+    if (!mime.value.startsWith("image/") && mime.value !== "application/pdf") return Option.none()
+    const bytes = yield* Effect.option(files.readBytes(file))
+    return Option.map(bytes, (content): LocalAttachment => ({ type: "binary", mime: mime.value, content }))
+  })
 }
