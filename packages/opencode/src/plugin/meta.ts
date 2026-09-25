@@ -1,7 +1,8 @@
 import path from "path"
 import { fileURLToPath } from "url"
 
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { Effect, Option } from "effect"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Global } from "@opencode-ai/core/global"
 import { Filesystem } from "@/util/filesystem"
 import { Flock } from "@opencode-ai/core/util/flock"
@@ -45,8 +46,13 @@ type Store = Record<string, Entry>
 type Core = Omit<Entry, "first_time" | "last_time" | "time_changed" | "load_count" | "fingerprint" | "themes">
 type Row = Touch & { core: Core }
 
+// The variable is read at each call: tests and worker processes set it after start.
 function storePath() {
-  return Flag.OPENCODE_PLUGIN_META_FILE ?? path.join(Global.Path.state, "plugin-meta.json")
+  return Effect.runPromise(
+    FlagConfig.OPENCODE_PLUGIN_META_FILE.pipe(
+      Effect.map(Option.getOrElse(() => path.join(Global.Path.state, "plugin-meta.json"))),
+    ),
+  )
 }
 
 function lock(file: string) {
@@ -141,7 +147,7 @@ function next(prev: Entry | undefined, core: Core, now: number): { state: State;
 
 export async function touchMany(items: Touch[]): Promise<Array<{ state: State; entry: Entry }>> {
   if (!items.length) return []
-  const file = storePath()
+  const file = await storePath()
   const rows = await Promise.all(items.map((item) => row(item)))
 
   return Flock.withLock(lock(file), async () => {
@@ -167,7 +173,7 @@ export async function touch(spec: string, target: string, id: string): Promise<{
 }
 
 export async function setTheme(id: string, name: string, theme: Theme): Promise<void> {
-  const file = storePath()
+  const file = await storePath()
   await Flock.withLock(lock(file), async () => {
     const store = await read(file)
     const entry = store[id]
@@ -181,7 +187,7 @@ export async function setTheme(id: string, name: string, theme: Theme): Promise<
 }
 
 export async function list(): Promise<Store> {
-  const file = storePath()
+  const file = await storePath()
   return Flock.withLock(lock(file), async () => read(file))
 }
 

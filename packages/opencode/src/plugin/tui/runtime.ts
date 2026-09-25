@@ -34,7 +34,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
 import { Flock } from "@opencode-ai/core/util/flock"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { internalTuiPlugins, type InternalTuiPlugin } from "./internal"
 import type { HostPluginApi, HostSlots } from "@opencode-ai/tui/plugin/slots"
 import { ConfigPlugin } from "@/config/plugin"
@@ -1086,9 +1086,8 @@ async function load(input: {
       }).pipe(Effect.provide(AppNodeBuilder.build(RuntimeFlags.node))),
     )
     const pluginOrigins = config.plugin_origins ?? (await TuiConfig.pluginOrigins())
-    const records = Flag.OPENCODE_PURE ? [] : pluginOrigins
-    if (Flag.OPENCODE_PURE && pluginOrigins.length) {
-    }
+    const pure = await Effect.runPromise(FlagConfig.OPENCODE_PURE)
+    const records = pure ? [] : pluginOrigins
 
     for (const item of internalTuiPlugins(flags)) {
       const entry = loadInternalPlugin(item)
