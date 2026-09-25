@@ -808,9 +808,7 @@ export default function Page() {
               file,
               directory,
               error: error.cause,
-            }).pipe(
-              Effect.as(Option.none<VcsFileDiff>()),
-            ),
+            }).pipe(Effect.as(Option.none<VcsFileDiff>())),
           ),
         )
         if (Option.isSome(scoped)) return scoped
@@ -822,9 +820,7 @@ export default function Page() {
             file,
             root,
             error: error.cause,
-          }).pipe(
-            Effect.as(Option.none<VcsFileDiff>()),
-          ),
+          }).pipe(Effect.as(Option.none<VcsFileDiff>())),
         ),
       )
     })
@@ -956,8 +952,7 @@ export default function Page() {
     setUi("scrollGesture", DateTime.toEpochMillis(DateTime.nowUnsafe()))
   }
 
-  const hasScrollGesture = () =>
-    DateTime.toEpochMillis(DateTime.nowUnsafe()) - ui.scrollGesture < scrollGestureWindowMs
+  const hasScrollGesture = () => DateTime.toEpochMillis(DateTime.nowUnsafe()) - ui.scrollGesture < scrollGestureWindowMs
 
   createEffect(
     on(
@@ -1945,7 +1940,12 @@ export default function Page() {
           },
           request: () =>
             halt(input.sessionID).pipe(
-              Effect.andThen(Effect.tryPromise({ try: () => session.revert.stage(input), catch: (cause) => new SessionRequestError({ cause }) })),
+              Effect.andThen(
+                Effect.tryPromise({
+                  try: () => session.revert.stage(input),
+                  catch: (cause) => new SessionRequestError({ cause }),
+                }),
+              ),
             ),
           complete: () => {},
           rollback: () => roll(input.sessionID, Option.fromNullishOr(last), target),
