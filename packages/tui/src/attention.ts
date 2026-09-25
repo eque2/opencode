@@ -1,17 +1,19 @@
 /// <reference path="./audio.d.ts" />
 import type {
   TuiAttention,
+  TuiAttentionNotification,
   TuiAttentionNotifyInput,
   TuiAttentionNotifyResult,
   TuiAttentionNotifySkipReason,
   TuiAttentionWhen,
   TuiKV,
+  TuiAttentionSound,
   TuiAttentionSoundName,
   TuiAttentionSoundPack,
   TuiAttentionSoundPackInfo,
 } from "@opencode-ai/plugin/tui"
 import { AttentionSoundName, type TuiConfig } from "./config"
-import { Option, Schema } from "effect"
+import { Option, Predicate, Schema } from "effect"
 import stripAnsi from "strip-ansi"
 import * as TuiAudio from "./audio"
 import defaultSoundPath from "@opencode-ai/ui/audio/bip-bop-01.mp3" with { type: "file" }
@@ -94,9 +96,10 @@ function soundVolume(
 function normalizePack(pack: TuiAttentionSoundPack): Option.Option<RegisteredSoundPack> {
   const id = pack.id.trim()
   if (!id) return Option.none()
+  const name = pack.name?.trim()
   return Option.some({
     id,
-    name: pack.name?.trim() || undefined,
+    ...(name ? { name } : {}),
     builtin: false,
     sounds: Object.fromEntries(
       Object.entries(pack.sounds).filter(
@@ -115,6 +118,11 @@ function focusSkip(when: TuiAttentionWhen, focus: FocusState): Option.Option<Tui
   return Option.none()
 }
 
+// The `when` of an object request. A boolean or absent request uses the fallback.
+function requestedWhen(request: TuiAttentionNotification | TuiAttentionSound | undefined, fallback: TuiAttentionWhen) {
+  return Predicate.isObject(request) ? (request.when ?? fallback) : fallback
+}
+
 export function createTuiAttention(input: {
   renderer: AttentionRenderer
   config: Pick<TuiConfig.Resolved, "attention">
@@ -123,7 +131,7 @@ export function createTuiAttention(input: {
 }): TuiAttentionHost {
   let focus: FocusState = "unknown"
   let disposed = false
-  let activePackID: string | undefined
+  let activePackID: Option.Option<string> = Option.none()
   const packs = new Map<string, RegisteredSoundPack>([[BUILTIN_PACK.id, BUILTIN_PACK]])
   const audio = input.audio ?? TuiAudio
 
@@ -138,8 +146,11 @@ export function createTuiAttention(input: {
   input.renderer.on("blur", onBlur)
 
   function configuredPackID() {
-    const stored = input.kv?.get<string | undefined>(KV_SOUND_PACK, undefined)
-    return activePackID ?? stored ?? input.config.attention.sound_pack
+    const stored = Option.fromNullishOr(input.kv?.get<string | undefined>(KV_SOUND_PACK))
+    return activePackID.pipe(
+      Option.orElse(() => stored),
+      Option.getOrElse(() => input.config.attention.sound_pack),
+    )
   }
 
   function currentPack() {
@@ -179,8 +190,7 @@ export function createTuiAttention(input: {
         const message = normalizeText(request.message, "", MESSAGE_LIMIT)
         if (!message) return skipped("empty_message")
 
-        const requestedNotification = typeof request.notification === "object" ? request.notification : undefined
-        const notificationSkip = focusSkip(requestedNotification?.when ?? "blurred", focus)
+        const notificationSkip = focusSkip(requestedWhen(request.notification, "blurred"), focus)
         const notificationRequested = input.config.attention.notifications && request.notification !== false
         const shouldNotify = notificationRequested && Option.isNone(notificationSkip)
         const notification = shouldNotify
@@ -197,10 +207,11 @@ export function createTuiAttention(input: {
             })()
           : false
         const volume = soundVolume(request, input.config)
-        const requestedSound = typeof request.sound === "object" ? request.sound : undefined
-        const soundSkip = Option.isSome(volume) ? focusSkip(requestedSound?.when ?? "always", focus) : Option.none()
+        const soundSkip = Option.isSome(volume) ? focusSkip(requestedWhen(request.sound, "always"), focus) : Option.none()
         const soundName =
-          requestedSound?.name && Schema.is(AttentionSoundName)(requestedSound.name) ? requestedSound.name : "default"
+          Predicate.isObject(request.sound) && Schema.is(AttentionSoundName)(request.sound.name)
+            ? request.sound.name
+            : "default"
         const sound =
           Option.isSome(volume) && Option.isNone(soundSkip) ? await playSound(soundName, volume.value) : false
 
@@ -239,7 +250,7 @@ export function createTuiAttention(input: {
       activate(id, options) {
         const pack = packs.get(id)
         if (!pack) return false
-        activePackID = pack.id
+        activePackID = Option.some(pack.id)
         if (options?.persist) input.kv?.set(KV_SOUND_PACK, pack.id)
         return true
       },
