@@ -125,7 +125,7 @@ const getData = query((shareID: string) => {
 
 // The error view for a share that cannot render, from the ErrorBoundary or a missing session.
 function ShareError(props: { error: unknown }) {
-  console.error(props.error)
+  Effect.runFork(Effect.logError(props.error))
   const details = props.error instanceof Error ? (props.error.stack ?? props.error.message) : String(props.error)
   return (
     <div class="min-h-screen w-full bg-background-base text-text-base flex flex-col items-center justify-center gap-4 p-6 text-center">
