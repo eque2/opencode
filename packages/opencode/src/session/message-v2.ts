@@ -17,7 +17,15 @@ import {
 } from "@opencode-ai/core/v1/session"
 
 import { NamedError } from "@opencode-ai/core/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  type ModelMessage,
+  type ProviderMetadata,
+  type UIMessage,
+} from "ai"
+import { isJSONObject } from "@ai-sdk/provider"
 import { Database } from "@opencode-ai/core/database/database"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { NotFoundError } from "@/storage/storage"
@@ -34,7 +42,7 @@ import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
-import { Effect, Schema } from "effect"
+import { Effect, Predicate, Record, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -122,10 +130,18 @@ function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$infer
   })
 }
 
-function providerMeta(metadata: Record<string, any> | undefined) {
-  if (!metadata) return undefined
-  const { providerExecuted: _, ...rest } = metadata
-  return Object.keys(rest).length > 0 ? rest : undefined
+// The AI SDK accepts only JSON objects as provider metadata entries. Session part
+// metadata is open JSON, so keep the entries that have the provider shape.
+function toProviderMetadata(metadata: Record.ReadonlyRecord<string, unknown>): ProviderMetadata {
+  return Record.filter(metadata, isJSONObject)
+}
+
+// Tool parts keep the providerExecuted flag beside the provider entries; the AI SDK
+// reads that flag from its own field, so it is not provider metadata.
+function callProviderMetadata(metadata: Record.ReadonlyRecord<string, unknown> | undefined) {
+  if (!metadata) return {}
+  const entries = toProviderMetadata(Record.remove(metadata, "providerExecuted"))
+  return Record.isEmptyRecord(entries) ? {} : { callProviderMetadata: entries }
 }
 
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
@@ -276,7 +292,8 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       // the neighboring signed reasoning blocks.
       const hasSignedReasoning = msg.parts.some((part) => {
         if (part.type !== "reasoning") return false
-        return part.metadata?.anthropic?.signature != null
+        const anthropic = part.metadata?.anthropic
+        return Predicate.hasProperty(anthropic, "signature") && Predicate.isNotNullish(anthropic.signature)
       })
       for (const part of msg.parts) {
         if (part.type === "text") {
@@ -284,7 +301,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           assistantMessage.parts.push({
             type: "text",
             text,
-            ...(differentModel ? {} : { providerMetadata: part.metadata }),
+            ...(differentModel || !part.metadata ? {} : { providerMetadata: toProviderMetadata(part.metadata) }),
           })
         }
         if (part.type === "step-start")
@@ -323,7 +340,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               input: part.state.input,
               output,
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : callProviderMetadata(part.metadata)),
             })
           }
           if (part.state.status === "error") {
@@ -336,7 +353,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 input: part.state.input,
                 output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...(differentModel ? {} : callProviderMetadata(part.metadata)),
               })
             } else {
               assistantMessage.parts.push({
@@ -346,7 +363,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 input: part.state.input,
                 errorText: part.state.error,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-                ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+                ...(differentModel ? {} : callProviderMetadata(part.metadata)),
               })
             }
           }
@@ -360,7 +377,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               input: part.state.input,
               errorText: "[Tool execution was interrupted]",
               ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
-              ...(differentModel ? {} : { callProviderMetadata: providerMeta(part.metadata) }),
+              ...(differentModel ? {} : callProviderMetadata(part.metadata)),
             })
         }
         if (part.type === "reasoning") {
@@ -375,7 +392,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           assistantMessage.parts.push({
             type: "reasoning",
             text: part.text,
-            providerMetadata: part.metadata,
+            ...(part.metadata ? { providerMetadata: toProviderMetadata(part.metadata) } : {}),
           })
         }
       }
