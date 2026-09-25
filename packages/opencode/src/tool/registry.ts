@@ -115,8 +115,10 @@ const layer = Layer.effect(
     const patchtool = yield* ApplyPatchTool
     const skilltool = yield* SkillTool
     const agent = yield* Agent.Service
-    const codeMode = flags.experimentalCodeMode ? yield* Effect.promise(() => import("./code-mode")) : undefined
-    const codeModeTool = codeMode ? yield* codeMode.CodeModeTool : undefined
+    const codeMode = flags.experimentalCodeMode
+      ? Option.some(yield* Effect.promise(() => import("./code-mode")))
+      : Option.none<typeof import("./code-mode")>()
+    const codeModeTool = Option.isSome(codeMode) ? Option.some(yield* codeMode.value.CodeModeTool) : Option.none()
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
@@ -130,12 +132,12 @@ const layer = Layer.effect(
           const args = def.args ?? {}
           const entries = Object.entries(args)
           const allZod = entries.every((entry) => isZodType(entry[1]))
-          const zodParams = allZod ? z.object(args) : undefined
-          const jsonSchema = zodParams
-            ? yield* Effect.fromResult(zodJsonSchema(zodParams)).pipe(Effect.orDie)
+          const zodParams = allZod ? Option.some(z.object(args)) : Option.none()
+          const jsonSchema = Option.isSome(zodParams)
+            ? yield* Effect.fromResult(zodJsonSchema(zodParams.value)).pipe(Effect.orDie)
             : legacyJsonSchema(entries)
-          const parameters = zodParams
-            ? Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success)
+          const parameters = Option.isSome(zodParams)
+            ? Schema.declare<unknown>((u): u is unknown => zodParams.value.safeParse(u).success)
             : Schema.Unknown
           const tool: Tool.Def = {
             id,
@@ -156,13 +158,12 @@ const layer = Layer.effect(
                 const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
-                const attachments = typeof result === "string" ? undefined : result.attachments
                 const info = yield* agent.get(toolCtx.agent)
                 const out = yield* truncate.output(output, {}, info)
                 return {
                   title: typeof result === "string" ? "" : (result.title ?? ""),
                   output: out.truncated ? out.content : output,
-                  attachments,
+                  ...(typeof result !== "string" && result.attachments ? { attachments: result.attachments } : {}),
                   metadata: {
                     ...metadata,
                     truncated: out.truncated,
@@ -226,7 +227,7 @@ const layer = Layer.effect(
           question: Tool.init(question),
           lsp: Tool.init(lsptool),
           plan: Tool.init(plan),
-          ...(codeModeTool ? { execute: Tool.init(codeModeTool) } : {}),
+          ...(Option.isSome(codeModeTool) ? { execute: Tool.init(codeModeTool.value) } : {}),
         })
 
         return {
@@ -284,11 +285,13 @@ const layer = Layer.effect(
       agent: Agent.Info
       permission?: PermissionV1.Ruleset
     }) {
-      if (!codeMode) return Option.none<string>()
+      if (Option.isNone(codeMode)) return Option.none<string>()
       const ruleset = Permission.merge(input.agent.permission, input.permission ?? [])
       const tools = Permission.visibleTools(yield* mcp.tools(), ruleset)
       if (Object.keys(tools).length === 0) return Option.none<string>()
-      return Option.some(codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)))
+      return Option.some(
+        codeMode.value.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)),
+      )
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
@@ -321,10 +324,8 @@ const layer = Layer.effect(
             jsonSchema: tool.jsonSchema,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
-          const jsonSchema =
-            output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
-              ? output.jsonSchema
-              : undefined
+          // A plugin that replaces the parameters without a new JSON Schema drops the old one.
+          const keepJsonSchema = output.parameters === tool.parameters || output.jsonSchema !== tool.jsonSchema
           return {
             id: tool.id,
             description: [
@@ -336,7 +337,7 @@ const layer = Layer.effect(
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,
-            jsonSchema,
+            ...(keepJsonSchema ? { jsonSchema: output.jsonSchema } : {}),
             execute: tool.execute,
             formatValidationError: tool.formatValidationError,
           }
@@ -403,11 +404,10 @@ function zodMetadataRegistry(schema: z.ZodType) {
     seen.add(value)
 
     if (isZodType(value)) {
-      const metadata = typeof value.meta === "function" ? value.meta() : undefined
-      const description = typeof value.description === "string" ? value.description : undefined
+      const metadata = typeof value.meta === "function" ? value.meta() : {}
       const merged = {
-        ...(metadata && typeof metadata === "object" ? metadata : {}),
-        ...(description ? { description } : {}),
+        ...(Predicate.isObject(metadata) ? metadata : {}),
+        ...(typeof value.description === "string" && value.description ? { description: value.description } : {}),
       }
       if (Object.keys(merged).length) registry.add(value, merged)
       collect(value._zod.def)

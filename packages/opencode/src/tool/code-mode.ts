@@ -74,10 +74,11 @@ export function describeCatalog(mcpTools: Record<string, MCP.McpTool>, servers: 
   }).instructions()
 }
 
+// The last path segment of a URI, or None when the path ends without one.
 const lastSegment = (uri: string) => {
   const trimmed = uri.split(/[?#]/, 1)[0]!.replace(/\/+$/, "")
   const segment = trimmed.slice(trimmed.lastIndexOf("/") + 1)
-  return segment.length > 0 ? segment : undefined
+  return segment.length > 0 ? Option.some(segment) : Option.none<string>()
 }
 
 const dataUrl = (mime: string, base64: string) => `data:${mime};base64,${base64}`
@@ -106,7 +107,13 @@ function projectMcpResult(result: CallToolResult, collect: (attachment: Attachme
           break
         }
         const mime = block.resource.mimeType ?? "application/octet-stream"
-        push({ type: "file", mime, url: dataUrl(mime, block.resource.blob), filename: lastSegment(block.resource.uri) })
+        const filename = lastSegment(block.resource.uri)
+        push({
+          type: "file",
+          mime,
+          url: dataUrl(mime, block.resource.blob),
+          ...(Option.isSome(filename) ? { filename: filename.value } : {}),
+        })
         break
       }
       case "resource_link":

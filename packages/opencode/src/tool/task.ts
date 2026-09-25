@@ -10,7 +10,7 @@ import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
-import { Effect, Exit, Schema, Scope } from "effect"
+import { Effect, Exit, Option, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
@@ -138,8 +138,11 @@ export const TaskTool = Tool.define(
       }
 
       const session = params.task_id
-        ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
-        : undefined
+        ? yield* sessions.get(SessionID.make(params.task_id)).pipe(
+            Effect.map(Option.some),
+            Effect.catchCause(() => Effect.succeedNone),
+          )
+        : Option.none()
       const childPermission = deriveSubagentSessionPermission({
         parentSessionPermission: parent.permission ?? [],
         subagent: next,
@@ -157,23 +160,25 @@ export const TaskTool = Tool.define(
           action: "deny" as const,
         })) ?? []),
       ]
-      const nextSession =
-        session ??
-        (yield* sessions.create({
-          parentID: ctx.sessionID,
-          title: params.description + ` (@${next.name} subagent)`,
-          agent: next.name,
-          permission: [
-            ...childPermission,
-            ...childToolDenies.filter(
-              (deny) =>
-                !childPermission.some(
-                  (rule) =>
-                    rule.permission === deny.permission && rule.pattern === deny.pattern && rule.action === deny.action,
-                ),
-            ),
-          ],
-        }))
+      const nextSession = Option.isSome(session)
+        ? session.value
+        : yield* sessions.create({
+            parentID: ctx.sessionID,
+            title: params.description + ` (@${next.name} subagent)`,
+            agent: next.name,
+            permission: [
+              ...childPermission,
+              ...childToolDenies.filter(
+                (deny) =>
+                  !childPermission.some(
+                    (rule) =>
+                      rule.permission === deny.permission &&
+                      rule.pattern === deny.pattern &&
+                      rule.action === deny.action,
+                  ),
+              ),
+            ],
+          })
 
       const msg = yield* MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID }).pipe(
         Effect.provideService(Database.Service, database),
@@ -210,7 +215,7 @@ export const TaskTool = Tool.define(
             modelID: model.modelID,
             providerID: model.providerID,
           },
-          variant: next.model ? undefined : variant,
+          ...(next.model ? {} : { variant }),
           agent: next.name,
           parts,
         })
@@ -369,7 +374,7 @@ export const TaskTool = Tool.define(
         ? [DESCRIPTION, BACKGROUND_DESCRIPTION].join("\n\n")
         : DESCRIPTION,
       parameters: Parameters,
-      jsonSchema: flags.experimentalBackgroundSubagents ? undefined : ToolJsonSchema.fromSchema(BaseParameters),
+      ...(flags.experimentalBackgroundSubagents ? {} : { jsonSchema: ToolJsonSchema.fromSchema(BaseParameters) }),
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         run(params, ctx).pipe(Effect.orDie),
     }
