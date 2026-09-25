@@ -1,5 +1,5 @@
 import { Binary } from "@opencode-ai/core/util/binary"
-import { HashSet, Predicate } from "effect"
+import { DateTime, HashSet, Predicate } from "effect"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type {
   Event,
@@ -255,7 +255,7 @@ export function applyDirectoryEvent(input: {
       input.setStore("session", result.index, (session) => ({
         ...session,
         title: properties.title,
-        time: { ...session.time, updated: Date.now() },
+        time: { ...session.time, updated: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
       }))
       break
     }
@@ -294,7 +294,7 @@ export function applyDirectoryEvent(input: {
           workspaceID: properties.location.workspaceID,
           directory: properties.location.directory,
           path: properties.subpath,
-          time: { ...session.time, updated: Date.now() },
+          time: { ...session.time, updated: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
         }))
         break
       }
