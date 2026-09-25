@@ -803,7 +803,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         const prev = node.previousSibling
         const next = node.nextSibling
         const prevIsBr = prev instanceof Element && prev.tagName === "BR"
-        return !!prevIsBr && !next
+        return prevIsBr && !next
       }
       if (!(node instanceof Element)) return false
       if (node instanceof HTMLElement && node.dataset.type === "file") return true
