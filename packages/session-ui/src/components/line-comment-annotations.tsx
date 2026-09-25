@@ -63,7 +63,7 @@ type LineCommentControllerProps<T extends LineCommentShape> = {
   onDelete?: (comment: T) => void
   renderCommentActions?: (comment: T, controls: { edit: VoidFunction; remove: VoidFunction }) => JSX.Element
   editSubmitLabel?: string
-  onDraftPopoverFocusOut?: JSX.EventHandlerUnion<HTMLDivElement, FocusEvent>
+  onDraftPopoverFocusOut?: JSX.EventHandler<HTMLDivElement, FocusEvent>
   getHoverSelectedRange?: Accessor<SelectedLineRange | null>
   cancelDraftOnCommentToggle?: boolean
   clearSelectionOnSelectionEndNull?: boolean
@@ -80,8 +80,8 @@ type CommentProps = {
   selection: JSX.Element
   actions?: JSX.Element
   editor?: DraftProps
-  onClick?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-  onMouseEnter?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
+  onClick?: JSX.EventHandler<HTMLElement, MouseEvent>
+  onMouseEnter?: JSX.EventHandler<HTMLElement, MouseEvent>
 }
 
 type DraftProps = {
@@ -91,7 +91,7 @@ type DraftProps = {
   onInput: (value: string) => void
   onCancel: VoidFunction
   onSubmit: (value: string) => void
-  onPopoverFocusOut?: JSX.EventHandlerUnion<HTMLDivElement, FocusEvent>
+  onPopoverFocusOut?: JSX.EventHandler<HTMLDivElement, FocusEvent>
   cancelLabel?: string
   submitLabel?: string
 }

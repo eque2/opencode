@@ -233,12 +233,12 @@ export const SessionReview = (props: SessionReviewProps) => {
     queue()
     const next = props.onScroll
     if (!next) return
-    if (Array.isArray(next)) {
-      const [fn, data] = next as [(data: unknown, event: Event) => void, unknown]
-      fn(data, event)
+    if (typeof next === "function") {
+      next(event)
       return
     }
-    ;(next as JSX.EventHandler<HTMLDivElement, Event>)(event)
+    // Solid bound handler: [handler, data].
+    next[0](next[1], event)
   }
 
   onCleanup(() => {

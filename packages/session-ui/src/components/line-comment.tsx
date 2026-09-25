@@ -40,9 +40,13 @@ export type LineCommentAnchorProps = {
   variant?: LineCommentVariant
   icon?: "comment" | "plus"
   buttonLabel?: string
-  onClick?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-  onMouseEnter?: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent>
-  onPopoverFocusOut?: JSX.EventHandlerUnion<HTMLDivElement, FocusEvent>
+  // Plain handlers: they bind through Solid `on:` listeners, which take a
+  // function (or a handleEvent object), never a bound [handler, data] tuple.
+  // The click and mouseenter handlers serve both the button and the inline
+  // popover div, so they take any HTMLElement as currentTarget.
+  onClick?: JSX.EventHandler<HTMLElement, MouseEvent>
+  onMouseEnter?: JSX.EventHandler<HTMLElement, MouseEvent>
+  onPopoverFocusOut?: JSX.EventHandler<HTMLDivElement, FocusEvent>
   class?: string
   popoverClass?: string
   children?: JSX.Element
@@ -85,8 +89,8 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
               data-slot="line-comment-button"
               on:mousedown={(e) => e.stopPropagation()}
               on:mouseup={(e) => e.stopPropagation()}
-              on:click={props.onClick as any}
-              on:mouseenter={props.onMouseEnter as any}
+              on:click={props.onClick}
+              on:mouseenter={props.onMouseEnter}
             >
               <Show
                 when={props.inline}
@@ -102,7 +106,7 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
                   [props.popoverClass ?? ""]: !!props.popoverClass,
                 }}
                 on:mousedown={(e) => e.stopPropagation()}
-                on:focusout={props.onPopoverFocusOut as any}
+                on:focusout={props.onPopoverFocusOut}
               >
                 {props.children}
               </div>
@@ -117,9 +121,9 @@ export const LineCommentAnchor = (props: LineCommentAnchorProps) => {
             [props.popoverClass ?? ""]: !!props.popoverClass,
           }}
           on:mousedown={(e) => e.stopPropagation()}
-          on:click={props.onClick as any}
-          on:mouseenter={props.onMouseEnter as any}
-          on:focusout={props.onPopoverFocusOut as any}
+          on:click={props.onClick}
+          on:mouseenter={props.onMouseEnter}
+          on:focusout={props.onPopoverFocusOut}
         >
           {props.children}
         </div>
@@ -247,12 +251,12 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
   })
 
   const focus = () => refs.textarea?.focus()
-  const hold: JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> = (e) => {
+  const hold: JSX.EventHandler<HTMLButtonElement, MouseEvent> = (e) => {
     e.preventDefault()
     e.stopPropagation()
   }
   const click =
-    (fn: VoidFunction): JSX.EventHandlerUnion<HTMLButtonElement, MouseEvent> =>
+    (fn: VoidFunction): JSX.EventHandler<HTMLButtonElement, MouseEvent> =>
     (e) => {
       e.stopPropagation()
       fn()
@@ -409,8 +413,8 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   type="button"
                   data-slot="line-comment-action"
                   data-variant="ghost"
-                  on:mousedown={hold as any}
-                  on:click={click(split.onCancel) as any}
+                  on:mousedown={hold}
+                  on:click={click(split.onCancel)}
                 >
                   {split.cancelLabel ?? i18n.t("ui.common.cancel")}
                 </button>
@@ -419,8 +423,8 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
                   data-slot="line-comment-action"
                   data-variant="primary"
                   disabled={split.value.trim().length === 0}
-                  on:mousedown={hold as any}
-                  on:click={click(submit) as any}
+                  on:mousedown={hold}
+                  on:click={click(submit)}
                 >
                   {split.submitLabel ?? i18n.t("ui.lineComment.submit")}
                 </button>

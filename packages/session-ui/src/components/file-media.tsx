@@ -61,7 +61,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
     const media = cfg()
     if (!media || media.mode === "off") return false
     if (kind() !== "none") return false
-    return isBinaryContent(media.current as any)
+    return isBinaryContent(media.current)
   })
 
   const onLoad = () => props.media?.onLoad?.()
@@ -73,7 +73,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
     if (media.deleted) return true
     if (k === "svg") return false
     if (media.current !== undefined) return false
-    return !hasMediaValue(media.after as any) && hasMediaValue(media.before as any)
+    return !hasMediaValue(media.after) && hasMediaValue(media.before)
   })
 
   const direct = createMemo((): Option.Option<string> => {
@@ -120,7 +120,7 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
     void input.readFile(input.path).then(
       (result) => {
         if (!active) return
-        const src = dataUrlFromMediaValue(result as any, input.kind)
+        const src = dataUrlFromMediaValue(result, input.kind)
         if (Option.isNone(src)) {
           input.onError?.({ kind: input.kind })
           setRemote({ key: Option.some(input.key), loading: false, error: true, src: Option.none(), mime: Option.none() })
@@ -173,18 +173,18 @@ export function FileMedia(props: { media?: FileMediaOptions; fallback: () => JSX
   const svgSource = createMemo((): Option.Option<string> => {
     const media = cfg()
     if (!media || kind() !== "svg") return Option.none()
-    return svgTextFromValue(media.current as any)
+    return svgTextFromValue(media.current)
   })
   const svgSrc = createMemo((): Option.Option<string> => {
     const media = cfg()
     if (!media || kind() !== "svg") return Option.none()
-    return dataUrlFromMediaValue(media.current as any, "svg")
+    return dataUrlFromMediaValue(media.current, "svg")
   })
   const svgInvalid = createMemo((): Option.Option<readonly [string | undefined, unknown]> => {
     const media = cfg()
     if (!media || kind() !== "svg") return Option.none()
     if (Option.isSome(svgSource())) return Option.none()
-    if (!hasMediaValue(media.current as any)) return Option.none()
+    if (!hasMediaValue(media.current)) return Option.none()
     return Option.some([media.path, media.current] as const)
   })
 
