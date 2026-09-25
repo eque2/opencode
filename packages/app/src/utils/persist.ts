@@ -1,6 +1,7 @@
 import { Platform, usePlatform } from "@/context/platform"
 import { makePersisted, type AsyncStorage, type SyncStorage } from "@solid-primitives/storage"
 import { checksum } from "@opencode-ai/core/util/encode"
+import { Array as Arr, Iterable, MutableHashMap, MutableHashSet, Option } from "effect"
 import { createResource, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import { pathKey } from "@/utils/path-key"
@@ -28,28 +29,29 @@ const LEGACY_STORAGE = "default.dat"
 const GLOBAL_STORAGE = "opencode.global.dat"
 const WINDOW_STORAGE = "opencode.window"
 const LOCAL_PREFIX = "opencode."
-const fallback = new Map<string, boolean>()
+const fallback = MutableHashSet.empty<string>()
 
 const CACHE_MAX_ENTRIES = 500
 const CACHE_MAX_BYTES = 8 * 1024 * 1024
 
 type CacheEntry = { value: string; bytes: number }
-const cache = new Map<string, CacheEntry>()
+// MutableHashMap iterates in insertion order, so the first key is the least recently used entry.
+const cache = MutableHashMap.empty<string, CacheEntry>()
 const cacheTotal = { bytes: 0 }
 
 function cacheDelete(key: string) {
-  const entry = cache.get(key)
-  if (!entry) return
-  cacheTotal.bytes -= entry.bytes
-  cache.delete(key)
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isNone(entry)) return
+  cacheTotal.bytes -= entry.value.bytes
+  MutableHashMap.remove(cache, key)
 }
 
 function cachePrune() {
   for (;;) {
-    if (cache.size <= CACHE_MAX_ENTRIES && cacheTotal.bytes <= CACHE_MAX_BYTES) return
-    const oldest = cache.keys().next().value as string | undefined
-    if (!oldest) return
-    cacheDelete(oldest)
+    if (MutableHashMap.size(cache) <= CACHE_MAX_ENTRIES && cacheTotal.bytes <= CACHE_MAX_BYTES) return
+    const oldest = Iterable.head(MutableHashMap.keys(cache))
+    if (Option.isNone(oldest)) return
+    cacheDelete(oldest.value)
   }
 }
 
@@ -60,28 +62,28 @@ function cacheSet(key: string, value: string) {
     return
   }
 
-  const entry = cache.get(key)
-  if (entry) cacheTotal.bytes -= entry.bytes
-  cache.delete(key)
-  cache.set(key, { value, bytes })
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isSome(entry)) cacheTotal.bytes -= entry.value.bytes
+  MutableHashMap.remove(cache, key)
+  MutableHashMap.set(cache, key, { value, bytes })
   cacheTotal.bytes += bytes
   cachePrune()
 }
 
-function cacheGet(key: string) {
-  const entry = cache.get(key)
-  if (!entry) return
-  cache.delete(key)
-  cache.set(key, entry)
-  return entry.value
+function cacheGet(key: string): Option.Option<string> {
+  const entry = MutableHashMap.get(cache, key)
+  if (Option.isNone(entry)) return Option.none()
+  MutableHashMap.remove(cache, key)
+  MutableHashMap.set(cache, key, entry.value)
+  return Option.some(entry.value.value)
 }
 
 function fallbackDisabled(scope: string) {
-  return fallback.get(scope) === true
+  return MutableHashSet.has(fallback, scope)
 }
 
 function fallbackSet(scope: string) {
-  fallback.set(scope, true)
+  MutableHashSet.add(fallback, scope)
 }
 
 function quota(error: unknown) {
@@ -363,21 +365,17 @@ function windowStorage(windowID: string) {
   return `${WINDOW_STORAGE}.${safe}.dat`
 }
 
-function legacyWorkspaceStorage(dir: string) {
-  const storage = workspaceStorage(pathKey(dir))
-  const result = new Set<string>()
-  const raw = workspaceStorage(dir)
-  if (raw !== storage) result.add(raw)
-
+function legacyWorkspaceStorage(dir: string): string[] | undefined {
   const key = pathKey(dir)
+  const storage = workspaceStorage(key)
   const drive = key.length >= 3 && key[1] === ":" && key[2] === "/"
-  if (drive) {
-    const backslash = workspaceStorage(key.replaceAll("/", "\\"))
-    if (backslash !== storage) result.add(backslash)
-  }
+  const candidates = drive
+    ? [workspaceStorage(dir), workspaceStorage(key.replaceAll("/", "\\"))]
+    : [workspaceStorage(dir)]
+  const result = Arr.dedupe(candidates.filter((name) => name !== storage))
 
-  if (result.size === 0) return
-  return [...result]
+  if (result.length === 0) return undefined
+  return result
 }
 
 function serverWorkspaceTarget(scope: ServerScopeValue, dir: string, key: string, legacy?: string[]): PersistTarget {
@@ -393,7 +391,7 @@ function localStorageWithPrefix(prefix: string): SyncStorage {
     getItem: (key) => {
       const name = item(key)
       const cached = cacheGet(name)
-      if (fallbackDisabled(scope)) return cached ?? null
+      if (fallbackDisabled(scope)) return Option.getOrNull(cached)
 
       const stored = (() => {
         try {
@@ -403,7 +401,7 @@ function localStorageWithPrefix(prefix: string): SyncStorage {
           return null
         }
       })()
-      if (stored === null) return cached ?? null
+      if (stored === null) return Option.getOrNull(cached)
       cacheSet(name, stored)
       return stored
     },
@@ -436,7 +434,7 @@ function localStorageDirect(): SyncStorage {
   return {
     getItem: (key) => {
       const cached = cacheGet(key)
-      if (fallbackDisabled(scope)) return cached ?? null
+      if (fallbackDisabled(scope)) return Option.getOrNull(cached)
 
       const stored = (() => {
         try {
@@ -446,7 +444,7 @@ function localStorageDirect(): SyncStorage {
           return null
         }
       })()
-      if (stored === null) return cached ?? null
+      if (stored === null) return Option.getOrNull(cached)
       cacheSet(key, stored)
       return stored
     },

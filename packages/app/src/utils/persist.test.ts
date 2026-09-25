@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { Array as Arr, MutableHashMap, Option } from "effect"
 import { ServerScope } from "./server-scope"
 
 type PersistTestingType = typeof import("./persist").PersistTesting
@@ -6,27 +7,27 @@ type PersistType = typeof import("./persist").Persist
 type RemovePersistedType = typeof import("./persist").removePersisted
 
 class MemoryStorage implements Storage {
-  private values = new Map<string, string>()
+  private values = MutableHashMap.empty<string, string>()
   readonly events: string[] = []
   readonly calls = { get: 0, set: 0, remove: 0 }
 
   clear() {
-    this.values.clear()
+    MutableHashMap.clear(this.values)
   }
 
   get length() {
-    return this.values.size
+    return MutableHashMap.size(this.values)
   }
 
   key(index: number) {
-    return Array.from(this.values.keys())[index] ?? null
+    return Option.getOrNull(Arr.get(Array.from(MutableHashMap.keys(this.values)), index))
   }
 
   getItem(key: string) {
     this.calls.get += 1
     this.events.push(`get:${key}`)
     if (key.startsWith("opencode.throw")) throw new Error("storage get failed")
-    return this.values.get(key) ?? null
+    return Option.getOrNull(MutableHashMap.get(this.values, key))
   }
 
   setItem(key: string, value: string) {
@@ -34,14 +35,14 @@ class MemoryStorage implements Storage {
     this.events.push(`set:${key}`)
     if (key.startsWith("opencode.quota")) throw new DOMException("quota", "QuotaExceededError")
     if (key.startsWith("opencode.throw")) throw new Error("storage set failed")
-    this.values.set(key, value)
+    MutableHashMap.set(this.values, key, value)
   }
 
   removeItem(key: string) {
     this.calls.remove += 1
     this.events.push(`remove:${key}`)
     if (key.startsWith("opencode.throw")) throw new Error("storage remove failed")
-    this.values.delete(key)
+    MutableHashMap.remove(this.values, key)
   }
 }
 
@@ -206,6 +207,8 @@ describe("persist localStorage resilience", () => {
   })
 
   test("server global target cannot collide when scope and key contain colons", () => {
-    expect(Persist.serverGlobal(ServerScope.make("a:b"), "c")).not.toEqual(Persist.serverGlobal(ServerScope.make("a"), "b:c"))
+    expect(Persist.serverGlobal(ServerScope.make("a:b"), "c")).not.toEqual(
+      Persist.serverGlobal(ServerScope.make("a"), "b:c"),
+    )
   })
 })
