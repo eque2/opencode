@@ -2,7 +2,7 @@ import { getFilename } from "@opencode-ai/core/util/path"
 import type { Project } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { HashMap, MutableHashSet, Option } from "effect"
+import { Effect, HashMap, MutableHashSet, Option } from "effect"
 import { createMemo, onCleanup } from "solid-js"
 import { commandPaletteOptions, useCommand, type CommandOption } from "@/context/command"
 import { useFile } from "@/context/file"
@@ -247,56 +247,57 @@ export function createServerSessionEntries(props: {
 
   onCleanup(() => abort?.abort())
 
-  return async (text: string): Promise<CommandPaletteEntry[]> => {
-    const search = text.trim()
-    if (!search) {
-      abort?.abort()
-      return []
-    }
-    abort?.abort()
-    const current = new AbortController()
-    abort = current
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, 100)
-      current.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true },
-      )
-    })
-    if (current.signal.aborted) return []
-    const opened = props.opened()
-    const openedByID = HashMap.fromIterable(
-      opened.flatMap((project) => (project.id ? [[project.id, project] as const] : [])),
+  return (text: string): Promise<CommandPaletteEntry[]> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const search = text.trim()
+        abort?.abort()
+        if (!search) return []
+        const current = new AbortController()
+        abort = current
+        // Wait 100 ms so fast typing sends one request. A newer search aborts the wait, and this one gives nothing.
+        yield* Effect.raceFirst(Effect.sleep("100 millis"), abortOf(current.signal))
+        if (current.signal.aborted) return []
+        const opened = props.opened()
+        const openedByID = HashMap.fromIterable(
+          opened.flatMap((project) => (project.id ? [[project.id, project] as const] : [])),
+        )
+        const stored = props.stored().map((project) => ({ ...project, expanded: false }))
+        const storedByID = HashMap.fromIterable(stored.map((project) => [project.id, project] as const))
+        return yield* Effect.tryPromise(() => props.load(search, current.signal)).pipe(
+          Effect.map((result) =>
+            result.data
+              .map(normalizeSessionInfo)
+              .filter((session) => !session.time.archived)
+              .map((session): CommandPaletteEntry => {
+                const project =
+                  projectForSession(session, opened, openedByID) ?? projectForSession(session, stored, storedByID)
+                return {
+                  id: `session:${props.server}:${session.id}`,
+                  type: "session" as const,
+                  title: session.title || props.untitled(),
+                  description: project ? displayName(project) : getFilename(session.directory),
+                  category: props.category(),
+                  directory: session.directory,
+                  sessionID: session.id,
+                  server: props.server,
+                  project,
+                  updated: session.time.updated,
+                }
+              }),
+          ),
+          // A failed request, or a failure while reading its result, shows no sessions, as the old catch did.
+          Effect.catchCause(() => Effect.succeed<CommandPaletteEntry[]>([])),
+        )
+      }),
     )
-    const stored = props.stored().map((project) => ({ ...project, expanded: false }))
-    const storedByID = HashMap.fromIterable(stored.map((project) => [project.id, project] as const))
-    return props
-      .load(search, current.signal)
-      .then((result) =>
-        result.data
-          .map(normalizeSessionInfo)
-          .filter((session) => !session.time.archived)
-          .map((session) => {
-            const project =
-              projectForSession(session, opened, openedByID) ?? projectForSession(session, stored, storedByID)
-            return {
-              id: `session:${props.server}:${session.id}`,
-              type: "session" as const,
-              title: session.title || props.untitled(),
-              description: project ? displayName(project) : getFilename(session.directory),
-              category: props.category(),
-              directory: session.directory,
-              sessionID: session.id,
-              server: props.server,
-              project,
-              updated: session.time.updated,
-            }
-          }),
-      )
-      .catch(() => [] as CommandPaletteEntry[])
-  }
 }
+
+/** Completes when the signal aborts. Interrupting it removes the listener. */
+const abortOf = (signal: AbortSignal) =>
+  Effect.callback<void>((resume) => {
+    const onAbort = () => resume(Effect.void)
+    signal.addEventListener("abort", onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort))
+  })
