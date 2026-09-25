@@ -102,7 +102,7 @@ function isPartEqual(partA: ContentPart, partB: ContentPart) {
       )
     case "agent":
       return partB.type === "agent" && partA.name === partB.name
-    case "image":
+    default:
       return partB.type === "image" && partA.id === partB.id
   }
 }
