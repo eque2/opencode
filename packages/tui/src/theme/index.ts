@@ -1,5 +1,5 @@
 import { SyntaxStyle, RGBA, type TerminalColors } from "@opentui/core"
-import { MutableHashSet } from "effect"
+import { MutableHashSet, Predicate } from "effect"
 import aura from "./assets/aura.json" with { type: "json" }
 import ayu from "./assets/ayu.json" with { type: "json" }
 import carbonfox from "./assets/carbonfox.json" with { type: "json" }
@@ -192,10 +192,9 @@ export function allThemes() {
   return listThemes()
 }
 
+// A theme is an object whose `theme` key holds an object; resolveTheme checks the colors.
 export function isTheme(theme: unknown): theme is ThemeJson {
-  if (typeof theme !== "object" || theme === null || Array.isArray(theme)) return false
-  const value = Reflect.get(theme, "theme")
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(theme) && Predicate.isObject(theme.theme)
 }
 
 export function subscribeThemes(listener: (themes: Record<string, ThemeJson>) => void) {
