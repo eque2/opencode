@@ -1,5 +1,5 @@
 import type { AssistantMessage, Part, Provider, UserMessage } from "@opencode-ai/sdk/v2"
-import { DateTime } from "effect"
+import { DateTime, Schema } from "effect"
 import { Locale } from "./locale"
 import * as Model from "./model"
 
@@ -45,6 +45,9 @@ export function formatTranscript(
 
   return transcript
 }
+
+// Tool input is untyped wire JSON; the transcript prints it as indented JSON text.
+const encodeToolInput = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 // The transcript shows times in the reader's locale, so the DateTime crosses to a Date only for Intl formatting.
 function localeTimestamp(epochMillis: number) {
@@ -104,7 +107,7 @@ export function formatPart(part: Part, options: TranscriptOptions): string {
   if (part.type === "tool") {
     let result = `**Tool: ${part.tool}**\n`
     if (options.toolDetails && part.state.input) {
-      result += `\n**Input:**\n\`\`\`json\n${JSON.stringify(part.state.input, null, 2)}\n\`\`\`\n`
+      result += `\n**Input:**\n\`\`\`json\n${encodeToolInput(part.state.input)}\n\`\`\`\n`
     }
     if (options.toolDetails && part.state.status === "completed" && part.state.output) {
       result += `\n**Output:**\n\`\`\`\n${part.state.output}\n\`\`\`\n`
