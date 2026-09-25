@@ -1,5 +1,5 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { absurd, Brand } from "effect"
+import { absurd, Brand, MutableHashMap, MutableHashSet, Option } from "effect"
 import { type Accessor, batch, createMemo } from "solid-js"
 import { createStore, produce, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
@@ -55,13 +55,13 @@ export function migrateCanonicalLocalServerState(value: unknown, canonicalLocalS
   const next = { ...value }
   if (projects && Array.isArray(previousProjects)) {
     const local = Array.isArray(projects.local) ? projects.local : []
-    const worktrees = new Set(
+    const worktrees = MutableHashSet.fromIterable(
       local.flatMap((project) => (isRecord(project) && typeof project.worktree === "string" ? [project.worktree] : [])),
     )
     const migrated = previousProjects.filter((project) => {
       if (!isRecord(project) || typeof project.worktree !== "string") return true
-      if (worktrees.has(project.worktree)) return false
-      worktrees.add(project.worktree)
+      if (MutableHashSet.has(worktrees, project.worktree)) return false
+      MutableHashSet.add(worktrees, project.worktree)
       return true
     })
     const nextProjects: Record<string, unknown> = { ...projects, local: [...local, ...migrated] }
@@ -171,7 +171,8 @@ export function resolveServerList(input: {
   props?: Array<ServerConnection.Any>
   stored: StoredServer[]
 }): Array<ServerConnection.Any> {
-  const deduped = new Map<ServerConnection.Key, ServerConnection.Any>(
+  // MutableHashMap keeps string keys in insertion order, so the list order does not change.
+  const deduped = MutableHashMap.fromIterable<ServerConnection.Key, ServerConnection.Any>(
     input.props?.map((v) => [ServerConnection.key(v), v]) ?? [],
   )
 
@@ -187,17 +188,17 @@ export function resolveServerList(input: {
           : { type: "http", http: value }
     const key = ServerConnection.key(conn)
 
-    const existing = deduped.get(key)
-    if (existing)
-      deduped.set(key, {
-        ...existing,
+    const existing = MutableHashMap.get(deduped, key)
+    if (Option.isSome(existing))
+      MutableHashMap.set(deduped, key, {
+        ...existing.value,
         ...conn,
-        http: { ...existing.http, ...conn.http },
+        http: { ...existing.value.http, ...conn.http },
       })
-    else deduped.set(key, conn)
+    else MutableHashMap.set(deduped, key, conn)
   }
 
-  return [...deduped.values()]
+  return Array.from(MutableHashMap.values(deduped))
 }
 
 export namespace ServerConnection {
@@ -342,12 +343,12 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const scope = (key = state.active) => ServerScope.fromServerKey(key, props.canonicalLocalServer)
     const projects = createServerProjects({ scope, store, setStore })
-    const projectStores = new Map<ServerConnection.Key, ReturnType<typeof createServerProjects>>()
+    const projectStores = MutableHashMap.empty<ServerConnection.Key, ReturnType<typeof createServerProjects>>()
     const projectsForServer = (key: ServerConnection.Key) => {
-      const existing = projectStores.get(key)
-      if (existing) return existing
+      const existing = MutableHashMap.get(projectStores, key)
+      if (Option.isSome(existing)) return existing.value
       const next = createServerProjects({ scope: () => scope(key), store, setStore })
-      projectStores.set(key, next)
+      MutableHashMap.set(projectStores, key, next)
       return next
     }
     const current: Accessor<ServerConnection.Any | undefined> = createMemo(
