@@ -59,6 +59,7 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
+import { HashMap } from "effect"
 
 type GlobalStore = {
   ready: boolean
@@ -275,7 +276,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       return pathQuery.data ?? EMPTY
     },
     get provider() {
-      const EMPTY = { all: new Map(), connected: [], default: {} }
+      const EMPTY: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
       if (providerQuery.isLoading) return EMPTY
       return providerQuery.data ?? EMPTY
     },

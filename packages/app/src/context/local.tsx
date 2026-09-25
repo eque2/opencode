@@ -14,6 +14,7 @@ import { useSDK } from "./sdk"
 import { useSync } from "./sync"
 import { useServerSDK } from "./server-sdk"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
+import { HashMap, Option } from "effect"
 
 export type ModelKey = { providerID: string; modelID: string; variant?: string }
 
@@ -99,8 +100,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     })
 
     const validModel = (model: ModelKey) => {
-      const provider = providers.all().get(model.providerID)
-      return !!provider?.models[model.modelID] && connected().has(model.providerID)
+      const provider = HashMap.get(providers.all(), model.providerID)
+      return Option.exists(provider, (item) => !!item.models[model.modelID]) && connected().has(model.providerID)
     }
 
     const firstModel = (...items: Array<() => ModelKey | undefined>) => {
