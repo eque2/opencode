@@ -7,17 +7,24 @@ import { queryOptions } from "@tanstack/solid-query"
 import type { State } from "./types"
 import type { ChildQueryOptions } from "./child-store"
 import { ServerScope } from "@/utils/server-scope"
-import { Chunk, Effect, HashMap } from "effect"
+import { Chunk, Effect, HashMap, Option } from "effect"
 
 let createChildStoreManager: typeof import("./child-store").createChildStoreManager
 type QueryAccessor = () => { queryKey?: readonly unknown[]; enabled?: boolean }
 let querySingles = Chunk.empty<QueryAccessor>()
-const persist: typeof import("@/utils/persist").persisted = (_target, store) => [
-  store[0],
-  store[1],
-  null,
-  Object.assign(() => true, { promise: undefined }),
-]
+// A synchronous persisted store with nothing saved: no stored raw value and no
+// pending load, given back in the `string | null` and `Promise | undefined`
+// shapes that persisted() returns.
+const persist: typeof import("@/utils/persist").persisted = (_target, store) => {
+  const stored = Option.none<string>()
+  const pending = Option.none<Promise<string>>()
+  return [
+    store[0],
+    store[1],
+    Option.getOrNull(stored),
+    Object.assign(() => true, { promise: Option.getOrUndefined(pending) }),
+  ]
+}
 
 const provider: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
 
@@ -125,7 +132,7 @@ beforeAll(() => {
         },
         get data() {
           if (queryKind(options) === "path") throw new Error("pending path data read")
-          if (queryKind(options) === "mcp") return options().enabled ? { demo: { status: "disabled" } } : undefined
+          if (queryKind(options) === "mcp" && options().enabled) return { demo: { status: "disabled" } }
           if (queryKind(options) === "lsp") return []
           if (queryKind(options) === "providers") return provider
           return undefined
