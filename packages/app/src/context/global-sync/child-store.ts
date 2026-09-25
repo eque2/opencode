@@ -35,6 +35,12 @@ const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
   get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
 })
 
+/** The directory query factories that a child store subscribes to. */
+export type ChildQueryOptions = Pick<
+  QueryOptionsApi,
+  "path" | "mcp" | "mcpResources" | "lsp" | "providers" | "references"
+>
+
 export function createChildStoreManager(input: {
   owner: Owner
   scope: ServerScope
@@ -45,7 +51,7 @@ export function createChildStoreManager(input: {
   onMcp: (directory: string, setStore: SetStoreFunction<State>) => void
   onDispose: (directory: string) => void
   translate: (key: string, vars?: Record<string, string | number>) => string
-  queryOptions: QueryOptionsApi
+  queryOptions: ChildQueryOptions
   global: {
     provider: NormalizedProviderListResponse
   }

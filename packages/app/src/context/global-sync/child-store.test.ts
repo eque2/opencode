@@ -2,13 +2,15 @@ import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { createRoot, getOwner, type Owner } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+import type { LspStatus, Path, ReferenceInfo } from "@opencode-ai/sdk/v2/client"
+import { queryOptions } from "@tanstack/solid-query"
 import type { State } from "./types"
-import type { QueryOptionsApi } from "../server-sync"
+import type { ChildQueryOptions } from "./child-store"
 import { ServerScope } from "@/utils/server-scope"
 import { HashMap } from "effect"
 
 let createChildStoreManager: typeof import("./child-store").createChildStoreManager
-const querySingles: Array<() => { queryKey?: unknown[]; enabled?: boolean }> = []
+const querySingles: Array<() => { queryKey?: readonly unknown[]; enabled?: boolean }> = []
 const persist: typeof import("@/utils/persist").persisted = (_target, store) => [
   store[0],
   store[1],
@@ -16,30 +18,81 @@ const persist: typeof import("@/utils/persist").persisted = (_target, store) => 
   Object.assign(() => true, { promise: undefined }),
 ]
 
-const child = () => createStore({} as State)
 const provider: NormalizedProviderListResponse = { all: HashMap.empty(), connected: [], default: {} }
 
-const queryOptionsApi = {
-  globalConfig: () => ({ queryKey: ["globalConfig"], queryFn: async () => ({}) }),
-  projects: () => ({ queryKey: ["projects"], queryFn: async () => [] }),
-  providers: (directory: string | null) => ({ queryKey: [directory, "providers"], queryFn: async () => provider }),
-  path: (directory: string | null) => ({
-    queryKey: [directory, "path"],
-    queryFn: async () => ({
-      state: "",
-      config: "",
-      worktree: "",
-      directory: directory ?? "",
-      home: "",
+// A directory store as the eviction test needs it: only its presence in
+// manager.children matters, so the fields hold plain empty values.
+const child = () =>
+  createStore<State>({
+    status: "loading",
+    agent: [],
+    command: [],
+    reference: [],
+    project: "",
+    projectMeta: {},
+    icon: "",
+    provider_ready: false,
+    provider,
+    config: {},
+    path: { state: "", config: "", worktree: "", directory: "", home: "" },
+    session: [],
+    sessionTotal: 0,
+    session_status: {},
+    session_working: () => false,
+    session_diff: {},
+    todo: {},
+    permission: {},
+    question: {},
+    mcp_ready: false,
+    mcp: {},
+    mcp_resource: {},
+    lsp_ready: false,
+    lsp: [],
+    vcs: {},
+    limit: 5,
+    message: {},
+    session_message: {},
+    part: {},
+    part_text_accum_delta: {},
+  })
+
+// The query factories that child stores subscribe to, keyed like the real
+// loaders ([scope, directory, kind]). useQuery is mocked below, so the query
+// functions never run.
+const queryOptionsApi: ChildQueryOptions = {
+  providers: (directory) =>
+    queryOptions({ queryKey: [ServerScope.local, directory, "providers"], queryFn: async () => provider }),
+  path: (directory) =>
+    queryOptions<Path>({
+      queryKey: [ServerScope.local, directory, "path"],
+      queryFn: async () => ({
+        state: "",
+        config: "",
+        worktree: "",
+        directory: directory ?? "",
+        home: "",
+      }),
     }),
+  mcp: (directory) => ({ queryKey: [ServerScope.local, directory, "mcp"], queryFn: async () => ({}) }),
+  mcpResources: (directory) => ({
+    queryKey: [ServerScope.local, directory, "mcpResources"],
+    queryFn: async () => ({}),
   }),
-  agents: (directory: string) => ({ queryKey: [directory, "agents"], queryFn: async () => [] }),
-  mcp: (directory: string) => ({ queryKey: [directory, "mcp"], queryFn: async () => ({}) }),
-  mcpResources: (directory: string) => ({ queryKey: [directory, "mcpResources"], queryFn: async () => ({}) }),
-  lsp: (directory: string) => ({ queryKey: [directory, "lsp"], queryFn: async () => [] }),
-  references: (directory: string) => ({ queryKey: [directory, "references"], queryFn: async () => [] }),
-  sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
-} as unknown as QueryOptionsApi
+  lsp: (directory: string) =>
+    queryOptions({
+      queryKey: [ServerScope.local, directory, "lsp"] as const,
+      queryFn: async (): Promise<LspStatus[]> => [],
+    }),
+  references: (directory) =>
+    queryOptions<ReferenceInfo[]>({
+      queryKey: [ServerScope.local, directory, "references"],
+      queryFn: async () => [],
+    }),
+}
+
+// The mocked query records each options accessor; tests find a query by the
+// last queryKey element.
+const queryKind = (options: () => { queryKey?: readonly unknown[] }) => options().queryKey?.at(-1)
 
 function createOwner(callback: (owner: Owner) => void) {
   return createRoot((dispose) => {
@@ -53,17 +106,18 @@ function createOwner(callback: (owner: Owner) => void) {
 
 beforeAll(async () => {
   mock.module("@tanstack/solid-query", () => ({
-    useQuery: (options: () => { queryKey?: unknown[]; enabled?: boolean }) => {
+    queryOptions,
+    useQuery: (options: () => { queryKey?: readonly unknown[]; enabled?: boolean }) => {
       querySingles.push(options)
       return {
         get isLoading() {
-          return options().queryKey?.[1] === "path"
+          return queryKind(options) === "path"
         },
         get data() {
-          if (options().queryKey?.[1] === "path") throw new Error("pending path data read")
-          if (options().queryKey?.[1] === "mcp") return options().enabled ? { demo: { status: "disabled" } } : undefined
-          if (options().queryKey?.[1] === "lsp") return []
-          if (options().queryKey?.[1] === "providers") return provider
+          if (queryKind(options) === "path") throw new Error("pending path data read")
+          if (queryKind(options) === "mcp") return options().enabled ? { demo: { status: "disabled" } } : undefined
+          if (queryKind(options) === "lsp") return []
+          if (queryKind(options) === "providers") return provider
           return undefined
         },
       }
