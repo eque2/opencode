@@ -3,7 +3,7 @@ import { ServerConnection } from "@/context/server"
 import { createFiberSlot } from "@/utils/fiber-slot"
 import { authTokenFromCredentials, createSdkForServer } from "./server"
 import { ClientError, OpenCode } from "@opencode-ai/client"
-import { DateTime, Effect, MutableHashMap, Option, Schedule, Schema } from "effect"
+import { Data, DateTime, Effect, MutableHashMap, Option, Schedule, Schema } from "effect"
 import { Accessor, createEffect } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 
@@ -35,6 +35,9 @@ function cacheKey(server: ServerConnection.HttpBase) {
 }
 
 const unhealthy: ServerHealth = { healthy: false }
+
+/** The V1 health request failed. `cause` is the rejection or the SDK error value, which decides a retry. */
+class LegacyHealthError extends Data.TaggedError("ServerHealth.LegacyHealthError")<{ readonly cause: unknown }> {}
 
 // Both health endpoints answer with this shape. The version is optional on the current endpoint.
 const HealthResponse = Schema.Struct({ healthy: Schema.Boolean, version: Schema.optional(Schema.String) }).annotate({
@@ -119,13 +122,16 @@ const checkServerHealthEffect = (
         if (signal.aborted) return unhealthy
 
         const sdk = createSdkForServer({ server, fetch, signal })
-        return yield* Effect.tryPromise({ try: () => sdk.global.health(), catch: (error) => error }).pipe(
+        return yield* Effect.tryPromise({
+          try: () => sdk.global.health(),
+          catch: (cause) => new LegacyHealthError({ cause }),
+        }).pipe(
           Effect.flatMap((response) =>
             response.error
-              ? Effect.fail(response.error)
+              ? Effect.fail(new LegacyHealthError({ cause: response.error }))
               : Effect.succeed(Option.getOrElse(decodeHealth(response.data), () => unhealthy)),
           ),
-          Effect.catch((error) => retry(count, error)),
+          Effect.catch((error) => retry(count, error.cause)),
         )
       })
 
