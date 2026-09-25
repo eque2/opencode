@@ -47,10 +47,8 @@ describe("runtime adapters", () => {
   })
 
   test("resolves speech recognition constructor with webkit precedence", () => {
-    // oxlint-disable-next-line no-extraneous-class
-    class SpeechCtor {}
-    // oxlint-disable-next-line no-extraneous-class
-    class WebkitCtor {}
+    function SpeechCtor() {}
+    function WebkitCtor() {}
     const ctor = getSpeechRecognitionCtor({
       SpeechRecognition: SpeechCtor,
       webkitSpeechRecognition: WebkitCtor,
