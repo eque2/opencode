@@ -1,4 +1,4 @@
-import { MutableHashMap } from "effect"
+import { Data, Effect, MutableHashMap } from "effect"
 
 type QueueInput = {
   paused: () => boolean
@@ -7,6 +7,22 @@ type QueueInput = {
   key?: (directory: string) => string
 }
 
+/** A refresh step that failed; `cause` is the value its bootstrap call threw or rejected with. */
+class RefreshQueueError extends Data.TaggedError("App.RefreshQueueError")<{ readonly cause: unknown }> {}
+
+/** Runs one bootstrap call, which can return a Promise or finish synchronously. */
+const attempt = (run: () => Promise<void> | void) =>
+  Effect.try({ try: run, catch: (cause) => new RefreshQueueError({ cause }) }).pipe(
+    Effect.flatMap((result) =>
+      result instanceof Promise
+        ? Effect.tryPromise({ try: () => result, catch: (cause) => new RefreshQueueError({ cause }) })
+        : Effect.void,
+    ),
+  )
+
+/** Lets the event loop turn once between refresh steps, as the old setTimeout(0) tick did. */
+const tick = Effect.sleep("0 millis")
+
 export function createRefreshQueue(input: QueueInput) {
   const queued = MutableHashMap.empty<string, string>()
   let root = false
@@ -14,8 +30,6 @@ export function createRefreshQueue(input: QueueInput) {
   let timer: ReturnType<typeof setTimeout> | undefined
 
   const key = input.key ?? ((directory: string) => directory)
-
-  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
   const take = (count: number) => {
     const picked = [...queued].slice(0, count)
@@ -27,7 +41,7 @@ export function createRefreshQueue(input: QueueInput) {
     if (timer) return
     timer = setTimeout(() => {
       timer = undefined
-      void drain()
+      Effect.runFork(drain.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
     }, 0)
   }
 
@@ -44,30 +58,39 @@ export function createRefreshQueue(input: QueueInput) {
     schedule()
   }
 
-  async function drain() {
-    if (running) return
+  // One drain runs at a time. It refreshes the root first, then up to two directories per step,
+  // and stops when the queue is empty or paused. A failed step ends this drain; the finalizer
+  // schedules the next drain for the work that remains, unless the queue is paused.
+  const drain: Effect.Effect<void, RefreshQueueError> = Effect.suspend(() => {
+    if (running) return Effect.void
     running = true
-    try {
+    return Effect.gen(function* () {
       while (true) {
         if (input.paused()) return
         if (root) {
           root = false
-          await input.bootstrap()
-          await tick()
+          yield* attempt(() => input.bootstrap())
+          yield* tick
           continue
         }
         const dirs = take(2)
         if (dirs.length === 0) return
-        await Promise.all(dirs.map((dir) => input.bootstrapInstance(dir)))
-        await tick()
+        yield* Effect.forEach(dirs, (dir) => attempt(() => input.bootstrapInstance(dir)), {
+          concurrency: "unbounded",
+          discard: true,
+        })
+        yield* tick
       }
-    } finally {
-      running = false
-      // oxlint-disable-next-line no-unsafe-finally -- intentional: early return skips schedule() when paused
-      if (input.paused()) return
-      if (root || !MutableHashMap.isEmpty(queued)) schedule()
-    }
-  }
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          running = false
+          if (input.paused()) return
+          if (root || !MutableHashMap.isEmpty(queued)) schedule()
+        }),
+      ),
+    )
+  })
 
   return {
     push,
