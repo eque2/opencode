@@ -1,4 +1,5 @@
 import { createComponent, createContext, type JSX, useContext } from "solid-js"
+import { MissingProviderError } from "./errors"
 
 export type TuiPaths = Readonly<{
   cwd: string
@@ -59,7 +60,10 @@ export function TuiFlagsProvider(props: { value: TuiFlags; children: JSX.Element
 
 function required<T>(context: ReturnType<typeof createContext<T>>, name: string) {
   const value = useContext(context)
-  if (!value) throw new Error(`${name} is missing`)
+  if (!value) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: `${name} is missing` })
+  }
   return value
 }
 

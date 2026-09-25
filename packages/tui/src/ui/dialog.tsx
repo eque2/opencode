@@ -7,6 +7,7 @@ import { useToast } from "./toast"
 import { useTuiFlags } from "../context/runtime"
 import { useBindings, useOpencodeModeStack } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { MissingProviderError } from "../context/errors"
 import { Effect, Fiber, Option, Schema } from "effect"
 
 // OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
@@ -239,7 +240,8 @@ export function DialogProvider(props: ParentProps) {
 export function useDialog() {
   const value = useContext(ctx)
   if (!value) {
-    throw new Error("useDialog must be used within a DialogProvider")
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useDialog must be used within a DialogProvider" })
   }
   return value
 }
