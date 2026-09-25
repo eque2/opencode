@@ -58,7 +58,7 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
-import { HashMap } from "effect"
+import { HashMap, MutableHashMap, Option } from "effect"
 
 type GlobalStore = {
   ready: boolean
@@ -207,21 +207,24 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const owner = getOwner()
   if (!owner) throw new Error("ServerSync must be created within owner")
 
-  const sdkCache = new Map<string, OpencodeClient>()
-  const booting = new Map<string, Promise<void>>()
-  const sessionLoads = new Map<string, Promise<void>>()
-  const sessionMeta = new Map<string, { limit: number }>()
+  const sdkCache = MutableHashMap.empty<string, OpencodeClient>()
+  const booting = MutableHashMap.empty<string, Promise<void>>()
+  const sessionLoads = MutableHashMap.empty<string, Promise<void>>()
+  const sessionMeta = MutableHashMap.empty<string, { limit: number }>()
+
+  /** The session limit that a directory keeps after its last session load, if it has one. */
+  const retainedLimitOf = (key: string) => Option.map(MutableHashMap.get(sessionMeta, key), (meta) => meta.limit)
 
   const sdkFor = (directory: string) => {
     const key = directoryKey(directory)
-    const cached = sdkCache.get(key)
-    if (cached) return cached
-    const sdk = serverSDK.createClient({
-      directory,
-      throwOnError: true,
+    return Option.getOrElse(MutableHashMap.get(sdkCache, key), () => {
+      const sdk = serverSDK.createClient({
+        directory,
+        throwOnError: true,
+      })
+      MutableHashMap.set(sdkCache, key, sdk)
+      return sdk
     })
-    sdkCache.set(key, sdk)
-    return sdk
   }
 
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
@@ -341,8 +344,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     owner,
     scope: serverSDK.scope,
     persist: persisted,
-    isBooting: (directory) => booting.has(directory),
-    isLoadingSessions: (directory) => sessionLoads.has(directory),
+    isBooting: (directory) => MutableHashMap.has(booting, directory),
+    isLoadingSessions: (directory) => MutableHashMap.has(sessionLoads, directory),
     onBootstrap: (directory) => {
       void bootstrapInstance(directory)
     },
@@ -360,8 +363,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     onDispose: (directory) => {
       const key = directoryKey(directory)
       queue.clear(key)
-      sessionMeta.delete(key)
-      sdkCache.delete(key)
+      MutableHashMap.remove(sessionMeta, key)
+      MutableHashMap.remove(sdkCache, key)
       clearProviderRev(serverSDK.scope, key)
     },
     translate: language.t,
@@ -373,17 +376,21 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   async function loadSessions(directory: string, options?: { limit?: number }) {
     const key = directoryKey(directory)
-    const pending = sessionLoads.get(key)
-    if (pending) {
-      await pending
+    const pending = MutableHashMap.get(sessionLoads, key)
+    if (Option.isSome(pending)) {
+      await pending.value
       return loadSessions(directory, options)
     }
 
     children.pin(key)
     const [store, setStore] = children.child(directory, { bootstrap: false })
-    const meta = sessionMeta.get(key)
-    const retainedLimit = Math.max(store.limit, options?.limit ?? 0, meta?.limit ?? 0)
-    if (meta && meta.limit >= retainedLimit) {
+    const meta = retainedLimitOf(key)
+    const retainedLimit = Math.max(
+      store.limit,
+      options?.limit ?? 0,
+      Option.getOrElse(meta, () => 0),
+    )
+    if (Option.exists(meta, (limit) => limit >= retainedLimit)) {
       const next = trimSessions(store.session, {
         limit: retainedLimit,
         permission: session.data.permission,
@@ -411,7 +418,11 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
                 .filter((s) => !!s?.id)
                 .filter((s) => !s.time?.archived)
                 .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-              const limit = Math.max(store.limit, options?.limit ?? 0, sessionMeta.get(key)?.limit ?? 0)
+              const limit = Math.max(
+                store.limit,
+                options?.limit ?? 0,
+                Option.getOrElse(retainedLimitOf(key), () => 0),
+              )
               const childSessions = store.session.filter((s) => !!s.parentID)
               const next = trimSessions([...nonArchived, ...childSessions], {
                 limit,
@@ -429,7 +440,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
                 )
                 setStore("session", reconcile(next, { key: "id" }))
               })
-              sessionMeta.set(key, { limit })
+              MutableHashMap.set(sessionMeta, key, { limit })
             })
             .catch((err) => {
               console.error("Failed to load sessions", err)
@@ -444,9 +455,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       })
       .then(() => {})
 
-    sessionLoads.set(key, promise)
+    MutableHashMap.set(sessionLoads, key, promise)
     void promise.finally(() => {
-      sessionLoads.delete(key)
+      MutableHashMap.remove(sessionLoads, key)
       children.unpin(key)
     })
     return promise
@@ -455,8 +466,8 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   async function bootstrapInstance(directory: string) {
     const key = directoryKey(directory)
     if (!key) return
-    const pending = booting.get(key)
-    if (pending) return pending
+    const pending = MutableHashMap.get(booting, key)
+    if (Option.isSome(pending)) return pending.value
 
     children.pin(key)
     const promise = Promise.resolve().then(async () => {
@@ -487,9 +498,9 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       })
     })
 
-    booting.set(key, promise)
+    MutableHashMap.set(booting, key, promise)
     void promise.finally(() => {
-      booting.delete(key)
+      MutableHashMap.remove(booting, key)
       children.unpin(key)
     })
     return promise
@@ -505,7 +516,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       store: existing[0],
       setStore: existing[1],
       push: queue.push,
-      retainedLimit: sessionMeta.get(key)?.limit,
+      retainedLimit: Option.getOrUndefined(retainedLimitOf(key)),
       sessionContent: false,
       permission: session.data.permission,
       loadLsp() {},
@@ -589,7 +600,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       push: (directory) => {
         if (children.active(directory)) queue.push(directory)
       },
-      retainedLimit: sessionMeta.get(key)?.limit,
+      retainedLimit: Option.getOrUndefined(retainedLimitOf(key)),
       sessionContent: false,
       permission: session.data.permission,
       vcsCache: children.vcsCache.get(key),
