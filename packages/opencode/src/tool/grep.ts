@@ -57,7 +57,7 @@ export const GrepTool = Tool.define(
             kind: requestedInfo?.type === "Directory" ? "directory" : "file",
           })
 
-          const search = FSUtil.resolve(requested)
+          const search = yield* fs.resolve(requested).pipe(Effect.flatMap(fs.normalizePath))
           const info = yield* fs.stat(search).pipe(Effect.catch(() => Effect.succeed(undefined)))
           const cwd = info?.type === "Directory" ? search : path.dirname(search)
           const result = yield* ripgrep.grep({
@@ -109,7 +109,7 @@ export const GrepTool = Tool.define(
             },
             output: output.join("\n"),
           }
-        }).pipe(Effect.orDie),
+        }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

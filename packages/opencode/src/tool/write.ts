@@ -74,7 +74,7 @@ export const WriteTool = Tool.define(
           let output = "Wrote file successfully."
           yield* lsp.touchFile(filepath, "document")
           const diagnostics = yield* lsp.diagnostics()
-          const normalizedFilepath = FSUtil.normalizePath(filepath)
+          const normalizedFilepath = yield* fs.normalizePath(filepath)
           let projectDiagnosticsCount = 0
           for (const [file, issues] of Object.entries(diagnostics)) {
             const current = file === normalizedFilepath
@@ -98,7 +98,7 @@ export const WriteTool = Tool.define(
             },
             output,
           }
-        }).pipe(Effect.orDie),
+        }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

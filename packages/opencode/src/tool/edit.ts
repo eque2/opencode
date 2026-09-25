@@ -34,8 +34,7 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
 
 const locks = new Map<string, Semaphore.Semaphore>()
 
-function lock(filePath: string) {
-  const resolvedFilePath = FSUtil.resolve(filePath)
+function lock(resolvedFilePath: string) {
   const hit = locks.get(resolvedFilePath)
   if (hit) return hit
 
@@ -85,7 +84,9 @@ export const EditTool = Tool.define(
           let diff = ""
           let contentOld = ""
           let contentNew = ""
-          yield* lock(filePath).withPermits(1)(
+          // Lock on the canonical real path, so two spellings of one file share a lock.
+          const resolvedFilePath = yield* afs.resolve(filePath).pipe(Effect.flatMap(afs.normalizePath))
+          yield* lock(resolvedFilePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
                 const existed = yield* afs.existsSafe(filePath)
@@ -196,7 +197,7 @@ export const EditTool = Tool.define(
           let output = "Edit applied successfully."
           yield* lsp.touchFile(filePath, "document")
           const diagnostics = yield* lsp.diagnostics()
-          const normalizedFilePath = FSUtil.normalizePath(filePath)
+          const normalizedFilePath = yield* afs.normalizePath(filePath)
           const block = LSP.Diagnostic.report(filePath, diagnostics[normalizedFilePath] ?? [])
           if (block) output += `\n\nLSP errors detected in this file, please fix:\n${block}`
 
@@ -209,7 +210,7 @@ export const EditTool = Tool.define(
             title: `${path.relative(instance.worktree, filePath)}`,
             output,
           }
-        }),
+        }).pipe(Effect.provideService(FSUtil.Service, afs)),
     }
   }),
 )

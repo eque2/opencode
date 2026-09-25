@@ -231,13 +231,10 @@ export const ReadTool = Tool.define<
       ctx: Tool.Context<Metadata>,
     ) {
       const instance = yield* InstanceState.context
-      let filepath = params.filePath
-      if (!path.isAbsolute(filepath)) {
-        filepath = path.resolve(instance.directory, filepath)
-      }
-      if (process.platform === "win32") {
-        filepath = FSUtil.normalizePath(filepath)
-      }
+      // normalizePath canonicalizes a Windows path and returns any other path unchanged.
+      const filepath = yield* fs.normalizePath(
+        path.isAbsolute(params.filePath) ? params.filePath : path.resolve(instance.directory, params.filePath),
+      )
       const title = path.relative(instance.worktree, filepath)
 
       const stat = yield* fs.stat(filepath).pipe(
@@ -380,7 +377,7 @@ export const ReadTool = Tool.define<
       description: DESCRIPTION,
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
-        run(params, ctx).pipe(Effect.orDie),
+        run(params, ctx).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )

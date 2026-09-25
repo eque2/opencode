@@ -70,7 +70,7 @@ export const GlobTool = Tool.define(
             },
             output: output.join("\n"),
           }
-        }).pipe(Effect.orDie),
+        }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }
   }),
 )
