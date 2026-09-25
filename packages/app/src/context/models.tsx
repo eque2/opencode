@@ -1,6 +1,6 @@
 import { type Accessor, createMemo, createResource } from "solid-js"
 import { createStore } from "solid-js/store"
-import { DateTime } from "luxon"
+import { DateTime, Effect, HashMap, HashSet, Option } from "effect"
 import { filter, firstBy, flat, groupBy, mapValues, pipe, uniqueBy, values } from "remeda"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useProviders } from "@/hooks/use-providers"
@@ -17,6 +17,8 @@ type Store = {
 }
 
 const RECENT_LIMIT = 5
+// A model counts as latest within six months of its release, with 30-day months as luxon measured them.
+const LATEST_WINDOW_MS = 6 * 30 * 24 * 60 * 60 * 1000
 
 function modelKey(model: ModelKey) {
   return `${model.providerID}:${model.modelID}`
@@ -25,7 +27,7 @@ function modelKey(model: ModelKey) {
 export const { use: useModels, provider: ModelsProvider } = createSimpleContext({
   name: "Models",
   gate: false,
-  init: (props: { directory?: Accessor<string | undefined> } = {}) => {
+  init: (props: { directory?: Accessor<string | undefined> }) => {
     const providers = useProviders(() => props.directory?.())
 
     const [store, setStore, _, ready] = persisted(
@@ -46,52 +48,48 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       ),
     )
 
-    const release = createMemo(
-      () =>
-        new Map(
-          available().map((model) => {
-            const parsed = DateTime.fromISO(model.release_date)
-            return [modelKey({ providerID: model.provider.id, modelID: model.id }), parsed] as const
-          }),
+    // The release date of each model; none when the date does not parse.
+    const release = createMemo(() =>
+      HashMap.fromIterable(
+        available().map(
+          (model) =>
+            [
+              modelKey({ providerID: model.provider.id, modelID: model.id }),
+              DateTime.make(model.release_date),
+            ] as const,
         ),
+      ),
     )
+    const releaseOf = (key: string) => Option.flatten(HashMap.get(release(), key))
 
-    const latest = createMemo(() =>
-      pipe(
+    const latest = createMemo(() => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
+      return pipe(
         available(),
-        filter(
-          (x) =>
-            Math.abs(
-              (release().get(modelKey({ providerID: x.provider.id, modelID: x.id })) ?? DateTime.invalid("invalid"))
-                .diffNow()
-                .as("months"),
-            ) < 6,
+        filter((x) =>
+          Option.exists(
+            releaseOf(modelKey({ providerID: x.provider.id, modelID: x.id })),
+            (date) => Math.abs(DateTime.toEpochMillis(date) - now) < LATEST_WINDOW_MS,
+          ),
         ),
         groupBy((x) => x.provider.id),
         mapValues((models) =>
-          pipe(
-            models,
-            groupBy((x) => x.family),
-            values(),
-            (groups) =>
-              groups.flatMap((g) => {
-                const first = firstBy(g, [(x) => x.release_date, "desc"])
-                return first ? [{ modelID: first.id, providerID: first.provider.id }] : []
-              }),
-          ),
+          values(groupBy(models, (x) => x.family)).flatMap((g) => {
+            const first = firstBy(g, [(x) => x.release_date, "desc"])
+            return first ? [{ modelID: first.id, providerID: first.provider.id }] : []
+          }),
         ),
         values(),
         flat(),
-      ),
-    )
-
-    const latestSet = createMemo(() => new Set(latest().map((x) => modelKey(x))))
-
-    const visibility = createMemo(() => {
-      const map = new Map<string, Visibility>()
-      for (const item of store.user) map.set(`${item.providerID}:${item.modelID}`, item.visibility)
-      return map
+      )
     })
+
+    const latestSet = createMemo(() => HashSet.fromIterable(latest().map((x) => modelKey(x))))
+
+    // When a model appears twice in the user list, the last entry wins, as with the Map it replaces.
+    const visibility = createMemo(() =>
+      HashMap.fromIterable(store.user.map((item) => [modelKey(item), item.visibility] as const)),
+    )
 
     const list = createMemo(() =>
       available().map((m) => ({
@@ -114,13 +112,11 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
 
     const visible = (model: ModelKey) => {
       const key = modelKey(model)
-      const state = visibility().get(key)
-      if (state === "hide") return false
-      if (state === "show") return true
-      if (latestSet().has(key)) return true
-      const date = release().get(key)
-      if (!date?.isValid) return true
-      return false
+      const state = HashMap.get(visibility(), key)
+      if (Option.isSome(state)) return state.value === "show"
+      if (HashSet.has(latestSet(), key)) return true
+      // A model with no valid release date stays visible.
+      return Option.isNone(releaseOf(key))
     }
 
     const setVisibility = (model: ModelKey, state: boolean) => {
@@ -145,11 +141,16 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       setStore("variant", key, value)
     }
 
+    // The source reads the recent list now, so the resource tracks it, and resolves once storage is ready.
     const [recentModels] = createResource(
-      async () => {
+      () => {
         const recent = store.recent
-        await ready.promise
-        return recent
+        return Effect.runPromise(
+          Option.match(Option.fromNullishOr(ready.promise), {
+            onNone: () => Effect.succeed(recent),
+            onSome: (promise) => Effect.promise(() => promise).pipe(Effect.as(recent)),
+          }),
+        )
       },
       (p) => p,
       { initialValue: [] },
@@ -161,7 +162,7 @@ export const { use: useModels, provider: ModelsProvider } = createSimpleContext(
       visible,
       setVisibility,
       recent: {
-        list: () => recentModels()!,
+        list: () => recentModels(),
         push,
       },
       variant: {
