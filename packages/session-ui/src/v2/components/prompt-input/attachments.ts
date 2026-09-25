@@ -67,6 +67,8 @@ type PromptTarget = {
   set: (prompt: PromptInputV2Prompt, cursor?: number) => void
 }
 
+type AttachmentTarget = { prompt: PromptTarget; cursor: number }
+
 export type PromptInputV2AttachmentConfig = {
   picker?: (
     options: { defaultPath?: string; multiple?: boolean; accept?: string[] },
@@ -91,16 +93,17 @@ export function createPromptInputV2Attachments(
     setDraggingType: (type: Option.Option<"image" | "@mention">) => void
   },
 ) {
-  const capture = () => {
+  const capture = (): Option.Option<AttachmentTarget> => {
     const prompt = input.capture()
-    const editor = input.editor()
-    if (!editor) return
-    return { prompt, cursor: prompt.cursor() ?? cursorPosition(editor) }
+    return Option.map(Option.fromNullishOr(input.editor()), (editor) => ({
+      prompt,
+      cursor: prompt.cursor() ?? cursorPosition(editor),
+    }))
   }
   const add = async (file: File, toast = true, target = capture(), clipboard = false) => {
-    if (!target) return false
+    if (Option.isNone(target)) return false
     const mime = await attachmentMime(file)
-    if (!mime) {
+    if (Option.isNone(mime)) {
       if (toast) input.warn()
       return false
     }
@@ -108,7 +111,7 @@ export function createPromptInputV2Attachments(
     const sourcePath = input.getPathForFile?.(file) || undefined
     // Native clipboard images arrive with a fresh timestamped filename on every paste, so identical
     // clipboard content is matched on bytes alone.
-    const duplicate = target.prompt
+    const duplicate = target.value.prompt
       .current()
       .some(
         (part) =>
@@ -127,10 +130,10 @@ export function createPromptInputV2Attachments(
       id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2),
       filename: file.name,
       sourcePath,
-      mime,
+      mime: mime.value,
       blob,
     }
-    target.prompt.set([...target.prompt.current(), attachment], target.cursor)
+    target.value.prompt.set([...target.value.prompt.current(), attachment], target.value.cursor)
     return true
   }
   const addAttachments = async (files: File[], toast = true, target = capture()) => {
@@ -145,7 +148,7 @@ export function createPromptInputV2Attachments(
     const clipboardData = event.clipboardData
     if (!clipboardData) return
     const target = capture()
-    if (!target) return
+    if (Option.isNone(target)) return
     event.preventDefault()
     event.stopPropagation()
     const files = Array.from(clipboardData.items).flatMap((item) => {
@@ -245,23 +248,23 @@ const textMimes = HashSet.fromIterable([
   "application/yaml",
 ])
 
-async function attachmentMime(file: File) {
+async function attachmentMime(file: File): Promise<Option.Option<string>> {
   const type = file.type.split(";", 1)[0]?.trim().toLowerCase() ?? ""
-  if (HashSet.has(imageMimes, type) || type === "application/pdf") return type
+  if (HashSet.has(imageMimes, type) || type === "application/pdf") return Option.some(type)
   const index = file.name.lastIndexOf(".")
   const suffix = index === -1 ? "" : file.name.slice(index + 1).toLowerCase()
   const fallback = HashMap.get(imageExtensions, suffix).pipe(
     Option.orElse(() => (suffix === "pdf" ? Option.some("application/pdf") : Option.none())),
   )
-  if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback.value
+  if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback
   if (type.startsWith("text/") || HashSet.has(textMimes, type) || type.endsWith("+json") || type.endsWith("+xml")) {
-    return "text/plain"
+    return Option.some("text/plain")
   }
   const bytes = new Uint8Array(await file.slice(0, 4096).arrayBuffer())
-  if (bytes.some((byte) => byte === 0)) return
+  if (bytes.some((byte) => byte === 0)) return Option.none()
   const control = bytes.filter((byte) => byte < 9 || (byte > 13 && byte < 32)).length
-  if (bytes.length > 0 && control / bytes.length > 0.3) return
-  return "text/plain"
+  if (bytes.length > 0 && control / bytes.length > 0.3) return Option.none()
+  return Option.some("text/plain")
 }
 
 function cursorPosition(editor: HTMLElement) {
