@@ -69,21 +69,14 @@ function formatInitError(error: InitError, t: Translator): string {
     }
     case "APIError": {
       const message = typeof data.message === "string" ? data.message : t("error.chain.apiError")
-      const lines: string[] = [message]
-
-      if (typeof data.statusCode === "number") {
-        lines.push(t("error.chain.status", { status: data.statusCode }))
-      }
-
-      if (typeof data.isRetryable === "boolean") {
-        lines.push(t("error.chain.retryable", { retryable: data.isRetryable }))
-      }
-
-      if (typeof data.responseBody === "string" && data.responseBody) {
-        lines.push(t("error.chain.responseBody", { body: data.responseBody }))
-      }
-
-      return lines.join("\n")
+      return [
+        message,
+        ...(typeof data.statusCode === "number" ? [t("error.chain.status", { status: data.statusCode })] : []),
+        ...(typeof data.isRetryable === "boolean" ? [t("error.chain.retryable", { retryable: data.isRetryable })] : []),
+        ...(typeof data.responseBody === "string" && data.responseBody
+          ? [t("error.chain.responseBody", { body: data.responseBody })]
+          : []),
+      ].join("\n")
     }
     case "ProviderModelNotFoundError": {
       const { providerID, modelID, suggestions } = data as {
@@ -158,47 +151,13 @@ function formatErrorChain(error: unknown, t: Translator, depth = 0, parentMessag
 
   if (error instanceof Error) {
     const isDuplicate = depth > 0 && parentMessage === error.message
-    const parts: string[] = []
     const indent = depth > 0 ? `\n${CHAIN_SEPARATOR}${t("error.chain.causedBy")}\n` : ""
-
     const header = `${error.name}${error.message ? `: ${error.message}` : ""}`
-    const stack = error.stack?.trim()
-
-    if (stack) {
-      const startsWithHeader = stack.startsWith(header)
-
-      if (isDuplicate && startsWithHeader) {
-        const trace = stack.split("\n").slice(1).join("\n").trim()
-        if (trace) {
-          parts.push(indent + trace)
-        }
-      }
-
-      if (isDuplicate && !startsWithHeader) {
-        parts.push(indent + stack)
-      }
-
-      if (!isDuplicate && startsWithHeader) {
-        parts.push(indent + stack)
-      }
-
-      if (!isDuplicate && !startsWithHeader) {
-        parts.push(indent + `${header}\n${stack}`)
-      }
-    }
-
-    if (!stack && !isDuplicate) {
-      parts.push(indent + header)
-    }
-
-    if (error.cause) {
-      const causeResult = formatErrorChain(error.cause, t, depth + 1, error.message)
-      if (causeResult) {
-        parts.push(causeResult)
-      }
-    }
-
-    return parts.join("\n\n")
+    const causeResult = error.cause ? formatErrorChain(error.cause, t, depth + 1, error.message) : ""
+    return [
+      ...errorParts(error.stack?.trim(), header, isDuplicate).map((part) => indent + part),
+      ...(causeResult ? [causeResult] : []),
+    ].join("\n\n")
   }
 
   if (typeof error === "string") {
@@ -209,6 +168,21 @@ function formatErrorChain(error: unknown, t: Translator, depth = 0, parentMessag
 
   const indent = depth > 0 ? `\n${CHAIN_SEPARATOR}${t("error.chain.causedBy")}\n` : ""
   return indent + json(error)
+}
+
+/**
+ * The text of one error in the chain. A duplicate of its parent message shows only the stack trace;
+ * otherwise the header comes first, unless the stack already starts with it.
+ */
+function errorParts(stack: string | undefined, header: string, isDuplicate: boolean): string[] {
+  if (!stack) return isDuplicate ? [] : [header]
+  const startsWithHeader = stack.startsWith(header)
+  if (isDuplicate && startsWithHeader) {
+    const trace = stack.split("\n").slice(1).join("\n").trim()
+    return trace ? [trace] : []
+  }
+  if (!isDuplicate && !startsWithHeader) return [`${header}\n${stack}`]
+  return [stack]
 }
 
 function formatError(error: unknown, t: Translator): string {
