@@ -6,7 +6,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { Option } from "effect"
+import { Chunk, Option } from "effect"
 
 type Mem = Performance & {
   memory?: {
@@ -28,6 +28,9 @@ type Shift = PerformanceEntry & {
 type Obs = PerformanceObserverInit & {
   durationThreshold?: number
 }
+
+/** One frame or long task: its start time and its duration, in milliseconds. */
+type Sample = { at: number; dur: number }
 
 /** A measured value. None means that the bar has no sample yet. */
 type Metric = Option.Option<number>
@@ -274,9 +277,9 @@ export function DebugBar(props: { inline?: boolean } = {}) {
   })
 
   onMount(() => {
-    const obs: PerformanceObserver[] = []
-    const fps: Array<{ at: number; dur: number }> = []
-    const long: Array<{ at: number; dur: number }> = []
+    let obs = Chunk.empty<PerformanceObserver>()
+    let fps = Chunk.empty<Sample>()
+    let long = Chunk.empty<Sample>()
     const seen = new Map<number | string, { at: number; delay: number; dur: number }>()
     let hasLong = false
     let poll: number | undefined
@@ -284,17 +287,16 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     let last = 0
     let snap = 0
 
-    const trim = (list: Array<{ at: number; dur: number }>, span: number, at: number) => {
-      while (list[0] && at - list[0].at > span) list.shift()
-    }
+    /** Drops the samples that started more than `span` before `at`. */
+    const trim = (samples: Chunk.Chunk<Sample>, at: number) => Chunk.dropWhile(samples, (entry) => at - entry.at > span)
 
     const syncFrame = (at: number) => {
-      trim(fps, span, at)
-      const total = fps.reduce((sum, entry) => sum + entry.dur, 0)
-      const gap = fps.reduce((max, entry) => Math.max(max, entry.dur), 0)
-      const jank = fps.filter((entry) => entry.dur > 32).length
+      fps = trim(fps, at)
+      const total = Chunk.reduce(fps, 0, (sum, entry) => sum + entry.dur)
+      const gap = Chunk.reduce(fps, 0, (max, entry) => Math.max(max, entry.dur))
+      const jank = Chunk.size(Chunk.filter(fps, (entry) => entry.dur > 32))
       batch(() => {
-        setState("fps", total > 0 ? Option.some((fps.length * 1000) / total) : Option.none())
+        setState("fps", total > 0 ? Option.some((Chunk.size(fps) * 1000) / total) : Option.none())
         setState("gap", gap > 0 ? Option.some(gap) : Option.none())
         setState("jank", Option.some(jank))
       })
@@ -302,10 +304,10 @@ export function DebugBar(props: { inline?: boolean } = {}) {
 
     const syncLong = (at = performance.now()) => {
       if (!hasLong) return
-      trim(long, span, at)
-      const block = long.reduce((sum, entry) => sum + Math.max(0, entry.dur - 50), 0)
-      const max = long.reduce((hi, entry) => Math.max(hi, entry.dur), 0)
-      setState("long", { block: Option.some(block), count: Option.some(long.length), max: Option.some(max) })
+      long = trim(long, at)
+      const block = Chunk.reduce(long, 0, (sum, entry) => sum + Math.max(0, entry.dur - 50))
+      const max = Chunk.reduce(long, 0, (hi, entry) => Math.max(hi, entry.dur))
+      setState("long", { block: Option.some(block), count: Option.some(Chunk.size(long)), max: Option.some(max) })
     }
 
     const syncInp = (at = performance.now()) => {
@@ -331,8 +333,8 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     }
 
     const reset = () => {
-      fps.length = 0
-      long.length = 0
+      fps = Chunk.empty()
+      long = Chunk.empty()
       seen.clear()
       last = 0
       snap = 0
@@ -352,7 +354,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       const ob = new PerformanceObserver((list) => fn(list.getEntries()))
       try {
         ob.observe(init)
-        obs.push(ob)
+        obs = Chunk.append(obs, ob)
         return true
       } catch {
         ob.disconnect()
@@ -377,7 +379,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     if (
       watch("longtask", { buffered: true, type: "longtask" }, (entries) => {
         const at = performance.now()
-        long.push(...entries.map((entry) => ({ at: entry.startTime, dur: entry.duration })))
+        long = Chunk.appendAll(long, Chunk.fromIterable(entries.map((entry) => ({ at: entry.startTime, dur: entry.duration }))))
         syncLong(at)
       })
     ) {
@@ -419,7 +421,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
         return
       }
 
-      fps.push({ at, dur: at - last })
+      fps = Chunk.append(fps, { at, dur: at - last })
       last = at
 
       if (at - snap >= 250) {

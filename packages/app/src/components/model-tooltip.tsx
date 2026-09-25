@@ -58,20 +58,15 @@ export const ModelTooltip: Component<{ model: ModelInfo; latest?: boolean; free?
     if (value === "pdf") return language.t("model.input.pdf")
     return value
   }
-  const title = () => {
-    const tags: Array<string> = []
-    if (props.latest) tags.push(language.t("model.tag.latest"))
-    if (props.free) tags.push(language.t("model.tag.free"))
-    const suffix = tags.length ? ` (${tags.join(", ")})` : ""
-    return `${sourceName(props.model)} ${props.model.name}${suffix}`
+  const tagSuffix = () => {
+    const tags = [
+      ...(props.latest ? [language.t("model.tag.latest")] : []),
+      ...(props.free ? [language.t("model.tag.free")] : []),
+    ]
+    return tags.length ? ` (${tags.join(", ")})` : ""
   }
-  const name = () => {
-    const tags: Array<string> = []
-    if (props.latest) tags.push(language.t("model.tag.latest"))
-    if (props.free) tags.push(language.t("model.tag.free"))
-    const suffix = tags.length ? ` (${tags.join(", ")})` : ""
-    return `${props.model.name}${suffix}`
-  }
+  const title = () => `${sourceName(props.model)} ${props.model.name}${tagSuffix()}`
+  const name = () => `${props.model.name}${tagSuffix()}`
   const inputLabels = () => {
     const capabilities = props.model.capabilities
     if (capabilities) return inputOrder.filter((key) => capabilities.input[key]).map((key) => inputLabel(key))
