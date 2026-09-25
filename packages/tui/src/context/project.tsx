@@ -75,38 +75,22 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
 
     return {
       data: store,
-      project() {
-        return store.project.id
-      },
+      project: () => store.project.id,
       instance: {
-        path() {
-          return store.instance.path
-        },
-        directory() {
-          return store.instance.path.directory
-        },
+        path: () => store.instance.path,
+        directory: () => store.instance.path.directory,
       },
       workspace: {
-        current() {
-          return store.workspace.current
-        },
-        set(next?: string | null) {
+        current: () => store.workspace.current,
+        set: (next?: string | null) => {
           const workspace = next ?? undefined
           if (store.workspace.current === workspace) return
           setStore("workspace", "current", workspace)
         },
-        list() {
-          return store.workspace.list
-        },
-        get(workspaceID: string) {
-          return store.workspace.list.find((item) => item.id === workspaceID)
-        },
-        status(workspaceID: string) {
-          return store.workspace.status[workspaceID]
-        },
-        statuses() {
-          return store.workspace.status
-        },
+        list: () => store.workspace.list,
+        get: (workspaceID: string) => store.workspace.list.find((item) => item.id === workspaceID),
+        status: (workspaceID: string) => store.workspace.status[workspaceID],
+        statuses: () => store.workspace.status,
         sync: syncWorkspace,
       },
       sync,
