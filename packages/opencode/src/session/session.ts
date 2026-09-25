@@ -35,7 +35,7 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
+import { Clock, DateTime, Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -516,6 +516,7 @@ const layer: Layer.Layer<
       permission?: PermissionV1.Ruleset
     }) {
       const ctx = yield* InstanceState.context
+      const now = yield* DateTime.now
       const result: Info = {
         id: SessionID.descending(input.id),
         slug: yield* Slug.make,
@@ -525,7 +526,7 @@ const layer: Layer.Layer<
         path: input.path,
         workspaceID: input.workspaceID,
         parentID: input.parentID,
-        title: input.title ?? (input.parentID ? childTitlePrefix : parentTitlePrefix) + new Date().toISOString(),
+        title: input.title ?? (input.parentID ? childTitlePrefix : parentTitlePrefix) + DateTime.formatIso(now),
         agent: input.agent,
         model: input.model,
         metadata: input.metadata,
@@ -533,8 +534,8 @@ const layer: Layer.Layer<
         cost: 0,
         tokens: EmptyTokens,
         time: {
-          created: Date.now(),
-          updated: Date.now(),
+          created: DateTime.toEpochMillis(now),
+          updated: DateTime.toEpochMillis(now),
         },
       }
       yield* Effect.logInfo("created", result)
@@ -647,7 +648,7 @@ const layer: Layer.Layer<
         yield* events.publish(SessionV1.Event.PartUpdated, {
           sessionID: part.sessionID,
           part: structuredClone(part),
-          time: Date.now(),
+          time: yield* Clock.currentTimeMillis,
         })
         return part
       }).pipe(Effect.withSpan("Session.updatePart"))
@@ -759,7 +760,7 @@ const layer: Layer.Layer<
       })
 
     const touch = Effect.fn("Session.touch")(function* (sessionID: SessionID) {
-      yield* patch(sessionID, { time: { updated: Date.now() } }).pipe(Effect.orDie)
+      yield* patch(sessionID, { time: { updated: yield* Clock.currentTimeMillis } }).pipe(Effect.orDie)
     })
 
     const setTitle = Effect.fn("Session.setTitle")(function* (input: { sessionID: SessionID; title: string }) {
@@ -771,7 +772,10 @@ const layer: Layer.Layer<
     })
 
     const setMetadata = Effect.fn("Session.setMetadata")(function* (input: typeof SetMetadataInput.Type) {
-      yield* patch(input.sessionID, { metadata: input.metadata, time: { updated: Date.now() } }).pipe(Effect.orDie)
+      yield* patch(input.sessionID, {
+        metadata: input.metadata,
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const setAgentModel = Effect.fn("Session.setAgentModel")(function* (input: {
@@ -793,7 +797,7 @@ const layer: Layer.Layer<
     }) {
       yield* patch(input.sessionID, {
         permission: Option.some([...input.permission]),
-        time: { updated: Date.now() },
+        time: { updated: yield* Clock.currentTimeMillis },
       }).pipe(Effect.orDie)
     })
 
@@ -804,13 +808,15 @@ const layer: Layer.Layer<
     }) {
       yield* patch(input.sessionID, {
         ...(input.summary ? { summary: Option.some(input.summary) } : {}),
-        time: { updated: Date.now() },
+        time: { updated: yield* Clock.currentTimeMillis },
         ...(input.revert ? { revert: Option.some(input.revert) } : {}),
       }).pipe(Effect.orDie)
     })
 
     const clearRevert = Effect.fn("Session.clearRevert")(function* (sessionID: SessionID) {
-      yield* patch(sessionID, { time: { updated: Date.now() }, revert: Option.none() }).pipe(Effect.orDie)
+      yield* patch(sessionID, { time: { updated: yield* Clock.currentTimeMillis }, revert: Option.none() }).pipe(
+        Effect.orDie,
+      )
     })
 
     const setSummary = Effect.fn("Session.setSummary")(function* (input: {
@@ -818,24 +824,26 @@ const layer: Layer.Layer<
       summary: Info["summary"]
     }) {
       yield* patch(input.sessionID, {
-        time: { updated: Date.now() },
+        time: { updated: yield* Clock.currentTimeMillis },
         ...(input.summary ? { summary: Option.some(input.summary) } : {}),
       }).pipe(Effect.orDie)
     })
 
     const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Info["share"] }) {
-      yield* patch(input.sessionID, { share: Option.fromUndefinedOr(input.share), time: { updated: Date.now() } }).pipe(
-        Effect.orDie,
-      )
+      yield* patch(input.sessionID, {
+        share: Option.fromUndefinedOr(input.share),
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const setWorkspace = Effect.fn("Session.setWorkspace")(function* (input: {
       sessionID: SessionID
       workspaceID: Info["workspaceID"]
     }) {
-      yield* patch(input.sessionID, { workspaceID: input.workspaceID, time: { updated: Date.now() } }).pipe(
-        Effect.orDie,
-      )
+      yield* patch(input.sessionID, {
+        workspaceID: input.workspaceID,
+        time: { updated: yield* Clock.currentTimeMillis },
+      }).pipe(Effect.orDie)
     })
 
     const diff = Effect.fn("Session.diff")(function* (sessionID: SessionID) {
