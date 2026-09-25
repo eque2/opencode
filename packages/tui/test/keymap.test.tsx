@@ -139,3 +139,30 @@ test("mode-less bindings stay active when opencode mode changes", async () => {
     app.renderer.destroy()
   }
 })
+
+test("a keymap without the opencode registration keeps the base mode", async () => {
+  const modes: string[] = []
+
+  function Harness() {
+    const renderer = useRenderer()
+    const keymap = createDefaultOpenTuiKeymap(renderer)
+    const modeStack = getOpencodeModeStack(keymap)
+    const popQuestion = modeStack.push("question")
+    modes.push(modeStack.current())
+    popQuestion()
+    modes.push(modeStack.current())
+
+    return (
+      <OpencodeKeymapProvider keymap={keymap}>
+        <box />
+      </OpencodeKeymapProvider>
+    )
+  }
+
+  const app = await testRender(() => <Harness />)
+  try {
+    expect(modes).toEqual([OPENCODE_BASE_MODE, OPENCODE_BASE_MODE])
+  } finally {
+    app.renderer.destroy()
+  }
+})

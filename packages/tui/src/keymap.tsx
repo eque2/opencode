@@ -13,7 +13,7 @@ import {
   formatKeySequence as formatKeySequenceExtra,
 } from "@opentui/keymap/extras"
 import { KeymapProvider, useKeymap, useKeymapSelector, useBindings } from "@opentui/keymap/solid"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
 import { createMemo, type Accessor } from "solid-js"
 import { useTuiConfig } from "./config"
 import { TuiKeybind } from "./config/keybind"
@@ -104,10 +104,25 @@ export function useOpencodeModeStack() {
   return getOpencodeModeStack(useOpencodeKeymap())
 }
 
-export function getOpencodeModeStack(keymap: OpenTuiKeymap) {
-  const value = modeStacks.get(keymap)
-  if (!value) throw new Error("Opencode mode stack is not registered for this keymap")
-  return value
+// A keymap without a registered mode stack has no opencode modes. It acts like a disposed stack: current() is the
+// base mode, and push() changes nothing and returns a pop that does nothing.
+const unregisteredModeStack: OpencodeModeStack = {
+  current: () => OPENCODE_BASE_MODE,
+  push: () => () => {},
+  dispose: () => {},
+}
+
+/**
+ * The mode stack that registerOpencodeKeymap created for this keymap. Without one, it logs a warning and returns a
+ * stack that keeps the base mode.
+ */
+export function getOpencodeModeStack(keymap: OpenTuiKeymap): OpencodeModeStack {
+  return Option.fromNullishOr(modeStacks.get(keymap)).pipe(
+    Option.getOrElse(() => {
+      Effect.runFork(Effect.logWarning("Opencode mode stack is not registered for this keymap"))
+      return unregisteredModeStack
+    }),
+  )
 }
 
 const KEY_ALIASES = {
