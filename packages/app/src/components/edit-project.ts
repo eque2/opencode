@@ -1,10 +1,10 @@
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useMutation } from "@tanstack/solid-query"
-import { Data, Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import { normalizeProjectInfo } from "@/context/global-sync/utils"
 import { createMemo } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 import { useGlobal } from "@/context/global"
 import { type LocalProject } from "@/context/layout"
 import { ServerConnection } from "@/context/server"
@@ -12,13 +12,25 @@ import { ServerConnection } from "@/context/server"
 // Wraps a rejected project update, so the save mutation fails with a typed error.
 class ProjectUpdateError extends Data.TaggedError("App.ProjectUpdateError")<{ readonly cause: unknown }> {}
 
+type EditProjectStore = {
+  name: string
+  color?: string
+  iconOverride?: string
+  startup: string
+  dragOver: boolean
+  iconHover: boolean
+}
+
+// A blank field has no value. The project meta and icon APIs read an undefined value as "clear this field".
+const filledText = (value: string | undefined) => Option.fromNullishOr(value).pipe(Option.filter((text) => text !== ""))
+
 export function createEditProjectModel(props: { project: LocalProject; server: ServerConnection.Any }) {
   const dialog = useDialog()
   const global = useGlobal()
   const serverCtx = createMemo(() => global.ensureServerCtx(props.server))
   const folderName = createMemo(() => getFilename(props.project.worktree))
   const defaultName = createMemo(() => props.project.name || folderName())
-  const [store, setStore] = createStore({
+  const [store, setStore] = createStore<EditProjectStore>({
     name: defaultName(),
     color: props.project.icon?.color,
     iconOverride: props.project.icon?.override,
@@ -99,15 +111,18 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
       serverCtx().sync.set("project", (items) =>
         items.map((item) => (item.id === project.id ? normalizeProjectInfo(project) : item)),
       )
-      serverCtx().sync.project.icon(props.project.worktree, store.iconOverride || undefined)
+      serverCtx().sync.project.icon(props.project.worktree, Option.getOrUndefined(filledText(store.iconOverride)))
       dialog.close()
       return
     }
 
     serverCtx().sync.project.meta(props.project.worktree, {
       name,
-      icon: { color: store.color || undefined, override: store.iconOverride || undefined },
-      commands: { start: start || undefined },
+      icon: {
+        color: Option.getOrUndefined(filledText(store.color)),
+        override: Option.getOrUndefined(filledText(store.iconOverride)),
+      },
+      commands: { start: Option.getOrUndefined(filledText(start)) },
     })
     dialog.close()
   })
@@ -134,6 +149,13 @@ export function createEditProjectModel(props: { project: LocalProject; server: S
     dragLeave,
     inputChange,
     iconClick,
+    clearColor: () => {
+      setStore(
+        produce((draft) => {
+          delete draft.color
+        }),
+      )
+    },
     close: () => {
       dialog.close()
     },
