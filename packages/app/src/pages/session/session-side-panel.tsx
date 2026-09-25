@@ -203,7 +203,7 @@ export function SessionSidePanel(props: {
   }
 
   let fileFilter: HTMLInputElement | undefined
-  let tabList: HTMLDivElement | undefined
+  let tabList: Option.Option<HTMLDivElement> = Option.none()
   const temporaryTab = tabs().preview
   const previewTab = (value: string) => {
     const next = normalizeTab(value)
@@ -529,11 +529,12 @@ export function SessionSidePanel(props: {
                       ]}
                       modifiers={[
                         RestrictToHorizontalAxis,
-                        RestrictToElement.configure({ element: () => tabList ?? null }),
+                        RestrictToElement.configure({ element: () => Option.getOrNull(tabList) }),
                       ]}
                       plugins={(defaults) => [
                         ...defaults.filter((plugin) => plugin !== Accessibility),
                         AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+                        // eslint-disable-next-line effect/no-null-use-option -- @dnd-kit/dom FeedbackOptions.dropAnimation documents null as the value that disables the drop animation; undefined means the default animation
                         Feedback.configure({ dropAnimation: null }),
                       ]}
                       onDragEnd={(event) => {
@@ -546,7 +547,7 @@ export function SessionSidePanel(props: {
                         <div class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center">
                           <Tabs.List
                             ref={(el: HTMLDivElement) => {
-                              tabList = el
+                              tabList = Option.some(el)
                               const stop = createFileTabListSync({ el, contextOpen })
                               onCleanup(stop)
                             }}

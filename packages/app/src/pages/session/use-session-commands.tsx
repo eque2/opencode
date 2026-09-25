@@ -1,5 +1,5 @@
 import { useNavigate } from "@solidjs/router"
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
@@ -128,7 +128,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     if (!tab) return false
     const path = file.pathFromTab(tab)
     if (!path) return false
-    return file.selectedLines(path) != null
+    return Predicate.isNotNullish(file.selectedLines(path))
   }
 
   const navigateMessageByOffset = actions.navigateMessageByOffset

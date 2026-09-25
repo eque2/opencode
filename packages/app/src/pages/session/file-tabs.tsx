@@ -337,18 +337,18 @@ function SessionFileViewV1(props: { tab: string }) {
   const commentedLines = createMemo(() => fileComments().map((comment) => comment.selection))
 
   const [note, setNote] = createStore({
-    openedComment: null as string | null,
-    commenting: null as SelectedLineRange | null,
-    selected: null as SelectedLineRange | null,
+    openedComment: Option.none<string>(),
+    commenting: Option.none<SelectedLineRange>(),
+    selected: Option.none<SelectedLineRange>(),
   })
 
   const syncSelected = (range: SelectedLineRange | null) => {
     const p = path()
     if (!p) return
-    file.setSelectedLines(p, range ? cloneSelectedLineRange(range) : null)
+    file.setSelectedLines(p, Option.getOrNull(Option.map(Option.fromNullOr(range), cloneSelectedLineRange)))
   }
 
-  const activeSelection = () => note.selected ?? Option.getOrNull(selectedLines())
+  const activeSelection = () => Option.orElse(note.selected, selectedLines)
 
   const commentsUi = createLineCommentController({
     comments: fileComments,
@@ -358,16 +358,16 @@ function SessionFileViewV1(props: { tab: string }) {
       items: file.searchFilesAndDirectories,
     },
     state: {
-      opened: () => note.openedComment,
-      setOpened: (id) => setNote("openedComment", id),
-      selected: () => note.selected,
-      setSelected: (range) => setNote("selected", range),
-      commenting: () => note.commenting,
-      setCommenting: (range) => setNote("commenting", range),
+      opened: () => Option.getOrNull(note.openedComment),
+      setOpened: (id) => setNote("openedComment", Option.fromNullOr(id)),
+      selected: () => Option.getOrNull(note.selected),
+      setSelected: (range) => setNote("selected", Option.fromNullOr(range)),
+      commenting: () => Option.getOrNull(note.commenting),
+      setCommenting: (range) => setNote("commenting", Option.fromNullOr(range)),
       syncSelected,
       hoverSelected: syncSelected,
     },
-    getHoverSelectedRange: activeSelection,
+    getHoverSelectedRange: () => Option.getOrNull(activeSelection()),
     cancelDraftOnCommentToggle: true,
     clearSelectionOnSelectionEndNull: true,
     onSubmit: ({ comment, selection }) => {
@@ -465,7 +465,7 @@ function SessionFileViewV1(props: { tab: string }) {
         }}
         enableLineSelection
         enableGutterUtility
-        selectedLines={activeSelection()}
+        selectedLines={Option.getOrNull(activeSelection())}
         commentedLines={commentedLines()}
         onRendered={() => {
           scrollSync.queueRestore()
@@ -626,18 +626,18 @@ function SessionFileViewV2(props: { tab: string }) {
   const commentedLines = createMemo(() => fileComments().map((comment) => comment.selection))
 
   const [note, setNote] = createStore({
-    openedComment: null as string | null,
-    commenting: null as SelectedLineRange | null,
-    selected: null as SelectedLineRange | null,
+    openedComment: Option.none<string>(),
+    commenting: Option.none<SelectedLineRange>(),
+    selected: Option.none<SelectedLineRange>(),
   })
 
   const syncSelected = (range: SelectedLineRange | null) => {
     const p = path()
     if (!p) return
-    file.setSelectedLines(p, range ? cloneSelectedLineRange(range) : null)
+    file.setSelectedLines(p, Option.getOrNull(Option.map(Option.fromNullOr(range), cloneSelectedLineRange)))
   }
 
-  const activeSelection = () => note.selected ?? Option.getOrNull(selectedLines())
+  const activeSelection = () => Option.orElse(note.selected, selectedLines)
 
   const commentsUi = createLineCommentControllerV2({
     comments: fileComments,
@@ -648,12 +648,12 @@ function SessionFileViewV2(props: { tab: string }) {
     },
     getSide: selectionSide,
     state: {
-      opened: () => note.openedComment,
-      setOpened: (id) => setNote("openedComment", id),
-      selected: () => note.selected,
-      setSelected: (range) => setNote("selected", range),
-      commenting: () => note.commenting,
-      setCommenting: (range) => setNote("commenting", range),
+      opened: () => Option.getOrNull(note.openedComment),
+      setOpened: (id) => setNote("openedComment", Option.fromNullOr(id)),
+      selected: () => Option.getOrNull(note.selected),
+      setSelected: (range) => setNote("selected", Option.fromNullOr(range)),
+      commenting: () => Option.getOrNull(note.commenting),
+      setCommenting: (range) => setNote("commenting", Option.fromNullOr(range)),
       syncSelected,
       hoverSelected: syncSelected,
     },
@@ -752,7 +752,7 @@ function SessionFileViewV2(props: { tab: string }) {
         }}
         enableLineSelection
         enableGutterUtility
-        selectedLines={activeSelection()}
+        selectedLines={Option.getOrNull(activeSelection())}
         commentedLines={commentedLines()}
         onRendered={() => {
           scrollSync.queueRestore()
@@ -765,7 +765,7 @@ function SessionFileViewV2(props: { tab: string }) {
         }}
         onLineSelectionEnd={(range: SelectedLineRange | null) => {
           if (!range) {
-            commentsUi.note.select(null)
+            commentsUi.note.selectRange(Option.none())
             commentsUi.note.cancelDraft()
             return
           }

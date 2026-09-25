@@ -15,6 +15,16 @@ const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_don
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
 const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
 
+type GoUpsellKey =
+  | typeof GO_UPSELL_FREE_TIER_LAST_SEEN_AT
+  | typeof GO_UPSELL_FREE_TIER_DONT_SHOW
+  | typeof GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT
+  | typeof GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW
+
+// A key is absent until the dialog records a time. Data stored by earlier
+// versions holds null for a key that has no time.
+type GoUpsellState = { [K in GoUpsellKey]?: number | null }
+
 function goUpsellKeys(status: SessionStatus) {
   if (status.type !== "retry" || !status.action) return
   const { action } = status
@@ -40,15 +50,7 @@ export function useUsageExceededDialogs() {
   const { t, locale } = useI18n()
   const isEnglish = () => locale() === "en"
 
-  const [goUpsellState, setGoUpsellState] = persisted(
-    Persist.global("go-upsell"),
-    createStore({
-      [GO_UPSELL_FREE_TIER_LAST_SEEN_AT]: null as null | number,
-      [GO_UPSELL_FREE_TIER_DONT_SHOW]: null as null | number,
-      [GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT]: null as null | number,
-      [GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW]: null as null | number,
-    }),
-  )
+  const [goUpsellState, setGoUpsellState] = persisted(Persist.global("go-upsell"), createStore<GoUpsellState>({}))
 
   onCleanup(
     sdk().event.on("session.status", (evt) => {
