@@ -13,7 +13,7 @@
  * ```
  */
 
-import { Data, Option } from "effect"
+import { Array as Arr, Data, Option } from "effect"
 import type { ITerminalAddon, ITerminalCore, IBufferRange } from "ghostty-web"
 
 // ============================================================================
@@ -647,24 +647,22 @@ export class SerializeAddon implements ITerminalAddon {
     const correctRows = rowCount(maxRows, terminal.rows, Option.fromNullishOr(options?.scrollback))
 
     const startRow = maxRows - correctRows
-    const endRow = maxRows - 1
-    const lines: string[] = []
-
-    for (let row = startRow; row <= endRow; row++) {
+    const lines = Array.from({ length: correctRows }, (_, index) => startRow + index).flatMap((row) => {
       const line = activeBuffer.value.getLine(row)
-      if (line) {
-        const text = line.translateToString(options?.trimWhitespace ?? true)
-        lines.push(text)
-      }
-    }
+      return line ? [line.translateToString(options?.trimWhitespace ?? true)] : []
+    })
 
     // Trim trailing empty lines if requested
-    if (options?.trimWhitespace) {
-      while (lines.length > 0 && lines[lines.length - 1] === "") {
-        lines.pop()
-      }
-    }
+    const kept = options?.trimWhitespace
+      ? Option.match(
+          Arr.findLastIndex(lines, (line) => line !== ""),
+          {
+            onNone: () => [],
+            onSome: (last) => lines.slice(0, last + 1),
+          },
+        )
+      : lines
 
-    return lines.join("\n")
+    return kept.join("\n")
   }
 }
