@@ -11,6 +11,7 @@ import { closeHomeProject, errorMessage, homeProjectDirectories } from "@/pages/
 import { Persist, persisted } from "@/utils/persist"
 import { showToast } from "@/utils/toast"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Effect, Option } from "effect"
 import { createResource } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { HomeController } from "./home-controller"
@@ -27,9 +28,20 @@ export function createHomeProjectsController(home: HomeController) {
     Persist.global("home.servers", ["home.servers.v1"]),
     createStore({ collapsed: {} as Record<string, boolean> }),
   )
+  // The source is an Option, so a store with no pending load still resolves the resource once.
   const [state] = createResource(
-    () => ready.promise ?? Promise.resolve(),
-    (promise) => promise.then(() => _state),
+    () => Option.fromNullishOr(ready.promise),
+    (pending) =>
+      Effect.runPromise(
+        Option.match(pending, {
+          onNone: () => Effect.succeed(_state),
+          onSome: (promise) =>
+            Effect.as(
+              Effect.promise(() => promise),
+              _state,
+            ),
+        }),
+      ),
     { initialValue: _state },
   )
   function directories(project: LocalProject) {
