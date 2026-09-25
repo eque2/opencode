@@ -47,7 +47,7 @@ const MAX_PROMPT_SESSIONS = 20
 
 export function selectPromptTab(tabs: Tab[], scope: PromptScope, server: ServerConnection.Key) {
   if ("draftID" in scope) return tabs.find((tab) => tab.type === "draft" && tab.draftID === scope.draftID)
-  if (!scope.id) return
+  if (!scope.id) return undefined
   return (
     tabs.find((tab) => tab.type === "session" && tab.server === server && tab.sessionId === scope.id) ??
     ({ type: "session", server, sessionId: scope.id } satisfies Tab)
