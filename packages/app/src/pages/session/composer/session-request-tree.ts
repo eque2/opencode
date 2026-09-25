@@ -1,4 +1,4 @@
-import { MutableHashSet } from "effect"
+import { MutableHashMap, MutableHashSet, Option } from "effect"
 import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
 
 function sessionTreeRequest<T>(
@@ -11,18 +11,18 @@ function sessionTreeRequest<T>(
 
   const map = session.reduce((acc, item) => {
     if (!item.parentID) return acc
-    const list = acc.get(item.parentID)
-    if (list) list.push(item.id)
-    if (!list) acc.set(item.parentID, [item.id])
+    const list = MutableHashMap.get(acc, item.parentID)
+    if (Option.isSome(list)) list.value.push(item.id)
+    if (Option.isNone(list)) MutableHashMap.set(acc, item.parentID, [item.id])
     return acc
-  }, new Map<string, string[]>())
+  }, MutableHashMap.empty<string, string[]>())
 
   const seen = MutableHashSet.make(sessionID)
   const ids = [sessionID]
   for (const id of ids) {
-    const list = map.get(id)
-    if (!list) continue
-    for (const child of list) {
+    const list = MutableHashMap.get(map, id)
+    if (Option.isNone(list)) continue
+    for (const child of list.value) {
       if (MutableHashSet.has(seen, child)) continue
       MutableHashSet.add(seen, child)
       ids.push(child)
