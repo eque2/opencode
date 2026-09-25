@@ -1,4 +1,4 @@
-import { HashSet, Option } from "effect"
+import { Effect, HashSet, Option, Predicate } from "effect"
 import { createEffect, on, type Accessor } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
@@ -108,14 +108,19 @@ export function createPromptInputV2Controller(input: {
     attachments.pick(() => fileInput?.click())
   }
   const contextList = useFilteredList<PromptInputV2Suggestion>({
-    items: async (query) => {
-      const fixed = input.context().filter((item) => item.kind !== "file")
-      const recent = input.context().filter((item) => item.kind === "file" && item.recent)
-      if (!query.trim()) return [...fixed, ...recent]
-      const seen = HashSet.fromIterable(recent.map((item) => item.id))
-      const files = (await input.searchContextFiles(query)).filter((item) => !HashSet.has(seen, item.id))
-      return [...fixed, ...recent, ...files]
-    },
+    items: (query) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const fixed = input.context().filter((item) => item.kind !== "file")
+          const recent = input.context().filter((item) => item.kind === "file" && item.recent)
+          if (!query.trim()) return [...fixed, ...recent]
+          const seen = HashSet.fromIterable(recent.map((item) => item.id))
+          const found = input.searchContextFiles(query)
+          const searched = Predicate.isPromiseLike(found) ? yield* Effect.promise(() => found) : found
+          const files = searched.filter((item) => !HashSet.has(seen, item.id))
+          return [...fixed, ...recent, ...files]
+        }),
+      ),
     key: (item) => item.id,
     filterKeys: ["label"],
     skipFilter: (item) => item.kind === "file" && !item.recent,
