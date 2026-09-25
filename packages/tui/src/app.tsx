@@ -149,6 +149,12 @@ const appBindingCommands = [
   "app.toggle.session_directory_filter",
 ] as const
 
+/** The terminal renderer could not start. The cause is the value createCliRenderer rejected with. */
+export class TuiRendererError extends Schema.TaggedError<TuiRendererError>()("Tui.RendererError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
 export type TuiInput = {
   url: string
   args: Args
@@ -225,7 +231,8 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                 keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],
               },
             }),
-          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+          catch: (cause) =>
+            new TuiRendererError({ message: Predicate.isError(cause) ? cause.message : String(cause), cause }),
         }),
         (renderer) =>
           Effect.sync(() => {
