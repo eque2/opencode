@@ -61,7 +61,7 @@ export const layer = Layer.effect(
     })
 
     const createClient = Effect.fnUntraced(function* (url: string) {
-      return createOpencodeClient({ baseUrl: url, headers: ServerAuth.headers({ password: yield* password() }) })
+      return createOpencodeClient({ baseUrl: url, headers: yield* ServerAuth.headers({ password: yield* password() }) })
     })
 
     const healthy = Effect.fnUntraced(function* () {
@@ -136,7 +136,7 @@ export const layer = Layer.effect(
     })
 
     const transport = Effect.fn("cli.daemon.transport")(function* () {
-      return { url: yield* start(), headers: ServerAuth.headers({ password: yield* password() }) }
+      return { url: yield* start(), headers: yield* ServerAuth.headers({ password: yield* password() }) }
     })
 
     const client = Effect.fn("cli.daemon.client")(function* () {
