@@ -7,7 +7,7 @@ import {
   type Renderable,
 } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
-import { Effect, Equivalence, Fiber, Option } from "effect"
+import { Effect, Equivalence, Fiber, HashMap, Option } from "effect"
 import { useTheme, selectedForeground } from "../context/theme"
 import { entries, filter, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
@@ -138,19 +138,18 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     }),
   )
 
-  const actionLabels = createMemo(() => {
-    const labels = new Map<string, string>()
-
-    for (const action of shownActions()) {
-      const label = formatKeyBindings(actionBindings().get(action.command), tuiConfig)
-      if (label) labels.set(action.command, label)
-    }
-
-    return labels
-  })
+  // The key label of each shown action command that has a binding.
+  const actionLabels = createMemo(() =>
+    HashMap.fromIterable(
+      shownActions().flatMap((action) => {
+        const label = formatKeyBindings(actionBindings().get(action.command), tuiConfig)
+        return label ? [[action.command, label] as const] : []
+      }),
+    ),
+  )
   const visibleActions = createMemo(() => [
     ...shownActions()
-      .map((item) => ({ ...item, label: actionLabels().get(item.command) ?? "" }))
+      .map((item) => ({ ...item, label: Option.getOrElse(HashMap.get(actionLabels(), item.command), () => "") }))
       .filter((item) => item.label),
     ...(props.footerHints ?? []),
   ])
