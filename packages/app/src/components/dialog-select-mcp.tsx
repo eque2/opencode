@@ -58,6 +58,7 @@ export const DialogSelectMcp: Component = () => {
           const error = () => {
             const s = mcpStatus()
             if (s?.status === "failed" || s?.status === "needs_client_registration") return s.error
+            return undefined
           }
           const enabled = () => status() === "connected"
           return (

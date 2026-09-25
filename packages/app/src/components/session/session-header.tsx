@@ -151,7 +151,7 @@ export function SessionHeader() {
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
     const directory = projectDirectory()
-    if (!directory) return
+    if (!directory) return undefined
     return layout.projects.list().find((p) => p.worktree === directory || p.sandboxes?.includes(directory))
   })
   const name = createMemo(() => {
