@@ -6,7 +6,7 @@ import type { createServerSdkContext } from "./server-sdk"
 import type { createServerSyncContextInner } from "./server-sync"
 import type { State } from "./global-sync/types"
 import { normalizeSessionInfo } from "@/utils/session"
-import { HashSet } from "effect"
+import { DateTime, HashSet } from "effect"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const sessionFields: HashSet.HashSet<string> = HashSet.make(
@@ -106,7 +106,7 @@ export const createDirSyncContext = (
             id: input.messageID,
             sessionID: input.sessionID,
             role: "user",
-            time: { created: Date.now() },
+            time: { created: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
             agent: input.agent,
             model: { ...input.model, variant: input.variant },
           },
@@ -136,7 +136,11 @@ export const createDirSyncContext = (
       more: createMemo(() => current()[0].session.length >= current()[0].limit),
       archive: async (sessionID: string) => {
         if ((await serverSDK.protocol) !== "v1") return
-        await serverSDK.client.session.update({ sessionID, directory, time: { archived: Date.now() } })
+        await serverSDK.client.session.update({
+          sessionID,
+          directory,
+          time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
+        })
         current()[1](
           "session",
           produce((draft) => {

@@ -1,7 +1,7 @@
 import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import { cmp } from "./utils"
 import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
-import { HashSet, MutableHashSet } from "effect"
+import { DateTime, HashSet, MutableHashSet } from "effect"
 
 export function sessionUpdatedAt(session: Session) {
   return session.time.updated ?? session.time.created
@@ -36,7 +36,7 @@ export function trimSessions(
   options: { limit: number; permission: Record<string, PermissionRequest[]>; now?: number },
 ) {
   const limit = Math.max(0, options.limit)
-  const cutoff = (options.now ?? Date.now()) - SESSION_RECENT_WINDOW
+  const cutoff = (options.now ?? DateTime.toEpochMillis(DateTime.nowUnsafe())) - SESSION_RECENT_WINDOW
   const all = input
     .filter((s) => !!s?.id)
     .filter((s) => !s.time?.archived)
