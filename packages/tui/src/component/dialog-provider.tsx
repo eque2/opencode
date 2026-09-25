@@ -136,9 +136,9 @@ export function createDialogProviderOptions() {
           title: provider.title,
           value: provider.value,
           description: provider.description,
-          footer: consoleManaged ? sync.data.console_state.activeOrgName : undefined,
+          ...(consoleManaged ? { footer: sync.data.console_state.activeOrgName } : {}),
           category: provider.category,
-          gutter: connected && onboarded() ? () => <text fg={theme.success}>✓</text> : undefined,
+          ...(connected && onboarded() ? { gutter: () => <text fg={theme.success}>✓</text> } : {}),
           async onSelect() {
             if (consoleManaged) return
 
@@ -387,7 +387,7 @@ function ApiMethod(props: ApiMethodProps) {
               </text>
             </box>
           ),
-        })[props.providerID] ?? undefined
+        })[props.providerID]
       }
       onConfirm={async (value) => {
         if (!value) return

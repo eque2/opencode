@@ -41,7 +41,7 @@ export function DialogModel(props: { providerID?: string }) {
             description: provider.name,
             category,
             disabled: provider.id === "opencode" && model.id.includes("-nano"),
-            footer: model.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            ...(model.cost?.input === 0 && provider.id === "opencode" ? { footer: "Free" } : {}),
             onSelect: () => {
               onSelect(provider.id, model.id)
             },
@@ -71,12 +71,12 @@ export function DialogModel(props: { providerID?: string }) {
             value: { providerID: provider.id, modelID: model },
             title: info.name ?? model,
             releaseDate: info.release_date,
-            description: favorites.some((item) => item.providerID === provider.id && item.modelID === model)
-              ? "(Favorite)"
-              : undefined,
-            category: connected() ? provider.name : undefined,
+            ...(favorites.some((item) => item.providerID === provider.id && item.modelID === model)
+              ? { description: "(Favorite)" }
+              : {}),
+            ...(connected() ? { category: provider.name } : {}),
             disabled: provider.id === "opencode" && model.includes("-nano"),
-            footer: info.cost?.input === 0 && provider.id === "opencode" ? "Free" : undefined,
+            ...(info.cost?.input === 0 && provider.id === "opencode" ? { footer: "Free" } : {}),
             onSelect() {
               onSelect(provider.id, model)
             },

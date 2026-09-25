@@ -6,7 +6,8 @@ import { onCleanup } from "solid-js"
 export function DialogThemeList() {
   const theme = useTheme()
   const options = Object.keys(theme.all())
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    // An empty locale list selects the default locale, as an undefined locale did.
+    .sort((a, b) => a.localeCompare(b, [], { sensitivity: "base" }))
     .map((value) => ({
       title: value,
       value: value,

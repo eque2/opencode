@@ -120,16 +120,19 @@ export function DialogConsoleOrg() {
       current={current()}
       renderFilter={!showError()}
       locked={showError()}
-      emptyView={
-        showError() ? (
-          <box paddingLeft={4} paddingRight={4}>
-            <text fg={theme.error} attributes={TextAttributes.BOLD}>
-              Could not load orgs
-            </text>
-            <text fg={theme.textMuted}>{errorMessage(loadError())}</text>
-          </box>
-        ) : undefined
-      }
+      // Leave emptyView out when there is no error, so the list keeps its default empty text.
+      {...(showError()
+        ? {
+            emptyView: (
+              <box paddingLeft={4} paddingRight={4}>
+                <text fg={theme.error} attributes={TextAttributes.BOLD}>
+                  Could not load orgs
+                </text>
+                <text fg={theme.textMuted}>{errorMessage(loadError())}</text>
+              </box>
+            ),
+          }
+        : {})}
     />
   )
 }
