@@ -42,7 +42,7 @@ import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
 import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
-import { Effect, Predicate, Record, Schema } from "effect"
+import { Array as Arr, Effect, Option, Predicate, Record, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
@@ -105,27 +105,26 @@ const older = (row: Cursor) =>
 
 function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$inferSelect)[]) {
   const ids = rows.map((row) => row.id)
-  const partByMessage = new Map<string, Part[]>()
   return Effect.gen(function* () {
-    if (ids.length > 0) {
-      const partRows = yield* db
-        .select()
-        .from(PartTable)
-        .where(inArray(PartTable.message_id, ids))
-        .orderBy(PartTable.message_id, PartTable.id)
-        .all()
-        .pipe(Effect.orDie)
-      for (const row of partRows) {
-        const next = part(row)
-        const list = partByMessage.get(row.message_id)
-        if (list) list.push(next)
-        else partByMessage.set(row.message_id, [next])
-      }
-    }
+    const partRows =
+      ids.length > 0
+        ? yield* db
+            .select()
+            .from(PartTable)
+            .where(inArray(PartTable.message_id, ids))
+            .orderBy(PartTable.message_id, PartTable.id)
+            .all()
+            .pipe(Effect.orDie)
+        : []
+    // Rows arrive ordered by message and part id, so each group keeps part order.
+    const partsByMessage = Arr.groupBy(partRows, (row) => row.message_id)
 
     return rows.map((row) => ({
       info: info(row),
-      parts: partByMessage.get(row.id) ?? [],
+      parts: Option.match(Record.get(partsByMessage, row.id), {
+        onNone: (): Part[] => [],
+        onSome: (group) => group.map(part),
+      }),
     }))
   })
 }

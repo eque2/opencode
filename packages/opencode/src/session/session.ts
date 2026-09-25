@@ -561,13 +561,14 @@ const layer: Layer.Layer<
     })
 
     const listGlobal = Effect.fn("Session.listGlobal")(function* (input?: GlobalListInput) {
-      const conditions: SQL[] = []
-      if (input?.directory) conditions.push(eq(SessionTable.directory, input.directory))
-      if (input?.roots) conditions.push(isNull(SessionTable.parent_id))
-      if (input?.start) conditions.push(gte(SessionTable.time_updated, input.start))
-      if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
-      if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
-      if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
+      const conditions: SQL[] = [
+        ...(input?.directory ? [eq(SessionTable.directory, input.directory)] : []),
+        ...(input?.roots ? [isNull(SessionTable.parent_id)] : []),
+        ...(input?.start ? [gte(SessionTable.time_updated, input.start)] : []),
+        ...(input?.cursor ? [lt(SessionTable.time_updated, input.cursor)] : []),
+        ...(input?.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+        ...(input?.archived ? [] : [isNull(SessionTable.time_archived)]),
+      ]
 
       const query =
         conditions.length > 0
@@ -985,38 +986,14 @@ function listByProject(
     experimentalWorkspaces: boolean
   },
 ) {
-  const conditions = [eq(SessionTable.project_id, input.projectID)]
-
-  if (input.workspaceID) {
-    conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
-  }
-  if (input.path !== undefined) {
-    if (input.path) {
-      const conds = [
-        eq(SessionTable.path, input.path),
-        like(SessionTable.path, sql.param(`${input.path}/%`, SessionTable.path)),
-      ]
-
-      conditions.push(
-        input.directory
-          ? or(...conds, and(isNull(SessionTable.path), eq(SessionTable.directory, input.directory))!)!
-          : or(...conds)!,
-      )
-    }
-  } else if (input.scope !== "project") {
-    if (input.directory) {
-      conditions.push(eq(SessionTable.directory, input.directory))
-    }
-  }
-  if (input.roots) {
-    conditions.push(isNull(SessionTable.parent_id))
-  }
-  if (input.start) {
-    conditions.push(gte(SessionTable.time_updated, input.start))
-  }
-  if (input.search) {
-    conditions.push(like(SessionTable.title, `%${input.search}%`))
-  }
+  const conditions: SQL[] = [
+    eq(SessionTable.project_id, input.projectID),
+    ...(input.workspaceID ? [eq(SessionTable.workspace_id, input.workspaceID)] : []),
+    ...locationConditions(input),
+    ...(input.roots ? [isNull(SessionTable.parent_id)] : []),
+    ...(input.start ? [gte(SessionTable.time_updated, input.start)] : []),
+    ...(input.search ? [like(SessionTable.title, `%${input.search}%`)] : []),
+  ]
 
   const limit = input.limit ?? 100
 
@@ -1031,6 +1008,25 @@ function listByProject(
       Effect.orDie,
       Effect.map((rows) => rows.map(fromRow)),
     )
+}
+
+// A path matches itself and its subpaths; with a directory it also matches the
+// rows in that directory that have no path. Without a path, a scope other than
+// "project" filters by directory.
+function locationConditions(input: ListInput): SQL[] {
+  if (input.path !== undefined) {
+    if (!input.path) return []
+    const pathMatches = [
+      eq(SessionTable.path, input.path),
+      like(SessionTable.path, sql.param(`${input.path}/%`, SessionTable.path)),
+    ]
+    const matches = input.directory
+      ? or(...pathMatches, and(isNull(SessionTable.path), eq(SessionTable.directory, input.directory)))
+      : or(...pathMatches)
+    return matches ? [matches] : []
+  }
+  if (input.scope !== "project" && input.directory) return [eq(SessionTable.directory, input.directory)]
+  return []
 }
 
 export const node = LayerNode.make({
