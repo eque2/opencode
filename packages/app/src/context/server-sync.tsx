@@ -60,7 +60,7 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
-import { Data, DateTime, Effect, HashMap, MutableHashMap, Option } from "effect"
+import { Cause, Clock, Data, DateTime, Effect, HashMap, MutableHashMap, Option } from "effect"
 import { createFiberSlot } from "@/utils/fiber-slot"
 
 /** Raised when the server sync context is created outside a Solid owner, which it needs for its child stores. */
@@ -68,6 +68,30 @@ class ServerSyncOwnerError extends Data.TaggedError("ServerSyncOwnerError")<{ re
 
 /** Raised when the ServerSync context has no server to sync with. The message is the translated text. */
 class NoServerAvailableError extends Data.TaggedError("NoServerAvailableError")<{ readonly message: string }> {}
+
+/** A server request from server sync that failed; `cause` is the value the request rejected with. */
+class ServerSyncRequestError extends Data.TaggedError("ServerSyncRequestError")<{ readonly cause: unknown }> {}
+
+/** Runs one Promise-returning request and maps its rejection to a ServerSyncRequestError. */
+function request<A>(run: () => PromiseLike<A>) {
+  return Effect.tryPromise({ try: () => run(), catch: (cause) => new ServerSyncRequestError({ cause }) })
+}
+
+/** Gives a request program back to a Promise API. The Promise rejects with the raw request error, as before. */
+function runRequest<A>(program: Effect.Effect<A, { readonly cause: unknown }>): Promise<A> {
+  return Effect.runPromise(program.pipe(Effect.mapError((error) => error.cause)))
+}
+
+/** The value the old Promise chain rejected with: the request's own error, or the defect of a thrown bug. */
+const rejection = (cause: Cause.Cause<{ readonly cause: unknown }>): unknown =>
+  Option.match(Cause.findErrorOption(cause), { onNone: () => Cause.squash(cause), onSome: (error) => error.cause })
+
+/** Whether the server speaks the legacy v1 protocol. An absent protocol counts as not v1. */
+const isLegacyProtocol = (protocol: Promise<"v1" | "v2"> | undefined) =>
+  Option.match(Option.fromNullishOr(protocol), {
+    onNone: () => Effect.succeed(false),
+    onSome: (pending) => request(() => pending).pipe(Effect.map((value) => value === "v1")),
+  })
 
 /** Completes on the next animation frame. Interrupting it cancels the frame request. */
 const nextFrame = Effect.callback<void>((resume) => {
@@ -119,12 +143,17 @@ export const loadMcpQuery = (
     readonly [ServerScope, string, "mcp"]
   >({
     queryKey: [scope, directory, "mcp"] as const,
-    queryFn: async () => {
-      if ((await protocol) === "v1" && legacy) return (await legacy.mcp.status()).data ?? {}
-      return api
-        .list({ location: { directory } })
-        .then((result) => Object.fromEntries(result.data.map((server) => [server.name, server.status])))
-    },
+    queryFn: () =>
+      runRequest(
+        Effect.gen(function* () {
+          if ((yield* isLegacyProtocol(protocol)) && legacy) {
+            const result = yield* request(() => legacy.mcp.status())
+            return result.data ?? {}
+          }
+          const result = yield* request(() => api.list({ location: { directory } }))
+          return Object.fromEntries(result.data.map((server) => [server.name, server.status]))
+        }),
+      ),
   })
 
 export const loadMcpResourcesQuery = (
@@ -141,21 +170,24 @@ export const loadMcpResourcesQuery = (
     readonly [ServerScope, string, "mcpResources"]
   >({
     queryKey: [scope, directory, "mcpResources"] as const,
-    queryFn: async () => {
-      if ((await protocol) === "v1" && legacy) {
-        return Object.fromEntries(
-          Object.entries((await legacy.experimental.resource.list()).data ?? {}).map(([key, resource]) => [
-            key,
-            { ...resource, server: resource.client },
-          ]),
-        )
-      }
-      return api.resource
-        .catalog({ location: { directory } })
-        .then((result) =>
-          Object.fromEntries(result.data.resources.map((resource) => [`${resource.server}:${resource.uri}`, resource])),
-        )
-    },
+    queryFn: () =>
+      runRequest(
+        Effect.gen(function* () {
+          if ((yield* isLegacyProtocol(protocol)) && legacy) {
+            const result = yield* request(() => legacy.experimental.resource.list())
+            return Object.fromEntries(
+              Object.entries(result.data ?? {}).map(([key, resource]) => [
+                key,
+                { ...resource, server: resource.client },
+              ]),
+            )
+          }
+          const result = yield* request(() => api.resource.catalog({ location: { directory } }))
+          return Object.fromEntries(
+            result.data.resources.map((resource) => [`${resource.server}:${resource.uri}`, resource]),
+          )
+        }),
+      ),
     placeholderData: {},
   })
 
@@ -252,6 +284,15 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const session = createServerSession(serverSDK.client, serverSDK.api.session, serverSDK.api.message, {
     protocol: serverSDK.protocol,
   })
+
+  /** Starts a lookup of each session without waiting for it. A failed lookup is ignored, as before. */
+  const resolveInBackground = (sessionIDs: ReadonlyArray<string>) =>
+    Effect.forEach(
+      sessionIDs,
+      (sessionID) =>
+        Effect.forkDetach(request(() => session.resolve(sessionID)).pipe(Effect.ignore), { startImmediately: true }),
+      { discard: true },
+    )
   const queryOptionsApi = makeQueryOptionsApi(
     serverSDK.scope,
     () => serverSDK.client,
@@ -265,26 +306,25 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   }))
   const activeSessionsQuery = useQuery(() =>
     loadActiveSessionsQuery(serverSDK.scope, {
-      active: async () => {
-        if ((await serverSDK.protocol) === "v1") {
-          const statuses = (await serverSDK.client.session.status()).data ?? {}
-          seedActiveSessionStatuses(session, statuses)
-          for (const sessionID of Object.keys(statuses)) {
-            void session.resolve(sessionID).catch(() => undefined)
-          }
-          return Object.fromEntries(
-            Object.entries(statuses).flatMap(([sessionID, status]) =>
-              status.type === "idle" ? [] : [[sessionID, { type: "running" as const }]],
-            ),
-          )
-        }
-        const active = await serverSDK.api.session.active()
-        seedActiveSessionStatuses(session, active)
-        for (const sessionID of Object.keys(active)) {
-          void session.resolve(sessionID).catch(() => undefined)
-        }
-        return active
-      },
+      active: () =>
+        runRequest(
+          Effect.gen(function* () {
+            if (yield* isLegacyProtocol(serverSDK.protocol)) {
+              const statuses = (yield* request(() => serverSDK.client.session.status())).data ?? {}
+              seedActiveSessionStatuses(session, statuses)
+              yield* resolveInBackground(Object.keys(statuses))
+              return Object.fromEntries(
+                Object.entries(statuses).flatMap(([sessionID, status]) =>
+                  status.type === "idle" ? [] : [[sessionID, { type: "running" as const }]],
+                ),
+              )
+            }
+            const active = yield* request(() => serverSDK.api.session.active())
+            seedActiveSessionStatuses(session, active)
+            yield* resolveInBackground(Object.keys(active))
+            return active
+          }),
+        ),
     }),
   )
 
@@ -332,21 +372,26 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   const bootstrap = useQuery(() => ({
     queryKey: [serverSDK.scope, "bootstrap"],
-    queryFn: async () => {
-      await bootstrapGlobal({
-        serverSDK: serverSDK.client,
-        serverAPI: serverSDK.api,
-        protocol: serverSDK.protocol,
-        scope: serverSDK.scope,
-        requestFailedTitle: language.t("common.requestFailed"),
-        translate: language.t,
-        formatMoreCount: (count) => language.t("common.moreCountSuffix", { count }),
-        setGlobalStore,
-        queryClient,
-      })
-      bootedAt = DateTime.toEpochMillis(DateTime.nowUnsafe())
-      return bootedAt
-    },
+    queryFn: (): Promise<number> =>
+      runRequest(
+        Effect.gen(function* () {
+          yield* request(() =>
+            bootstrapGlobal({
+              serverSDK: serverSDK.client,
+              serverAPI: serverSDK.api,
+              protocol: serverSDK.protocol,
+              scope: serverSDK.scope,
+              requestFailedTitle: language.t("common.requestFailed"),
+              translate: language.t,
+              formatMoreCount: (count) => language.t("common.moreCountSuffix", { count }),
+              setGlobalStore,
+              queryClient,
+            }),
+          )
+          bootedAt = yield* Clock.currentTimeMillis
+          return bootedAt
+        }),
+      ),
   }))
 
   const paused = () => untrack(() => globalStore.reload) !== undefined
@@ -368,15 +413,20 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       void bootstrapInstance(directory)
     },
     onMcp: (directory, setStore) => {
-      void loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocol)
-        .then((commands) => setStore("command", commands))
-        .catch((err) => {
-          showToast({
-            variant: "error",
-            title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
-            description: formatServerError(err, language.t),
-          })
-        })
+      Effect.runFork(
+        request(() => loadCommands(directory, serverSDK.api.command, sdkFor(directory), serverSDK.protocol)).pipe(
+          Effect.flatMap((commands) => Effect.sync(() => setStore("command", commands))),
+          Effect.catch((error) =>
+            Effect.sync(() =>
+              showToast({
+                variant: "error",
+                title: language.t("toast.project.reloadFailed.title", { project: getFilename(directory) }),
+                description: formatServerError(error.cause, language.t),
+              }),
+            ),
+          ),
+        ),
+      )
     },
     onDispose: (directory) => {
       const key = directoryKey(directory)
@@ -392,12 +442,12 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     },
   })
 
-  async function loadSessions(directory: string, options?: { limit?: number }) {
+  function loadSessions(directory: string, options?: { limit?: number }): Promise<void> {
     const key = directoryKey(directory)
     const pending = MutableHashMap.get(sessionLoads, key)
     if (Option.isSome(pending)) {
-      await pending.value
-      return loadSessions(directory, options)
+      const inFlight = pending.value
+      return runRequest(request(() => inFlight).pipe(Effect.andThen(request(() => loadSessions(directory, options)))))
     }
 
     children.pin(key)
@@ -417,111 +467,127 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         setStore("session", reconcile(next, { key: "id" }))
       }
       children.unpin(key)
-      return
+      return Effect.runPromise(Effect.void)
     }
 
     const limit = Math.max(retainedLimit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
-    const promise = queryClient
-      .fetchQuery({
-        ...queryOptionsApi.sessions(key),
-        queryFn: () =>
-          serverSDK.protocol
-            .then((protocol) =>
-              protocol === "v1"
-                ? loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
-                : loadRootSessions({ api: serverSDK.api.session, directory, limit }),
-            )
-            .then((x) => {
-              const nonArchived = (x.data ?? [])
-                .filter((s) => !!s?.id)
-                .filter((s) => !s.time?.archived)
-                .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-              const limit = Math.max(
-                store.limit,
-                options?.limit ?? 0,
-                Option.getOrElse(retainedLimitOf(key), () => 0),
-              )
-              const childSessions = store.session.filter((s) => !!s.parentID)
-              const next = trimSessions([...nonArchived, ...childSessions], {
-                limit,
-                permission: session.data.permission,
-              })
-              batch(() => {
-                next.forEach(session.remember)
-                setStore(
-                  "sessionTotal",
-                  estimateRootSessionTotal({
-                    count: nonArchived.length,
-                    limit: x.limit,
-                    limited: x.limited,
-                  }),
-                )
-                setStore("session", reconcile(next, { key: "id" }))
-              })
-              MutableHashMap.set(sessionMeta, key, { limit })
-            })
-            .catch((err) => {
-              console.error("Failed to load sessions", err)
-              const project = getFilename(directory)
-              showToast({
-                variant: "error",
-                title: language.t("toast.session.listFailed.title", { project }),
-                description: formatServerError(err, language.t),
-              })
-            })
-            .then(() => null),
+    // The query data records whether the page loaded; tanstack query does not accept undefined data.
+    const loadPage = Effect.gen(function* () {
+      const x = (yield* isLegacyProtocol(serverSDK.protocol))
+        ? yield* loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
+        : yield* loadRootSessions({ api: serverSDK.api.session, directory, limit })
+      const nonArchived = (x.data ?? [])
+        .filter((s) => !!s?.id)
+        .filter((s) => !s.time?.archived)
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      const keep = Math.max(
+        store.limit,
+        options?.limit ?? 0,
+        Option.getOrElse(retainedLimitOf(key), () => 0),
+      )
+      const childSessions = store.session.filter((s) => !!s.parentID)
+      const next = trimSessions([...nonArchived, ...childSessions], {
+        limit: keep,
+        permission: session.data.permission,
       })
-      .then(() => {})
+      batch(() => {
+        next.forEach(session.remember)
+        setStore(
+          "sessionTotal",
+          estimateRootSessionTotal({
+            count: nonArchived.length,
+            limit: x.limit,
+            limited: x.limited,
+          }),
+        )
+        setStore("session", reconcile(next, { key: "id" }))
+      })
+      MutableHashMap.set(sessionMeta, key, { limit: keep })
+      return true
+    }).pipe(
+      // Any failure of the page load, a thrown bug included, ends in the toast, as the old .catch did.
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          const error = rejection(cause)
+          yield* Effect.logError("Failed to load sessions", error)
+          const project = getFilename(directory)
+          showToast({
+            variant: "error",
+            title: language.t("toast.session.listFailed.title", { project }),
+            description: formatServerError(error, language.t),
+          })
+          return false
+        }),
+      ),
+    )
 
-    MutableHashMap.set(sessionLoads, key, promise)
-    void promise.finally(() => {
-      MutableHashMap.remove(sessionLoads, key)
-      children.unpin(key)
-    })
-    return promise
+    const loading = runRequest(
+      request(() =>
+        queryClient.fetchQuery({ ...queryOptionsApi.sessions(key), queryFn: () => Effect.runPromise(loadPage) }),
+      ).pipe(
+        Effect.asVoid,
+        Effect.ensuring(
+          Effect.sync(() => {
+            MutableHashMap.remove(sessionLoads, key)
+            children.unpin(key)
+          }),
+        ),
+      ),
+    )
+    MutableHashMap.set(sessionLoads, key, loading)
+    return loading
   }
 
-  async function bootstrapInstance(directory: string) {
+  function bootstrapInstance(directory: string): Promise<void> {
     const key = directoryKey(directory)
-    if (!key) return
+    if (!key) return Effect.runPromise(Effect.void)
     const pending = MutableHashMap.get(booting, key)
     if (Option.isSome(pending)) return pending.value
 
     children.pin(key)
-    const promise = Promise.resolve().then(async () => {
-      const child = children.ensureChild(directory)
-      const cache = children.vcsCache.get(key)
-      if (!cache) return
-      const sdk = sdkFor(directory)
-      await bootstrapDirectory({
-        directory,
-        scope: serverSDK.scope,
-        mcp: children.mcp(key),
-        global: {
-          config: globalStore.config,
-          path: globalStore.path,
-          project: globalStore.project,
-          provider: globalStore.provider,
-        },
-        sdk,
-        api: serverSDK.api,
-        store: child[0],
-        setStore: child[1],
-        vcsCache: cache,
-        loadSessions,
-        translate: language.t,
-        queryClient,
-        session,
-        protocol: serverSDK.protocol,
-      })
-    })
-
-    MutableHashMap.set(booting, key, promise)
-    void promise.finally(() => {
-      MutableHashMap.remove(booting, key)
-      children.unpin(key)
-    })
-    return promise
+    const booted = runRequest(
+      Effect.gen(function* () {
+        // Yield first, as the old Promise.resolve().then did, so this call records the boot
+        // before ensureChild can ask for another one.
+        yield* Effect.yieldNow
+        const child = children.ensureChild(directory)
+        const cache = children.vcsCache.get(key)
+        if (!cache) return
+        const sdk = sdkFor(directory)
+        yield* request(() =>
+          bootstrapDirectory({
+            directory,
+            scope: serverSDK.scope,
+            mcp: children.mcp(key),
+            global: {
+              config: globalStore.config,
+              path: globalStore.path,
+              project: globalStore.project,
+              provider: globalStore.provider,
+            },
+            sdk,
+            api: serverSDK.api,
+            store: child[0],
+            setStore: child[1],
+            vcsCache: cache,
+            loadSessions,
+            translate: language.t,
+            queryClient,
+            session,
+            protocol: serverSDK.protocol,
+          }),
+        )
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            MutableHashMap.remove(booting, key)
+            children.unpin(key)
+          }),
+        ),
+      ),
+    )
+    MutableHashMap.set(booting, key, booted)
+    return booted
   }
 
   const indexSession = (info: Parameters<typeof session.remember>[0]) => {
@@ -589,11 +655,15 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       const info = session.get(event.current.data.sessionID)
       if (info) indexSession(info)
     }
-    if (event.current?.type === "session.forked")
-      void session
-        .resolve(event.current.data.sessionID, { force: true })
-        .then(indexSession)
-        .catch(() => {})
+    if (event.current?.type === "session.forked") {
+      const sessionID = event.current.data.sessionID
+      Effect.runFork(
+        request(() => session.resolve(sessionID, { force: true })).pipe(
+          Effect.flatMap((info) => Effect.sync(() => indexSession(info))),
+          Effect.ignore,
+        ),
+      )
+    }
 
     const existing = children.children[key]
     if (!existing) return
@@ -701,35 +771,47 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     session,
     homeSessions,
     mcp: {
-      toggle: async (directory: string, name: string) => {
+      toggle: (directory: string, name: string): Promise<void> => {
         const key = directoryKey(directory)
         const sdk = sdkFor(key)
         const status = children.child(key, { bootstrap: false })[0].mcp[name]?.status
-        if (!status) return
-        await toggleMcp({
-          status,
-          connect: async () => {
-            if ((await serverSDK.protocol) === "v1") {
-              await sdk.mcp.connect({ name })
-              return
-            }
-            await serverSDK.api.mcp.connect({ server: name, location: { directory: key } })
-          },
-          disconnect: async () => {
-            if ((await serverSDK.protocol) === "v1") {
-              await sdk.mcp.disconnect({ name })
-              return
-            }
-            await serverSDK.api.mcp.disconnect({ server: name, location: { directory: key } })
-          },
-          authenticate: async () => {
-            await sdk.mcp.auth.authenticate({ name })
-          },
-          refresh: async () => {
-            await queryClient.refetchQueries(queryOptionsApi.mcp(key))
-            await queryClient.refetchQueries(queryOptionsApi.mcpResources(key))
-          },
-        })
+        if (!status) return Effect.runPromise(Effect.void)
+        const api = serverSDK.api.mcp
+        return runRequest(
+          request(() =>
+            toggleMcp({
+              status,
+              connect: () =>
+                runRequest(
+                  Effect.gen(function* () {
+                    if (yield* isLegacyProtocol(serverSDK.protocol)) {
+                      yield* request(() => sdk.mcp.connect({ name }))
+                      return
+                    }
+                    yield* request(() => api.connect({ server: name, location: { directory: key } }))
+                  }),
+                ),
+              disconnect: () =>
+                runRequest(
+                  Effect.gen(function* () {
+                    if (yield* isLegacyProtocol(serverSDK.protocol)) {
+                      yield* request(() => sdk.mcp.disconnect({ name }))
+                      return
+                    }
+                    yield* request(() => api.disconnect({ server: name, location: { directory: key } }))
+                  }),
+                ),
+              authenticate: () => runRequest(request(() => sdk.mcp.auth.authenticate({ name })).pipe(Effect.asVoid)),
+              refresh: () =>
+                runRequest(
+                  Effect.gen(function* () {
+                    yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcp(key)))
+                    yield* request(() => queryClient.refetchQueries(queryOptionsApi.mcpResources(key)))
+                  }),
+                ),
+            }),
+          ),
+        )
       },
     },
   }

@@ -2,12 +2,16 @@ import { describe, expect, test } from "bun:test"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type {
   McpListInput,
+  McpListOutput,
   McpResourceCatalogInput,
+  McpResourceCatalogOutput,
+  SessionActiveOutput,
   SessionApi,
   SessionInfo,
   SessionListInput,
 } from "@opencode-ai/client/promise"
 import { QueryClient } from "@tanstack/solid-query"
+import { Data, Effect } from "effect"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./global-sync/eviction"
 import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/session-load"
 import { loadActiveSessionsQuery, loadMcpQuery, loadMcpResourcesQuery, seedActiveSessionStatuses } from "./server-sync"
@@ -17,71 +21,95 @@ import type { ServerApi } from "@/utils/server"
 
 type McpApi = ServerApi["mcp"]
 
+/** The failure a stub session API rejects with. */
+class ListFailedError extends Data.TaggedError("ListFailedError")<{ readonly message: string }> {}
+
 describe("MCP queries", () => {
-  test("loads current servers for the requested location", async () => {
-    const calls: unknown[] = []
-    const queryClient = new QueryClient()
-    const result = await queryClient.fetchQuery(
-      loadMcpQuery(ServerScope.local, "/project", {
-        list: async (input: McpListInput = {}) => {
-          calls.push(input)
-          return {
-            location: { directory: "/project", project: { id: "project", directory: "/project" } },
-            data: [
-              { name: "docs", status: { status: "connected" } },
-              { name: "search", status: { status: "pending" } },
-            ],
-          }
-        },
-      } as unknown as McpApi),
-    )
-
-    expect(calls).toEqual([{ location: { directory: "/project" } }])
-    expect(result).toEqual({ docs: { status: "connected" }, search: { status: "pending" } })
-  })
-
-  test("loads and keys the current resource catalog", async () => {
-    const calls: unknown[] = []
-    const queryClient = new QueryClient()
-    const result = await queryClient.fetchQuery(
-      loadMcpResourcesQuery(ServerScope.local, "/project", {
-        resource: {
-          catalog: async (input: McpResourceCatalogInput = {}) => {
-            calls.push(input)
-            return {
-              location: { directory: "/project", project: { id: "project", directory: "/project" } },
-              data: {
-                resources: [{ server: "docs", name: "Guide", uri: "docs://guide" }],
-                templates: [],
+  test("loads current servers for the requested location", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const queryClient = new QueryClient()
+        const result = yield* Effect.promise(() =>
+          queryClient.fetchQuery(
+            loadMcpQuery(ServerScope.local, "/project", {
+              list: (input: McpListInput = {}) => {
+                calls.push(input)
+                return Effect.runPromise(
+                  Effect.succeed<McpListOutput>({
+                    location: { directory: "/project", project: { id: "project", directory: "/project" } },
+                    data: [
+                      { name: "docs", status: { status: "connected" } },
+                      { name: "search", status: { status: "pending" } },
+                    ],
+                  }),
+                )
               },
-            }
-          },
-        },
-      } as unknown as McpApi),
-    )
+            } as unknown as McpApi),
+          ),
+        )
 
-    expect(calls).toEqual([{ location: { directory: "/project" } }])
-    expect(result).toEqual({ "docs:docs://guide": { server: "docs", name: "Guide", uri: "docs://guide" } })
-  })
+        expect(calls).toEqual([{ location: { directory: "/project" } }])
+        expect(result).toEqual({ docs: { status: "connected" }, search: { status: "pending" } })
+      }),
+    ))
+
+  test("loads and keys the current resource catalog", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const queryClient = new QueryClient()
+        const result = yield* Effect.promise(() =>
+          queryClient.fetchQuery(
+            loadMcpResourcesQuery(ServerScope.local, "/project", {
+              resource: {
+                catalog: (input: McpResourceCatalogInput = {}) => {
+                  calls.push(input)
+                  return Effect.runPromise(
+                    Effect.succeed<McpResourceCatalogOutput>({
+                      location: { directory: "/project", project: { id: "project", directory: "/project" } },
+                      data: {
+                        resources: [{ server: "docs", name: "Guide", uri: "docs://guide" }],
+                        templates: [],
+                      },
+                    }),
+                  )
+                },
+              },
+            } as unknown as McpApi),
+          ),
+        )
+
+        expect(calls).toEqual([{ location: { directory: "/project" } }])
+        expect(result).toEqual({ "docs:docs://guide": { server: "docs", name: "Guide", uri: "docs://guide" } })
+      }),
+    ))
 })
 
 describe("active session query", () => {
-  test("loads active sessions immediately and once per server cache", async () => {
-    let calls = 0
-    const queryClient = new QueryClient()
-    const options = loadActiveSessionsQuery(ServerScope.local, {
-      active: async () => {
-        calls++
-        return { ses_running: { type: "running" } }
-      },
-    })
+  test("loads active sessions immediately and once per server cache", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let calls = 0
+        const queryClient = new QueryClient()
+        const options = loadActiveSessionsQuery(ServerScope.local, {
+          active: () => {
+            calls++
+            return Effect.runPromise(Effect.succeed<SessionActiveOutput>({ ses_running: { type: "running" } }))
+          },
+        })
 
-    expect(await queryClient.fetchQuery(options)).toEqual({ ses_running: { type: "running" } })
-    expect(await queryClient.fetchQuery(options)).toEqual({ ses_running: { type: "running" } })
-    expect(calls).toBe(1)
-    expect(options.enabled).toBe(true)
-    expect([...options.queryKey]).toEqual([ServerScope.local, "activeSessions"])
-  })
+        expect(yield* Effect.promise(() => queryClient.fetchQuery(options))).toEqual({
+          ses_running: { type: "running" },
+        })
+        expect(yield* Effect.promise(() => queryClient.fetchQuery(options))).toEqual({
+          ses_running: { type: "running" },
+        })
+        expect(calls).toBe(1)
+        expect(options.enabled).toBe(true)
+        expect([...options.queryKey]).toEqual([ServerScope.local, "activeSessions"])
+      }),
+    ))
 
   test("does not overwrite statuses already written by events", () => {
     const session = createServerSession({} as OpencodeClient)
@@ -124,38 +152,41 @@ describe("pickDirectoriesToEvict", () => {
 })
 
 describe("loadRootSessions", () => {
-  test("loads and normalizes a limited page of root sessions", async () => {
-    const calls: SessionListInput[] = []
+  test("loads and normalizes a limited page of root sessions", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: SessionListInput[] = []
 
-    const result = await loadRootSessions({
-      api: {
-        list: async (query = {}) => {
-          calls.push(query)
-          return { data: [sessionInfo("session-1")], cursor: {} }
-        },
-      } satisfies Pick<SessionApi, "list">,
-      directory: "dir",
-      limit: 10,
-    })
+        const result = yield* loadRootSessions({
+          api: {
+            list: (query = {}) => {
+              calls.push(query)
+              return Effect.runPromise(Effect.succeed({ data: [sessionInfo("session-1")], cursor: {} }))
+            },
+          } satisfies Pick<SessionApi, "list">,
+          directory: "dir",
+          limit: 10,
+        })
 
-    expect(result.data).toEqual([
-      expect.objectContaining({ id: "session-1", directory: "dir", slug: "session-1", version: "" }),
-    ])
-    expect(result.limited).toBe(true)
-    expect(calls).toEqual([{ directory: "dir", parentID: null, limit: 10, order: "desc" }])
-  })
+        expect(result.data).toEqual([
+          expect.objectContaining({ id: "session-1", directory: "dir", slug: "session-1", version: "" }),
+        ])
+        expect(result.limited).toBe(true)
+        expect(calls).toEqual([{ directory: "dir", parentID: null, limit: 10, order: "desc" }])
+      }),
+    ))
 
   test("propagates list failures", () => {
     expect(
-      loadRootSessions({
-        api: {
-          list: async () => {
-            throw new Error("failed")
-          },
-        } satisfies Pick<SessionApi, "list">,
-        directory: "dir",
-        limit: 25,
-      }),
+      Effect.runPromise(
+        loadRootSessions({
+          api: {
+            list: () => Effect.runPromise(Effect.fail(new ListFailedError({ message: "failed" }))),
+          } satisfies Pick<SessionApi, "list">,
+          directory: "dir",
+          limit: 25,
+        }).pipe(Effect.mapError((error) => error.cause)),
+      ),
     ).rejects.toThrow("failed")
   })
 })
