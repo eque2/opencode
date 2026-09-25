@@ -936,6 +936,7 @@ export function Prompt(props: PromptProps) {
             setStore("mode", item.mode ?? "normal")
             restoreExtmarksFromParts(item.parts)
             input.cursorOffset = 0
+            return true
           },
         },
       ],
@@ -972,6 +973,7 @@ export function Prompt(props: PromptProps) {
             setStore("mode", item.mode ?? "normal")
             restoreExtmarksFromParts(item.parts)
             input.cursorOffset = input.plainText.length
+            return true
           },
         },
       ],
@@ -1632,31 +1634,26 @@ export function Prompt(props: PromptProps) {
                     {(() => {
                       const retry = createMemo(() => {
                         const s = status()
-                        if (s.type !== "retry") return
-                        return s
+                        return s.type === "retry" ? Option.some(s) : Option.none()
                       })
-                      const message = createMemo(() => {
-                        const r = retry()
-                        if (!r) return
-                        if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
-                          return "gemini is way too hot right now"
-                        if (r.message.length > 80) return r.message.slice(0, 80) + "…"
-                        return r.message
-                      })
-                      const isTruncated = createMemo(() => {
-                        const r = retry()
-                        if (!r) return false
-                        return r.message.length > 120
-                      })
+                      const message = createMemo(() =>
+                        Option.map(retry(), (r) => {
+                          if (r.message.includes("exceeded your current quota") && r.message.includes("gemini"))
+                            return "gemini is way too hot right now"
+                          if (r.message.length > 80) return r.message.slice(0, 80) + "…"
+                          return r.message
+                        }),
+                      )
+                      const isTruncated = createMemo(() => Option.exists(retry(), (r) => r.message.length > 120))
                       const [seconds, setSeconds] = createSignal(0)
                       onMount(() => {
                         // Tick every second, first after one second, as setInterval did.
                         const countdown = Effect.runFork(
                           Effect.gen(function* () {
-                            const next = retry()?.next
-                            if (!next) return
+                            const current = retry()
+                            if (Option.isNone(current) || !current.value.next) return
                             const now = yield* Clock.currentTimeMillis
-                            setSeconds(Math.round((next - now) / 1000))
+                            setSeconds(Math.round((current.value.next - now) / 1000))
                           }).pipe(Effect.repeat(Schedule.spaced("1 second")), Effect.delay("1 second")),
                         )
 
@@ -1666,24 +1663,24 @@ export function Prompt(props: PromptProps) {
                       })
                       const handleMessageClick = () => {
                         const r = retry()
-                        if (!r) return
+                        if (Option.isNone(r)) return
                         if (isTruncated()) {
-                          void DialogAlert.show(dialog, "Retry Error", r.message)
+                          void DialogAlert.show(dialog, "Retry Error", r.value.message)
                         }
                       }
 
                       const retryText = () => {
                         const r = retry()
-                        if (!r) return ""
-                        const baseMessage = message()
+                        if (Option.isNone(r)) return ""
+                        const baseMessage = Option.getOrElse(message(), () => "")
                         const truncatedHint = isTruncated() ? " (click to expand)" : ""
                         const duration = formatDuration(seconds())
-                        const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.attempt}]`
+                        const retryInfo = ` [retrying ${duration ? `in ${duration} ` : ""}attempt #${r.value.attempt}]`
                         return baseMessage + truncatedHint + retryInfo
                       }
 
                       return (
-                        <Show when={retry()}>
+                        <Show when={Option.isSome(retry())}>
                           <box onMouseUp={handleMessageClick}>
                             <text fg={theme.error}>{retryText()}</text>
                           </box>
