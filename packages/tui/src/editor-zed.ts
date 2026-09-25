@@ -13,16 +13,16 @@ const ZedEditorRowSchema = Schema.Struct({
   workspace_paths: Schema.NullOr(Schema.String),
   timestamp: Schema.String,
   buffer_path: Schema.NullOr(Schema.String),
-})
+}).annotate({ identifier: "TuiEditorZed.EditorRow" })
 
 const ZedSelectionRowSchema = Schema.Struct({
   selection_start: Schema.NullOr(Schema.Number),
   selection_end: Schema.NullOr(Schema.Number),
-})
+}).annotate({ identifier: "TuiEditorZed.SelectionRow" })
 
 const ZedEditorContentsSchema = Schema.Struct({
   contents: Schema.NullOr(Schema.String),
-})
+}).annotate({ identifier: "TuiEditorZed.EditorContents" })
 
 const decodeZedEditorRow = Schema.decodeUnknownOption(ZedEditorRowSchema)
 const decodeZedSelectionRow = Schema.decodeUnknownOption(ZedSelectionRowSchema)

@@ -19,12 +19,12 @@ const JsonRpcMessageSchema = Schema.Struct({
       message: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "TuiEditorContext.JsonRpcMessage" })
 
 const PositionSchema = Schema.Struct({
   line: Schema.Number,
   character: Schema.Number,
-})
+}).annotate({ identifier: "TuiEditorContext.Position" })
 
 const EditorSelectionRangeSchema = Schema.Struct({
   text: Schema.String,
@@ -32,13 +32,13 @@ const EditorSelectionRangeSchema = Schema.Struct({
     start: PositionSchema,
     end: PositionSchema,
   }),
-})
+}).annotate({ identifier: "TuiEditorContext.SelectionRange" })
 
 const EditorSelectionRangesSchema = Schema.Struct({
   filePath: Schema.String,
   source: Schema.optional(Schema.Literals(["websocket", "zed"])),
   ranges: Schema.mutable(Schema.Array(EditorSelectionRangeSchema).check(Schema.isMinLength(1))),
-})
+}).annotate({ identifier: "TuiEditorContext.SelectionRanges" })
 
 const EditorSelectionSchema = Schema.Union([
   EditorSelectionRangesSchema,
@@ -75,7 +75,7 @@ const EditorMentionSchema = Schema.Struct({
   filePath: Schema.String,
   lineStart: Schema.Number,
   lineEnd: Schema.Number,
-})
+}).annotate({ identifier: "TuiEditorContext.Mention" })
 
 const EditorServerInfoSchema = Schema.Struct({
   protocolVersion: Schema.optional(Schema.String),
@@ -85,7 +85,7 @@ const EditorServerInfoSchema = Schema.Struct({
       version: Schema.optional(Schema.String),
     }),
   ),
-})
+}).annotate({ identifier: "TuiEditorContext.ServerInfo" })
 
 const decodeJsonRpcMessage = Schema.decodeUnknownOption(JsonRpcMessageSchema)
 const decodeEditorSelection = Schema.decodeUnknownOption(EditorSelectionSchema)
