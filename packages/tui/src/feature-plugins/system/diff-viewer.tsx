@@ -871,7 +871,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                         const reviewed = () => HashSet.has(reviewedFileNames(), entry.file.file)
                         return (
                           <box ref={(element: BoxRenderable) => registerPatchNode(entry.fileIndex, element)}>
-                            {index() !== 0 ? <PatchSeparator edge="edge" fileTree={showFileTree()} /> : null}
+                            <Show when={index() !== 0}>
+                              <PatchSeparator edge="edge" fileTree={showFileTree()} />
+                            </Show>
                             <box
                               flexDirection="row"
                               gap={1}
