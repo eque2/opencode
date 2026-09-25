@@ -5,7 +5,7 @@ import type { TerminalColors } from "@opentui/core"
 import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Option, Result } from "effect"
-import { DEFAULT_THEMES, addTheme, allThemes, hasTheme, resolveTheme, terminalMode } from "../src/theme"
+import { DEFAULT_THEMES, addTheme, allThemes, hasTheme, isTheme, resolveTheme, terminalMode } from "../src/theme"
 import { discoverThemes } from "../src/context/theme"
 import { tmpdir } from "./fixture/fixture"
 
@@ -58,6 +58,19 @@ test("resolveTheme rejects missing color refs", () => {
   const error = Result.getFailure(resolveTheme(item, "dark"))
   expect(Option.map(error, (value) => value.message)).toEqual(
     Option.some('Color reference "missing" not found in defs or theme'),
+  )
+})
+
+test("resolveTheme rejects a theme without a required color", () => {
+  // A custom or plugin theme is unchecked JSON, so isTheme accepts it without the error color.
+  const partial: unknown = {
+    ...DEFAULT_THEMES.opencode,
+    theme: Object.fromEntries(Object.entries(DEFAULT_THEMES.opencode.theme).filter(([key]) => key !== "error")),
+  }
+  expect(isTheme(partial)).toBe(true)
+  const error = isTheme(partial) ? Result.getFailure(resolveTheme(partial, "dark")) : Option.none()
+  expect(Option.map(error, (value) => [value._tag, value.message])).toEqual(
+    Option.some(["TuiTheme.ColorMissingError", 'Required theme color "error" is missing']),
   )
 })
 

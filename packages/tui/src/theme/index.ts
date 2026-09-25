@@ -246,13 +246,22 @@ export class ThemeColorReferenceError extends Schema.TaggedError<ThemeColorRefer
   { message: Schema.String },
 ) {}
 
+/** A theme that leaves out a color that ThemeJson requires. */
+export class ThemeColorMissingError extends Schema.TaggedError<ThemeColorMissingError>()(
+  "TuiTheme.ColorMissingError",
+  { key: Schema.String, message: Schema.String },
+) {}
+
 // Theme values by key. A color reference may name any theme key, and thinkingOpacity holds a number.
 type ThemeValueLookup = Readonly<Record<string, ColorValue | number | undefined>>
+
+// The theme colors that every theme defines. selectedListItemText and backgroundMenu fall back to other colors.
+type RequiredThemeColor = Exclude<ThemeColor, "selectedListItemText" | "backgroundMenu">
 
 export function resolveTheme(
   theme: ThemeJson,
   mode: "dark" | "light",
-): Result.Result<Theme, ThemeColorReferenceError> {
+): Result.Result<Theme, ThemeColorReferenceError | ThemeColorMissingError> {
   const defs = theme.defs ?? {}
   const values: ThemeValueLookup = theme.theme
   function resolveColor(
@@ -283,37 +292,86 @@ export function resolveTheme(
     return resolveColor(c[mode], chain)
   }
 
+  // Custom and plugin themes are unchecked JSON, so a required color can be absent at run time.
+  function color(key: RequiredThemeColor): Result.Result<RGBA, ThemeColorReferenceError | ThemeColorMissingError> {
+    const value = values[key]
+    if (value === undefined) {
+      return Result.fail(new ThemeColorMissingError({ key, message: `Required theme color "${key}" is missing` }))
+    }
+    return resolveColor(value)
+  }
+
   return Result.gen(function* () {
-    const colors = yield* Result.all(
-      Object.entries(values).flatMap(([key, value]) =>
-        key === "selectedListItemText" || key === "backgroundMenu" || key === "thinkingOpacity" || value === undefined
-          ? []
-          : [Result.map(resolveColor(value), (color): readonly [string, RGBA] => [key, color])],
-      ),
-    )
-    const resolved: Partial<Record<ThemeColor, RGBA>> = Object.fromEntries(colors)
+    const background = yield* color("background")
+    const backgroundElement = yield* color("backgroundElement")
 
     // Handle selectedListItemText separately since it's optional
-    const selectedListItemText = theme.theme.selectedListItemText
-    const hasSelectedListItemText = selectedListItemText !== undefined
     // Backward compatibility: if selectedListItemText is not defined, use background color
     // This preserves the current behavior for all existing themes
-    resolved.selectedListItemText =
-      selectedListItemText === undefined ? resolved.background : yield* resolveColor(selectedListItemText)
+    const selectedListItemText = theme.theme.selectedListItemText
 
     // Handle backgroundMenu - optional with fallback to backgroundElement
     const backgroundMenu = theme.theme.backgroundMenu
-    resolved.backgroundMenu =
-      backgroundMenu === undefined ? resolved.backgroundElement : yield* resolveColor(backgroundMenu)
 
-    // Handle thinkingOpacity - optional with default of 0.6
-    const thinkingOpacity = theme.theme.thinkingOpacity ?? 0.6
-
-    return {
-      ...resolved,
-      _hasSelectedListItemText: hasSelectedListItemText,
-      thinkingOpacity,
-    } as Theme
+    const resolved: Theme = {
+      primary: yield* color("primary"),
+      secondary: yield* color("secondary"),
+      accent: yield* color("accent"),
+      error: yield* color("error"),
+      warning: yield* color("warning"),
+      success: yield* color("success"),
+      info: yield* color("info"),
+      text: yield* color("text"),
+      textMuted: yield* color("textMuted"),
+      selectedListItemText:
+        selectedListItemText === undefined ? background : yield* resolveColor(selectedListItemText),
+      background,
+      backgroundPanel: yield* color("backgroundPanel"),
+      backgroundElement,
+      backgroundMenu: backgroundMenu === undefined ? backgroundElement : yield* resolveColor(backgroundMenu),
+      border: yield* color("border"),
+      borderActive: yield* color("borderActive"),
+      borderSubtle: yield* color("borderSubtle"),
+      diffAdded: yield* color("diffAdded"),
+      diffRemoved: yield* color("diffRemoved"),
+      diffContext: yield* color("diffContext"),
+      diffHunkHeader: yield* color("diffHunkHeader"),
+      diffHighlightAdded: yield* color("diffHighlightAdded"),
+      diffHighlightRemoved: yield* color("diffHighlightRemoved"),
+      diffAddedBg: yield* color("diffAddedBg"),
+      diffRemovedBg: yield* color("diffRemovedBg"),
+      diffContextBg: yield* color("diffContextBg"),
+      diffLineNumber: yield* color("diffLineNumber"),
+      diffAddedLineNumberBg: yield* color("diffAddedLineNumberBg"),
+      diffRemovedLineNumberBg: yield* color("diffRemovedLineNumberBg"),
+      markdownText: yield* color("markdownText"),
+      markdownHeading: yield* color("markdownHeading"),
+      markdownLink: yield* color("markdownLink"),
+      markdownLinkText: yield* color("markdownLinkText"),
+      markdownCode: yield* color("markdownCode"),
+      markdownBlockQuote: yield* color("markdownBlockQuote"),
+      markdownEmph: yield* color("markdownEmph"),
+      markdownStrong: yield* color("markdownStrong"),
+      markdownHorizontalRule: yield* color("markdownHorizontalRule"),
+      markdownListItem: yield* color("markdownListItem"),
+      markdownListEnumeration: yield* color("markdownListEnumeration"),
+      markdownImage: yield* color("markdownImage"),
+      markdownImageText: yield* color("markdownImageText"),
+      markdownCodeBlock: yield* color("markdownCodeBlock"),
+      syntaxComment: yield* color("syntaxComment"),
+      syntaxKeyword: yield* color("syntaxKeyword"),
+      syntaxFunction: yield* color("syntaxFunction"),
+      syntaxVariable: yield* color("syntaxVariable"),
+      syntaxString: yield* color("syntaxString"),
+      syntaxNumber: yield* color("syntaxNumber"),
+      syntaxType: yield* color("syntaxType"),
+      syntaxOperator: yield* color("syntaxOperator"),
+      syntaxPunctuation: yield* color("syntaxPunctuation"),
+      // Handle thinkingOpacity - optional with default of 0.6
+      thinkingOpacity: theme.theme.thinkingOpacity ?? 0.6,
+      _hasSelectedListItemText: selectedListItemText !== undefined,
+    }
+    return resolved
   })
 }
 
