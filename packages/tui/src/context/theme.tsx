@@ -83,10 +83,12 @@ export {
 
 const THEME_REFRESH_DELAYS = [250, 1000] as const
 
+type Mode = "dark" | "light"
+
 type State = {
   themes: Record<string, ThemeJson>
-  mode: "dark" | "light"
-  lock: "dark" | "light" | undefined
+  mode: Mode
+  lock: Option.Option<Mode>
   active: string
   ready: boolean
 }
@@ -94,37 +96,43 @@ type State = {
 const [store, setStore] = createStore<State>({
   themes: allThemes(),
   mode: "dark",
-  lock: undefined,
+  lock: Option.none(),
   active: "opencode",
   ready: false,
 })
+
+const isMode = (value: unknown): value is Mode => value === "dark" || value === "light"
 
 subscribeThemes((themes) => setStore("themes", themes))
 
 export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
   name: "Theme",
-  init: (props: { mode: "dark" | "light"; source?: ThemeSource }) => {
+  init: (props: { mode: Mode; source?: ThemeSource }) => {
     const renderer = useRenderer()
     const config = useTuiConfig()
     const kv = useKV()
     const themes = props.source ?? themeSource
-    const pick = (value: unknown) => {
-      if (value === "dark" || value === "light") return value
-      return
-    }
+    const pick = (value: unknown): Option.Option<Mode> => Option.liftPredicate(value, isMode)
+
+    // kv keeps the mode lock, and the pinned mode next to it, only while the mode is locked. Both are written from
+    // the lock state; an unset key is how kv stores "no value".
+    const persistLock = () => kv.set("theme_mode_lock", Option.getOrUndefined(store.lock))
+    const persistPinnedMode = () => kv.set("theme_mode", Option.getOrUndefined(Option.as(store.lock, store.mode)))
 
     setStore(
       produce((draft) => {
         const lock = pick(kv.get("theme_mode_lock"))
-        const mode = lock ?? pick(renderer.themeMode) ?? props.mode
-        if (!lock && pick(kv.get("theme_mode")) !== undefined) kv.set("theme_mode", undefined)
-        draft.mode = mode
+        draft.mode = lock.pipe(
+          Option.orElse(() => pick(renderer.themeMode)),
+          Option.getOrElse(() => props.mode),
+        )
         draft.lock = lock
         const active = config.theme ?? kv.get("theme", "opencode")
         draft.active = typeof active === "string" ? active : "opencode"
         draft.ready = false
       }),
     )
+    if (Option.isNone(store.lock) && Option.isSome(pick(kv.get("theme_mode")))) persistPinnedMode()
 
     createEffect(() => {
       const theme = config.theme
@@ -152,30 +160,30 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     })
 
     let systemThemeSignature: string | undefined
-    let systemThemeMode: "dark" | "light" | undefined
+    let systemThemeMode: Mode | undefined
     let hasResolvedSystemTheme = false
-    function resolveSystemTheme(mode: "dark" | "light" = store.mode) {
+    function resolveSystemTheme(mode: Mode = store.mode) {
       return renderer
         .getPalette({ size: 16 })
         .then((colors: TerminalColors) => {
           if (!colors.palette[0]) {
             if (hasResolvedSystemTheme) return
-            setSystemTheme(undefined)
+            setSystemTheme(Option.none())
             if (store.active === "system") setStore("active", "opencode")
             return
           }
-          const next = store.lock ?? terminalMode(colors) ?? mode
+          const next = Option.getOrElse(store.lock, () => terminalMode(colors) ?? mode)
           if (store.mode !== next) setStore("mode", next)
           const signature = JSON.stringify(colors)
           hasResolvedSystemTheme = true
           if (store.themes.system && systemThemeSignature === signature && systemThemeMode === next) return
           systemThemeSignature = signature
           systemThemeMode = next
-          setSystemTheme(generateSystem(colors, next))
+          setSystemTheme(Option.some(generateSystem(colors, next)))
         })
         .catch(() => {
           if (hasResolvedSystemTheme) return
-          setSystemTheme(undefined)
+          setSystemTheme(Option.none())
           if (store.active === "system") setStore("active", "opencode")
         })
     }
@@ -183,7 +191,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     let systemRefreshRunning = false
     let systemRefreshQueued = false
     let systemRefreshMode = store.mode
-    function refreshSystemTheme(mode: "dark" | "light" = store.mode) {
+    function refreshSystemTheme(mode: Mode = store.mode) {
       systemRefreshMode = mode
       if (systemRefreshRunning) {
         systemRefreshQueued = true
@@ -201,28 +209,28 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       })
     }
 
-    function apply(mode: "dark" | "light") {
-      if (store.lock !== undefined) kv.set("theme_mode", mode)
-      if (store.mode === mode) return
-      setStore("mode", mode)
-      refreshSystemTheme(mode)
+    function apply(mode: Mode) {
+      const changed = store.mode !== mode
+      if (changed) setStore("mode", mode)
+      if (Option.isSome(store.lock)) persistPinnedMode()
+      if (changed) refreshSystemTheme(mode)
     }
 
-    function pin(mode: "dark" | "light" = store.mode) {
-      setStore("lock", mode)
-      kv.set("theme_mode_lock", mode)
+    function pin(mode: Mode = store.mode) {
+      setStore("lock", Option.some(mode))
+      persistLock()
       apply(mode)
     }
 
     function free() {
-      setStore("lock", undefined)
-      kv.set("theme_mode_lock", undefined)
-      kv.set("theme_mode", undefined)
+      setStore("lock", Option.none())
+      persistLock()
+      persistPinnedMode()
       refreshSystemTheme(renderer.themeMode ?? store.mode)
     }
 
-    const handle = (mode: "dark" | "light") => {
-      if (store.lock) return
+    const handle = (mode: Mode) => {
+      if (Option.isSome(store.lock)) return
       apply(mode)
     }
     renderer.on(CliRenderEvents.THEME_MODE, handle)
@@ -301,7 +309,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       syntax,
       subtleSyntax,
       mode: () => store.mode,
-      locked: () => store.lock !== undefined,
+      locked: () => Option.isSome(store.lock),
       lock: () => pin(store.mode),
       unlock: free,
       setMode: pin,

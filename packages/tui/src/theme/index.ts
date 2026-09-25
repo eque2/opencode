@@ -1,5 +1,5 @@
 import { SyntaxStyle, RGBA, type TerminalColors } from "@opentui/core"
-import { MutableHashSet, Predicate, Result, Schema } from "effect"
+import { MutableHashSet, Option, Predicate, Result, Schema } from "effect"
 import aura from "./assets/aura.json" with { type: "json" }
 import ayu from "./assets/ayu.json" with { type: "json" }
 import carbonfox from "./assets/carbonfox.json" with { type: "json" }
@@ -166,7 +166,7 @@ export const DEFAULT_THEMES: Record<string, ThemeJson> = {
 
 const pluginThemes: Record<string, ThemeJson> = {}
 let customThemes: Record<string, ThemeJson> = {}
-let systemTheme: ThemeJson | undefined
+let systemTheme: Option.Option<ThemeJson> = Option.none()
 const listeners = MutableHashSet.empty<(themes: Record<string, ThemeJson>) => void>()
 
 function listThemes() {
@@ -176,10 +176,10 @@ function listThemes() {
     ...pluginThemes,
     ...customThemes,
   }
-  if (!systemTheme) return themes
+  if (Option.isNone(systemTheme)) return themes
   return {
     ...themes,
-    system: systemTheme,
+    system: systemTheme.value,
   }
 }
 
@@ -209,7 +209,7 @@ export function setCustomThemes(themes: Record<string, ThemeJson>) {
   syncThemes()
 }
 
-export function setSystemTheme(theme: ThemeJson | undefined) {
+export function setSystemTheme(theme: Option.Option<ThemeJson>) {
   systemTheme = theme
   syncThemes()
 }

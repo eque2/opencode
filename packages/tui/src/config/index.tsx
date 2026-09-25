@@ -114,8 +114,9 @@ export function resolve(input: Info, options: ResolveOptions): Resolved {
     }
   }
 
+  const { cursor, ...rest } = input
   return {
-    ...input,
+    ...rest,
     attention: {
       enabled: input.attention?.enabled ?? false,
       notifications: input.attention?.notifications ?? true,
@@ -130,12 +131,7 @@ export function resolve(input: Info, options: ResolveOptions): Resolved {
     }),
     leader_timeout: input.leader_timeout ?? LeaderTimeoutDefault,
     mouse: input.mouse ?? true,
-    cursor: input.cursor
-      ? {
-          style: input.cursor.style ?? "block",
-          blinking: input.cursor.blinking ?? true,
-        }
-      : undefined,
+    ...(cursor ? { cursor: { style: cursor.style ?? "block", blinking: cursor.blinking ?? true } } : {}),
   }
 }
 
