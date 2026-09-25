@@ -1,3 +1,4 @@
+import { Record } from "effect"
 import type { VisualRegionDefinition } from "./regions"
 
 type RegionSet<RegionName extends string> = readonly RegionName[] | "all"
@@ -55,7 +56,11 @@ export function visualPlan<const Regions extends Record<string, VisualRegionDefi
   invariants: readonly VisualInvariant<Extract<keyof Regions, string>>[],
   options: Omit<VisualPlan<Extract<keyof Regions, string>>, "regionNames" | "invariants"> = {},
 ): VisualPlan<Extract<keyof Regions, string>> {
-  return { ...options, regionNames: Object.keys(regions) as Extract<keyof Regions, string>[], invariants }
+  return {
+    ...options,
+    regionNames: Record.keys<Extract<keyof Regions, string>, VisualRegionDefinition>(regions),
+    invariants,
+  }
 }
 
 export function legacyVisualPlan<RegionName extends string>(

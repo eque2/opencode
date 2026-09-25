@@ -1,3 +1,5 @@
+import { Record } from "effect"
+
 export type VisualRegionDefinition = {
   selector: string
   closest?: string
@@ -12,7 +14,5 @@ export function mapVisualRegions<const Regions extends Record<string, VisualRegi
   regions: Regions,
   map: (region: Regions[keyof Regions], name: keyof Regions) => Result,
 ) {
-  return Object.fromEntries(
-    Object.entries(regions).map(([name, region]) => [name, map(region as Regions[keyof Regions], name)]),
-  ) as { [Name in keyof Regions]: Result }
+  return Record.map<Extract<keyof Regions, string>, Regions[keyof Regions], Result>(regions, map)
 }
