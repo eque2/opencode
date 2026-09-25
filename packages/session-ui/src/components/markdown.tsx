@@ -23,11 +23,9 @@ import {
   disposeMarkdownProjection,
   disposeStreamingCode,
   highlightStreamingCode,
-  MarkdownWorkerDisposedError,
-  MarkdownWorkerSupersededError,
-  MarkdownWorkerUnavailableError,
   parseMarkdown,
   projectMarkdown,
+  type MarkdownWorkerError,
 } from "./markdown-worker"
 import { markdownBlockKey, type MarkdownToken } from "./markdown-worker-protocol"
 import { shouldResetCodeTokens, type RenderedCodeState } from "./markdown-code-state"
@@ -68,23 +66,40 @@ function fallback(markdown: string) {
   return escape(markdown).replace(/\r\n?/g, "\n").replace(/\n/g, "<br>")
 }
 
-async function code(text: string, language: string | undefined, key: string, complete = false) {
-  try {
-    const result = await Effect.runPromise(highlightStreamingCode(key, text, language ?? "text", complete))
-    return {
-      language: result.language,
-      generation: result.generation,
-      stable: result.stable,
-      unstable: result.unstable,
-    }
-  } catch (error) {
-    if (
-      !(error instanceof MarkdownWorkerDisposedError) &&
-      !(error instanceof MarkdownWorkerSupersededError) &&
-      !(error instanceof MarkdownWorkerUnavailableError)
-    )
-      console.error("Markdown highlighting worker failed", error)
-    return { language: language ?? "text", generation: 0, stable: [], unstable: [[text, ""] as MarkdownToken] }
+type CodeTokens = {
+  language: string
+  generation: number
+  stable: MarkdownToken[]
+  unstable: MarkdownToken[]
+}
+
+// Posts the highlight request now; the Effect waits for the tokens. When the request fails, the
+// text renders as one plain token, and only a failure of the worker itself is logged.
+function code(text: string, language: string | undefined, key: string, complete = false): Effect.Effect<CodeTokens> {
+  return highlightStreamingCode(key, text, language ?? "text", complete).pipe(
+    Effect.map(
+      (result): CodeTokens => ({
+        language: result.language,
+        generation: result.generation,
+        stable: result.stable,
+        unstable: result.unstable,
+      }),
+    ),
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        if (error._tag === "MarkdownWorkerFailedError")
+          yield* Effect.logError("Markdown highlighting worker failed", error)
+        const plain: CodeTokens = { language: language ?? "text", generation: 0, stable: [], unstable: [[text, ""]] }
+        return plain
+      }),
+    ),
+  )
+}
+
+function fallbackResult(text: string, key: string): RenderResult {
+  return {
+    text,
+    blocks: [{ key, mode: "full", raw: text, hash: checksum(text) ?? "", html: fallback(text) }],
   }
 }
 
@@ -433,75 +448,26 @@ export function Markdown(
         projection: value,
       }
     },
-    async (src) => {
-      if (isServer)
-        return {
-          text: src.text,
-          blocks: [
-            {
-              key: "server",
-              mode: "full" as const,
-              raw: src.text,
-              hash: checksum(src.text) ?? "",
-              html: fallback(src.text),
-            },
-          ],
-        } satisfies RenderResult
-      if (!src.text) return { text: src.text, blocks: [] } satisfies RenderResult
+    (src) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          if (isServer) return fallbackResult(src.text, "server")
+          if (!src.text) return { text: src.text, blocks: [] } satisfies RenderResult
 
-      const base = src.key ?? checksum(src.text)
-      return Promise.all(
-        src.projection.blocks.map(async (block, index) => {
-          const key = base ? Option.some(`${base}:${index}:${block.mode}`) : Option.none()
-          const blockKey = markdownBlockKey(owner, Option.fromNullishOr(src.key), index, block.mode)
-
-          if (block.mode === "code") {
-            const cached = MutableHashMap.get(completedCode, blockKey)
-            if (block.complete && Option.isSome(cached) && cached.value.raw === block.raw) return cached.value
-            const result = await code(block.src, block.language, blockKey, block.complete)
-            const rendered = {
-              key: blockKey,
-              mode: block.mode,
-              raw: block.raw,
-              hash: String(block.raw.length),
-              complete: !!block.complete,
-              ...result,
-            }
-            if (block.complete) MutableHashMap.set(completedCode, blockKey, rendered)
-            return rendered
-          }
-
-          if (Option.isSome(key)) {
-            const cached = getCachedMarkdown(key.value)
-            if (Option.isSome(cached) && cached.value.raw === block.raw) {
-              touchCachedMarkdown(key.value, cached.value)
-              return { key: blockKey, mode: block.mode, ...cached.value }
-            }
-          }
-
-          const hash = checksum(block.raw)
-          const safe = sanitizeMarkdown(await Effect.runPromise(parseMarkdown(block.src)))
-          if (Option.isSome(key) && hash) touchCachedMarkdown(key.value, { raw: block.raw, hash, html: safe })
-          return { key: blockKey, mode: block.mode, raw: block.raw, hash: hash ?? "", html: safe }
+          const base = src.key ?? checksum(src.text)
+          // Effect.runPromise starts this program at once, so every block posts its worker request
+          // during the fetcher call, in block order, as the old async callbacks did.
+          return yield* Effect.suspend(() =>
+            Effect.all(
+              src.projection.blocks.map((block, index) => renderBlock(block, index, base, src.key)),
+              { concurrency: "unbounded" },
+            ),
+          ).pipe(
+            Effect.map((blocks): RenderResult => ({ text: src.text, blocks })),
+            Effect.catchCause(() => Effect.succeed(fallbackResult(src.text, base ?? "fallback"))),
+          )
         }),
-      )
-        .then((blocks) => ({ text: src.text, blocks }) satisfies RenderResult)
-        .catch(
-          () =>
-            ({
-              text: src.text,
-              blocks: [
-                {
-                  key: base ?? "fallback",
-                  mode: "full" as const,
-                  raw: src.text,
-                  hash: checksum(src.text) ?? "",
-                  html: fallback(src.text),
-                },
-              ],
-            }) satisfies RenderResult,
-        )
-    },
+      ),
     {
       initialValue: initialResult(
         local.text,
@@ -511,6 +477,54 @@ export function Markdown(
       ),
     },
   )
+
+  // Posts the block's worker request at once, unless a cache already holds the block.
+  function renderBlock(
+    block: Block,
+    index: number,
+    base: string | undefined,
+    cacheKey: string | undefined,
+  ): Effect.Effect<RenderedBlock, MarkdownWorkerError> {
+    const key = base ? Option.some(`${base}:${index}:${block.mode}`) : Option.none()
+    const blockKey = markdownBlockKey(owner, Option.fromNullishOr(cacheKey), index, block.mode)
+
+    if (block.mode === "code") {
+      const cached = MutableHashMap.get(completedCode, blockKey)
+      if (block.complete && Option.isSome(cached) && cached.value.raw === block.raw) return Effect.succeed(cached.value)
+      return code(block.src, block.language, blockKey, block.complete).pipe(
+        Effect.map((result) => {
+          const rendered: Extract<RenderedBlock, { mode: "code" }> = {
+            key: blockKey,
+            mode: "code",
+            raw: block.raw,
+            hash: String(block.raw.length),
+            complete: !!block.complete,
+            ...result,
+          }
+          if (block.complete) MutableHashMap.set(completedCode, blockKey, rendered)
+          return rendered
+        }),
+      )
+    }
+
+    const mode = block.mode
+    if (Option.isSome(key)) {
+      const cached = getCachedMarkdown(key.value)
+      if (Option.isSome(cached) && cached.value.raw === block.raw) {
+        touchCachedMarkdown(key.value, cached.value)
+        return Effect.succeed({ key: blockKey, mode, ...cached.value })
+      }
+    }
+
+    const hash = checksum(block.raw)
+    return parseMarkdown(block.src).pipe(
+      Effect.map((html) => {
+        const safe = sanitizeMarkdown(html)
+        if (Option.isSome(key) && hash) touchCachedMarkdown(key.value, { raw: block.raw, hash, html: safe })
+        return { key: blockKey, mode, raw: block.raw, hash: hash ?? "", html: safe }
+      }),
+    )
+  }
 
   let copyCleanup: (() => void) | undefined
 

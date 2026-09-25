@@ -52,18 +52,19 @@ export function touchCachedMarkdown(key: string, value: MarkdownCacheEntry) {
   MutableHashMap.remove(cache, first.value)
 }
 
-export async function preloadMarkdown(text: string, cacheKey: string) {
-  const key = `${cacheKey}:0:full`
-  const cached = getCachedMarkdown(key)
-  if (Option.isSome(cached) && cached.value.raw === text) {
-    touchCachedMarkdown(key, cached.value)
-    return
-  }
-  const hash = checksum(text)
-  if (!hash) return
-  touchCachedMarkdown(key, {
-    raw: text,
-    hash,
-    html: sanitizeMarkdown(await Effect.runPromise(parseMarkdown(text))),
-  })
+export function preloadMarkdown(text: string, cacheKey: string): Promise<void> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const key = `${cacheKey}:0:full`
+      const cached = getCachedMarkdown(key)
+      if (Option.isSome(cached) && cached.value.raw === text) {
+        touchCachedMarkdown(key, cached.value)
+        return
+      }
+      const hash = checksum(text)
+      if (!hash) return
+      const html = yield* parseMarkdown(text)
+      touchCachedMarkdown(key, { raw: text, hash, html: sanitizeMarkdown(html) })
+    }),
+  )
 }
