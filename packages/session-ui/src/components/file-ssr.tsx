@@ -2,7 +2,7 @@ import { DIFFS_TAG_NAME, FileDiff, type SelectedLineRange, VirtualizedFileDiff, 
 import { type PreloadFileDiffResult, type PreloadMultiFileDiffResult } from "@pierre/diffs/ssr"
 import { createEffect, onCleanup, onMount, Show, splitProps } from "solid-js"
 import { Dynamic, isServer } from "solid-js/web"
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { useWorkerPool } from "@opencode-ai/ui/context/worker-pool"
 import { createDefaultOptions, styleVariables } from "../pierre"
 import { markCommentedDiffLines } from "../pierre/commented-lines"
@@ -78,7 +78,7 @@ function DiffSSRViewer<T>(props: SSRDiffFileProps<T>) {
       state: ready,
       container,
       getRoot,
-      isReady: (root) => root.querySelector("[data-line]") != null,
+      isReady: (root) => Predicate.isNotNull(root.querySelector("[data-line]")),
       settleFrames: 1,
       onReady: () => {
         setSelectedLines(Option.fromNullishOr(local.selectedLines))

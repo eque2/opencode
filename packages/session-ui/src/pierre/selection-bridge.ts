@@ -54,7 +54,7 @@ export function lineInSelectedRange(range: SelectedLineRange | null | undefined,
 
 export function isSingleLineSelection(range: SelectedLineRange | null) {
   if (!range) return false
-  return range.start === range.end && (range.endSide == null || range.endSide === range.side)
+  return range.start === range.end && (Predicate.isNullish(range.endSide) || range.endSide === range.side)
 }
 
 export function toRange(source: Range | StaticRange): Range {
@@ -133,8 +133,8 @@ export function createLineNumberSelectionBridge() {
       clear()
       return current
     },
-    consume(range: SelectedLineRange | null) {
-      const result = pending && !isSingleLineSelection(range)
+    consume(range: Option.Option<SelectedLineRange>) {
+      const result = pending && !Option.exists(range, isSingleLineSelection)
       pending = false
       return result
     },

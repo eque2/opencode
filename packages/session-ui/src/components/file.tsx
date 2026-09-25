@@ -22,7 +22,7 @@ import { type WorkerPoolManager } from "@pierre/diffs/worker"
 import { createMediaQuery } from "@solid-primitives/media"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { ComponentProps, createEffect, createMemo, createSignal, onCleanup, onMount, Show, splitProps } from "solid-js"
-import { Equivalence, Option } from "effect"
+import { Equivalence, Option, Predicate } from "effect"
 import { createDefaultOptions, styleVariables } from "../pierre"
 import { markCommentedDiffLines, markCommentedFileLines } from "../pierre/commented-lines"
 import { DiffSelectionFix, fixDiffSelection, findDiffSide, type DiffSelectionSide } from "../pierre/diff-selection"
@@ -79,7 +79,8 @@ export type FileSearchHandle = {
 }
 
 export type FileSearchControl = {
-  register: (handle: FileSearchHandle | null) => void
+  /** Receives the find handle when the viewer mounts, and None when it unmounts. */
+  register: (handle: Option.Option<FileSearchHandle>) => void
 }
 
 export type TextFileProps<T = {}> = FileOptions<T> &
@@ -149,11 +150,11 @@ type ViewerConfig = {
   enableLineSelection: () => boolean
   selectedLines: () => SelectedLineRange | null | undefined
   commentedLines: () => SelectedLineRange[]
-  onLineSelectionEnd: (range: SelectedLineRange | null) => void
+  onLineSelectionEnd: (range: Option.Option<SelectedLineRange>) => void
 
   // mode-specific callbacks
   lineFromMouseEvent: (event: MouseEvent) => MouseHit
-  setSelectedLines: (range: SelectedLineRange | null, preserve?: { root: ShadowRoot; text: Range }) => void
+  setSelectedLines: (range: Option.Option<SelectedLineRange>, preserve?: { root: ShadowRoot; text: Range }) => void
   updateSelection: (preserveTextSelection: boolean) => void
   buildDragSelection: () => Option.Option<SelectedLineRange>
   buildClickSelection: () => Option.Option<SelectedLineRange>
@@ -183,7 +184,7 @@ function useFileViewer(config: ViewerConfig) {
   let dragStart: Option.Option<number> = Option.none()
   let dragEnd: Option.Option<number> = Option.none()
   let dragMoved = false
-  let lastSelection: SelectedLineRange | null = null
+  let lastSelection: Option.Option<SelectedLineRange> = Option.none()
   let pendingSelectionEnd = false
 
   const ready = createReadyWatcher()
@@ -221,7 +222,7 @@ function useFileViewer(config: ViewerConfig) {
       requestAnimationFrame(() => {
         dragFrame = Option.none()
         const selected = config.buildDragSelection()
-        if (Option.isSome(selected)) config.setSelectedLines(selected.value)
+        if (Option.isSome(selected)) config.setSelectedLines(selected)
       }),
     )
   }
@@ -281,7 +282,7 @@ function useFileViewer(config: ViewerConfig) {
         config.onLineSelectionEnd(lastSelection)
       } else {
         // A click on the line that is already selected clears the selection.
-        const next = sameSelection(Option.fromNullOr(lastSelection), selected.value) ? null : selected.value
+        const next = sameSelection(lastSelection, selected.value) ? Option.none() : selected
         config.setSelectedLines(next)
         config.onLineSelectionEnd(next)
       }
@@ -349,7 +350,7 @@ function useFileViewer(config: ViewerConfig) {
   })
 
   createEffect(() => {
-    config.setSelectedLines(config.selectedLines() ?? null)
+    config.setSelectedLines(Option.fromNullishOr(config.selectedLines()))
   })
 
   createEffect(() => {
@@ -373,7 +374,7 @@ function useFileViewer(config: ViewerConfig) {
     dragEnd = Option.none()
     dragMoved = false
     bridge.reset()
-    lastSelection = null
+    lastSelection = Option.none()
     pendingSelectionEnd = false
   })
 
@@ -405,7 +406,7 @@ function useFileViewer(config: ViewerConfig) {
     get lastSelection() {
       return lastSelection
     },
-    set lastSelection(v: SelectedLineRange | null) {
+    set lastSelection(v: Option.Option<SelectedLineRange>) {
       lastSelection = v
     },
     ready,
@@ -427,7 +428,7 @@ type ModeConfig = {
   enableLineSelection: () => boolean
   selectedLines: () => SelectedLineRange | null | undefined
   commentedLines: () => SelectedLineRange[] | undefined
-  onLineSelectionEnd: (range: SelectedLineRange | null) => void
+  onLineSelectionEnd: (range: Option.Option<SelectedLineRange>) => void
 }
 
 type RenderTarget = {
@@ -481,8 +482,8 @@ function useSearchHandle(opts: {
       focus: () => opts.find.focus(),
     } satisfies FileSearchHandle
 
-    search.register(handle)
-    onCleanup(() => search.register(null))
+    search.register(Option.some(handle))
+    onCleanup(() => search.register(Option.none()))
   })
 }
 
@@ -493,26 +494,29 @@ function createLineCallbacks(opts: {
   onLineSelectionEnd?: (range: SelectedLineRange | null) => void
   onLineNumberSelectionEnd?: (selection: SelectedLineRange | null) => void
 }) {
-  const select = (range: SelectedLineRange | null) => {
+  // pierre reports a cleared selection as null. The viewer holds the selection as an Option and converts back to
+  // null only where it calls out to the props callbacks, which keep the pierre shape.
+  const select = (reported: SelectedLineRange | null): Option.Option<SelectedLineRange> => {
+    const range = Option.fromNullOr(reported)
     if (!opts.normalize) return range
-    const fixed = opts.normalize(Option.fromNullOr(range))
+    const fixed = opts.normalize(range)
     // A pending fix means the rows are not rendered yet, so the range stays as pierre reported it.
     if (fixed._tag === "Pending") return range
-    return Option.getOrNull(fixed.range)
+    return fixed.range
   }
 
   return {
     onLineSelected: (range: SelectedLineRange | null) => {
       const next = select(range)
       opts.viewer.lastSelection = next
-      opts.onLineSelected?.(next)
+      opts.onLineSelected?.(Option.getOrNull(next))
     },
     onLineSelectionEnd: (range: SelectedLineRange | null) => {
       const next = select(range)
       opts.viewer.lastSelection = next
-      opts.onLineSelectionEnd?.(next)
+      opts.onLineSelectionEnd?.(Option.getOrNull(next))
       if (!opts.viewer.bridge.consume(next)) return
-      requestAnimationFrame(() => opts.onLineNumberSelectionEnd?.(next))
+      requestAnimationFrame(() => opts.onLineNumberSelectionEnd?.(Option.getOrNull(next)))
     },
   }
 }
@@ -703,11 +707,11 @@ function mouseHit(
   for (const item of path) {
     if (!(item instanceof HTMLElement)) continue
 
-    numberColumn = numberColumn || item.dataset.columnNumber != null
+    numberColumn = numberColumn || item.dataset.columnNumber !== undefined
     if (Option.isNone(value)) value = line(item)
     if (Option.isNone(branch) && side) branch = side(item)
 
-    if (numberColumn && Option.isSome(value) && (side == null || Option.isSome(branch))) break
+    if (numberColumn && Option.isSome(value) && (side === undefined || Option.isSome(branch))) break
   }
 
   return {
@@ -732,6 +736,22 @@ function diffSelectionSide(node: Node | null): Option.Option<DiffSelectionSide> 
 // ---------------------------------------------------------------------------
 // Shared JSX shell
 // ---------------------------------------------------------------------------
+
+/**
+ * Fits a selection to the rendered lines of a text file. None clears the selection: a bound is outside the file,
+ * or its line is not rendered. A deletions side is kept only when the view renders deletions.
+ */
+function fitTextSelection(root: ShadowRoot, range: SelectedLineRange, total: number): Option.Option<SelectedLineRange> {
+  const start = Math.min(range.start, range.end)
+  const end = Math.max(range.start, range.end)
+  if (start < 1 || end > total) return Option.none()
+  if (!root.querySelector(`[data-line="${start}"]`) || !root.querySelector(`[data-line="${end}"]`)) return Option.none()
+
+  if (Predicate.isNotNullish(range.endSide)) return Option.some({ start: range.start, end: range.end })
+  if (range.side !== "deletions") return Option.some(range)
+  if (Predicate.isNotNull(root.querySelector("[data-deletions]"))) return Option.some(range)
+  return Option.some({ start: range.start, end: range.end })
+}
 
 function ViewerShell(props: {
   mode: "text" | "diff"
@@ -789,7 +809,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
     const value = local.file.contents as unknown
     if (typeof value === "string") return value
     if (Array.isArray(value)) return value.join("\n")
-    if (value == null) return ""
+    if (Predicate.isNullish(value)) return ""
     // oxlint-disable-next-line no-base-to-string -- file contents cast to unknown, coercion is intentional
     return String(value)
   }
@@ -810,7 +830,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
         0,
       )
     }
-    if (value == null) return 0
+    if (Predicate.isNullish(value)) return 0
     // oxlint-disable-next-line no-base-to-string -- file contents cast to unknown, coercion is intentional
     return String(value).length
   })
@@ -821,12 +841,13 @@ function TextViewer<T>(props: TextFileProps<T>) {
 
   const lineFromMouseEvent = (event: MouseEvent): MouseHit => mouseHit(event, parseLine)
 
-  const applySelection = (range: SelectedLineRange | null) => {
+  // File.setSelectedLines takes null to clear the selection, so each call converts the Option with getOrNull.
+  const applySelection = (range: Option.Option<SelectedLineRange>) => {
     if (Option.isNone(instance)) return false
     const current = instance.value
 
     if (virtual()) {
-      current.setSelectedLines(range)
+      current.setSelectedLines(Option.getOrNull(range))
       return true
     }
 
@@ -837,35 +858,11 @@ function TextViewer<T>(props: TextFileProps<T>) {
     const total = lineCount()
     if (root.querySelectorAll("[data-line]").length < total) return false
 
-    if (!range) {
-      current.setSelectedLines(null)
-      return true
-    }
-
-    const start = Math.min(range.start, range.end)
-    const end = Math.max(range.start, range.end)
-    if (start < 1 || end > total) {
-      current.setSelectedLines(null)
-      return true
-    }
-
-    if (!root.querySelector(`[data-line="${start}"]`) || !root.querySelector(`[data-line="${end}"]`)) {
-      current.setSelectedLines(null)
-      return true
-    }
-
-    const normalized = (() => {
-      if (range.endSide != null) return { start: range.start, end: range.end }
-      if (range.side !== "deletions") return range
-      if (root.querySelector("[data-deletions]") != null) return range
-      return { start: range.start, end: range.end }
-    })()
-
-    current.setSelectedLines(normalized)
+    current.setSelectedLines(Option.getOrNull(Option.flatMap(range, (value) => fitTextSelection(root, value, total))))
     return true
   }
 
-  const setSelectedLines = (range: SelectedLineRange | null) => {
+  const setSelectedLines = (range: Option.Option<SelectedLineRange>) => {
     viewer.lastSelection = range
     applySelection(range)
   }
@@ -885,7 +882,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
       })
       if (Option.isNone(selected)) return
 
-      setSelectedLines(selected.value.range)
+      setSelectedLines(Option.some(selected.value.range))
       const text = selected.value.text
       if (!preserveTextSelection || Option.isNone(text)) return
       restoreShadowTextSelection(root.value, text.value)
@@ -907,7 +904,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
       enableLineSelection: () => props.enableLineSelection === true,
       selectedLines: () => local.selectedLines,
       commentedLines: () => local.commentedLines,
-      onLineSelectionEnd: (range) => local.onLineSelectionEnd?.(range),
+      onLineSelectionEnd: (range) => local.onLineSelectionEnd?.(Option.getOrNull(range)),
     },
     adapter,
   )
@@ -929,7 +926,7 @@ function TextViewer<T>(props: TextFileProps<T>) {
     notifyRendered({
       viewer,
       isReady: (root) => {
-        if (virtual()) return root.querySelector("[data-line]") != null
+        if (virtual()) return Predicate.isNotNull(root.querySelector("[data-line]"))
         return root.querySelectorAll("[data-line]").length >= lineCount()
       },
       onReady: () => {
@@ -1010,19 +1007,22 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
 
   const lineFromMouseEvent = (event: MouseEvent): MouseHit => mouseHit(event, findDiffLineNumber, diffMouseSide)
 
-  const setSelectedLines = (range: SelectedLineRange | null, preserve?: { root: ShadowRoot; text: Range }) => {
+  const setSelectedLines = (
+    range: Option.Option<SelectedLineRange>,
+    preserve?: { root: ShadowRoot; text: Range },
+  ) => {
     if (Option.isNone(instance)) return
     const active = instance.value.diff
 
-    const fixed = fixDiffSelection(viewer.getRoot(), Option.fromNullOr(range))
+    const fixed = fixDiffSelection(viewer.getRoot(), range)
     if (fixed._tag === "Pending") {
       viewer.lastSelection = range
       return
     }
 
-    const next = Option.getOrNull(fixed.range)
-    viewer.lastSelection = next
-    active.setSelectedLines(next)
+    viewer.lastSelection = fixed.range
+    // FileDiff.setSelectedLines takes null to clear the selection.
+    active.setSelectedLines(Option.getOrNull(fixed.range))
     restoreShadowTextSelection(preserve?.root, preserve?.text)
   }
 
@@ -1043,11 +1043,11 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
 
       const text = selected.value.text
       if (Option.isSome(text)) {
-        setSelectedLines(selected.value.range, { root: root.value, text: text.value })
+        setSelectedLines(Option.some(selected.value.range), { root: root.value, text: text.value })
         return
       }
 
-      setSelectedLines(selected.value.range)
+      setSelectedLines(Option.some(selected.value.range))
     },
     buildDragSelection: () =>
       Option.zipWith(viewer.dragStart, viewer.dragEnd, (start, end) => {
@@ -1082,7 +1082,7 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
       enableLineSelection: () => props.enableLineSelection === true,
       selectedLines: () => local.selectedLines,
       commentedLines: () => local.commentedLines,
-      onLineSelectionEnd: (range) => local.onLineSelectionEnd?.(range),
+      onLineSelectionEnd: (range) => local.onLineSelectionEnd?.(Option.getOrNull(range)),
     },
     adapter,
   )
@@ -1133,7 +1133,7 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
   const notify = (done?: VoidFunction) => {
     notifyRendered({
       viewer,
-      isReady: (root) => root.querySelector("[data-line]") != null,
+      isReady: (root) => Predicate.isNotNull(root.querySelector("[data-line]")),
       settleFrames: 1,
       onReady: () => {
         done?.()

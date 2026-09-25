@@ -1,5 +1,5 @@
 import { type SelectedLineRange } from "@pierre/diffs"
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { diffLineIndex, diffRowIndex } from "./diff-selection"
 import { parseLineNumber } from "./file-selection"
 
@@ -38,7 +38,7 @@ export function markCommentedDiffLines(root: ShadowRoot, ranges: SelectedLineRan
     if (Option.isNone(start)) continue
 
     const end = (() => {
-      const same = range.end === range.start && (range.endSide == null || range.endSide === range.side)
+      const same = range.end === range.start && (Predicate.isNullish(range.endSide) || range.endSide === range.side)
       if (same) return start
       return diffRowIndex(root, split, range.end, (range.endSide ?? range.side) as CommentSide | undefined)
     })()
