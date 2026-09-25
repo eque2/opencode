@@ -20,6 +20,18 @@ import { showToast } from "@/utils/toast"
 import { canStartTabDrag, isTabCloseTarget } from "./titlebar-tab-gesture"
 import { adjacentTabKey, mergeVisibleTabOrder } from "./titlebar-tab-order"
 import type { Session } from "@opencode-ai/sdk/v2"
+import { Data, Effect } from "effect"
+
+/** A session rename request that rejected. `cause` is the original rejection. */
+class TabRenameError extends Data.TaggedError("App.TabRenameError")<{ readonly cause: unknown }> {}
+
+/** A session prefetch for a tab that threw or rejected. `cause` is the original error. */
+class TabPrefetchError extends Data.TaggedError("App.TabPrefetchError")<{ readonly cause: unknown }> {}
+
+/** Runs tab strip work in the background. A defect goes to the Effect logger. */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 function SessionTabSlot(props: {
   tab: SessionTab
@@ -98,24 +110,33 @@ function SessionTabEntry(props: {
   const visible = createMemo(() => !!session() || missingSession() || !!persisted()?.title)
   let prefetched = false
 
-  const rename = async (title: string) => {
-    const value = session()
-    const ctx = props.serverCtx()
-    if (!value || !ctx) return
+  // Shows the new title at once. A failed request restores the old title and shows a toast, so the Promise never rejects.
+  const rename = (title: string) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const value = session()
+        const ctx = props.serverCtx()
+        if (!value || !ctx) return
 
-    ctx.sync.session.remember({ ...value, title })
-    try {
-      await ctx.sdk.api.session.rename({ sessionID: value.id, title })
-    } catch (err) {
-      const current = session()
-      const currentCtx = props.serverCtx()
-      if (current && currentCtx) currentCtx.sync.session.remember({ ...current, title: value.title })
-      showToast({
-        title: language.t("common.requestFailed"),
-        description: err instanceof Error ? err.message : undefined,
-      })
-    }
-  }
+        ctx.sync.session.remember({ ...value, title })
+        yield* Effect.tryPromise({
+          try: () => ctx.sdk.api.session.rename({ sessionID: value.id, title }),
+          catch: (cause) => new TabRenameError({ cause }),
+        }).pipe(
+          Effect.catch((error) =>
+            Effect.sync(() => {
+              const current = session()
+              const currentCtx = props.serverCtx()
+              if (current && currentCtx) currentCtx.sync.session.remember({ ...current, title: value.title })
+              showToast({
+                title: language.t("common.requestFailed"),
+                ...(error.cause instanceof Error ? { description: error.cause.message } : {}),
+              })
+            }),
+          ),
+        )
+      }),
+    )
 
   createEffect(() => props.onVisibleChange(visible()))
 
@@ -124,16 +145,23 @@ function SessionTabEntry(props: {
     const value = session()
     if (!ctx || !value || prefetched) return
     prefetched = true
+    // The directory sync context is created synchronously under this root. A failed prefetch is ignored.
     createRoot((dispose) => {
-      try {
-        void ctx.sync
-          .ensureDirSyncContext(value.directory)
-          .session.sync(value.id)
-          .catch(() => {})
-          .finally(dispose)
-      } catch {
-        dispose()
-      }
+      runDetached(
+        Effect.try({
+          try: () => ctx.sync.ensureDirSyncContext(value.directory),
+          catch: (cause) => new TabPrefetchError({ cause }),
+        }).pipe(
+          Effect.flatMap((dir) =>
+            Effect.tryPromise({
+              try: () => dir.session.sync(value.id),
+              catch: (cause) => new TabPrefetchError({ cause }),
+            }),
+          ),
+          Effect.ignore,
+          Effect.ensuring(Effect.sync(dispose)),
+        ),
+      )
     })
   })
 

@@ -49,6 +49,9 @@ const macTrafficLightsBaseWidth = 84
 /** A new draft tab that failed to open. `cause` is the original rejection. */
 class TitlebarDraftError extends Data.TaggedError("App.TitlebarDraftError")<{ readonly cause: unknown }> {}
 
+/** The session lookup of the titlebar that rejected. `cause` is the original rejection. */
+class TitlebarSessionError extends Data.TaggedError("App.TitlebarSessionError")<{ readonly cause: unknown }> {}
+
 /**
  * Runs titlebar work in the background. A failure or defect goes to the
  * Effect logger, as an unhandled rejection went to the console before.
@@ -208,21 +211,29 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
             const tabs = useTabs()
             const tabsStore = tabs.store
             const tabsStoreActions = tabs
-            const [session] = createResource(
+            // The session of the current route. A lookup that fails reads as no session, as it did before.
+            const [sessionLookup] = createResource(
               () => {
                 const route = layout.route()
                 if (route.type !== "session") return undefined
                 const conn = global.servers
                   .list()
                   .find((item) => ServerConnection.key(item) === (route.server ?? server.key))
-                return conn ? { route, sdk: global.ensureServerCtx(conn).sdk } : undefined
+                if (!conn) return undefined
+                return { route, sdk: global.ensureServerCtx(conn).sdk }
               },
               ({ route, sdk }) =>
-                sdk.api.session
-                  .get({ sessionID: route.sessionId })
-                  .then(normalizeSessionInfo)
-                  .catch(() => {}),
+                Effect.runPromise(
+                  Effect.tryPromise({
+                    try: () => sdk.api.session.get({ sessionID: route.sessionId }),
+                    catch: (cause) => new TitlebarSessionError({ cause }),
+                  }).pipe(
+                    Effect.map((info) => Option.some(normalizeSessionInfo(info))),
+                    Effect.catchCause(() => Effect.succeed(Option.none())),
+                  ),
+                ),
             )
+            const session = () => sessionLookup() ?? Option.none()
 
             const matchRoute = (route: LayoutRoute) => {
               if (route.type === "home") return undefined
@@ -236,8 +247,8 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                 )
                 if (main) return main
                 const s = session()
-                if (s?.parentID) {
-                  const parentID = s.parentID
+                if (Option.isSome(s) && s.value.parentID) {
+                  const parentID = s.value.parentID
                   const parent = tabsStore.find(
                     (item) => item.type === "session" && item.server === route.server && item.sessionId === parentID,
                   )
@@ -260,8 +271,8 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
 
               if (route.type === "session") {
                 const s = session()
-                if (!s) return
-                const sessionId = s.parentID ?? s.id
+                if (Option.isNone(s)) return
+                const sessionId = s.value.parentID ?? s.value.id
                 const next = { server: route.server ?? server.key, sessionId }
                 tabsStoreActions.addSessionTab(next)
               }
@@ -288,13 +299,17 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
             const openNewTab = () => {
               const route = layout.route()
               const activeSession = session()
-              if (route.type === "session" && activeSession) {
+              if (route.type === "session" && Option.isSome(activeSession)) {
                 const sessionTab = {
                   type: "session" as const,
                   server: route.server ?? server.key,
-                  sessionId: activeSession.id,
+                  sessionId: activeSession.value.id,
                 }
-                openDraft({ server: sessionTab.server, directory: activeSession.directory }, "", draftModel(sessionTab))
+                openDraft(
+                  { server: sessionTab.server, directory: activeSession.value.directory },
+                  "",
+                  draftModel(sessionTab),
+                )
                 return
               }
 

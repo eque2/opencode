@@ -1,3 +1,4 @@
+import { Data, Effect } from "effect"
 import { createMemo } from "solid-js"
 import type { UpdaterState } from "@/updater"
 import { usePlatform } from "@/context/platform"
@@ -22,6 +23,12 @@ export function updaterAction(state: UpdaterState | undefined) {
   }
 }
 
+/** A desktop updater request that rejected. `cause` is the original rejection. */
+class UpdaterActionError extends Data.TaggedError("App.UpdaterActionError")<{ readonly cause: unknown }> {}
+
+const updaterRequest = <A>(request: () => Promise<A>) =>
+  Effect.tryPromise({ try: request, catch: (cause) => new UpdaterActionError({ cause }) })
+
 export function useUpdaterAction() {
   const platform = usePlatform()
   const language = useLanguage()
@@ -29,23 +36,32 @@ export function useUpdaterAction() {
 
   return {
     action,
-    async run() {
-      const run = action().run
-      if (run === "install") return platform.updater?.install()
-      if (run !== "check") return
+    /** Runs the current action. The Promise rejects with UpdaterActionError when the updater request rejects. */
+    run: () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const run = action().run
+          const updater = platform.updater
+          if (!updater) return
+          if (run === "install") {
+            yield* updaterRequest(() => updater.install())
+            return
+          }
+          if (run !== "check") return
 
-      const state = await platform.updater?.check()
-      if (state?.status === "up-to-date") {
-        showToast({
-          variant: "success",
-          icon: "circle-check",
-          title: language.t("settings.updates.toast.latest.title"),
-          description: language.t("settings.updates.toast.latest.description", { version: platform.version ?? "" }),
-        })
-      }
-      if (state?.status === "error") {
-        showToast({ title: language.t("common.requestFailed"), description: state.message })
-      }
-    },
+          const state = yield* updaterRequest(() => updater.check())
+          if (state.status === "up-to-date") {
+            showToast({
+              variant: "success",
+              icon: "circle-check",
+              title: language.t("settings.updates.toast.latest.title"),
+              description: language.t("settings.updates.toast.latest.description", { version: platform.version ?? "" }),
+            })
+          }
+          if (state.status === "error") {
+            showToast({ title: language.t("common.requestFailed"), description: state.message })
+          }
+        }),
+      ),
   }
 }

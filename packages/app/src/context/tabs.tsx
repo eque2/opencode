@@ -13,7 +13,7 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
-import { Array as Arr, Data, HashMap, HashSet, MutableHashSet, Option } from "effect"
+import { Array as Arr, Data, Effect, HashMap, HashSet, MutableHashSet, Option } from "effect"
 
 export type SessionTab = {
   type: "session"
@@ -33,6 +33,16 @@ export type Tab = SessionTab | DraftTab
 
 /** No open draft tab has the requested draft ID. tabs.draft throws it synchronously. */
 class DraftNotFoundError extends Data.TaggedError("App.DraftNotFoundError")<{ readonly message: string }> {}
+
+/** A tab store transition that rejected because its update threw. `cause` is the rejection. */
+class TabsTransitionError extends Data.TaggedError("App.TabsTransitionError")<{ readonly cause: unknown }> {}
+
+/** Runs `update` in a Solid transition. It fails when the update throws, as the transition Promise rejects. */
+const transition = (update: () => void) =>
+  Effect.tryPromise({
+    try: () => startTransition(update),
+    catch: (cause) => new TabsTransitionError({ cause }),
+  })
 
 export type TabInfo = {
   title?: string
@@ -199,15 +209,16 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           () => new DraftNotFoundError({ message: `Draft not found: ${draftID}` }),
         )
       },
-      async newDraft(draft: Omit<DraftTab, "type" | "draftID">, prompt?: string, model?: PromptModel) {
+      newDraft(draft: Omit<DraftTab, "type" | "draftID">, prompt?: string, model?: PromptModel) {
         const draftID = uuid()
         const tab = { type: "draft" as const, draftID, ...draft }
         memory.ensure(tabKey(tab), "prompt", () => createDraftPromptSession(draftID, { prompt, model }))
-        await startTransition(() => {
-          setStore((tabs) => [...tabs, tab])
-          navigate(draftHref(draftID))
-        })
-        return tab
+        return Effect.runPromise(
+          transition(() => {
+            setStore((tabs) => [...tabs, tab])
+            navigate(draftHref(draftID))
+          }).pipe(Effect.as(tab)),
+        )
       },
       updateDraft(draftID: string, draft: Partial<Omit<DraftTab, "type" | "draftID">>) {
         void startTransition(() => {

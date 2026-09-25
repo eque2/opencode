@@ -120,7 +120,8 @@ export function TabNavItem(props: {
     selection?.addRange(range)
   }
 
-  const closeRename = async (save: boolean) => {
+  // The rename mutation runs in the background. The owner's onRename reports its own failures.
+  const closeRename = (save: boolean) => {
     if (rename.isPending || !editing()) return
 
     const original = props.session()?.title ?? ""
@@ -133,7 +134,7 @@ export function TabNavItem(props: {
       return
     }
 
-    await rename.mutateAsync(next)
+    rename.mutate(next)
   }
 
   createEffect(() => {
@@ -169,7 +170,7 @@ export function TabNavItem(props: {
         const target = event.target
         if (!(target instanceof Node)) return
         if (tabRoot.contains(target)) return
-        void closeRename(true)
+        closeRename(true)
       },
       { capture: true },
     )
@@ -268,15 +269,15 @@ export function TabNavItem(props: {
             event.stopPropagation()
             if (event.key === "Enter") {
               event.preventDefault()
-              void closeRename(true)
+              closeRename(true)
               return
             }
             if (event.key !== "Escape") return
             event.preventDefault()
             titleEl.textContent = props.session()?.title ?? ""
-            void closeRename(false)
+            closeRename(false)
           }}
-          onBlur={() => void closeRename(true)}
+          onBlur={() => closeRename(true)}
           onPointerDown={(event) => {
             if (!editing()) return
             event.stopPropagation()
