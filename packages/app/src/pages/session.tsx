@@ -517,7 +517,7 @@ export default function Page() {
   const sessionPanelResizedWidth = createMemo(() =>
     clampSessionPanelWidth({
       width: layout.session.width(),
-      available: sessionPanelAvailable(),
+      available: Option.fromUndefinedOr(sessionPanelAvailable()),
       split: splitReview(),
     }),
   )

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import {
   clampSessionPanelWidth,
   REVIEW_PANE_WIDTH_MIN,
@@ -32,21 +33,25 @@ describe("sessionPanelWidthMax", () => {
 
 describe("clampSessionPanelWidth", () => {
   test("keeps widths already within the limit", () => {
-    expect(clampSessionPanelWidth({ width: 800, available: 1700, split: false })).toBe(800)
+    expect(clampSessionPanelWidth({ width: 800, available: Option.some(1700), split: false })).toBe(800)
   })
 
   test("forces the width down when the window shrinks", () => {
-    expect(clampSessionPanelWidth({ width: 1600, available: 1700, split: false })).toBe(1700 - REVIEW_PANE_WIDTH_MIN)
-    expect(clampSessionPanelWidth({ width: 1600, available: 1700, split: true })).toBe(
+    expect(clampSessionPanelWidth({ width: 1600, available: Option.some(1700), split: false })).toBe(
+      1700 - REVIEW_PANE_WIDTH_MIN,
+    )
+    expect(clampSessionPanelWidth({ width: 1600, available: Option.some(1700), split: true })).toBe(
       1700 - REVIEW_PANE_WIDTH_MIN_SPLIT,
     )
   })
 
   test("holds the chat panel minimum when there is no room for both", () => {
-    expect(clampSessionPanelWidth({ width: 1600, available: 700, split: true })).toBe(SESSION_PANEL_WIDTH_MIN)
+    expect(clampSessionPanelWidth({ width: 1600, available: Option.some(700), split: true })).toBe(
+      SESSION_PANEL_WIDTH_MIN,
+    )
   })
 
   test("skips clamping before the layout is measured", () => {
-    expect(clampSessionPanelWidth({ width: 1600, available: undefined, split: false })).toBe(1600)
+    expect(clampSessionPanelWidth({ width: 1600, available: Option.none(), split: false })).toBe(1600)
   })
 })

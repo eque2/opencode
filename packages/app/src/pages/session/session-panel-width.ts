@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 // The review pane has no width of its own: it takes whatever the chat panel
 // leaves behind. Instead of capping the chat panel at a fraction of the window
 // (which forces the review pane to grow with the monitor), reserve a fixed
@@ -11,9 +13,11 @@ export function sessionPanelWidthMax(input: { available: number; split: boolean 
   return Math.max(SESSION_PANEL_WIDTH_MIN, input.available - pane)
 }
 
-// `available` is undefined until the layout row is first measured; render the
+// `available` is none until the layout row is first measured; render the
 // stored width untouched until then to avoid a first-frame snap.
-export function clampSessionPanelWidth(input: { width: number; available: number | undefined; split: boolean }) {
-  if (input.available === undefined) return input.width
-  return Math.min(input.width, sessionPanelWidthMax({ available: input.available, split: input.split }))
+export function clampSessionPanelWidth(input: { width: number; available: Option.Option<number>; split: boolean }) {
+  return Option.match(input.available, {
+    onNone: () => input.width,
+    onSome: (available) => Math.min(input.width, sessionPanelWidthMax({ available, split: input.split })),
+  })
 }
