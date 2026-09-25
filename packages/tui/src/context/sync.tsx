@@ -405,10 +405,11 @@ export const {
             "part",
             event.properties.messageID,
             produce((draft) => {
-              const part = draft[result.index]
-              const field = event.properties.field as keyof typeof part
-              const existing = part[field] as string | undefined
-              ;(part[field] as string) = (existing ?? "") + event.properties.delta
+              // The delta names its target field at run time, so the part is
+              // written through its record view.
+              const part: Record<string, unknown> = draft[result.index]
+              const existing = part[event.properties.field]
+              part[event.properties.field] = (typeof existing === "string" ? existing : "") + event.properties.delta
             }),
           )
           break
@@ -477,12 +478,12 @@ export const {
         ...(args.continue ? [sessionListPromise] : []),
       ])
         .then(async () => {
-          const providersResponse = providersPromise.then((x) => x.data!)
-          const providerListResponse = providerListPromise.then((x) => x.data!)
+          const providersResponse = providersPromise.then((x) => x.data)
+          const providerListResponse = providerListPromise.then((x) => x.data)
           const capabilitiesResponse = capabilitiesPromise
           const consoleStateResponse = consoleStatePromise
           const agentsResponse = agentsPromise.then((x) => x.data ?? [])
-          const configResponse = configPromise.then((x) => x.data!)
+          const configResponse = configPromise.then((x) => x.data)
           const sessionListResponse = args.continue ? sessionListPromise : undefined
 
           return Promise.all([
@@ -607,8 +608,8 @@ export const {
             setStore(
               produce((draft) => {
                 const match = search(draft.session, sessionID, (s) => s.id)
-                if (match.found) draft.session[match.index] = session.data!
-                if (!match.found) draft.session.splice(match.index, 0, session.data!)
+                if (match.found) draft.session[match.index] = session.data
+                if (!match.found) draft.session.splice(match.index, 0, session.data)
                 draft.todo[sessionID] = todo.data ?? []
                 const currentMessages = draft.message[sessionID] ?? []
                 const infos = (messages.data ?? []).flatMap((message) => {
