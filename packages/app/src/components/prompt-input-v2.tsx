@@ -398,9 +398,9 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       props.ref?.(element)
     },
     onSuggestionSelect(item) {
-      if (item.kind !== "command") return
+      if (item.kind !== "command") return undefined
       const selected = slashCommands().find((entry) => entry.id === item.id)
-      if (!selected || selected.type === "custom") return
+      if (!selected || selected.type === "custom") return undefined
       return () => command.trigger(selected.id, "slash")
     },
     attachments: {
