@@ -13,7 +13,7 @@ import type {
   TuiAttentionSoundPackInfo,
 } from "@opencode-ai/plugin/tui"
 import { AttentionSoundName, type TuiConfig } from "./config"
-import { Option, Predicate, Schema } from "effect"
+import { MutableHashMap, Option, Predicate, Schema } from "effect"
 import stripAnsi from "strip-ansi"
 import * as TuiAudio from "./audio"
 import defaultSoundPath from "@opencode-ai/ui/audio/bip-bop-01.mp3" with { type: "file" }
@@ -132,7 +132,7 @@ export function createTuiAttention(input: {
   let focus: FocusState = "unknown"
   let disposed = false
   let activePackID: Option.Option<string> = Option.none()
-  const packs = new Map<string, RegisteredSoundPack>([[BUILTIN_PACK.id, BUILTIN_PACK]])
+  const packs = MutableHashMap.make([BUILTIN_PACK.id, BUILTIN_PACK])
   const audio = input.audio ?? TuiAudio
 
   const onFocus = () => {
@@ -154,7 +154,7 @@ export function createTuiAttention(input: {
   }
 
   function currentPack() {
-    return packs.get(configuredPackID()) ?? BUILTIN_PACK
+    return Option.getOrElse(MutableHashMap.get(packs, configuredPackID()), () => BUILTIN_PACK)
   }
 
   function soundCandidates(name: TuiAttentionSoundName) {
@@ -239,19 +239,21 @@ export function createTuiAttention(input: {
         const normalized = normalizePack(pack)
         if (Option.isNone(normalized)) return () => {}
         const next = normalized.value
-        packs.set(next.id, next)
+        MutableHashMap.set(packs, next.id, next)
         let disposed = false
         return () => {
           if (disposed) return
           disposed = true
-          if (packs.get(next.id) === next) packs.delete(next.id)
+          // Remove the pack only while it is still the one registered under this id.
+          if (Option.exists(MutableHashMap.get(packs, next.id), (current) => current === next))
+            MutableHashMap.remove(packs, next.id)
         }
       },
       activate(id, options) {
-        const pack = packs.get(id)
-        if (!pack) return false
-        activePackID = Option.some(pack.id)
-        if (options?.persist) input.kv?.set(KV_SOUND_PACK, pack.id)
+        const pack = MutableHashMap.get(packs, id)
+        if (Option.isNone(pack)) return false
+        activePackID = Option.some(pack.value.id)
+        if (options?.persist) input.kv?.set(KV_SOUND_PACK, pack.value.id)
         return true
       },
       current() {
@@ -259,7 +261,7 @@ export function createTuiAttention(input: {
       },
       list(): TuiAttentionSoundPackInfo[] {
         const current = currentPack().id
-        return Array.from(packs.values()).map((pack) => ({
+        return Array.from(MutableHashMap.values(packs), (pack) => ({
           id: pack.id,
           name: pack.name,
           active: pack.id === current,
