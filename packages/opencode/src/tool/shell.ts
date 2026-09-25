@@ -161,10 +161,12 @@ function home(text: string) {
   return text
 }
 
-function envValue(key: string) {
-  if (process.platform !== "win32") return process.env[key]
-  const name = Object.keys(process.env).find((item) => item.toLowerCase() === key.toLowerCase())
-  return name ? process.env[name] : undefined
+// The value of a variable in the command environment, or "" when it is not set. Windows
+// variable names ignore case.
+function envValue(env: NodeJS.ProcessEnv, key: string) {
+  if (process.platform !== "win32") return env[key] ?? ""
+  const name = Object.keys(env).find((item) => item.toLowerCase() === key.toLowerCase())
+  return (name && env[name]) || ""
 }
 
 // The value of an automatic PowerShell variable, or "" for a variable the scan does not know.
@@ -176,10 +178,10 @@ function auto(key: string, cwd: string, shell: string) {
   return ""
 }
 
-function expand(text: string, cwd: string, shell: string) {
+function expand(text: string, cwd: string, shell: string, env: NodeJS.ProcessEnv) {
   const out = unquote(text)
-    .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(key) || "")
-    .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(key) || "")
+    .replace(/\$\{env:([^}]+)\}/gi, (_, key: string) => envValue(env, key))
+    .replace(/\$env:([A-Za-z_][A-Za-z0-9_]*)/gi, (_, key: string) => envValue(env, key))
     .replace(/\$(HOME|PWD|PSHOME)(?=$|[\\/])/gi, (_, key: string) => auto(key, cwd, shell))
   return home(out)
 }
@@ -412,8 +414,14 @@ export const ShellTool = Tool.define(
       return path.resolve(root, text)
     })
 
-    const argPath = Effect.fn("ShellTool.argPath")(function* (arg: string, cwd: string, ps: boolean, shell: string) {
-      const text = ps ? expand(arg, cwd, shell) : home(unquote(arg))
+    const argPath = Effect.fn("ShellTool.argPath")(function* (
+      arg: string,
+      cwd: string,
+      ps: boolean,
+      shell: string,
+      env: NodeJS.ProcessEnv,
+    ) {
+      const text = ps ? expand(arg, cwd, shell, env) : home(unquote(arg))
       const file = prefix(text).pipe(Option.filter((file) => file.length > 0 && !dynamic(file, ps)))
       const next = ps ? Option.flatMap(file, provider) : file
       if (Option.isNone(next) || !next.value) return Option.none<string>()
@@ -427,8 +435,9 @@ export const ShellTool = Tool.define(
       ps: boolean,
       shell: string,
       instance: InstanceContext,
+      env: NodeJS.ProcessEnv,
     ) {
-      const found = yield* argPath(arg, cwd, ps, shell)
+      const found = yield* argPath(arg, cwd, ps, shell, env)
       const resolved = Option.getOrUndefined(found)
       yield* Effect.logInfo("resolved path", { arg, resolved })
       if (Option.isNone(found) || containsPath(found.value, instance)) return Option.none<string>()
@@ -441,6 +450,7 @@ export const ShellTool = Tool.define(
       ps: boolean,
       shell: string,
       instance: InstanceContext,
+      env: NodeJS.ProcessEnv,
     ) {
       const shellKind = ShellID.toKind(Shell.name(shell))
 
@@ -452,7 +462,7 @@ export const ShellTool = Tool.define(
           const files = cmd && (HashSet.has(FILES, cmd) || (shellKind === "cmd" && HashSet.has(CMD_FILES, cmd)))
           const dirs = files
             ? yield* Effect.forEach(pathArgs(command, ps, shellKind === "cmd"), (arg) =>
-                argDir(arg, cwd, ps, shell, instance),
+                argDir(arg, cwd, ps, shell, instance, env),
               )
             : []
           const asks = tokens.length > 0 && (!cmd || !HashSet.has(CWD, cmd))
@@ -666,12 +676,14 @@ export const ShellTool = Tool.define(
               }
               const timeout = params.timeout ?? defaultTimeoutMs
               const ps = Shell.ps(shell)
+              // PowerShell $env: paths expand against the environment that the command runs with.
+              const env = yield* shellEnv(ctx, cwd)
               yield* Effect.scoped(
                 Effect.gen(function* () {
                   const tree = yield* Effect.acquireRelease(parse(params.command, ps), (tree) =>
                     Effect.sync(() => tree.delete()),
                   )
-                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx)
+                  const scan = yield* collect(tree.rootNode, cwd, ps, shell, instanceCtx, env)
                   yield* ask(
                     fs,
                     ctx,
@@ -686,7 +698,7 @@ export const ShellTool = Tool.define(
                   shell,
                   command: params.command,
                   cwd,
-                  env: yield* shellEnv(ctx, cwd),
+                  env,
                   timeout,
                 },
                 ctx,
