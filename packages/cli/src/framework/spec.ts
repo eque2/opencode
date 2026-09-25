@@ -53,7 +53,7 @@ function node<Name extends string, Input, Commands extends ReadonlyArray<Any>>(
   return {
     name,
     spec: options.description ? command.pipe(Command.withDescription(options.description)) : command,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Object.fromEntries lib signature returns { [k: string]: T } and drops the literal key of each node
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) Object.fromEntries lib signature returns { [k: string]: T } and drops the literal key of each node
     commands: Object.fromEntries(
       (options.commands ?? []).map((command) => [command.name, command]),
     ) as ChildrenOf<Commands>,
