@@ -1,17 +1,17 @@
 import type { Event } from "@opencode-ai/sdk/v2"
 import type { TuiAttentionSoundName, TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
-import { Effect, MutableHashSet } from "effect"
+import { Effect, MutableHashSet, Option } from "effect"
 
 const id = "internal:notifications"
 
 type SessionError = Extract<Event, { type: "session.error" }>["properties"]["error"]
 
 function notify(api: TuiPluginApi, sessionID: string | undefined, message: string, sound: TuiAttentionSoundName) {
-  const session = sessionID ? api.state.session.get(sessionID) : undefined
-  const isSubagent = session?.parentID !== undefined
+  const session = sessionID ? Option.fromNullishOr(api.state.session.get(sessionID)) : Option.none()
+  const isSubagent = Option.exists(session, (item) => item.parentID !== undefined)
   void api.attention.notify({
-    title: session?.title,
+    title: Option.getOrUndefined(Option.map(session, (item) => item.title)),
     message,
     notification: isSubagent ? false : { when: "blurred" },
     sound: { name: sound, when: "always" },

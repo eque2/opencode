@@ -172,10 +172,10 @@ const TIPS: Tip[] = [
   (shortcuts) => `Use ${commandText("/new", shortcuts.sessionNew())} to start a fresh conversation session`,
   (shortcuts) => `Use ${commandText("/sessions", shortcuts.sessionList())} to list, pin, and continue sessions`,
   (shortcuts) => press(shortcuts.sessionPinToggle(), "in the session list to pin one at the top"),
-  (shortcuts) =>
-    shortcuts.sessionQuickSwitch1() && shortcuts.sessionQuickSwitch9()
-      ? `Use ${shortcutText(shortcuts.sessionQuickSwitch1())} through ${shortcutText(shortcuts.sessionQuickSwitch9())} to switch pinned sessions`
-      : undefined,
+  (shortcuts) => {
+    if (!shortcuts.sessionQuickSwitch1() || !shortcuts.sessionQuickSwitch9()) return undefined
+    return `Use ${shortcutText(shortcuts.sessionQuickSwitch1())} through ${shortcutText(shortcuts.sessionQuickSwitch9())} to switch pinned sessions`
+  },
   "Run {highlight}/compact{/highlight} to summarize long sessions near context limits",
   (shortcuts) => `Use ${commandText("/export", shortcuts.sessionExport())} to save the conversation as Markdown`,
   (shortcuts) => press(shortcuts.messagesCopy(), "to copy the assistant's last message to clipboard"),
@@ -184,10 +184,10 @@ const TIPS: Tip[] = [
   (shortcuts) => `The leader key is ${shortcutText(shortcuts.leader())}; combine with other keys for quick actions`,
   (shortcuts) => press(shortcuts.modelCycleRecent(), "to quickly switch between recently used models"),
   (shortcuts) => press(shortcuts.sessionSidebarToggle(), "in a session to show or hide the sidebar panel"),
-  (shortcuts) =>
-    shortcuts.messagesPageUp() && shortcuts.messagesPageDown()
-      ? `Use ${shortcutText(shortcuts.messagesPageUp())}/${shortcutText(shortcuts.messagesPageDown())} to navigate through conversation history`
-      : undefined,
+  (shortcuts) => {
+    if (!shortcuts.messagesPageUp() || !shortcuts.messagesPageDown()) return undefined
+    return `Use ${shortcutText(shortcuts.messagesPageUp())}/${shortcutText(shortcuts.messagesPageDown())} to navigate through conversation history`
+  },
   (shortcuts) => press(shortcuts.messagesFirst(), "to jump to the beginning of the conversation"),
   (shortcuts) => press(shortcuts.messagesLast(), "to jump to the most recent message"),
   (shortcuts) => press(shortcuts.inputNewline(), "to add newlines in your prompt"),

@@ -4,7 +4,7 @@ import { createMemo, Match, Show, Switch } from "solid-js"
 import { abbreviateHome } from "../../runtime"
 import { useTuiPaths } from "../../context/runtime"
 import { useHomeSessionDestination } from "../../routes/home/session-destination"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 
 const id = "internal:home-footer"
 
@@ -14,15 +14,16 @@ function Directory(props: { api: TuiPluginApi }) {
   const paths = useTuiPaths()
   const dir = createMemo(() => {
     const selected = destination?.destination()
-    if (!selected || selected.type === "new") return
+    if (!selected || selected.type === "new") return Option.none<string>()
     const out = abbreviateHome(selected.directory, paths.home)
-    const branch =
-      selected.directory === (props.api.state.path.directory || paths.cwd) ? props.api.state.vcs?.branch : undefined
-    if (branch) return out + ":" + branch
-    return out
+    const branch = props.api.state.vcs?.branch
+    if (branch && selected.directory === (props.api.state.path.directory || paths.cwd)) {
+      return Option.some(out + ":" + branch)
+    }
+    return Option.some(out)
   })
 
-  return <Show when={dir()}>{(value) => <text fg={theme().textMuted}>{value()}</text>}</Show>
+  return <Show when={Option.getOrUndefined(dir())}>{(value) => <text fg={theme().textMuted}>{value()}</text>}</Show>
 }
 
 function Mcp(props: { api: TuiPluginApi }) {

@@ -162,7 +162,7 @@ function stateApi(sync: ReturnType<typeof useSync>): TuiPluginApi["state"] {
         .map(([name, item]) => ({
           name,
           status: item.status,
-          error: item.status === "failed" ? item.error : undefined,
+          ...(item.status === "failed" ? { error: item.error } : {}),
         }))
     },
   }

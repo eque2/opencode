@@ -6,7 +6,7 @@ import { useBindings, useKeymapSelector } from "../../keymap"
 import type { ActiveKey } from "@opentui/keymap"
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
-import { Array, Effect, Record } from "effect"
+import { Array, Effect, Option, Record } from "effect"
 
 const command = {
   toggle: "which-key.toggle",
@@ -86,10 +86,14 @@ type GroupHeader = {
 
 type Item = Entry | GroupHeader
 
-function text(value: unknown) {
-  if (typeof value !== "string") return undefined
-  const trimmed = value.trim()
-  return trimmed || undefined
+function text(value: unknown): Option.Option<string> {
+  if (typeof value !== "string") return Option.none()
+  return Option.liftPredicate(value.trim(), (trimmed) => trimmed.length > 0)
+}
+
+// The first value that is a non-blank string, trimmed, or UNKNOWN.
+function firstText(...values: ReadonlyArray<unknown>) {
+  return Option.getOrElse(Option.firstSomeOf(values.map(text)), () => UNKNOWN)
 }
 
 function ink(api: TuiPluginApi, name: string, fallback: string): Color {
@@ -113,15 +117,13 @@ function skin(api: TuiPluginApi): Skin {
 }
 
 function activeKeyLabel(active: ActiveKey<Renderable, KeyEvent>) {
-  if (active.continues) return text(active.tokenName) ?? text(active.display) ?? UNKNOWN
-  return (
-    text(active.commandAttrs?.title) ?? text(active.bindingAttrs?.desc) ?? text(active.commandAttrs?.desc) ?? UNKNOWN
-  )
+  if (active.continues) return firstText(active.tokenName, active.display)
+  return firstText(active.commandAttrs?.title, active.bindingAttrs?.desc, active.commandAttrs?.desc)
 }
 
 function activeKeyGroup(active: ActiveKey<Renderable, KeyEvent>) {
   if (active.continues) return "System"
-  return text(active.commandAttrs?.category) ?? text(active.bindingAttrs?.group) ?? UNKNOWN
+  return firstText(active.commandAttrs?.category, active.bindingAttrs?.group)
 }
 
 function activeKeyEntry(api: TuiPluginApi, active: ActiveKey<Renderable, KeyEvent>): Entry {
@@ -385,7 +387,7 @@ function WhichKeyPanel(props: {
         position={props.layout === "overlay" ? "absolute" : "relative"}
         zIndex={3500}
         left={left}
-        bottom={props.layout === "overlay" ? 0 : undefined}
+        {...(props.layout === "overlay" ? { bottom: 0 } : {})}
         width={dimensions().width}
         height={panelHeight()}
         backgroundColor={look().panel}
@@ -400,7 +402,7 @@ function WhichKeyPanel(props: {
             <For each={headerItems()}>
               {(item) => (
                 <Show
-                  when={item.type === "tab" ? item.group : undefined}
+                  when={item.type === "tab" && item.group}
                   fallback={
                     <box flexShrink={0}>
                       <text wrapMode="none">
@@ -418,7 +420,7 @@ function WhichKeyPanel(props: {
                         paddingLeft={1}
                         paddingRight={1}
                         flexShrink={0}
-                        backgroundColor={selected() ? look().tab : undefined}
+                        backgroundColor={selected() ? look().tab : "transparent"}
                         onMouseDown={() => {
                           setActiveGroup(group().label)
                           setOffset(0)
@@ -426,7 +428,7 @@ function WhichKeyPanel(props: {
                       >
                         <text
                           fg={selected() ? look().tabText : look().muted}
-                          attributes={selected() ? TextAttributes.BOLD : undefined}
+                          attributes={selected() ? TextAttributes.BOLD : TextAttributes.NONE}
                           wrapMode="none"
                         >
                           {group().label}
