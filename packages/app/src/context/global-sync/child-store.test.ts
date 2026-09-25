@@ -7,10 +7,11 @@ import { queryOptions } from "@tanstack/solid-query"
 import type { State } from "./types"
 import type { ChildQueryOptions } from "./child-store"
 import { ServerScope } from "@/utils/server-scope"
-import { Effect, HashMap } from "effect"
+import { Chunk, Effect, HashMap } from "effect"
 
 let createChildStoreManager: typeof import("./child-store").createChildStoreManager
-const querySingles: Array<() => { queryKey?: readonly unknown[]; enabled?: boolean }> = []
+type QueryAccessor = () => { queryKey?: readonly unknown[]; enabled?: boolean }
+let querySingles = Chunk.empty<QueryAccessor>()
 const persist: typeof import("@/utils/persist").persisted = (_target, store) => [
   store[0],
   store[1],
@@ -101,7 +102,7 @@ const queryOptionsApi: ChildQueryOptions = {
 
 // The mocked query records each options accessor; tests find a query by the
 // last queryKey element.
-const queryKind = (options: () => { queryKey?: readonly unknown[] }) => options().queryKey?.at(-1)
+const queryKind = (options: QueryAccessor) => options().queryKey?.at(-1)
 
 function createOwner(callback: (owner: Owner) => void) {
   return createRoot((dispose) => {
@@ -116,8 +117,8 @@ function createOwner(callback: (owner: Owner) => void) {
 beforeAll(() => {
   mock.module("@tanstack/solid-query", () => ({
     queryOptions,
-    useQuery: (options: () => { queryKey?: readonly unknown[]; enabled?: boolean }) => {
-      querySingles.push(options)
+    useQuery: (options: QueryAccessor) => {
+      querySingles = Chunk.append(querySingles, options)
       return {
         get isLoading() {
           return queryKind(options) === "path"
@@ -178,7 +179,7 @@ describe("createChildStoreManager", () => {
   })
 
   test("starts new child stores as loading and bootstraps them on first access", () => {
-    const bootstraps: string[] = []
+    let bootstraps = Chunk.empty<string>()
     let manager: ReturnType<typeof createChildStoreManager> | undefined
 
     const dispose = createOwner((owner) => {
@@ -189,7 +190,7 @@ describe("createChildStoreManager", () => {
         isBooting: () => false,
         isLoadingSessions: () => false,
         onBootstrap(directory) {
-          bootstraps.push(directory)
+          bootstraps = Chunk.append(bootstraps, directory)
         },
         onMcp() {},
         onDispose() {},
@@ -206,7 +207,7 @@ describe("createChildStoreManager", () => {
 
       expect(store.status).toBe("loading")
       expect(store.limit).toBe(5)
-      expect(bootstraps).toEqual(["/project"])
+      expect(Chunk.toReadonlyArray(bootstraps)).toEqual(["/project"])
     } finally {
       dispose()
     }
@@ -245,8 +246,8 @@ describe("createChildStoreManager", () => {
 
   test("enables MCP only when requested for the directory", () => {
     let manager: ReturnType<typeof createChildStoreManager> | undefined
-    const offset = querySingles.length
-    const mcpLoads: string[] = []
+    const offset = Chunk.size(querySingles)
+    let mcpLoads = Chunk.empty<string>()
 
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
@@ -257,7 +258,7 @@ describe("createChildStoreManager", () => {
         isLoadingSessions: () => false,
         onBootstrap() {},
         onMcp(directory) {
-          mcpLoads.push(directory)
+          mcpLoads = Chunk.append(mcpLoads, directory)
         },
         onDispose() {},
         translate: (key) => key,
@@ -269,9 +270,9 @@ describe("createChildStoreManager", () => {
     try {
       if (!manager) throw new Error("manager required")
       const [store, setStore] = manager.child("/project", { bootstrap: false })
-      expect(querySingles.length - offset).toBe(6)
-      const query = querySingles[offset + 1]
-      const resourceQuery = querySingles[offset + 2]
+      expect(Chunk.size(querySingles) - offset).toBe(6)
+      const query = Chunk.toReadonlyArray(querySingles)[offset + 1]
+      const resourceQuery = Chunk.toReadonlyArray(querySingles)[offset + 2]
       if (!query) throw new Error("query required")
       if (!resourceQuery) throw new Error("resource query required")
       expect(query().enabled).toBe(false)
@@ -282,7 +283,7 @@ describe("createChildStoreManager", () => {
       expect(query().enabled).toBe(true)
       expect(resourceQuery().enabled).toBe(true)
       expect(store.mcp).toEqual({ demo: { status: "disabled" } })
-      expect(mcpLoads).toEqual(["/project"])
+      expect(Chunk.toReadonlyArray(mcpLoads)).toEqual(["/project"])
 
       manager.disableMcp("/project")
       expect(query().enabled).toBe(false)
@@ -294,8 +295,8 @@ describe("createChildStoreManager", () => {
 
   test("keeps non-bootstrapping children passive until a real directory access", () => {
     let manager: ReturnType<typeof createChildStoreManager> | undefined
-    const offset = querySingles.length
-    const bootstraps: string[] = []
+    const offset = Chunk.size(querySingles)
+    let bootstraps = Chunk.empty<string>()
 
     const dispose = createOwner((owner) => {
       manager = createChildStoreManager({
@@ -305,7 +306,7 @@ describe("createChildStoreManager", () => {
         isBooting: () => false,
         isLoadingSessions: () => false,
         onBootstrap(directory) {
-          bootstraps.push(directory)
+          bootstraps = Chunk.append(bootstraps, directory)
         },
         onMcp() {},
         onDispose() {},
@@ -318,7 +319,7 @@ describe("createChildStoreManager", () => {
     try {
       if (!manager) throw new Error("manager required")
       const [store] = manager.child("/project", { bootstrap: false })
-      const queries = querySingles.slice(offset)
+      const queries = Chunk.toReadonlyArray(Chunk.drop(querySingles, offset))
 
       expect(queries).toHaveLength(6)
       expect(queries[0]?.().enabled).toBe(false)
@@ -328,14 +329,14 @@ describe("createChildStoreManager", () => {
       expect(store.path.directory).toBe("/project")
       expect(store.provider_ready).toBe(false)
       expect(store.lsp_ready).toBe(false)
-      expect(bootstraps).toEqual([])
+      expect(Chunk.toReadonlyArray(bootstraps)).toEqual([])
 
       manager.child("/project")
       expect(queries[0]?.().enabled).toBe(true)
       expect(queries[3]?.().enabled).toBe(true)
       expect(queries[4]?.().enabled).toBe(true)
       expect(queries[5]?.().enabled).toBe(true)
-      expect(bootstraps).toEqual(["/project"])
+      expect(Chunk.toReadonlyArray(bootstraps)).toEqual(["/project"])
 
       manager.child("/project", { bootstrap: false })
       expect(queries[0]?.().enabled).toBe(true)
