@@ -1,4 +1,4 @@
-import { Data, Effect, MutableHashMap, Option } from "effect"
+import { Data, Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
 import type { ServerApi } from "./server"
 import type { ServerProtocol } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
@@ -84,50 +84,26 @@ function sessionInfo(session: Session): SessionInfo {
   }
 }
 
-export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
-  const v1 = createV1Api(input)
-  return lazyApi(
-    input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current)),
-    input.current,
-  )
-}
-
-function lazyApi<T extends object>(implementation: Promise<T>, shape: T): T {
-  const cache = MutableHashMap.empty<PropertyKey, unknown>()
-  return new Proxy(shape, {
-    get(target, property, receiver) {
-      const sample = Reflect.get(target, property, receiver)
-      if (typeof sample === "function") {
-        return (...args: unknown[]) =>
-          implementation.then((value) => {
-            const method = Reflect.get(value, property)
-            if (typeof method !== "function") throw new Error(`API method unavailable: ${String(property)}`)
-            return Reflect.apply(method, value, args)
-          })
-      }
-      if (sample === null || typeof sample !== "object") return sample
-      const cached = MutableHashMap.get(cache, property)
-      if (Option.isSome(cached)) return cached.value
-      const nested = lazyApi(
-        implementation.then((value) => {
-          const result = Reflect.get(value, property)
-          if (result === null || typeof result !== "object") {
-            throw new Error(`API namespace unavailable: ${String(property)}`)
-          }
-          return result
-        }),
-        sample,
-      )
-      MutableHashMap.set(cache, property, nested)
-      return nested
-    },
-  })
-}
-
 /** A V1 SDK request rejected. `cause` holds the original rejection. */
 class CompatRequestError extends Data.TaggedError("App.CompatRequestError")<{ readonly cause: unknown }> {}
 
-type CompatError = CompatRequestError
+/** The API that the protocol selected has no method or namespace under the requested name. */
+class ApiUnavailableError extends Schema.TaggedError<ApiUnavailableError>()("App.ApiUnavailableError", {
+  message: Schema.String,
+}) {}
+
+/** A V1 request succeeded, but its response has no data for the requested item. */
+class LegacyMissingDataError extends Schema.TaggedError<LegacyMissingDataError>()("App.LegacyMissingDataError", {
+  message: Schema.String,
+}) {}
+
+/** A V1 session compaction needs a model, and the input has none. */
+class CompactModelRequiredError extends Schema.TaggedError<CompactModelRequiredError>()(
+  "App.CompactModelRequiredError",
+  { message: Schema.String },
+) {}
+
+type CompatError = CompatRequestError | ApiUnavailableError | LegacyMissingDataError | CompactModelRequiredError
 
 /** The value that a Promise caller receives: the original rejection of a request, or the error itself. */
 const rejection = (error: CompatError): unknown => (error._tag === "App.CompatRequestError" ? error.cause : error)
@@ -136,8 +112,60 @@ const rejection = (error: CompatError): unknown => (error._tag === "App.CompatRe
 const request = <A>(evaluate: () => PromiseLike<A>) =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => new CompatRequestError({ cause }) })
 
+/** Calls one method of the selected API. A thenable result is awaited; any other result is returned as it is. */
+const invoke = (call: () => unknown) =>
+  Effect.try({ try: call, catch: (cause) => new CompatRequestError({ cause }) }).pipe(
+    Effect.flatMap((result) => (Predicate.isPromiseLike(result) ? request(() => result) : Effect.succeed(result))),
+  )
+
 /** Runs an adapter program at the Promise API edge. A failed request rejects with its original value. */
 const run = <A>(program: Effect.Effect<A, CompatError>) => Effect.runPromise(program.pipe(Effect.mapError(rejection)))
+
+export function createCompatibleApi(input: CompatibleInput): CompatibleApi {
+  const v1 = createV1Api(input)
+  const selected = input.protocol.then((protocol) => (protocol === "v1" ? v1 : input.current))
+  return lazyApi(
+    request(() => selected),
+    input.current,
+  )
+}
+
+function lazyApi<T extends object>(implementation: Effect.Effect<T, CompatError>, shape: T): T {
+  const cache = MutableHashMap.empty<PropertyKey, unknown>()
+  return new Proxy(shape, {
+    get(target, property, receiver) {
+      const sample: unknown = Reflect.get(target, property, receiver)
+      if (typeof sample === "function") {
+        return (...args: unknown[]) =>
+          run(
+            Effect.gen(function* () {
+              const value = yield* implementation
+              const method: unknown = Reflect.get(value, property)
+              if (typeof method !== "function") {
+                return yield* new ApiUnavailableError({ message: `API method unavailable: ${String(property)}` })
+              }
+              return yield* invoke(() => Reflect.apply(method, value, args))
+            }),
+          )
+      }
+      if (sample === null || typeof sample !== "object") return sample
+      const cached = MutableHashMap.get(cache, property)
+      if (Option.isSome(cached)) return cached.value
+      const nested = lazyApi(
+        Effect.flatMap(implementation, (value) => {
+          const result: unknown = Reflect.get(value, property)
+          if (result === null || typeof result !== "object") {
+            return Effect.fail(new ApiUnavailableError({ message: `API namespace unavailable: ${String(property)}` }))
+          }
+          return Effect.succeed(result)
+        }),
+        sample,
+      )
+      MutableHashMap.set(cache, property, nested)
+      return nested
+    },
+  })
+}
 
 function createV1Api(input: CompatibleInput): CompatibleApi {
   const directory = (location?: { directory?: string }) => location?.directory ?? input.directory
@@ -192,7 +220,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 directory: directory(value?.location ?? undefined),
               }),
             )
-            if (!result.data) throw new Error("Failed to create session")
+            if (!result.data) return yield* new LegacyMissingDataError({ message: "Failed to create session" })
             return sessionInfo(result.data)
           }),
         ),
@@ -200,7 +228,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const result = yield* request(() => legacy().session.get(value))
-            if (!result.data) throw new Error(`Session not found: ${value.sessionID}`)
+            if (!result.data)
+              return yield* new LegacyMissingDataError({ message: `Session not found: ${value.sessionID}` })
             return sessionInfo(result.data)
           }),
         ),
@@ -231,7 +260,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const result = yield* request(() => legacy().session.fork(value))
-            if (!result.data) throw new Error("Failed to fork session")
+            if (!result.data) return yield* new LegacyMissingDataError({ message: "Failed to fork session" })
             return sessionInfo(result.data)
           }),
         ),
@@ -331,7 +360,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const model = value.model
-            if (!model) throw new Error("A model is required to compact a V1 session")
+            if (!model)
+              return yield* new CompactModelRequiredError({ message: "A model is required to compact a V1 session" })
             yield* request(() =>
               legacy().session.summarize({
                 sessionID: value.sessionID,
@@ -365,7 +395,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const result = yield* request(() => legacy(value?.location).project.current())
-            if (!result.data) throw new Error("Project not found")
+            if (!result.data) return yield* new LegacyMissingDataError({ message: "Project not found" })
             return { id: result.data.id, directory: result.data.worktree } satisfies ProjectCurrent
           }),
         ),
@@ -504,7 +534,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                   { throwOnError: true },
                 ),
               )
-              if (!result.data) throw new Error("Failed to start OAuth authorization")
+              if (!result.data)
+                return yield* new LegacyMissingDataError({ message: "Failed to start OAuth authorization" })
               return located(
                 {
                   attemptID: `${value.integrationID}:${method}`,
@@ -574,7 +605,7 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 env: value?.env,
               }),
             )
-            if (!result.data) throw new Error("Failed to create terminal")
+            if (!result.data) return yield* new LegacyMissingDataError({ message: "Failed to create terminal" })
             return located(result.data, value?.location)
           }),
         ),
@@ -582,7 +613,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
         run(
           Effect.gen(function* () {
             const result = yield* request(() => legacy(value.location).pty.get({ ptyID: value.ptyID }))
-            if (!result.data) throw new Error(`Terminal not found: ${value.ptyID}`)
+            if (!result.data)
+              return yield* new LegacyMissingDataError({ message: `Terminal not found: ${value.ptyID}` })
             return located(result.data, value.location)
           }),
         ),
@@ -596,7 +628,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 size: value.size,
               }),
             )
-            if (!result.data) throw new Error(`Terminal not found: ${value.ptyID}`)
+            if (!result.data)
+              return yield* new LegacyMissingDataError({ message: `Terminal not found: ${value.ptyID}` })
             return located(result.data, value.location)
           }),
         ),
