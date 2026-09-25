@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Message } from "@opencode-ai/sdk/v2/client"
+import type { AssistantMessage, Message, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { Option } from "effect"
 import { getSessionContext } from "./session-context-metrics"
 
@@ -9,12 +9,17 @@ const assistant = (
   cost: number,
   providerID = "openai",
   modelID = "gpt-4.1",
-) => {
+): AssistantMessage => {
   return {
     id,
+    sessionID: "ses_1",
     role: "assistant",
+    parentID: "u1",
     providerID,
     modelID,
+    mode: "build",
+    agent: "build",
+    path: { cwd: "/", root: "/" },
     cost,
     tokens: {
       input: tokens.input,
@@ -26,21 +31,23 @@ const assistant = (
       },
     },
     time: { created: 1 },
-  } as unknown as Message
+  }
 }
 
-const user = (id: string) => {
+const user = (id: string): UserMessage => {
   return {
     id,
+    sessionID: "ses_1",
     role: "user",
-    cost: 0,
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-4.1" },
     time: { created: 1 },
-  } as unknown as Message
+  }
 }
 
 describe("getSessionContext", () => {
   test("computes token totals and usage from latest assistant with tokens", () => {
-    const messages = [
+    const messages: Message[] = [
       user("u1"),
       assistant("a1", { input: 600, output: 200, reasoning: 100, read: 50, write: 50 }, 0.5),
       assistant("a2", { input: 300, output: 100, reasoning: 50, read: 25, write: 25 }, 1.25),
@@ -69,7 +76,9 @@ describe("getSessionContext", () => {
   })
 
   test("preserves fallback labels and null usage when model metadata is missing", () => {
-    const messages = [assistant("a1", { input: 40, output: 10, reasoning: 0, read: 0, write: 0 }, 0.1, "p-1", "m-1")]
+    const messages: Message[] = [
+      assistant("a1", { input: 40, output: 10, reasoning: 0, read: 0, write: 0 }, 0.1, "p-1", "m-1"),
+    ]
     const providers = [{ id: "p-1", models: {} }]
 
     const ctx = getSessionContext(messages, providers)
@@ -81,7 +90,7 @@ describe("getSessionContext", () => {
   })
 
   test("recomputes when message array is mutated in place", () => {
-    const messages = [assistant("a1", { input: 10, output: 10, reasoning: 10, read: 10, write: 10 }, 0.25)]
+    const messages: Message[] = [assistant("a1", { input: 10, output: 10, reasoning: 10, read: 10, write: 10 }, 0.25)]
     const providers = [{ id: "openai", models: {} }]
 
     const one = getSessionContext(messages, providers)
@@ -93,7 +102,7 @@ describe("getSessionContext", () => {
   })
 
   test("returns undefined when inputs are undefined", () => {
-    const ctx = getSessionContext(undefined, undefined)
+    const ctx = getSessionContext()
 
     expect(ctx).toBeUndefined()
   })

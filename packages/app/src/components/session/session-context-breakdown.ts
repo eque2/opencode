@@ -35,8 +35,8 @@ const charsFromAssistantPart = (part: Part) => {
 const build = (
   tokens: { system: number; user: number; assistant: number; tool: number; other: number },
   input: number,
-) => {
-  return [
+): SessionContextBreakdownSegment[] => {
+  const segments: ReadonlyArray<{ key: SessionContextBreakdownKey; tokens: number }> = [
     {
       key: "system",
       tokens: tokens.system,
@@ -58,13 +58,14 @@ const build = (
       tokens: tokens.other,
     },
   ]
+  return segments
     .filter((x) => x.tokens > 0)
     .map((x) => ({
       key: x.key,
       tokens: x.tokens,
       width: toPercent(x.tokens, input),
       percent: toPercentLabel(x.tokens, input),
-    })) as SessionContextBreakdownSegment[]
+    }))
 }
 
 export function estimateSessionContextBreakdown(args: {
