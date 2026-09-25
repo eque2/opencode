@@ -42,9 +42,8 @@ function SettingsServerDataProviders(props: ParentProps<{ server: ServerConnecti
 export function SettingsServerPicker() {
   const global = useGlobal()
   const settings = useSettings()
-  const selected = createMemo(() =>
-    settings.general.newLayoutDesigns() ? global.settings.server.selected() : undefined,
-  )
+  // The picker shows only in the new layout, for the selected server.
+  const selected = createMemo(() => settings.general.newLayoutDesigns() && global.settings.server.selected())
 
   return (
     <Show when={selected()}>
