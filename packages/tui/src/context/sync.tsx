@@ -110,7 +110,7 @@ export const {
         [key: string]: McpResource
       }
       formatter: FormatterStatus[]
-      vcs: VcsInfo | undefined
+      vcs?: VcsInfo
     }>({
       provider_next: {
         all: [],
@@ -140,7 +140,6 @@ export const {
       mcp: {},
       mcp_resource: {},
       formatter: [],
-      vcs: undefined,
     })
 
     const event = useEvent()
