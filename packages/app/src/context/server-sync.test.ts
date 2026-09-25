@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client"
 import type {
   McpListInput,
   McpListOutput,
@@ -17,9 +17,6 @@ import { estimateRootSessionTotal, loadRootSessions } from "./global-sync/sessio
 import { loadActiveSessionsQuery, loadMcpQuery, loadMcpResourcesQuery, seedActiveSessionStatuses } from "./server-sync"
 import { ServerScope } from "@/utils/server-scope"
 import { createServerSession } from "./server-session"
-import type { ServerApi } from "@/utils/server"
-
-type McpApi = ServerApi["mcp"]
 
 /** The failure a stub session API rejects with. */
 class ListFailedError extends Data.TaggedError("ListFailedError")<{ readonly message: string }> {}
@@ -45,7 +42,7 @@ describe("MCP queries", () => {
                   }),
                 )
               },
-            } as unknown as McpApi),
+            }),
           ),
         )
 
@@ -76,7 +73,7 @@ describe("MCP queries", () => {
                   )
                 },
               },
-            } as unknown as McpApi),
+            }),
           ),
         )
 
@@ -112,7 +109,7 @@ describe("active session query", () => {
     ))
 
   test("does not overwrite statuses already written by events", () => {
-    const session = createServerSession({} as OpencodeClient)
+    const session = createServerSession(createOpencodeClient())
     session.set("session_status", "ses_retry", { type: "retry", attempt: 2, message: "retrying", next: 10 })
 
     seedActiveSessionStatuses(session, {
