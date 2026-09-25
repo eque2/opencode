@@ -6,7 +6,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { Chunk, Effect, MutableHashMap, Option, Result } from "effect"
+import { Chunk, Data, Effect, MutableHashMap, Option, Result } from "effect"
 import { createFiberSlot } from "@/utils/fiber-slot"
 
 type Mem = Performance & {
@@ -37,6 +37,14 @@ type Sample = { at: number; dur: number }
 type Metric = Option.Option<number>
 
 const span = 5000
+
+/** A force-focus request that the desktop shell rejected. `cause` is the rejection. */
+class ForceFocusError extends Data.TaggedError("App.ForceFocusError")<{ readonly cause: unknown }> {}
+
+/** Runs a debug bar request in the background. A failure goes to the Effect logger. */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 /** Keeps a measured value only when it is a number. */
 const known = (n: Metric) => Option.filter(n, (value) => !Number.isNaN(value))
@@ -216,15 +224,24 @@ export function DebugBar(props: { inline?: boolean } = {}) {
       onSome: (count) => `${Option.getOrElse(time(state.long.block), na)}/${count}`,
     })
   const navv = () => (state.nav.pending ? "..." : Option.getOrElse(time(state.nav.dur), na))
-  const toggleFocus = async () => {
+  // The platform method is optional: without it the call returns no request, and nothing runs.
+  const setForceFocus = (enabled: boolean) =>
+    Effect.suspend(() =>
+      Option.match(Option.fromNullishOr(platform.setForceFocus?.(enabled)), {
+        onNone: () => Effect.void,
+        onSome: (request) =>
+          Effect.tryPromise({ try: () => request, catch: (cause) => new ForceFocusError({ cause }) }),
+      }),
+    )
+  const toggleFocus = () => {
     if (!platform.setForceFocus) return
     const enabled = !state.focus
-    await platform.setForceFocus(enabled)
-    setState("focus", enabled)
+    runDetached(setForceFocus(enabled).pipe(Effect.andThen(Effect.sync(() => setState("focus", enabled)))))
   }
 
   onCleanup(() => {
-    if (state.focus) void platform.setForceFocus?.(false).catch(() => undefined)
+    // Leaving force focus on unmount is best effort, so a rejection is ignored.
+    if (state.focus) Effect.runFork(Effect.ignore(setForceFocus(false)))
   })
 
   let prev = ""
@@ -605,7 +622,7 @@ export function DebugBar(props: { inline?: boolean } = {}) {
             label={language.t("debugBar.focus.label")}
             tip={language.t("debugBar.focus.tip")}
             value={language.t(state.focus ? "debugBar.focus.on" : "debugBar.focus.off")}
-            onClick={() => void toggleFocus()}
+            onClick={toggleFocus}
           />
         )}
       </div>
