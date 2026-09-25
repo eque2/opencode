@@ -104,7 +104,7 @@ test("refreshes integrations after integration updates", async () => {
       requests.provider++
       return json({ location: { directory, project: { id: "proj_test", directory } }, data: [] })
     }
-    if (url.pathname !== "/api/integration") return
+    if (url.pathname !== "/api/integration") return undefined
     requests.integration++
     return json({
       location: { directory, project: { id: "proj_test", directory } },
@@ -171,6 +171,7 @@ test("refreshes effective catalog data after catalog updates", async () => {
       requests.provider++
       return json({ location: { directory, project: { id: "proj_test", directory } }, data: [] })
     }
+    return undefined
   }, events)
 
   const app = await testRender(() => (
@@ -199,7 +200,7 @@ test("refreshes references after updates", async () => {
   const events = createEventSource()
   let requests = 0
   const calls = createFetch((url) => {
-    if (url.pathname !== "/api/reference") return
+    if (url.pathname !== "/api/reference") return undefined
     requests++
     return json({
       location: { directory, project: { id: "proj_test", directory } },
