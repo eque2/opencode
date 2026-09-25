@@ -22,7 +22,8 @@ import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
 import { createEventListener } from "@solid-primitives/event-listener"
 import { matchesModelSearch } from "./dialog-select-model-search"
-import { MutableHashMap, Option } from "effect"
+import { Effect, MutableHashMap, Option } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 const isFree = (provider: string, cost: { input: number } | undefined) =>
   provider === "opencode" && (!cost || cost.input === 0)
@@ -313,6 +314,10 @@ function ModelSelectorPopoverV2View(props: {
   let searchRef: HTMLInputElement | undefined
   let contentRef: HTMLDivElement | undefined
   const dismiss = createMenuDismissController(() => contentRef)
+  // Effect.yieldNow defers to the next macrotask in the browser, as setTimeout(fn) did.
+  const openFocus = createFiberSlot()
+  const hoverFocus = createFiberSlot()
+  const focusSearch = () => hoverFocus.run(Effect.yieldNow.pipe(Effect.andThen(Effect.sync(() => searchRef?.focus()))))
 
   const models = createMemo(() => props.models(store.search))
   const groups = createMemo(() => props.groups(models()))
@@ -338,11 +343,17 @@ function ModelSelectorPopoverV2View(props: {
     if (open) {
       dismiss.allowTriggerRestore()
       setStore({ open: true, active: initialActive() })
-      setTimeout(() =>
-        requestAnimationFrame(() => {
-          searchRef?.focus()
-          revealActive()
-        }),
+      openFocus.run(
+        Effect.yieldNow.pipe(
+          Effect.andThen(
+            Effect.sync(() =>
+              requestAnimationFrame(() => {
+                searchRef?.focus()
+                revealActive()
+              }),
+            ),
+          ),
+        ),
       )
       return
     }
@@ -497,7 +508,7 @@ function ModelSelectorPopoverV2View(props: {
                                 classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === modelKey(item) }}
                                 onMouseEnter={() => {
                                   setStore("active", modelKey(item))
-                                  setTimeout(() => searchRef?.focus())
+                                  focusSearch()
                                 }}
                                 onSelect={() => selectModel(item)}
                               >
@@ -526,7 +537,7 @@ function ModelSelectorPopoverV2View(props: {
               classList={{ "!bg-v2-overlay-simple-overlay-hover": store.active === manageKey }}
               onMouseEnter={() => {
                 setStore("active", manageKey)
-                setTimeout(() => searchRef?.focus())
+                focusSearch()
               }}
               onSelect={manage}
             >

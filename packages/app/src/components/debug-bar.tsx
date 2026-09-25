@@ -6,7 +6,8 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { Chunk, MutableHashMap, Option, Result } from "effect"
+import { Chunk, Effect, MutableHashMap, Option, Result } from "effect"
+import { createFiberSlot } from "@/utils/fiber-slot"
 
 type Mem = Performance & {
   memory?: {
@@ -282,7 +283,9 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     let long = Chunk.empty<Sample>()
     const seen = MutableHashMap.empty<number | string, { at: number; delay: number; dur: number }>()
     let hasLong = false
-    let poll: number | undefined
+    // The once-a-second refresh of the long-task, interaction and heap cells.
+    const poll = createFiberSlot()
+    let polling = false
     let raf = 0
     let last = 0
     let snap = 0
@@ -445,19 +448,22 @@ export function DebugBar(props: { inline?: boolean } = {}) {
     const stop = () => {
       if (raf !== 0) cancelAnimationFrame(raf)
       raf = 0
-      if (poll === undefined) return
-      clearInterval(poll)
-      poll = undefined
+      if (!polling) return
+      poll.interrupt()
+      polling = false
     }
 
     const start = () => {
       if (document.visibilityState !== "visible") return
-      if (poll === undefined) {
-        poll = window.setInterval(() => {
+      if (!polling) {
+        polling = true
+        const refresh = Effect.sync(() => {
           syncLong()
           syncInp()
           syncHeap()
-        }, 1000)
+        })
+        // Like setInterval, the first refresh runs one second after the start.
+        poll.run(refresh.pipe(Effect.delay("1 second"), Effect.forever))
       }
       if (raf !== 0) return
       raf = requestAnimationFrame(loop)
