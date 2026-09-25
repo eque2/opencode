@@ -3,7 +3,7 @@
 // Each leaf remembers what has been,
 // And waits where careful light aligns.
 
-import { Array as Arr, HashSet, MutableHashMap, Option } from "effect"
+import { Array as Arr, HashMap, HashSet, MutableHashSet, Option, Order } from "effect"
 
 export type FileTreeItem = {
   readonly file: string
@@ -14,15 +14,15 @@ export type FileTreeNode = {
   readonly id: number
   readonly name: string
   readonly parent: Option.Option<number>
-  readonly children: number[]
+  readonly children: readonly number[]
   readonly depth: number
   readonly kind: "directory" | "file"
   readonly fileIndex?: number
 }
 
 export type FileTree = {
-  readonly roots: number[]
-  readonly nodes: FileTreeNode[]
+  readonly roots: readonly number[]
+  readonly nodes: readonly FileTreeNode[]
 }
 
 export type FileTreeRow = {
@@ -38,77 +38,107 @@ export type FileTreeFileSelection = {
   readonly expandedNodes: readonly number[]
 }
 
+// One path segment of one changed file: a directory, or the file itself as the last segment.
+type FileTreeEntry = {
+  readonly path: string
+  readonly parentPath: Option.Option<string>
+  readonly name: string
+  readonly depth: number
+  readonly kind: "directory" | "file"
+  readonly fileIndex?: number
+}
+
 export function buildFileTree(files: readonly FileTreeItem[]): FileTree {
-  const roots: number[] = []
-  const nodes: FileTreeNode[] = []
-  const directoryByPath = MutableHashMap.empty<string, number>()
-
-  files.forEach((file, fileIndex) => {
-    const segments = file.file.split("/").filter(Boolean)
-    if (segments.length === 0) return
-
-    const parent = segments.slice(0, -1).reduce(
-      (state, segment) => {
-        const directoryPath = state.path ? `${state.path}/${segment}` : segment
-        const existing = MutableHashMap.get(directoryByPath, directoryPath)
-        if (Option.isSome(existing)) return { id: existing, path: directoryPath, depth: state.depth + 1 }
-
-        const id = addFileTreeNode(nodes, roots, {
-          name: segment,
-          parent: state.id,
-          depth: state.depth,
-          kind: "directory",
-        })
-        MutableHashMap.set(directoryByPath, directoryPath, id)
-        return { id: Option.some(id), path: directoryPath, depth: state.depth + 1 }
-      },
-      { id: Option.none<number>(), path: "", depth: 0 },
-    )
-
-    addFileTreeNode(nodes, roots, {
-      name: segments[segments.length - 1],
-      parent: parent.id,
-      depth: parent.depth,
-      kind: "file",
-      fileIndex,
-    })
+  // Keep each directory where it first appears, so node ids follow the order in which the nodes first appear.
+  const seenDirectories = MutableHashSet.empty<string>()
+  const entries = files.flatMap(fileTreeEntries).filter((entry) => {
+    if (entry.kind === "file") return true
+    if (MutableHashSet.has(seenDirectories, entry.path)) return false
+    MutableHashSet.add(seenDirectories, entry.path)
+    return true
   })
+  const directoryIds = HashMap.fromIterable(
+    entries.flatMap(
+      (entry, id): Array<readonly [string, number]> => (entry.kind === "directory" ? [[entry.path, id]] : []),
+    ),
+  )
+  const order = fileTreeEntryOrder(entries)
+  const childIds = Arr.groupBy(
+    entries.flatMap((entry, id) => Option.toArray(Option.map(entry.parentPath, (parentPath) => ({ id, parentPath })))),
+    (child) => child.parentPath,
+  )
+  const childrenOf = (entry: FileTreeEntry) =>
+    entry.kind === "directory" && Object.hasOwn(childIds, entry.path)
+      ? Arr.sort(
+          childIds[entry.path].map((child) => child.id),
+          order,
+        )
+      : []
 
-  const tree = { roots, nodes }
-  tree.roots.sort((left, right) => compareFileTreeNodes(tree, left, right))
-  tree.nodes.forEach((node) => node.children.sort((left, right) => compareFileTreeNodes(tree, left, right)))
-  return tree
+  return {
+    roots: Arr.sort(
+      entries.flatMap((entry, id) => (Option.isNone(entry.parentPath) ? [id] : [])),
+      order,
+    ),
+    nodes: entries.map((entry, id) => ({
+      id,
+      name: entry.name,
+      parent: Option.flatMap(entry.parentPath, (parentPath) => HashMap.get(directoryIds, parentPath)),
+      children: childrenOf(entry),
+      depth: entry.depth,
+      kind: entry.kind,
+      ...(entry.fileIndex === undefined ? {} : { fileIndex: entry.fileIndex }),
+    })),
+  }
+}
+
+function fileTreeEntries(item: FileTreeItem, fileIndex: number): FileTreeEntry[] {
+  const segments = item.file.split("/").filter(Boolean)
+  return segments.map((name, depth): FileTreeEntry => {
+    const path = segments.slice(0, depth + 1).join("/")
+    const parentPath = depth === 0 ? Option.none<string>() : Option.some(segments.slice(0, depth).join("/"))
+    return depth === segments.length - 1
+      ? { path, parentPath, name, depth, kind: "file", fileIndex }
+      : { path, parentPath, name, depth, kind: "directory" }
+  })
+}
+
+// Directories come before files, then names sort by code unit, then the earlier node comes first.
+function fileTreeEntryOrder(entries: ReadonlyArray<Pick<FileTreeEntry, "kind" | "name">>): Order.Order<number> {
+  return Order.combineAll([
+    Order.mapInput(Order.Boolean, (id: number) => entries[id].kind === "file"),
+    Order.mapInput(Order.String, (id: number) => entries[id].name),
+    Order.Number,
+  ])
 }
 
 export function flattenFileTree(tree: FileTree, expanded?: HashSet.HashSet<number>): FileTreeRow[] {
-  const rows: FileTreeRow[] = []
-  const visit = (id: number, depth: number) => {
+  const visit = (id: number, depth: number): FileTreeRow[] => {
     const node = tree.nodes[id]
     if (node.kind === "file") {
-      rows.push({
-        id: node.id,
-        depth,
-        kind: node.kind,
-        name: node.name,
-        fileIndex: node.fileIndex,
-      })
-      return
+      return [
+        {
+          id: node.id,
+          depth,
+          kind: node.kind,
+          name: node.name,
+          fileIndex: node.fileIndex,
+        },
+      ]
     }
 
     const chain = collapsedFileTreeDirectoryChain(tree, node.id)
-    const last = Arr.lastNonEmpty(chain)
-    rows.push({
+    const row: FileTreeRow = {
       id: node.id,
       depth,
       kind: node.kind,
       name: chain.map((item) => item.name).join("/"),
       fileIndex: node.fileIndex,
-    })
-    if (expanded === undefined || HashSet.has(expanded, node.id))
-      last.children.forEach((child) => visit(child, depth + 1))
+    }
+    if (expanded !== undefined && !HashSet.has(expanded, node.id)) return [row]
+    return [row, ...Arr.lastNonEmpty(chain).children.flatMap((child) => visit(child, depth + 1))]
   }
-  tree.roots.forEach((root) => visit(root, 0))
-  return rows
+  return tree.roots.flatMap((root) => visit(root, 0))
 }
 
 function collapsedFileTreeDirectoryChain(tree: FileTree, id: number): Arr.NonEmptyArray<FileTreeNode> {
@@ -124,12 +154,7 @@ function collapsedFileTreeDirectoryChain(tree: FileTree, id: number): Arr.NonEmp
 }
 
 export function compareFileTreeNodes(tree: FileTree, left: number, right: number) {
-  const leftNode = tree.nodes[left]
-  const rightNode = tree.nodes[right]
-  if (leftNode.kind !== rightNode.kind) return leftNode.kind === "directory" ? -1 : 1
-  if (leftNode.name < rightNode.name) return -1
-  if (leftNode.name > rightNode.name) return 1
-  return left - right
+  return fileTreeEntryOrder(tree.nodes)(left, right)
 }
 
 function rowIndex(rows: readonly FileTreeRow[], selected: Option.Option<number>) {
@@ -267,14 +292,6 @@ export function setFileTreeDirectoryExpanded(
     onNone: () => expanded,
     onSome: (id) => (value ? HashSet.add(expanded, id) : HashSet.remove(expanded, id)),
   })
-}
-
-function addFileTreeNode(nodes: FileTreeNode[], roots: number[], input: Omit<FileTreeNode, "id" | "children">) {
-  const id = nodes.length
-  nodes.push({ ...input, id, children: [] })
-  if (Option.isNone(input.parent)) roots.push(id)
-  else nodes[input.parent.value].children.push(id)
-  return id
 }
 
 // The parent directories of a node, nearest first.
