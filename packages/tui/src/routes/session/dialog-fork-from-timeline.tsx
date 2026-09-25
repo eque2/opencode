@@ -1,3 +1,4 @@
+import { Effect } from "effect"
 import { createMemo, onMount } from "solid-js"
 import { useSync } from "../../context/sync"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
@@ -8,6 +9,12 @@ import { useRoute } from "../../context/route"
 import { useDialog, type DialogContext } from "../../ui/dialog"
 import type { PromptInfo } from "../../component/prompt/history"
 import { stripPromptPartIDs as strip } from "../../prompt/part"
+
+// Runs a fork request from a dialog selection. Nothing handled a rejected fork before, so a failure is a
+// defect that goes to the Effect logger.
+function runForkRequest(effect: Effect.Effect<void>) {
+  Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError("Fork session failed", defect))))
+}
 
 export function DialogForkFromTimeline(props: { sessionID: string; onMove: (messageID?: string) => void }) {
   const sync = useSync()
@@ -24,13 +31,17 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     const fullSession = {
       title: "Full session",
       value: undefined,
-      onSelect: async (dialog: DialogContext) => {
-        const forked = await sdk.client.session.fork({ sessionID: props.sessionID })
-        route.navigate({
-          sessionID: forked.data!.id,
-          type: "session",
-        })
-        dialog.clear()
+      onSelect: (dialog: DialogContext) => {
+        runForkRequest(
+          Effect.gen(function* () {
+            const forked = yield* Effect.promise(() => sdk.client.session.fork({ sessionID: props.sessionID }))
+            route.navigate({
+              sessionID: forked.data!.id,
+              type: "session",
+            })
+            dialog.clear()
+          }),
+        )
       },
     } satisfies DialogSelectOption<string | undefined>
     const result = [] as DialogSelectOption<string | undefined>[]
@@ -44,28 +55,34 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
         title: part.text.replace(/\n/g, " "),
         value: message.id,
         footer: Locale.time(message.time.created),
-        onSelect: async (dialog) => {
-          const forked = await sdk.client.session.fork({
-            sessionID: props.sessionID,
-            messageID: message.id,
-          })
-          const parts = sync.data.part[message.id] ?? []
-          const prompt = parts.reduce(
-            (agg, part) => {
-              if (part.type === "text") {
-                if (!part.synthetic) agg.input += part.text
-              }
-              if (part.type === "file") agg.parts.push(strip(part))
-              return agg
-            },
-            { input: "", parts: [] as PromptInfo["parts"] },
+        onSelect: (dialog) => {
+          runForkRequest(
+            Effect.gen(function* () {
+              const forked = yield* Effect.promise(() =>
+                sdk.client.session.fork({
+                  sessionID: props.sessionID,
+                  messageID: message.id,
+                }),
+              )
+              const parts = sync.data.part[message.id] ?? []
+              const prompt = parts.reduce(
+                (agg, part) => {
+                  if (part.type === "text") {
+                    if (!part.synthetic) agg.input += part.text
+                  }
+                  if (part.type === "file") agg.parts.push(strip(part))
+                  return agg
+                },
+                { input: "", parts: [] as PromptInfo["parts"] },
+              )
+              route.navigate({
+                sessionID: forked.data!.id,
+                type: "session",
+                prompt,
+              })
+              dialog.clear()
+            }),
           )
-          route.navigate({
-            sessionID: forked.data!.id,
-            type: "session",
-            prompt,
-          })
-          dialog.clear()
         },
       })
     }

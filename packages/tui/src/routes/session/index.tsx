@@ -15,7 +15,7 @@ import {
   useContext,
 } from "solid-js"
 import path from "node:path"
-import { DateTime, Effect, Fiber, FileSystem, HashSet, Option, Predicate } from "effect"
+import { Data, DateTime, Effect, Fiber, FileSystem, HashSet, Option, Predicate } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -115,6 +115,22 @@ function goUpsellKeys(action: RetryAction): Option.Option<{ lastSeenAt: string; 
   return Option.none()
 }
 
+/** A rejected SDK, sync, clipboard or editor call inside a session action. */
+class SessionActionError extends Data.TaggedError("SessionActionError")<{ readonly cause: unknown }> {}
+
+/** Waits on a Promise-based call inside a session action and keeps its rejection as a typed failure. */
+function attempt<A>(run: () => PromiseLike<A>) {
+  return Effect.tryPromise({ try: run, catch: (cause) => new SessionActionError({ cause }) })
+}
+
+/**
+ * Runs a session action from a UI callback. Each action handles its typed failures first. A defect goes to the
+ * Effect logger, where a rejected async handler used to surface as an unhandled rejection.
+ */
+function runSessionAction(effect: Effect.Effect<void>) {
+  Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError("Session action failed", defect))))
+}
+
 const sessionBindingCommands = [
   "session.share",
   "session.rename",
@@ -180,6 +196,12 @@ function use() {
 export function Session() {
   const setEpilogue = useEpilogue()
   const clipboard = useClipboard()
+  // Writes text through the clipboard service. It succeeds with false when the service has no writer.
+  const writeClipboard = (text: string) =>
+    Effect.suspend(() => {
+      const pending = clipboard.write?.(text)
+      return pending ? attempt(() => pending).pipe(Effect.as(true)) : Effect.succeed(false)
+    })
   const writeExport = (file: string, content: string) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -290,42 +312,48 @@ export function Session() {
 
   createEffect(() => {
     const sessionID = route.sessionID
-    void (async () => {
-      const previousWorkspace = untrack(() => project.workspace.current())
-      const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
-      if (!result.data) {
+    // A session that cannot load sends the user home, unless they already moved to another session.
+    const leave = (error: unknown) =>
+      Effect.sync(() => {
+        if (route.sessionID !== sessionID) return
         toast.show({
-          message: `Session not found: ${sessionID}`,
+          message: errorMessage(error),
           variant: "error",
           duration: 5000,
         })
         navigate({ type: "home" })
-        return
-      }
-
-      if (result.data.workspaceID !== previousWorkspace) {
-        project.workspace.set(result.data.workspaceID)
-
-        // Sync all the data for this workspace. Note that this
-        // workspace may not exist anymore which is why this is not
-        // fatal. If it doesn't we still want to show the session
-        // (which will be non-interactive)
-        try {
-          await sync.bootstrap({ fatal: false })
-        } catch {}
-      }
-      editor.reconnect(result.data.directory)
-      await sync.session.sync(sessionID)
-      if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
-    })().catch((error) => {
-      if (route.sessionID !== sessionID) return
-      toast.show({
-        message: errorMessage(error),
-        variant: "error",
-        duration: 5000,
       })
-      navigate({ type: "home" })
-    })
+    Effect.runFork(
+      Effect.gen(function* () {
+        const previousWorkspace = untrack(() => project.workspace.current())
+        const result = yield* attempt(() => sdk.client.session.get({ sessionID }, { throwOnError: true }))
+        if (!result.data) {
+          toast.show({
+            message: `Session not found: ${sessionID}`,
+            variant: "error",
+            duration: 5000,
+          })
+          navigate({ type: "home" })
+          return
+        }
+
+        if (result.data.workspaceID !== previousWorkspace) {
+          project.workspace.set(result.data.workspaceID)
+
+          // Sync all the data for this workspace. Note that this
+          // workspace may not exist anymore which is why this is not
+          // fatal. If it doesn't we still want to show the session
+          // (which will be non-interactive)
+          yield* Effect.ignore(attempt(() => sync.bootstrap({ fatal: false })))
+        }
+        editor.reconnect(result.data.directory)
+        yield* attempt(() => sync.session.sync(sessionID))
+        if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+      }).pipe(
+        Effect.catch((error) => leave(error.cause)),
+        Effect.catchDefect(leave),
+      ),
+    )
   })
 
   let lastSwitch: string | undefined = undefined
@@ -496,35 +524,57 @@ export function Session() {
       slash: {
         name: "share",
       },
-      run: async () => {
+      run: () => {
         const copy = (url: string) =>
-          clipboard
-            .write?.(url)
-            .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
-            .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
-        const url = session()?.share?.url
-        if (url) {
-          await copy(url)
-          dialog.clear()
-          return
-        }
-        if (!kv.get("share_consent", false)) {
-          const ok = await DialogConfirm.show(dialog, "Share Session", "Are you sure you want to share it?")
-          if (ok !== true) return
-          kv.set("share_consent", true)
-        }
-        await sdk.client.session
-          .share({
-            sessionID: route.sessionID,
-          })
-          .then((res) => copy(res.data!.share!.url))
-          .catch((error) => {
-            toast.show({
-              message: error instanceof Error ? error.message : "Failed to share session",
-              variant: "error",
-            })
-          })
-        dialog.clear()
+          writeClipboard(url).pipe(
+            Effect.matchEffect({
+              onFailure: () =>
+                Effect.sync(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" })),
+              onSuccess: (written) =>
+                Effect.sync(() => {
+                  if (written) toast.show({ message: "Share URL copied to clipboard!", variant: "success" })
+                }),
+            }),
+          )
+        runSessionAction(
+          Effect.gen(function* () {
+            const url = session()?.share?.url
+            if (url) {
+              yield* copy(url)
+              dialog.clear()
+              return
+            }
+            if (!kv.get("share_consent", false)) {
+              const ok = yield* Effect.promise(() =>
+                DialogConfirm.show(dialog, "Share Session", "Are you sure you want to share it?"),
+              )
+              if (ok !== true) return
+              kv.set("share_consent", true)
+            }
+            yield* attempt(() =>
+              sdk.client.session.share({
+                sessionID: route.sessionID,
+              }),
+            ).pipe(
+              // A response without a share URL carries the SDK error instead.
+              Effect.flatMap((res) =>
+                Option.match(Option.fromNullishOr(res.data?.share?.url), {
+                  onNone: () => Effect.fail(new SessionActionError({ cause: res.error })),
+                  onSome: copy,
+                }),
+              ),
+              Effect.catch((error) =>
+                Effect.sync(() =>
+                  toast.show({
+                    message: error.cause instanceof Error ? error.cause.message : "Failed to share session",
+                    variant: "error",
+                  }),
+                ),
+              ),
+            )
+            dialog.clear()
+          }),
+        )
       },
     },
     {
@@ -616,19 +666,27 @@ export function Session() {
       slash: {
         name: "unshare",
       },
-      run: async () => {
-        await sdk.client.session
-          .unshare({
-            sessionID: route.sessionID,
-          })
-          .then(() => toast.show({ message: "Session unshared successfully", variant: "success" }))
-          .catch((error) => {
-            toast.show({
-              message: error instanceof Error ? error.message : "Failed to unshare session",
-              variant: "error",
-            })
-          })
-        dialog.clear()
+      run: () => {
+        runSessionAction(
+          attempt(() =>
+            sdk.client.session.unshare({
+              sessionID: route.sessionID,
+            }),
+          ).pipe(
+            Effect.matchEffect({
+              onSuccess: () =>
+                Effect.sync(() => toast.show({ message: "Session unshared successfully", variant: "success" })),
+              onFailure: (error) =>
+                Effect.sync(() =>
+                  toast.show({
+                    message: error.cause instanceof Error ? error.cause.message : "Failed to unshare session",
+                    variant: "error",
+                  }),
+                ),
+            }),
+            Effect.andThen(Effect.sync(() => dialog.clear())),
+          ),
+        )
       },
     },
     {
@@ -638,33 +696,38 @@ export function Session() {
       slash: {
         name: "undo",
       },
-      run: async () => {
-        const status = sync.data.session_status?.[route.sessionID]
-        if (status?.type !== "idle") await sdk.client.session.abort({ sessionID: route.sessionID }).catch(() => {})
-        const message = messagesBeforeRevert().findLast((item) => item.role === "user")
-        if (!message) return
-        void sdk.client.session
-          .revert({
-            sessionID: route.sessionID,
-            messageID: message.id,
-          })
-          .then(() => {
-            toBottom()
-          })
-        const parts = sync.data.part[message.id]
-        prompt?.set(
-          parts.reduce(
-            (agg, part) => {
-              if (part.type === "text") {
-                if (!part.synthetic) agg.input += part.text
-              }
-              if (part.type === "file") agg.parts.push(part)
-              return agg
-            },
-            { input: "", parts: [] as PromptInfo["parts"] },
-          ),
+      run: () => {
+        runSessionAction(
+          Effect.gen(function* () {
+            const status = sync.data.session_status?.[route.sessionID]
+            if (status?.type !== "idle")
+              yield* Effect.ignore(attempt(() => sdk.client.session.abort({ sessionID: route.sessionID })))
+            const message = messagesBeforeRevert().findLast((item) => item.role === "user")
+            if (!message) return
+            void sdk.client.session
+              .revert({
+                sessionID: route.sessionID,
+                messageID: message.id,
+              })
+              .then(() => {
+                toBottom()
+              })
+            const parts = sync.data.part[message.id]
+            prompt?.set(
+              parts.reduce(
+                (agg, part) => {
+                  if (part.type === "text") {
+                    if (!part.synthetic) agg.input += part.text
+                  }
+                  if (part.type === "file") agg.parts.push(part)
+                  return agg
+                },
+                { input: "", parts: [] as PromptInfo["parts"] },
+              ),
+            )
+            dialog.clear()
+          }),
         )
-        dialog.clear()
       },
     },
     {
@@ -930,10 +993,17 @@ export function Session() {
           return
         }
 
-        clipboard
-          .write?.(text)
-          .then(() => toast.show({ message: "Message copied to clipboard!", variant: "success" }))
-          .catch(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" }))
+        runSessionAction(
+          writeClipboard(text).pipe(
+            Effect.matchEffect({
+              onFailure: () => Effect.sync(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" })),
+              onSuccess: (written) =>
+                Effect.sync(() => {
+                  if (written) toast.show({ message: "Message copied to clipboard!", variant: "success" })
+                }),
+            }),
+          ),
+        )
         dialog.clear()
       },
     },
@@ -944,27 +1014,39 @@ export function Session() {
       slash: {
         name: "copy",
       },
-      run: async () => {
-        try {
-          const sessionData = session()
-          if (!sessionData) return
-          const sessionMessages = messages()
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: showThinking(),
-              toolDetails: showDetails(),
-              assistantMetadata: showAssistantMetadata(),
-              providers: sync.data.provider,
-            },
-          )
-          await clipboard.write?.(transcript)
-          toast.show({ message: "Session transcript copied to clipboard!", variant: "success" })
-        } catch {
-          toast.show({ message: "Failed to copy session transcript", variant: "error" })
-        }
-        dialog.clear()
+      run: () => {
+        runSessionAction(
+          Effect.gen(function* () {
+            const sessionData = session()
+            if (!sessionData) return
+            const sessionMessages = messages()
+            yield* Effect.try({
+              try: () =>
+                formatTranscript(
+                  sessionData,
+                  sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+                  {
+                    thinking: showThinking(),
+                    toolDetails: showDetails(),
+                    assistantMetadata: showAssistantMetadata(),
+                    providers: sync.data.provider,
+                  },
+                ),
+              catch: (cause) => new SessionActionError({ cause }),
+            }).pipe(
+              Effect.flatMap(writeClipboard),
+              Effect.matchEffect({
+                onSuccess: () =>
+                  Effect.sync(() =>
+                    toast.show({ message: "Session transcript copied to clipboard!", variant: "success" }),
+                  ),
+                onFailure: () =>
+                  Effect.sync(() => toast.show({ message: "Failed to copy session transcript", variant: "error" })),
+              }),
+            )
+            dialog.clear()
+          }),
+        )
       },
     },
     {
@@ -974,73 +1056,88 @@ export function Session() {
       slash: {
         name: "export",
       },
-      run: async () => {
-        try {
-          const sessionData = session()
-          if (!sessionData) return
-          const sessionMessages = messages()
+      run: () => {
+        runSessionAction(
+          Effect.gen(function* () {
+            const sessionData = session()
+            if (!sessionData) return
+            const sessionMessages = messages()
 
-          const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
+            const defaultFilename = `session-${sessionData.id.slice(0, 8)}.md`
 
-          const chosen = await DialogExportOptions.show(
-            dialog,
-            defaultFilename,
-            showThinking(),
-            showDetails(),
-            showAssistantMetadata(),
-            false,
-          )
+            const chosen = yield* Effect.promise(() =>
+              DialogExportOptions.show(
+                dialog,
+                defaultFilename,
+                showThinking(),
+                showDetails(),
+                showAssistantMetadata(),
+                false,
+              ),
+            )
 
-          if (Option.isNone(chosen)) return
-          const options = chosen.value
+            if (Option.isNone(chosen)) return
+            const options = chosen.value
 
-          const transcript = formatTranscript(
-            sessionData,
-            sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
-            {
-              thinking: options.thinking,
-              toolDetails: options.toolDetails,
-              assistantMetadata: options.assistantMetadata,
-              providers: sync.data.provider,
-            },
-          )
+            yield* Effect.gen(function* () {
+              const transcript = yield* Effect.try({
+                try: () =>
+                  formatTranscript(
+                    sessionData,
+                    sessionMessages.map((msg) => ({ info: msg, parts: sync.data.part[msg.id] ?? [] })),
+                    {
+                      thinking: options.thinking,
+                      toolDetails: options.toolDetails,
+                      assistantMetadata: options.assistantMetadata,
+                      providers: sync.data.provider,
+                    },
+                  ),
+                catch: (cause) => new SessionActionError({ cause }),
+              })
 
-          if (options.openWithoutSaving) {
-            // Just open in editor without saving
-            await openEditor({
-              renderer,
-              value: transcript,
-              cwd:
-                (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
-                project.instance.directory() ||
-                paths.cwd,
-            })
-          } else {
-            const exportDir = paths.cwd
-            const filename = options.filename.trim()
-            const filepath = path.join(exportDir, filename)
+              if (options.openWithoutSaving) {
+                // Just open in editor without saving
+                yield* attempt(() =>
+                  openEditor({
+                    renderer,
+                    value: transcript,
+                    cwd:
+                      (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
+                      project.instance.directory() ||
+                      paths.cwd,
+                  }),
+                )
+                return
+              }
 
-            await Effect.runPromise(writeExport(filepath, transcript))
+              const exportDir = paths.cwd
+              const filename = options.filename.trim()
+              const filepath = path.join(exportDir, filename)
 
-            // Open with EDITOR if available
-            const result = await openEditor({
-              renderer,
-              value: transcript,
-              cwd:
-                (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
-                project.instance.directory() ||
-                paths.cwd,
-            })
-            if (result !== undefined) {
-              await Effect.runPromise(writeExport(filepath, result))
-            }
+              yield* writeExport(filepath, transcript)
 
-            toast.show({ message: `Session exported to ${filename}`, variant: "success" })
-          }
-        } catch {
-          toast.show({ message: "Failed to export session", variant: "error" })
-        }
-        dialog.clear()
+              // Open with EDITOR if available
+              const result = yield* attempt(() =>
+                openEditor({
+                  renderer,
+                  value: transcript,
+                  cwd:
+                    (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
+                    project.instance.directory() ||
+                    paths.cwd,
+                }),
+              )
+              if (result !== undefined) {
+                yield* writeExport(filepath, result)
+              }
+
+              toast.show({ message: `Session exported to ${filename}`, variant: "success" })
+            }).pipe(
+              Effect.catch(() => Effect.sync(() => toast.show({ message: "Failed to export session", variant: "error" }))),
+            )
+            dialog.clear()
+          }),
+        )
       },
     },
     {
@@ -1232,15 +1329,21 @@ export function Session() {
                           const [hover, setHover] = createSignal(false)
                           const dialog = useDialog()
 
-                          const handleUnrevert = async () => {
-                            const confirmed = await DialogConfirm.show(
-                              dialog,
-                              "Confirm Redo",
-                              "Are you sure you want to restore the reverted messages?",
+                          const handleUnrevert = () => {
+                            runSessionAction(
+                              Effect.gen(function* () {
+                                const confirmed = yield* Effect.promise(() =>
+                                  DialogConfirm.show(
+                                    dialog,
+                                    "Confirm Redo",
+                                    "Are you sure you want to restore the reverted messages?",
+                                  ),
+                                )
+                                if (confirmed) {
+                                  keymap.dispatchCommand("session.redo")
+                                }
+                              }),
                             )
-                            if (confirmed) {
-                              keymap.dispatchCommand("session.redo")
-                            }
                           }
 
                           return (
