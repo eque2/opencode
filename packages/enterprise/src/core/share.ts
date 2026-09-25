@@ -1,6 +1,6 @@
 import { Message, Model, Part, Session, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 import { iife } from "@opencode-ai/core/util/iife"
-import { Array, HashMap, Order, String } from "effect"
+import { Array, HashMap, Match, Order, String } from "effect"
 import z from "zod"
 import { Storage } from "./storage"
 
@@ -49,20 +49,15 @@ export namespace Share {
     data: Data[]
   }
 
-  function key(item: Data) {
-    switch (item.type) {
-      case "session":
-        return "session"
-      case "message":
-        return `message/${item.data.id}`
-      case "part":
-        return `part/${item.data.messageID}/${item.data.id}`
-      case "session_diff":
-        return "session_diff"
-      case "model":
-        return "model"
-    }
-  }
+  const key = Match.type<Data>().pipe(
+    Match.discriminatorsExhaustive("type")({
+      session: () => "session",
+      message: (item) => `message/${item.data.id}`,
+      part: (item) => `part/${item.data.messageID}/${item.data.id}`,
+      session_diff: () => "session_diff",
+      model: () => "model",
+    }),
+  )
 
   // Keys sort with localeCompare, as the stored snapshots always did.
   const byKey = Order.make<string>((self, that) => String.localeCompare(that)(self))
