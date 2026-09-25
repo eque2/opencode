@@ -79,11 +79,11 @@ export function DialogStatus() {
                       <Match when={item.status === "connected"}>Connected</Match>
                       <Match when={item.status === "failed" && item}>{(val) => val().error}</Match>
                       <Match when={item.status === "disabled"}>Disabled in configuration</Match>
-                      <Match when={(item.status as string) === "needs_auth"}>
+                      <Match when={item.status === "needs_auth"}>
                         Needs authentication (run: opencode mcp auth {key})
                       </Match>
-                      <Match when={(item.status as string) === "needs_client_registration" && item}>
-                        {(val) => (val() as { error: string }).error}
+                      <Match when={item.status === "needs_client_registration" && item}>
+                        {(val) => val().error}
                       </Match>
                     </Switch>
                   </span>

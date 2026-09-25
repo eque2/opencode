@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Option, Predicate } from "effect"
 import { createMemo, createSignal } from "solid-js"
 import { useLocal } from "../context/local"
 import { map, pipe, entries, sortBy, take } from "remeda"
@@ -164,7 +164,9 @@ export function DialogModel(props: { providerID?: string }) {
           title: "Favorite",
           hidden: !connected(),
           onTrigger: (option) => {
-            local.model.toggleFavorite(option.value as { providerID: string; modelID: string })
+            // Provider rows carry a string value; only model rows can be favorites.
+            if (Predicate.isString(option.value)) return
+            local.model.toggleFavorite(option.value)
           },
         },
       ]}
