@@ -3,7 +3,7 @@ export * as TuiKeybind from "./keybind"
 import type { KeyEvent, Renderable } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
 import type { BindingCommandMap, BindingConfig, BindingDefaults } from "@opentui/keymap/extras"
-import { Schema } from "effect"
+import { Record, Schema } from "effect"
 
 const KeyStroke = Schema.Struct({
   name: Schema.String,
@@ -253,9 +253,7 @@ export const KeybindOverrides = Schema.Struct(
     ]),
   ),
 ).annotate({ description: "TUI keybinding overrides" })
-export const Descriptions = Object.fromEntries(
-  Object.entries(Definitions).map(([name, item]) => [name, item.description]),
-) as Record<KeybindName, string>
+export const Descriptions: Record<KeybindName, string> = Record.map(Definitions, (item) => item.description)
 export const CommandMap = {
   app_exit: "app.exit",
   app_debug: "app.debug",
@@ -421,12 +419,17 @@ export const CommandMap = {
   which_key_home: "which-key.home",
   which_key_end: "which-key.end",
 } satisfies BindingCommandMap
-const CommandDescriptions = Object.fromEntries(
+
+function isCommandMapName(name: string): name is keyof typeof CommandMap {
+  return Object.hasOwn(CommandMap, name)
+}
+
+const CommandDescriptions: Record<string, string> = Object.fromEntries(
   Object.entries(Definitions).map(([name, item]) => [
-    CommandMap[name as keyof typeof CommandMap] ?? name,
+    isCommandMapName(name) ? CommandMap[name] : name,
     item.description,
   ]),
-) as Record<string, string>
+)
 
 export type Keybinds = { [K in KeybindName]: BindingValueSchema }
 export type KeybindOverrides = Partial<Keybinds>
