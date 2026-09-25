@@ -271,7 +271,7 @@ function createThemeInstaller(
     await Flock.withLock(`tui-theme:${dest}`, async () => {
       const save = async () => {
         plugin.themes[name] = info
-        await PluginMeta.setTheme(plugin.id, name, info).catch(() => {})
+        await Effect.runPromise(PluginMeta.setTheme(plugin.id, name, info)).catch(() => {})
       }
 
       const exists = hasTheme(name)
@@ -776,12 +776,14 @@ async function resolveExternalPlugins(list: ConfigPlugin.Origin[], wait: () => P
 async function addExternalPluginEntries(state: RuntimeState, ready: PluginLoad[]) {
   if (!ready.length) return { plugins: [] as PluginEntry[], ok: true }
 
-  const meta = await PluginMeta.touchMany(
-    ready.map((item) => ({
-      spec: item.spec,
-      target: item.target,
-      id: item.id,
-    })),
+  const meta = await Effect.runPromise(
+    PluginMeta.touchMany(
+      ready.map((item) => ({
+        spec: item.spec,
+        target: item.target,
+        id: item.id,
+      })),
+    ),
   ).catch(() => undefined)
 
   const plugins: PluginEntry[] = []
