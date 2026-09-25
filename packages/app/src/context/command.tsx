@@ -3,6 +3,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { type Accessor, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { HashSet, MutableHashSet } from "effect"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { dict as en } from "@/i18n/en"
@@ -13,7 +14,7 @@ const IS_MAC = typeof navigator === "object" && /(Mac|iPod|iPhone|iPad)/.test(na
 const PALETTE_ID = "command.palette"
 export const DEFAULT_PALETTE_KEYBIND = "mod+k,mod+shift+p"
 const SUGGESTED_PREFIX = "suggested."
-const EDITABLE_KEYBIND_IDS = new Set(["terminal.toggle", "terminal.new", "file.attach"])
+const EDITABLE_KEYBIND_IDS = HashSet.make("terminal.toggle", "terminal.new", "file.attach")
 
 type KeyLabel =
   | "common.key.ctrl"
@@ -59,7 +60,7 @@ function signatureFromEvent(event: KeyboardEvent) {
 
 function isAllowedEditableKeybind(id: string | undefined) {
   if (!id) return false
-  return EDITABLE_KEYBIND_IDS.has(actionId(id))
+  return HashSet.has(EDITABLE_KEYBIND_IDS, actionId(id))
 }
 
 export type KeybindConfig = string
@@ -119,11 +120,11 @@ export function addCommandRegistration(registrations: CommandRegistration[], ent
 }
 
 export function activeCommandRegistrations(registrations: CommandRegistration[]) {
-  const keys = new Set<string>()
+  const keys = MutableHashSet.empty<string>()
   return registrations.filter((entry) => {
     if (entry.key === undefined) return true
-    if (keys.has(entry.key)) return false
-    keys.add(entry.key)
+    if (MutableHashSet.has(keys, entry.key)) return false
+    MutableHashSet.add(keys, entry.key)
     return true
   })
 }
@@ -271,7 +272,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
       registrations: [] as CommandRegistration[],
       suspendCount: 0,
     })
-    const warnedDuplicates = new Set<string>()
+    const warnedDuplicates = MutableHashSet.empty<string>()
 
     type CommandCatalog = Record<string, CommandCatalogItem>
     const [catalog, setCatalog, _, catalogReady] = persisted(
@@ -287,19 +288,19 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     }
 
     const registered = createMemo(() => {
-      const seen = new Set<string>()
+      const seen = MutableHashSet.empty<string>()
       const all: CommandOption[] = []
 
       for (const reg of activeCommandRegistrations(store.registrations)) {
         for (const opt of reg.options()) {
-          if (seen.has(opt.id)) {
-            if (import.meta.env.DEV && !warnedDuplicates.has(opt.id)) {
-              warnedDuplicates.add(opt.id)
+          if (MutableHashSet.has(seen, opt.id)) {
+            if (import.meta.env.DEV && !MutableHashSet.has(warnedDuplicates, opt.id)) {
+              MutableHashSet.add(warnedDuplicates, opt.id)
               console.warn(`[command] duplicate command id "${opt.id}" registered; keeping first entry`)
             }
             continue
           }
-          seen.add(opt.id)
+          MutableHashSet.add(seen, opt.id)
           all.push(opt)
         }
       }
@@ -351,7 +352,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     const palette = createMemo(() => {
       const config = settings.keybinds.get(PALETTE_ID) ?? DEFAULT_PALETTE_KEYBIND
       const keybinds = parseKeybind(config)
-      return new Set(keybinds.map((kb) => signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)))
+      return HashSet.fromIterable(keybinds.map((kb) => signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)))
     })
 
     const keymap = createMemo(() => {
@@ -398,7 +399,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
       if (suspended() || dialog.active) return
 
       const sig = signatureFromEvent(event)
-      const isPalette = palette().has(sig)
+      const isPalette = HashSet.has(palette(), sig)
       const option = resolveKeybindOption(keymap().get(sig), event)
       const modified = event.ctrlKey || event.metaKey || event.altKey
       const isTab = event.key === "Tab"
