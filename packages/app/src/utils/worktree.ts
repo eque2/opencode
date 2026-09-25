@@ -1,3 +1,4 @@
+import { Deferred, Effect, MutableHashMap, Option } from "effect"
 import { ScopedKey, type ServerScope } from "@/utils/server-scope"
 
 const normalize = (directory: string) => directory.replace(/[\\/]+$/, "")
@@ -15,62 +16,51 @@ type State =
       message: string
     }
 
-const state = new Map<string, State>()
-const waiters = new Map<
+const state = MutableHashMap.empty<string, State>()
+// One shared waiter per worktree. The Promise is kept, so every wait() call for a worktree gets the same Promise.
+const waiters = MutableHashMap.empty<
   string,
   {
-    promise: Promise<State>
-    resolve: (state: State) => void
+    readonly deferred: Deferred.Deferred<State>
+    readonly promise: Promise<State>
   }
 >()
 
-function deferred() {
-  const box = { resolve: (_: State) => {} }
-  const promise = new Promise<State>((resolve) => {
-    box.resolve = resolve
-  })
-  return { promise, resolve: box.resolve }
+function settle(id: string, next: State) {
+  MutableHashMap.set(state, id, next)
+  const waiter = MutableHashMap.get(waiters, id)
+  if (Option.isNone(waiter)) return
+  MutableHashMap.remove(waiters, id)
+  Deferred.doneUnsafe(waiter.value.deferred, Effect.succeed(next))
 }
 
 export const Worktree = {
   get(scope: ServerScope, directory: string) {
-    return state.get(key(scope, directory))
+    return Option.getOrUndefined(MutableHashMap.get(state, key(scope, directory)))
   },
   pending(scope: ServerScope, directory: string) {
     const id = key(scope, directory)
-    const current = state.get(id)
-    if (current && current.status !== "pending") return
-    state.set(id, { status: "pending" })
+    if (Option.exists(MutableHashMap.get(state, id), (current) => current.status !== "pending")) return
+    MutableHashMap.set(state, id, { status: "pending" })
   },
   ready(scope: ServerScope, directory: string) {
-    const id = key(scope, directory)
-    const next = { status: "ready" } as const
-    state.set(id, next)
-    const waiter = waiters.get(id)
-    if (!waiter) return
-    waiters.delete(id)
-    waiter.resolve(next)
+    settle(key(scope, directory), { status: "ready" })
   },
   failed(scope: ServerScope, directory: string, message: string) {
-    const id = key(scope, directory)
-    const next = { status: "failed", message } as const
-    state.set(id, next)
-    const waiter = waiters.get(id)
-    if (!waiter) return
-    waiters.delete(id)
-    waiter.resolve(next)
+    settle(key(scope, directory), { status: "failed", message })
   },
-  wait(scope: ServerScope, directory: string) {
+  wait(scope: ServerScope, directory: string): Promise<State> {
     const id = key(scope, directory)
-    const current = state.get(id)
-    if (current && current.status !== "pending") return Promise.resolve(current)
+    const current = MutableHashMap.get(state, id)
+    if (Option.isSome(current) && current.value.status !== "pending")
+      return Effect.runPromise(Effect.succeed(current.value))
 
-    const existing = waiters.get(id)
-    if (existing) return existing.promise
+    const existing = MutableHashMap.get(waiters, id)
+    if (Option.isSome(existing)) return existing.value.promise
 
-    const waiter = deferred()
-
-    waiters.set(id, waiter)
-    return waiter.promise
+    const deferred = Deferred.makeUnsafe<State>()
+    const promise = Effect.runPromise(Deferred.await(deferred))
+    MutableHashMap.set(waiters, id, { deferred, promise })
+    return promise
   },
 }
