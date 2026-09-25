@@ -1,4 +1,5 @@
-import { createContext, useContext, type ParentProps, Show } from "solid-js"
+import { Effect, Fiber, Option } from "effect"
+import { createContext, onCleanup, useContext, type ParentProps, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTheme } from "../context/theme"
 import { useTerminalDimensions } from "@opentui/solid"
@@ -56,16 +57,30 @@ function init() {
     currentToast: null as ToastOptions | null,
   })
 
-  let timeoutHandle: NodeJS.Timeout | null = null
+  // Hides the current toast after its duration. A new toast restarts the delay.
+  let hideTimer: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelHide = () => {
+    if (Option.isSome(hideTimer)) Effect.runFork(Fiber.interrupt(hideTimer.value))
+    hideTimer = Option.none()
+  }
+  onCleanup(cancelHide)
 
   const toast = {
     show(options: ToastInput) {
       const toastOptions = { ...options, duration: options.duration ?? 5000 }
       setStore("currentToast", toastOptions)
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-      timeoutHandle = setTimeout(() => {
-        setStore("currentToast", null)
-      }, toastOptions.duration).unref()
+      cancelHide()
+      hideTimer = Option.some(
+        Effect.runFork(
+          Effect.sleep(toastOptions.duration).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                setStore("currentToast", null)
+              }),
+            ),
+          ),
+        ),
+      )
     },
     error: (err: any) => {
       if (err instanceof Error)

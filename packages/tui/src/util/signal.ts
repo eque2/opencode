@@ -1,18 +1,30 @@
+import { Effect, Fiber, Option, Schedule } from "effect"
 import { createEffect, createSignal, on, onCleanup, type Accessor } from "solid-js"
 
 export function createDebouncedSignal<T>(value: T, ms: number): [Accessor<T>, (value: T) => void] {
   const [get, set] = createSignal(value)
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const debounced = (next: T) => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = undefined
-      set(() => next)
-    }, ms)
+  // A new value restarts the delay; cleanup stops an update that is still pending.
+  let timer: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancel = () => {
+    if (Option.isSome(timer)) Effect.runFork(Fiber.interrupt(timer.value))
+    timer = Option.none()
   }
-  onCleanup(() => {
-    if (timer) clearTimeout(timer)
-  })
+  const debounced = (next: T) => {
+    cancel()
+    timer = Option.some(
+      Effect.runFork(
+        Effect.sleep(ms).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              timer = Option.none()
+              set(() => next)
+            }),
+          ),
+        ),
+      ),
+    )
+  }
+  onCleanup(cancel)
   return [get, debounced]
 }
 
@@ -37,13 +49,21 @@ export function createFadeIn(show: Accessor<boolean>, enabled: Accessor<boolean>
       revealed = true
       setAlpha(0)
 
-      const timer = setInterval(() => {
+      // Step the fade every 16 ms until it reaches full opacity.
+      const step = Effect.sync(() => {
         const progress = Math.min((performance.now() - start) / 160, 1)
         setAlpha(progress * progress * (3 - 2 * progress))
-        if (progress >= 1) clearInterval(timer)
-      }, 16)
+        return progress
+      })
+      const fade = Effect.runFork(
+        Effect.sleep("16 millis").pipe(
+          Effect.andThen(step.pipe(Effect.repeat({ schedule: Schedule.spaced("16 millis"), until: (p) => p >= 1 }))),
+        ),
+      )
 
-      onCleanup(() => clearInterval(timer))
+      onCleanup(() => {
+        Effect.runFork(Fiber.interrupt(fade))
+      })
     }),
   )
 

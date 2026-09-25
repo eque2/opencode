@@ -1,8 +1,8 @@
 import { TextareaRenderable, TextAttributes } from "@opentui/core"
-import { Effect, Option } from "effect"
+import { Effect, Fiber, Option } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "./dialog"
-import { Show, createEffect, createSignal, onMount, type JSX } from "solid-js"
+import { Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js"
 import { Spinner } from "../component/spinner"
 import { useTuiConfig } from "../config"
 import { useBindings, useCommandShortcut } from "../keymap"
@@ -49,11 +49,21 @@ export function DialogPrompt(props: DialogPromptProps) {
 
   onMount(() => {
     dialog.setSize("medium")
-    setTimeout(() => {
-      if (!textarea || textarea.isDestroyed) return
-      if (props.busy) return
-      textarea.focus()
-    }, 1)
+    // Focus after the dialog finishes mounting; the pending focus stops if the dialog closes first.
+    const focus = Effect.runFork(
+      Effect.sleep("1 millis").pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (!textarea || textarea.isDestroyed) return
+            if (props.busy) return
+            textarea.focus()
+          }),
+        ),
+      ),
+    )
+    onCleanup(() => {
+      Effect.runFork(Fiber.interrupt(focus))
+    })
     textarea.gotoLineEnd()
   })
 

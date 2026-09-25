@@ -7,6 +7,7 @@ import {
   type Renderable,
 } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
+import { Effect, Fiber, Option } from "effect"
 import { useTheme, selectedForeground } from "../context/theme"
 import { entries, filter, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
@@ -114,6 +115,13 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   let input: InputRenderable
+  // Focus the filter input after it mounts; cleanup stops a focus that is still pending.
+  let pendingFocus: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelPendingFocus = () => {
+    if (Option.isSome(pendingFocus)) Effect.runFork(Fiber.interrupt(pendingFocus.value))
+    pendingFocus = Option.none()
+  }
+  onCleanup(cancelPendingFocus)
 
   const actions = createMemo(() => props.actions ?? [])
   const shownActions = createMemo(() => actions().filter((item) => !item.hidden))
@@ -271,19 +279,37 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     visibilityGeneration++
   })
 
+  // Move after the filtered list renders. A new filter or current value restarts the delay,
+  // and cleanup stops a move that is still pending.
+  let pendingMove: Option.Option<Fiber.Fiber<void>> = Option.none()
+  const cancelPendingMove = () => {
+    if (Option.isSome(pendingMove)) Effect.runFork(Fiber.interrupt(pendingMove.value))
+    pendingMove = Option.none()
+  }
+  onCleanup(cancelPendingMove)
+
   createEffect(
     on([() => store.filter, () => props.current], ([filter, current]) => {
       if (filter.length > 0) resetSelection = true
-      setTimeout(() => {
-        if (filter.length > 0) {
-          moveTo(0, true, false)
-        } else if (current) {
-          const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
-          if (currentIndex >= 0) {
-            moveTo(currentIndex, true)
-          }
-        }
-      }, 0)
+      cancelPendingMove()
+      pendingMove = Option.some(
+        Effect.runFork(
+          Effect.sleep("1 millis").pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (filter.length > 0) {
+                  moveTo(0, true, false)
+                } else if (current) {
+                  const currentIndex = flat().findIndex((opt) => isDeepEqual(opt.value, current))
+                  if (currentIndex >= 0) {
+                    moveTo(currentIndex, true)
+                  }
+                }
+              }),
+            ),
+          ),
+        ),
+      )
     }),
   )
 
@@ -584,11 +610,20 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
               ref={(r) => {
                 input = r
                 input.traits = { status: "FILTER" }
-                setTimeout(() => {
-                  if (!input) return
-                  if (input.isDestroyed) return
-                  input.focus()
-                }, 1)
+                cancelPendingFocus()
+                pendingFocus = Option.some(
+                  Effect.runFork(
+                    Effect.sleep("1 millis").pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          if (!input) return
+                          if (input.isDestroyed) return
+                          input.focus()
+                        }),
+                      ),
+                    ),
+                  ),
+                )
               }}
               placeholder={props.placeholder ?? "Search"}
               placeholderColor={theme.textMuted}
