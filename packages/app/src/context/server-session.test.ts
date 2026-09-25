@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Data, Effect } from "effect"
 import type { retry } from "@opencode-ai/core/util/retry"
 import type { OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
 import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
@@ -7,6 +7,12 @@ import { createServerSession } from "./server-session"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
+
+// A failure the test injects. The optional cause carries an HTTP status the way SDK errors do.
+class TestFailure extends Data.TaggedError("Test.Failure")<{
+  readonly message: string
+  readonly cause?: { readonly status: number }
+}> {}
 
 const session = (id: string, parentID?: string): Session => ({
   id,
@@ -252,7 +258,7 @@ describe("server session", () => {
     const client = {
       session: {
         messages: () => {
-          throw new Error("legacy message endpoint called")
+          throw new TestFailure({ message: "legacy message endpoint called" })
         },
       },
     } as unknown as OpencodeClient
@@ -325,7 +331,7 @@ describe("server session", () => {
     )
     const messageApi = {
       list: () => {
-        throw new Error("current message endpoint called")
+        throw new TestFailure({ message: "current message endpoint called" })
       },
     } as unknown as MessageApi
     const store = createServerSession(client, {} as SessionApi, messageApi, {
@@ -379,7 +385,7 @@ describe("server session", () => {
     const loading = store.sync("child")
     await client.rootRequested(1)
 
-    missing.reject(new Error("Message not found: message-missing", { cause: { status: 404 } }))
+    missing.reject(new TestFailure({ message: "Message not found: message-missing", cause: { status: 404 } }))
     await loading
 
     expect(client.rootRequests).toEqual([{ sessionID: "child", messageID: "message-missing" }])
@@ -407,7 +413,7 @@ describe("server session", () => {
     const loading = store.sync("child", { force: true })
     await client.rootRequested(1)
 
-    missing.reject(new Error(`Message not found: ${parent.id}`, { cause: { status: 404 } }))
+    missing.reject(new TestFailure({ message: `Message not found: ${parent.id}`, cause: { status: 404 } }))
     await loading
 
     expect(store.data.message.child).toEqual([assistant])
@@ -555,7 +561,7 @@ describe("server session", () => {
     await client.rootRequested(1)
 
     store.apply({ id: "evt", type: "message.updated", properties: { sessionID: live.sessionID, info: live } })
-    failed.reject(new Error("retry"))
+    failed.reject(new TestFailure({ message: "retry" }))
     await loading
 
     expect(client.requests).toHaveLength(1)
@@ -577,7 +583,7 @@ describe("server session", () => {
     await client.rootRequested(1)
 
     store.apply({ id: "evt", type: "message.updated", properties: { sessionID: live.sessionID, info: live } })
-    failed.reject(new Error("retry"))
+    failed.reject(new TestFailure({ message: "retry" }))
     await loading
 
     expect(store.data.message.child).toEqual([user, live])
@@ -597,7 +603,7 @@ describe("server session", () => {
     await client.rootRequested(1)
 
     store.apply({ id: "evt", type: "message.updated", properties: { sessionID: live.sessionID, info: live } })
-    failed.reject(new Error("retry"))
+    failed.reject(new TestFailure({ message: "retry" }))
     await loading
 
     expect(store.data.message.child).toEqual([user, assistant, live])
@@ -618,7 +624,7 @@ describe("server session", () => {
     await client.rootRequested(1)
 
     store.apply({ id: "evt", type: "message.part.updated", properties: { sessionID: "child", part: live, time: 2 } })
-    failed.reject(new Error("retry"))
+    failed.reject(new TestFailure({ message: "retry" }))
     await loading
 
     expect(store.data.part[assistant.id]).toEqual([live])
@@ -1129,7 +1135,7 @@ describe("server session", () => {
       type: "message.part.updated",
       properties: { sessionID: "child", part: intermediate, time: 2 },
     })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(2)
     retried.resolve(response([{ info: message, parts: [fetched] }]))
     await loading
@@ -1153,7 +1159,7 @@ describe("server session", () => {
       type: "message.part.delta",
       properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
     })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(2)
     retried.resolve(response([{ info: message, parts: [part] }]))
     await loading
@@ -1176,7 +1182,7 @@ describe("server session", () => {
       type: "message.part.removed",
       properties: { sessionID: "child", messageID: message.id, partID: part.id },
     })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [part] }]))
     await loading
@@ -1195,7 +1201,7 @@ describe("server session", () => {
     const loading = store.sync("child", { force: true })
 
     store.apply({ id: "evt", type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [part] }]))
     await loading
@@ -1217,7 +1223,7 @@ describe("server session", () => {
 
     store.apply({ id: "evt", type: "message.removed", properties: { sessionID: "child", messageID: message.id } })
     store.optimistic.add({ sessionID: "child", message, parts: [optimistic] })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [stale] }]))
     await loading
@@ -1241,7 +1247,7 @@ describe("server session", () => {
       type: "message.part.delta",
       properties: { sessionID: "child", messageID: message.id, partID: part.id, field: "text", delta: " delta" },
     })
-    failed.reject(new Error("failed to fetch"))
+    failed.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(3)
     retried.resolve(response([{ info: message, parts: [] }]))
     await loading
@@ -1261,11 +1267,11 @@ describe("server session", () => {
     const loading = store.sync("child").catch((error) => error)
 
     store.apply({ id: "evt", type: "message.part.updated", properties: { sessionID: "child", part, time: 2 } })
-    first.reject(new Error("failed to fetch"))
+    first.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(2)
-    second.reject(new Error("failed to fetch"))
+    second.reject(new TestFailure({ message: "failed to fetch" }))
     await client.requested(3)
-    third.reject(new Error("failed to fetch"))
+    third.reject(new TestFailure({ message: "failed to fetch" }))
     await loading
 
     expect(store.data.part[message.id]).toBeUndefined()
@@ -1440,7 +1446,7 @@ describe("server session", () => {
     const guard = { active: false }
     const latest = new Proxy(userMessage("message-2", { time: { created: 2 } }), {
       get(target, property, receiver) {
-        if (guard.active && property === "role") throw new Error("cached role accessed")
+        if (guard.active && property === "role") throw new TestFailure({ message: "cached role accessed" })
         return Reflect.get(target, property, receiver)
       },
     })
