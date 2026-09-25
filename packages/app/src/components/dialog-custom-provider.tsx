@@ -13,7 +13,7 @@ import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { type FormState, headerRow, modelRow, validateCustomProvider } from "./dialog-custom-provider-form"
-import { HashMap } from "effect"
+import { HashMap, HashSet } from "effect"
 
 type Props = {
   onBack: () => void
@@ -120,7 +120,7 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
       form,
       t: language.t,
       disabledProviders: serverSync().data.config.disabled_providers ?? [],
-      existingProviderIDs: new Set(HashMap.keys(serverSync().data.provider.all)),
+      existingProviderIDs: HashSet.fromIterable(HashMap.keys(serverSync().data.provider.all)),
     })
     batch(() => {
       setForm("err", output.err)

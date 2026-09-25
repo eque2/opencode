@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HashSet } from "effect"
 import { validateCustomProvider } from "./dialog-custom-provider-form"
 
 const t = (key: string) => key
@@ -20,7 +21,7 @@ describe("validateCustomProvider", () => {
       },
       t,
       disabledProviders: [],
-      existingProviderIDs: new Set(),
+      existingProviderIDs: HashSet.empty(),
     })
 
     expect(result.result).toEqual({
@@ -63,7 +64,7 @@ describe("validateCustomProvider", () => {
       },
       t,
       disabledProviders: ["custom-provider"],
-      existingProviderIDs: new Set(["custom-provider"]),
+      existingProviderIDs: HashSet.make("custom-provider"),
     })
 
     expect(result.result).toBeUndefined()

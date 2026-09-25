@@ -1,3 +1,5 @@
+import { HashSet } from "effect"
+
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 const OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
 
@@ -45,7 +47,7 @@ type ValidateArgs = {
   form: FormState
   t: Translator
   disabledProviders: string[]
-  existingProviderIDs: Set<string>
+  existingProviderIDs: HashSet.HashSet<string>
 }
 
 export function validateCustomProvider(input: ValidateArgs) {
@@ -73,41 +75,35 @@ export function validateCustomProvider(input: ValidateArgs) {
   const disabled = input.disabledProviders.includes(providerID)
   const existsError = idError
     ? undefined
-    : input.existingProviderIDs.has(providerID) && !disabled
+    : HashSet.has(input.existingProviderIDs, providerID) && !disabled
       ? input.t("provider.custom.error.providerID.exists")
       : undefined
 
-  const seenModels = new Set<string>()
-  const models = input.form.models.map((m) => {
+  const models = input.form.models.map((m, index) => {
     const id = m.id.trim()
+    // A row repeats an ID when an earlier row has the same trimmed ID.
     const idError = !id
       ? input.t("provider.custom.error.required")
-      : seenModels.has(id)
+      : input.form.models.findIndex((other) => other.id.trim() === id) < index
         ? input.t("provider.custom.error.duplicate")
-        : (() => {
-            seenModels.add(id)
-            return undefined
-          })()
+        : undefined
     const nameError = !m.name.trim() ? input.t("provider.custom.error.required") : undefined
     return { id: idError, name: nameError }
   })
   const modelsValid = models.every((m) => !m.id && !m.name)
   const modelConfig = Object.fromEntries(input.form.models.map((m) => [m.id.trim(), { name: m.name.trim() }]))
 
-  const seenHeaders = new Set<string>()
-  const headers = input.form.headers.map((h) => {
+  const headers = input.form.headers.map((h, index) => {
     const key = h.key.trim()
     const value = h.value.trim()
 
     if (!key && !value) return {}
+    // Header names are case-insensitive, so a row repeats a name when an earlier row has it in any case.
     const keyError = !key
       ? input.t("provider.custom.error.required")
-      : seenHeaders.has(key.toLowerCase())
+      : input.form.headers.findIndex((other) => other.key.trim().toLowerCase() === key.toLowerCase()) < index
         ? input.t("provider.custom.error.duplicate")
-        : (() => {
-            seenHeaders.add(key.toLowerCase())
-            return undefined
-          })()
+        : undefined
     const valueError = !value ? input.t("provider.custom.error.required") : undefined
     return { key: keyError, value: valueError }
   })

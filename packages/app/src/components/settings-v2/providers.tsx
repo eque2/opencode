@@ -8,6 +8,7 @@ import { createMemo, type Accessor, type Component, For, Show } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerProtocol, useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
+import { HashSet } from "effect"
 import { DialogConnectProvider, useProviderConnectController } from "../dialog-connect-provider"
 import { DialogCustomProvider } from "../dialog-custom-provider"
 import { SettingsListV2 } from "./parts/list"
@@ -53,10 +54,10 @@ export const SettingsProvidersV2: Component<{
   })
 
   const popular = createMemo(() => {
-    const connectedIDs = new Set(connected().map((p) => p.id))
+    const connectedIDs = HashSet.fromIterable(connected().map((p) => p.id))
     const items = providers
       .popular()
-      .filter((p) => !connectedIDs.has(p.id))
+      .filter((p) => !HashSet.has(connectedIDs, p.id))
       .slice()
     items.sort((a, b) => popularProviders.indexOf(a.id) - popularProviders.indexOf(b.id))
     return items
