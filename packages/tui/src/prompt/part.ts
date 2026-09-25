@@ -1,3 +1,4 @@
+import { Array } from "effect"
 import { displaySlice } from "./display"
 
 export function stripPromptPartIDs<Part extends { id: string; messageID: string; sessionID: string }>(part: Part) {
@@ -6,10 +7,10 @@ export function stripPromptPartIDs<Part extends { id: string; messageID: string;
 }
 
 export function expandPastedTextPlaceholders(text: string, parts: readonly unknown[]) {
-  return parts.reduce<string>((result, part) => {
+  return Array.reduce(parts, text, (result, part) => {
     if (!isPastedTextPart(part)) return result
     return result.replace(part.source.text.value, part.text)
-  }, text)
+  })
 }
 
 function isPastedTextPart(part: unknown): part is { type: "text"; text: string; source: { text: { value: string } } } {
