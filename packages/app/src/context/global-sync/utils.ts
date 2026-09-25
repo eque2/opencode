@@ -15,7 +15,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
-import { HashMap, Option, Predicate } from "effect"
+import { DateTime, HashMap, Option, Predicate } from "effect"
 export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -106,7 +106,7 @@ function toProviderModel(model: ModelListOutput["data"][number], providerID: str
     status: model.status,
     options: model.settings ?? {},
     headers: model.headers ?? {},
-    release_date: new Date(model.time.released).toISOString().slice(0, 10),
+    release_date: DateTime.formatIsoDateUtc(DateTime.makeUnsafe(model.time.released)),
     variants: Object.fromEntries(model.variants.map((variant) => [variant.id, variant.settings ?? {}])),
   }
 }
