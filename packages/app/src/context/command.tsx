@@ -193,12 +193,15 @@ export function matchKeybind(keybinds: Keybind[], event: KeyboardEvent): boolean
 }
 
 function displayKeybindParts(kb: Keybind, t?: (key: KeyLabel) => string) {
-  const parts: string[] = []
-
-  if (kb.ctrl) parts.push(IS_MAC ? "⌃" : keyText("common.key.ctrl", t))
-  if (kb.alt) parts.push(IS_MAC ? "⌥" : keyText("common.key.alt", t))
-  if (kb.shift) parts.push(IS_MAC ? "⇧" : keyText("common.key.shift", t))
-  if (kb.meta) parts.push(IS_MAC ? "⌘" : keyText("common.key.meta", t))
+  const modifiers = [
+    { on: kb.ctrl, mac: "⌃", label: "common.key.ctrl" },
+    { on: kb.alt, mac: "⌥", label: "common.key.alt" },
+    { on: kb.shift, mac: "⇧", label: "common.key.shift" },
+    { on: kb.meta, mac: "⌘", label: "common.key.meta" },
+  ] satisfies { on: boolean; mac: string; label: KeyLabel }[]
+  const parts = modifiers.flatMap((modifier) =>
+    modifier.on ? [IS_MAC ? modifier.mac : keyText(modifier.label, t)] : [],
+  )
 
   if (!kb.key) return parts
 
@@ -232,9 +235,8 @@ function displayKeybindParts(kb: Keybind, t?: (key: KeyLabel) => string) {
       : key.length === 1
         ? key.toUpperCase()
         : key.charAt(0).toUpperCase() + key.slice(1))
-  parts.push(displayKey)
 
-  return parts
+  return [...parts, displayKey]
 }
 
 export function formatKeybindParts(config: string, t?: (key: KeyLabel) => string): string[] {
