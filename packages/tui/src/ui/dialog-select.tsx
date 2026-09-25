@@ -682,7 +682,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                                 {option.margin}
                               </box>
                             </Show>
-                            <Option
+                            <OptionRow
                               title={option.title}
                               titleView={option.titleView}
                               footer={flatten() ? (option.category ?? option.footer) : option.footer}
@@ -729,7 +729,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 }
 
-function Option(props: {
+function OptionRow(props: {
   title: string
   titleView?: JSX.Element
   description?: string
