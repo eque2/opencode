@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { Effect } from "effect"
+import { DateTime, Effect } from "effect"
 import { createMemo, createSignal, For } from "solid-js"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { useTheme } from "../context/theme"
@@ -29,7 +29,7 @@ export function DialogDebug() {
     const model = local.model.current()
     return [
       { label: "Version", value: `${InstallationVersion} (${InstallationChannel})` },
-      { label: "Date", value: new Date().toISOString() },
+      { label: "Date", value: DateTime.formatIso(DateTime.nowUnsafe()) },
       { label: "OS", value: describeOS() },
       { label: "Terminal", value: terminal() },
       { label: "Session ID", value: route.data.type === "session" ? route.data.sessionID : "n/a" },
