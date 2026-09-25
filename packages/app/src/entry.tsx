@@ -1,7 +1,7 @@
 // @refresh reload
 
 import * as Sentry from "@sentry/solid"
-import { Option, Result, String as Str } from "effect"
+import { Effect, Option, Result, String as Str } from "effect"
 import { render } from "solid-js/web"
 import { AppBaseProviders, AppInterface } from "@/app"
 import { loadInitialLocale } from "@/context/language"
@@ -57,30 +57,34 @@ const setStorage = (key: string, value: Option.Option<string>) => {
 const readDefaultServerUrl = () => Option.filter(getStorage(DEFAULT_SERVER_URL_KEY), Str.isNonEmpty)
 const writeDefaultServerUrl = (url: Option.Option<string>) => setStorage(DEFAULT_SERVER_URL_KEY, url)
 
-const notify: Platform["notify"] = async (title, description, onClick) => {
-  if (!("Notification" in window)) return
+const notify: Platform["notify"] = (title, description, onClick) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      if (!("Notification" in window)) return
 
-  const permission =
-    Notification.permission === "default"
-      ? await Notification.requestPermission().catch(() => "denied")
-      : Notification.permission
+      // A failed permission request counts as a denial.
+      const permission =
+        Notification.permission === "default"
+          ? yield* Effect.tryPromise(() => Notification.requestPermission()).pipe(Effect.orElseSucceed(() => "denied"))
+          : Notification.permission
 
-  if (permission !== "granted") return
+      if (permission !== "granted") return
 
-  const inView = document.visibilityState === "visible" && document.hasFocus()
-  if (inView) return
+      const inView = document.visibilityState === "visible" && document.hasFocus()
+      if (inView) return
 
-  const notification = new Notification(title, {
-    body: description ?? "",
-    icon: "https://opencode.ai/favicon-96x96-v3.png",
-  })
+      const notification = new Notification(title, {
+        body: description ?? "",
+        icon: "https://opencode.ai/favicon-96x96-v3.png",
+      })
 
-  notification.onclick = () => {
-    window.focus()
-    onClick?.()
-    notification.close()
-  }
-}
+      notification.onclick = () => {
+        window.focus()
+        onClick?.()
+        notification.close()
+      }
+    }),
+  )
 
 const openExternal: Platform["openExternal"] = (value) => {
   if (!URL.canParse(value)) return
@@ -89,9 +93,7 @@ const openExternal: Platform["openExternal"] = (value) => {
   window.open(url.href, "_blank", "noopener,noreferrer")
 }
 
-const restart: Platform["restart"] = async () => {
-  window.location.reload()
-}
+const restart: Platform["restart"] = () => Effect.runPromise(Effect.sync(() => window.location.reload()))
 
 const root = document.getElementById("root")
 if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
@@ -122,8 +124,10 @@ const platform: Platform = {
   restart,
   notify,
   // Platform.getDefaultServer and setDefaultServer use null for "no default server".
-  getDefaultServer: async () =>
-    Option.getOrNull(Option.map(readDefaultServerUrl(), (url) => ServerConnection.Key.make(url))),
+  getDefaultServer: () =>
+    Effect.runPromise(
+      Effect.sync(() => Option.getOrNull(Option.map(readDefaultServerUrl(), (url) => ServerConnection.Key.make(url)))),
+    ),
   setDefaultServer: (url) => writeDefaultServerUrl(Option.fromNullishOr(url)),
 }
 
