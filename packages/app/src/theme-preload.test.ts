@@ -28,7 +28,7 @@ beforeEach(() => {
     value: () =>
       ({
         matches: false,
-      }) as MediaQueryList,
+      }) satisfies Pick<MediaQueryList, "matches">,
     configurable: true,
   })
 })
