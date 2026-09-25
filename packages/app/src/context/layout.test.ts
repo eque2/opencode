@@ -1,19 +1,23 @@
 import { describe, expect, test } from "bun:test"
-import { MutableHashMap } from "effect"
+import { Chunk, MutableHashMap } from "effect"
 import { createRoot, createSignal } from "solid-js"
 import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./layout-helpers"
 
 describe("layout session-key helpers", () => {
   test("couples touch and scroll seed in order", () => {
-    const calls: string[] = []
+    let calls = Chunk.empty<string>()
     const result = ensureSessionKey(
       "dir/a",
-      (key) => calls.push(`touch:${key}`),
-      (key) => calls.push(`seed:${key}`),
+      (key) => {
+        calls = Chunk.append(calls, `touch:${key}`)
+      },
+      (key) => {
+        calls = Chunk.append(calls, `seed:${key}`)
+      },
     )
 
     expect(result).toBe("dir/a")
-    expect(calls).toEqual(["touch:dir/a", "seed:dir/a"])
+    expect(Chunk.toReadonlyArray(calls)).toEqual(["touch:dir/a", "seed:dir/a"])
   })
 
   test("reads dynamic accessor keys lazily", () => {
