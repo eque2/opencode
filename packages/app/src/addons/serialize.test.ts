@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterEach } from "bun:test"
-import { Effect } from "effect"
+import { Chunk, Effect } from "effect"
 import { Terminal, Ghostty } from "ghostty-web"
 import { SerializeAddon } from "./serialize"
 
@@ -12,13 +12,19 @@ beforeAll(() =>
   ),
 )
 
-const terminals: Terminal[] = []
+/** The terminals that afterEach disposes. */
+let terminals = Chunk.empty<Terminal>()
+
+/** Records a terminal for disposal after the test. */
+function track(term: Terminal) {
+  terminals = Chunk.append(terminals, term)
+}
 
 afterEach(() => {
   for (const term of terminals) {
     term.dispose()
   }
-  terminals.length = 0
+  terminals = Chunk.empty()
   document.body.innerHTML = ""
 })
 
@@ -30,7 +36,7 @@ function createTerminal(cols = 80, rows = 24): { term: Terminal; addon: Serializ
   const addon = new SerializeAddon()
   term.loadAddon(addon)
   term.open(container)
-  terminals.push(term)
+  track(term)
 
   return { term, addon, container }
 }
@@ -71,7 +77,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -106,7 +112,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -140,7 +146,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -164,7 +170,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -189,7 +195,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -224,7 +230,7 @@ describe("SerializeAddon", () => {
           expect(cleanSerialized.startsWith("\x1b[1;")).toBe(true)
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, cleanSerialized)
 
           const line = term2.buffer.active.getLine(0)
@@ -269,7 +275,7 @@ describe("SerializeAddon", () => {
           expect(/\x1b\[\d+X/.test(serialized)).toBe(false)
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           for (let row = 0; row < 3; row++) {
@@ -299,7 +305,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize()
 
           const { term: term2 } = createTerminal()
-          terminals.push(term2)
+          track(term2)
           term2.reset()
           yield* writeAndWait(term2, serialized)
 
@@ -322,7 +328,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize()
 
           const { term: term2 } = createTerminal(20, 5)
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           expect(term2.buffer.active.type).toBe("alternate")
@@ -351,7 +357,7 @@ describe("SerializeAddon", () => {
           const serialized = addon.serialize({ range: { start: 0, end: 0 } })
 
           const { term: term2 } = createTerminal(40, 5)
-          terminals.push(term2)
+          track(term2)
           yield* writeAndWait(term2, serialized)
 
           const newLine = term2.buffer.active.getLine(0)
