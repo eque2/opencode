@@ -2,7 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import type { VcsFileStatus } from "@opencode-ai/sdk/v2"
 import { Effect, Option } from "effect"
-import { createMemo, For } from "solid-js"
+import { createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Locale } from "../util/locale"
 import { useTheme } from "../context/theme"
@@ -101,8 +101,12 @@ export function DialogWorkspaceFileChanges(props: {
               <box flexDirection="row" gap={1} minWidth={7} flexShrink={0} justifyContent="flex-end">
                 <text>
                   {" "}
-                  {item.additions ? <span style={{ fg: theme.diffAdded }}>+{item.additions}</span> : null}
-                  {item.deletions ? <span style={{ fg: theme.diffRemoved }}> -{item.deletions}</span> : null}
+                  <Show when={item.additions}>
+                    <span style={{ fg: theme.diffAdded }}>+{item.additions}</span>
+                  </Show>
+                  <Show when={item.deletions}>
+                    <span style={{ fg: theme.diffRemoved }}> -{item.deletions}</span>
+                  </Show>
                 </text>
               </box>
             </box>
