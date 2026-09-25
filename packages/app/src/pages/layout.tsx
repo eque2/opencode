@@ -220,7 +220,7 @@ export default function LegacyLayout(props: ParentProps) {
 
   const updateVersion = () => {
     const state = platform.updater?.state()
-    if (state?.status !== "ready") return
+    if (state?.status !== "ready") return undefined
     return state.version
   }
   const installUpdate = () => void platform.updater?.install()
@@ -325,13 +325,13 @@ export default function LegacyLayout(props: ParentProps) {
 
   const hoverProjectData = createMemo(() => {
     const id = state.hoverProject
-    if (!id) return
+    if (!id) return undefined
     return layout.projects.list().find((project) => project.worktree === id)
   })
 
   const peekProject = createMemo(() => {
     const id = state.peek
-    if (!id) return
+    if (!id) return undefined
     return layout.projects.list().find((project) => project.worktree === id)
   })
 
@@ -578,7 +578,7 @@ export default function LegacyLayout(props: ParentProps) {
 
   const currentProject = createMemo(() => {
     const directory = currentDir()
-    if (!directory) return
+    if (!directory) return undefined
     const key = pathKey(directory)
 
     const projects = layout.projects.list()
@@ -591,11 +591,11 @@ export default function LegacyLayout(props: ParentProps) {
 
     const [child] = serverSync().child(directory, { bootstrap: false })
     const id = child.project
-    if (!id) return
+    if (!id) return undefined
 
     const meta = serverSync().data.project.find((p) => p.id === id)
     const root = meta?.worktree
-    if (!root) return
+    if (!root) return undefined
 
     return projects.find((p) => p.worktree === root)
   })
@@ -633,8 +633,8 @@ export default function LegacyLayout(props: ParentProps) {
     const key = pathKey(directory)
     const direct = store.workspaceName[key] ?? store.workspaceName[directory]
     if (direct) return direct
-    if (!projectId) return
-    if (!branch) return
+    if (!projectId) return undefined
+    if (!branch) return undefined
     return store.workspaceBranchName[projectId]?.[branch]
   }
 
