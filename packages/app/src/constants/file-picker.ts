@@ -1,3 +1,5 @@
+import { HashMap, Option } from "effect"
+
 export const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
 
 export const ACCEPTED_FILE_TYPES = [
@@ -55,7 +57,7 @@ export const ACCEPTED_FILE_TYPES = [
   ".zsh",
 ]
 
-const MIME_EXT = new Map([
+const MIME_EXT = HashMap.make(
   ["image/png", "png"],
   ["image/jpeg", "jpg"],
   ["image/gif", "gif"],
@@ -68,7 +70,7 @@ const MIME_EXT = new Map([
   ["application/x-yaml", "yaml"],
   ["application/xml", "xml"],
   ["application/yaml", "yaml"],
-])
+)
 
 const TEXT_EXT = ["txt", "text", "md", "markdown", "log", "csv"]
 
@@ -77,8 +79,7 @@ export const ACCEPTED_FILE_EXTENSIONS = Array.from(
     ACCEPTED_FILE_TYPES.flatMap((item) => {
       if (item.startsWith(".")) return [item.slice(1)]
       if (item === "text/*") return TEXT_EXT
-      const out = MIME_EXT.get(item)
-      return out ? [out] : []
+      return Option.toArray(HashMap.get(MIME_EXT, item))
     }),
   ),
 ).sort()

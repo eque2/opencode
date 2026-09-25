@@ -1,7 +1,8 @@
+import { Array as Arr, HashMap, MutableHashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 export type FileTreeV2Model = {
-  children: ReadonlyMap<string, readonly FileTreeV2Node[]>
+  children: HashMap.HashMap<string, readonly FileTreeV2Node[]>
   total: number
 }
 
@@ -20,7 +21,7 @@ export function normalizeFileTreeV2Path(value: string) {
 }
 
 export function buildFileTreeV2Model(paths: readonly string[]): FileTreeV2Model {
-  const nodes = new Map<string, FileTreeV2Node>()
+  const nodes = MutableHashMap.empty<string, FileTreeV2Node>()
 
   paths.forEach((value) => {
     const file = normalizeFileTreeV2Path(value)
@@ -29,8 +30,8 @@ export function buildFileTreeV2Model(paths: readonly string[]): FileTreeV2Model 
     const parts = file.split("/")
     parts.forEach((name, index) => {
       const path = parts.slice(0, index + 1).join("/")
-      if (nodes.has(path)) return
-      nodes.set(path, {
+      if (MutableHashMap.has(nodes, path)) return
+      MutableHashMap.set(nodes, path, {
         name,
         path,
         absolute: path,
@@ -41,33 +42,37 @@ export function buildFileTreeV2Model(paths: readonly string[]): FileTreeV2Model 
     })
   })
 
-  const children = new Map<string, FileTreeV2Node[]>()
-  nodes.forEach((node) => {
+  const siblings = Arr.groupBy(MutableHashMap.values(nodes), (node) => {
     const index = node.path.lastIndexOf("/")
-    const parent = index === -1 ? "" : node.path.slice(0, index)
-    const list = children.get(parent)
-    if (list) list.push(node)
-    else children.set(parent, [node])
+    return index === -1 ? "" : node.path.slice(0, index)
   })
-  children.forEach((nodes) =>
-    nodes.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "directory" ? -1 : 1
-      return a.name.localeCompare(b.name)
-    }),
+  const children = HashMap.fromIterable(
+    Object.entries(siblings).map(
+      ([parent, group]) =>
+        [
+          parent,
+          group.toSorted((a, b) => {
+            if (a.type !== b.type) return a.type === "directory" ? -1 : 1
+            return a.name.localeCompare(b.name)
+          }),
+        ] as const,
+    ),
   )
 
-  return { children, total: nodes.size }
+  return { children, total: MutableHashMap.size(nodes) }
 }
 
 export function flattenFileTreeV2(model: FileTreeV2Model, expanded: (path: string) => boolean) {
   const rows: FileTreeV2Row[] = []
-  const stack = (model.children.get("") ?? []).toReversed().map((node) => ({ node, level: 0 }))
+  const stack = Option.getOrElse(HashMap.get(model.children, ""), () => [])
+    .toReversed()
+    .map((node) => ({ node, level: 0 }))
 
   while (stack.length > 0) {
     const row = stack.pop()!
     rows.push(row)
     if (row.node.type !== "directory" || !expanded(row.node.path)) continue
-    const children = model.children.get(row.node.path) ?? []
+    const children = Option.getOrElse(HashMap.get(model.children, row.node.path), () => [])
     for (let index = children.length - 1; index >= 0; index--) {
       stack.push({ node: children[index]!, level: row.level + 1 })
     }

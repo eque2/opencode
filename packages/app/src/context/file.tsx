@@ -1,4 +1,5 @@
 import { batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { MutableHashMap, Option } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { showToast } from "@/utils/toast"
@@ -69,7 +70,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       SessionStateKey.from(serverSDK().scope, SessionRouteKey.fromRoute(base64Encode(sdk().directory), params.id)),
     )
 
-    const inflight = new Map<string, Promise<void>>()
+    const inflight = MutableHashMap.empty<string, Promise<void>>()
     const [store, setStore] = createStore<{
       file: Record<string, FileState>
     }>({
@@ -108,7 +109,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
 
     createEffect(() => {
       scope()
-      inflight.clear()
+      MutableHashMap.clear(inflight)
       resetFileContentLru()
       batch(() => {
         setStore("file", reconcile({}))
@@ -175,8 +176,8 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       const current = store.file[file]
       if (!options?.force && current?.loaded) return Promise.resolve()
 
-      const pending = inflight.get(key)
-      if (pending) return pending
+      const pending = MutableHashMap.get(inflight, key)
+      if (Option.isSome(pending)) return pending.value
 
       setLoading(file)
 
@@ -196,10 +197,10 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           setLoadError(file, errorMessage(e, language.t("error.chain.unknown")))
         })
         .finally(() => {
-          inflight.delete(key)
+          MutableHashMap.remove(inflight, key)
         })
 
-      inflight.set(key, promise)
+      MutableHashMap.set(inflight, key, promise)
       return promise
     }
 

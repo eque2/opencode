@@ -1,4 +1,5 @@
 import { createStore, produce, reconcile } from "solid-js/store"
+import { MutableHashMap, Option } from "effect"
 import type { FileNode } from "@opencode-ai/sdk/v2"
 
 type DirectoryState = {
@@ -25,10 +26,10 @@ export function createFileTreeStore(options: TreeStoreOptions) {
     dir: { "": { expanded: true } },
   })
 
-  const inflight = new Map<string, Promise<void>>()
+  const inflight = MutableHashMap.empty<string, Promise<void>>()
 
   const reset = () => {
-    inflight.clear()
+    MutableHashMap.clear(inflight)
     setTree("node", reconcile({}))
     setTree("dir", reconcile({}))
     setTree("dir", "", { expanded: true })
@@ -46,8 +47,8 @@ export function createFileTreeStore(options: TreeStoreOptions) {
     const current = tree.dir[dir]
     if (!opts?.force && current?.loaded) return Promise.resolve()
 
-    const pending = inflight.get(dir)
-    if (pending) return pending
+    const pending = MutableHashMap.get(inflight, dir)
+    if (Option.isSome(pending)) return pending.value
 
     setTree(
       "dir",
@@ -120,10 +121,10 @@ export function createFileTreeStore(options: TreeStoreOptions) {
         options.onError(e.message)
       })
       .finally(() => {
-        inflight.delete(dir)
+        MutableHashMap.remove(inflight, dir)
       })
 
-    inflight.set(dir, promise)
+    MutableHashMap.set(inflight, dir, promise)
     return promise
   }
 

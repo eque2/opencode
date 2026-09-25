@@ -85,8 +85,8 @@ export function SessionFileListV2(props: {
       virtualizer.scrollToIndex(index, { align: "auto" })
     })
   })
-  const virtualItemByKey = createMemo(
-    () => new Map(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
+  const virtualItemByKey = createMemo(() =>
+    HashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
   const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key))
 
@@ -109,7 +109,7 @@ export function SessionFileListV2(props: {
           const directory = () => (value.includes("/") ? getDirectory(value) : undefined)
           const filename = () => getFilename(value)
           return (
-            <Show when={virtualItemByKey().get(key)}>
+            <Show when={Option.getOrUndefined(HashMap.get(virtualItemByKey(), key))}>
               {(item) => (
                 <div
                   style={{

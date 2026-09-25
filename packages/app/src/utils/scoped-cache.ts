@@ -1,3 +1,5 @@
+import { MutableHashMap, Option } from "effect"
+
 type ScopedCacheOptions<T> = {
   maxEntries?: number
   ttlMs?: number
@@ -11,7 +13,8 @@ type Entry<T> = {
 }
 
 export function createScopedCache<T>(createValue: (key: string) => T, options: ScopedCacheOptions<T> = {}) {
-  const store = new Map<string, Entry<T>>()
+  // MutableHashMap keeps insertion order for string keys, which the LRU prune relies on.
+  const store = MutableHashMap.empty<string, Entry<T>>()
   const now = options.now ?? Date.now
 
   const dispose = (key: string, entry: Entry<T>) => {
@@ -27,63 +30,63 @@ export function createScopedCache<T>(createValue: (key: string) => T, options: S
     if (options.ttlMs === undefined) return
     for (const [key, entry] of store) {
       if (!expired(entry)) continue
-      store.delete(key)
+      MutableHashMap.remove(store, key)
       dispose(key, entry)
     }
   }
 
   const touch = (key: string, entry: Entry<T>) => {
     entry.touchedAt = now()
-    store.delete(key)
-    store.set(key, entry)
+    MutableHashMap.remove(store, key)
+    MutableHashMap.set(store, key, entry)
   }
 
   const prune = () => {
     if (options.maxEntries === undefined) return
-    while (store.size > options.maxEntries) {
-      const key = store.keys().next().value
+    while (MutableHashMap.size(store) > options.maxEntries) {
+      const [key] = MutableHashMap.keys(store)
       if (!key) return
-      const entry = store.get(key)
-      store.delete(key)
-      if (!entry) continue
-      dispose(key, entry)
+      const entry = MutableHashMap.get(store, key)
+      MutableHashMap.remove(store, key)
+      if (Option.isNone(entry)) continue
+      dispose(key, entry.value)
     }
   }
 
   const remove = (key: string) => {
-    const entry = store.get(key)
-    if (!entry) return
-    store.delete(key)
-    dispose(key, entry)
-    return entry.value
+    const entry = MutableHashMap.get(store, key)
+    if (Option.isNone(entry)) return
+    MutableHashMap.remove(store, key)
+    dispose(key, entry.value)
+    return entry.value.value
   }
 
   const peek = (key: string) => {
     sweep()
-    const entry = store.get(key)
-    if (!entry) return
-    if (!expired(entry)) return entry.value
-    store.delete(key)
-    dispose(key, entry)
+    const entry = MutableHashMap.get(store, key)
+    if (Option.isNone(entry)) return
+    if (!expired(entry.value)) return entry.value.value
+    MutableHashMap.remove(store, key)
+    dispose(key, entry.value)
   }
 
   const get = (key: string) => {
     sweep()
-    const entry = store.get(key)
-    if (entry && !expired(entry)) {
-      touch(key, entry)
-      return entry.value
+    const entry = MutableHashMap.get(store, key)
+    if (Option.isSome(entry) && !expired(entry.value)) {
+      touch(key, entry.value)
+      return entry.value.value
     }
-    if (entry) {
-      store.delete(key)
-      dispose(key, entry)
+    if (Option.isSome(entry)) {
+      MutableHashMap.remove(store, key)
+      dispose(key, entry.value)
     }
 
     const created = {
       value: createValue(key),
       touchedAt: now(),
     }
-    store.set(key, created)
+    MutableHashMap.set(store, key, created)
     prune()
     return created.value
   }
@@ -92,7 +95,7 @@ export function createScopedCache<T>(createValue: (key: string) => T, options: S
     for (const [key, entry] of store) {
       dispose(key, entry)
     }
-    store.clear()
+    MutableHashMap.clear(store)
   }
 
   return {

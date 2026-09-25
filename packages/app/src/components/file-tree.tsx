@@ -207,7 +207,7 @@ export default function FileTree(props: {
 
   _filter?: Filter
   _marks?: Set<string>
-  _deeps?: Map<string, number>
+  _deeps?: HashMap.HashMap<string, number>
   _kinds?: HashMap.HashMap<string, Kind>
   _chain?: readonly string[]
 }) {
@@ -261,48 +261,46 @@ export default function FileTree(props: {
   const deeps = createMemo(() => {
     if (props._deeps) return props._deeps
 
-    const out = new Map<string, number>()
-
     const root = props.path
-    if (!(file.tree.state(root)?.expanded ?? false)) return out
+    if (!(file.tree.state(root)?.expanded ?? false)) return HashMap.empty<string, number>()
 
-    const seen = new Set<string>()
-    const stack: { dir: string; lvl: number; i: number; kids: string[]; max: number }[] = []
+    return HashMap.mutate(HashMap.empty<string, number>(), (out) => {
+      const seen = new Set<string>()
+      const stack: { dir: string; lvl: number; i: number; kids: string[]; max: number }[] = []
 
-    const push = (dir: string, lvl: number) => {
-      const id = key(dir)
-      if (seen.has(id)) return
-      seen.add(id)
+      const push = (dir: string, lvl: number) => {
+        const id = key(dir)
+        if (seen.has(id)) return
+        seen.add(id)
 
-      const kids = file.tree
-        .children(dir)
-        .filter((node) => node.type === "directory" && (file.tree.state(node.path)?.expanded ?? false))
-        .map((node) => node.path)
+        const kids = file.tree
+          .children(dir)
+          .filter((node) => node.type === "directory" && (file.tree.state(node.path)?.expanded ?? false))
+          .map((node) => node.path)
 
-      stack.push({ dir, lvl, i: 0, kids, max: lvl })
-    }
-
-    push(root, level - 1)
-
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1]!
-
-      if (top.i < top.kids.length) {
-        const next = top.kids[top.i]!
-        top.i++
-        push(next, top.lvl + 1)
-        continue
+        stack.push({ dir, lvl, i: 0, kids, max: lvl })
       }
 
-      out.set(top.dir, top.max)
-      stack.pop()
+      push(root, level - 1)
 
-      const parent = stack[stack.length - 1]
-      if (!parent) continue
-      parent.max = Math.max(parent.max, top.max)
-    }
+      while (stack.length > 0) {
+        const top = stack[stack.length - 1]!
 
-    return out
+        if (top.i < top.kids.length) {
+          const next = top.kids[top.i]!
+          top.i++
+          push(next, top.lvl + 1)
+          continue
+        }
+
+        HashMap.set(out, top.dir, top.max)
+        stack.pop()
+
+        const parent = stack[stack.length - 1]
+        if (!parent) continue
+        parent.max = Math.max(parent.max, top.max)
+      }
+    })
   })
 
   createEffect(() => {
@@ -391,7 +389,7 @@ export default function FileTree(props: {
       <For each={nodes()}>
         {(node) => {
           const expanded = () => file.tree.state(node.path)?.expanded ?? false
-          const deep = () => deeps().get(node.path) ?? -1
+          const deep = () => Option.getOrElse(HashMap.get(deeps(), node.path), () => -1)
           const kind = () => visibleKind(node, kinds(), marks())
           const active = () => !!kind() && !node.ignored
 

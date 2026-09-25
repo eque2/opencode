@@ -1,9 +1,10 @@
+import { MutableHashMap, Option } from "effect"
 import type { FileContent } from "@opencode-ai/sdk/v2"
 
 const MAX_FILE_CONTENT_ENTRIES = 40
 const MAX_FILE_CONTENT_BYTES = 20 * 1024 * 1024
 
-const lru = new Map<string, number>()
+const lru = MutableHashMap.empty<string, number>()
 let total = 0
 
 export function approxBytes(content: FileContent) {
@@ -15,42 +16,44 @@ export function approxBytes(content: FileContent) {
   return (content.content.length + (content.diff?.length ?? 0) + patchBytes) * 2
 }
 
+// MutableHashMap keeps insertion order for string keys, so removing and
+// setting a path moves it to the most recently used end.
 function setBytes(path: string, nextBytes: number) {
-  const prev = lru.get(path)
-  if (prev !== undefined) total -= prev
-  lru.delete(path)
-  lru.set(path, nextBytes)
+  const prev = MutableHashMap.get(lru, path)
+  if (Option.isSome(prev)) total -= prev.value
+  MutableHashMap.remove(lru, path)
+  MutableHashMap.set(lru, path, nextBytes)
   total += nextBytes
 }
 
 function touch(path: string, bytes?: number) {
-  const prev = lru.get(path)
-  if (prev === undefined && bytes === undefined) return
-  setBytes(path, bytes ?? prev ?? 0)
+  const prev = MutableHashMap.get(lru, path)
+  if (Option.isNone(prev) && bytes === undefined) return
+  setBytes(path, bytes ?? Option.getOrElse(prev, () => 0))
 }
 
 function remove(path: string) {
-  const prev = lru.get(path)
-  if (prev === undefined) return
-  lru.delete(path)
-  total -= prev
+  const prev = MutableHashMap.get(lru, path)
+  if (Option.isNone(prev)) return
+  MutableHashMap.remove(lru, path)
+  total -= prev.value
 }
 
 function reset() {
-  lru.clear()
+  MutableHashMap.clear(lru)
   total = 0
 }
 
 export function evictContentLru(keep: Set<string> | undefined, evict: (path: string) => void) {
   const set = keep ?? new Set<string>()
 
-  while (lru.size > MAX_FILE_CONTENT_ENTRIES || total > MAX_FILE_CONTENT_BYTES) {
-    const path = lru.keys().next().value
+  while (MutableHashMap.size(lru) > MAX_FILE_CONTENT_ENTRIES || total > MAX_FILE_CONTENT_BYTES) {
+    const [path] = MutableHashMap.keys(lru)
     if (!path) return
 
     if (set.has(path)) {
       touch(path)
-      if (lru.size <= set.size) return
+      if (MutableHashMap.size(lru) <= set.size) return
       continue
     }
 
@@ -80,9 +83,9 @@ export function getFileContentBytesTotal() {
 }
 
 export function getFileContentEntryCount() {
-  return lru.size
+  return MutableHashMap.size(lru)
 }
 
 export function hasFileContent(path: string) {
-  return lru.has(path)
+  return MutableHashMap.has(lru, path)
 }

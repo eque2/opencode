@@ -208,9 +208,9 @@ export default function FileTreeV2(props: {
     file.tree.expand(originalPath, live() ? undefined : { list: false })
   }
 
-  const rowByKey = createMemo(() => new Map(rows().map((row) => [row.node.path, row] as const)))
-  const virtualItemByKey = createMemo(
-    () => new Map(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
+  const rowByKey = createMemo(() => HashMap.fromIterable(rows().map((row) => [row.node.path, row] as const)))
+  const virtualItemByKey = createMemo(() =>
+    HashMap.fromIterable(virtualizer.getVirtualItems().map((item) => [item.key, item] as const)),
   )
   const virtualRowKeys = createMemo(() => virtualizer.getVirtualItems().map((item) => item.key))
 
@@ -224,7 +224,7 @@ export default function FileTreeV2(props: {
     >
       <For each={virtualRowKeys()}>
         {(key) => (
-          <Show when={virtualItemByKey().get(key)}>
+          <Show when={Option.getOrUndefined(HashMap.get(virtualItemByKey(), key))}>
             {(item) => (
               <div
                 style={{
@@ -236,7 +236,7 @@ export default function FileTreeV2(props: {
                   transform: `translateY(${item().start}px)`,
                 }}
               >
-                <Show when={rowByKey().get(key as string)}>
+                <Show when={Option.getOrUndefined(HashMap.get(rowByKey(), key as string))}>
                   {(row) => (
                     <Show
                       when={row().node.type === "directory"}
