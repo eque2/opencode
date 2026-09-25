@@ -278,7 +278,8 @@ function tail(text: string, maxLines: number, maxBytes: number) {
 }
 
 const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boolean) {
-  const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
+  const loaded = yield* Effect.promise(() => parsers())
+  const tree = (ps ? loaded.ps : loaded.bash).parse(command)
   if (!tree) return yield* Effect.die(new ParseError({ message: "Failed to parse command" }))
   return tree
 })
@@ -335,32 +336,50 @@ function cmd(shell: string, command: string, cwd: string, env: NodeJS.ProcessEnv
     detached: process.platform !== "win32",
   })
 }
-const parser = lazy(async () => {
-  const { Parser } = await import("web-tree-sitter")
-  const { default: treeWasm } = await import("web-tree-sitter/tree-sitter.wasm" as string, {
-    with: { type: "wasm" },
-  })
+const loadParsers = Effect.gen(function* () {
+  const { Parser } = yield* Effect.promise(() => import("web-tree-sitter"))
+  const { default: treeWasm } = yield* Effect.promise(
+    () =>
+      import("web-tree-sitter/tree-sitter.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
   const treePath = resolveWasm(treeWasm)
-  await Parser.init({
-    locateFile() {
-      return treePath
-    },
-  })
-  const { default: bashWasm } = await import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
-    with: { type: "wasm" },
-  })
-  const { default: psWasm } = await import("tree-sitter-powershell/tree-sitter-powershell.wasm" as string, {
-    with: { type: "wasm" },
-  })
+  yield* Effect.promise(() =>
+    Parser.init({
+      locateFile() {
+        return treePath
+      },
+    }),
+  )
+  const { default: bashWasm } = yield* Effect.promise(
+    () =>
+      import("tree-sitter-bash/tree-sitter-bash.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
+  const { default: psWasm } = yield* Effect.promise(
+    () =>
+      import("tree-sitter-powershell/tree-sitter-powershell.wasm" as string, {
+        with: { type: "wasm" },
+      }),
+  )
   const bashPath = resolveWasm(bashWasm)
   const psPath = resolveWasm(psWasm)
-  const [bashLanguage, psLanguage] = await Promise.all([Language.load(bashPath), Language.load(psPath)])
+  const [bashLanguage, psLanguage] = yield* Effect.all(
+    [Effect.promise(() => Language.load(bashPath)), Effect.promise(() => Language.load(psPath))],
+    { concurrency: "unbounded" },
+  )
   const bash = new Parser()
   bash.setLanguage(bashLanguage)
   const ps = new Parser()
   ps.setLanguage(psLanguage)
   return { bash, ps }
 })
+
+// web-tree-sitter keeps one module per process, and Parser.init replaces it, so the parsers load
+// once per process and every shell tool shares them.
+const parsers = lazy(() => Effect.runPromise(loadParsers))
 
 export const ShellTool = Tool.define(
   ShellID.ToolID,
