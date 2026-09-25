@@ -28,7 +28,7 @@ import {
   UserMessage,
 } from "@opencode-ai/sdk/v2"
 import { Array, Effect, HashMap, HashSet, Option, Predicate } from "effect"
-import { useData } from "../context"
+import { type NormalizedProviderListResponse, useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { type UiI18n, useI18n } from "@opencode-ai/ui/context/i18n"
@@ -497,6 +497,14 @@ function webSearchProviderLabel(provider: unknown, i18n: ReturnType<typeof useI1
   if (provider === "parallel") return i18n.t("ui.tool.websearch.provider", { provider: "Parallel" })
   if (provider === "exa") return i18n.t("ui.tool.websearch.provider", { provider: "Exa" })
   return i18n.t("ui.tool.websearch")
+}
+
+function modelLabel(provider: NormalizedProviderListResponse | undefined, providerID: string, modelID: string) {
+  return Option.fromNullishOr(provider).pipe(
+    Option.flatMap((list) => HashMap.get(list.all, providerID)),
+    Option.flatMap((match) => Option.fromNullishOr(match.models?.[modelID]?.name)),
+    Option.getOrElse(() => modelID),
+  )
 }
 
 export function getToolInfo(
@@ -1236,8 +1244,7 @@ export function UserMessageDisplay(props: {
     const providerID = props.message.model?.providerID
     const modelID = props.message.model?.modelID
     if (!providerID || !modelID) return ""
-    const match = data.store.provider?.all?.get(providerID)
-    return match?.models?.[modelID]?.name ?? modelID
+    return modelLabel(data.store.provider, providerID, modelID)
   })
   const timefmt = createMemo(() => new Intl.DateTimeFormat(i18n.locale(), { timeStyle: "short" }))
 
@@ -1689,8 +1696,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   const model = createMemo(() => {
     if (props.message.role !== "assistant") return ""
     const message = props.message
-    const match = data.store.provider?.all?.get(message.providerID)
-    return match?.models?.[message.modelID]?.name ?? message.modelID
+    return modelLabel(data.store.provider, message.providerID, message.modelID)
   })
 
   const duration = createMemo(() => {
