@@ -463,6 +463,36 @@ const errorMessage = (cause: unknown) => (cause instanceof Error ? cause.message
 /** Parses the file text as JSON without asserting a shape; normalize() checks the rows. */
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
+/** Raised when "Apply to source" cannot reach the playground-css endpoint. */
+class ApplyError extends Data.TaggedError("TimelinePlaygroundApplyError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+/** Request body of POST /__playground/apply-css (packages/storybook/.storybook/playground-css-plugin.ts). */
+const ApplyRequest = Schema.Struct({
+  edits: Schema.Array(
+    Schema.Struct({ file: Schema.String, anchor: Schema.String, prop: Schema.String, value: Schema.String }),
+  ),
+}).annotate({ identifier: "TimelinePlayground.ApplyRequest" })
+
+/** Response of the endpoint. An error response has no `results`. */
+const ApplyResponse = Schema.Struct({
+  results: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        file: Schema.String,
+        prop: Schema.String,
+        ok: Schema.Boolean,
+        error: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+}).annotate({ identifier: "TimelinePlayground.ApplyResponse" })
+
+const encodeApplyRequest = Schema.encodeEffect(Schema.fromJsonString(ApplyRequest))
+const decodeApplyResponse = Schema.decodeUnknownEffect(Schema.fromJsonString(ApplyResponse))
+
 function record(value: unknown): value is Row {
   return !!value && typeof value === "object" && !Array.isArray(value)
 }
@@ -1613,7 +1643,7 @@ function Playground() {
 
   const changedControls = createMemo(() => CSS_CONTROLS.filter((ctrl) => css[ctrl.key] !== undefined && ctrl.source))
 
-  const applyToSource = async () => {
+  const applyToSource = () => {
     const controls = changedControls()
     if (controls.length === 0) return
 
@@ -1625,35 +1655,53 @@ function Playground() {
       return { file: src.file, anchor: src.anchor, prop: src.prop, value: src.format(css[ctrl.key]) }
     })
 
-    try {
-      const resp = await fetch("/__playground/apply-css", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edits }),
-      })
-      const data = await resp.json()
-      const ok = data.results?.filter((r: any) => r.ok).length ?? 0
-      const fail = data.results?.filter((r: any) => !r.ok) ?? []
-      const lines = [`Applied ${ok}/${edits.length} edits`]
-      for (const f of fail) {
-        lines.push(`  FAIL ${f.file} ${f.prop}: ${f.error}`)
-      }
-      setApplyResult(lines.join("\n"))
+    Effect.runFork(
+      Effect.gen(function* () {
+        const body = yield* encodeApplyRequest({ edits })
+        const resp = yield* Effect.tryPromise({
+          try: () =>
+            fetch("/__playground/apply-css", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body,
+            }),
+          catch: (cause) => new ApplyError({ message: errorMessage(cause), cause }),
+        })
+        const text = yield* Effect.tryPromise({
+          try: () => resp.text(),
+          catch: (cause) => new ApplyError({ message: errorMessage(cause), cause }),
+        })
+        const results = (yield* decodeApplyResponse(text)).results ?? []
+        const ok = results.filter((r) => r.ok).length
+        const fail = results.filter((r) => !r.ok)
+        setApplyResult(
+          [`Applied ${ok}/${edits.length} edits`, ...fail.map((f) => `  FAIL ${f.file} ${f.prop}: ${f.error}`)].join(
+            "\n",
+          ),
+        )
+        if (ok !== edits.length) return false
 
-      if (ok === edits.length) {
         batch(() => {
           for (const ctrl of controls) setDefaults(ctrl.key, css[ctrl.key])
           clearCss(controls.map((ctrl) => ctrl.key))
         })
         updateStyle()
+        return true
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            setApplyResult(`Error: ${error.message}`)
+            return false
+          }),
+        ),
+        Effect.ensuring(Effect.sync(() => setApplying(false))),
         // Wait for Vite HMR then re-read computed defaults
-        setTimeout(readDefaults, 500)
-      }
-    } catch (err) {
-      setApplyResult(`Error: ${err}`)
-    } finally {
-      setApplying(false)
-    }
+        Effect.flatMap((applied) =>
+          applied ? Effect.sleep("500 millis").pipe(Effect.andThen(Effect.sync(readDefaults))) : Effect.void,
+        ),
+        Effect.tapDefect((defect) => Effect.logError(defect)),
+      ),
+    )
   }
 
   // ---- Panel collapse state ----
