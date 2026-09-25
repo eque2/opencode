@@ -1,4 +1,4 @@
-import { Chunk, DateTime, Effect, HashMap, HashSet, Option, Predicate, Random } from "effect"
+import { Chunk, DateTime, Effect, HashMap, HashSet, Option, Random } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import {
@@ -471,12 +471,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     },
   ])
 
-  const closePopover = () => setStore({ popover: null, slashMenu: false, slashMenuQuery: "" })
+  const closePopover = () => setStore({ popover: Option.none(), slashMenu: false, slashMenuQuery: "" })
 
   const resetHistoryNavigation = (force = false) => {
     if (!force && (store.historyIndex < 0 || store.applyingHistory)) return
     setStore("historyIndex", -1)
-    setStore("savedPrompt", null)
+    setStore("savedPrompt", Option.none())
   }
 
   const clearEditor = () => {
@@ -839,7 +839,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     })
   }
   const selectPopoverActive = () => {
-    if (store.popover === "at") {
+    if (Option.contains(store.popover, "at")) {
       const items = atFlat()
       if (items.length === 0) return
       const active = atActive()
@@ -848,7 +848,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return
     }
 
-    if (store.popover === "slash") {
+    if (Option.contains(store.popover, "slash")) {
       const items = slashFlat()
       if (items.length === 0) return
       const active = slashActive()
@@ -1013,10 +1013,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
       if (atMatch) {
         atOnInput(atMatch[1])
-        setStore({ popover: "at", slashMenu: false, slashMenuQuery: "" })
+        setStore({ popover: Option.some("at"), slashMenu: false, slashMenuQuery: "" })
       } else if (slashMatch) {
         slashOnInput(slashMatch[1])
-        setStore({ popover: "slash", slashMenu: false, slashMenuQuery: "" })
+        setStore({ popover: Option.some("slash"), slashMenu: false, slashMenuQuery: "" })
       } else {
         closePopover()
       }
@@ -1174,7 +1174,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     prompt,
     editor: () => editorRef,
     isDialogActive: () => !!dialog.active,
-    setDraggingType: (type) => setStore("draggingType", Option.getOrNull(type)),
+    setDraggingType: (type) => setStore("draggingType", type),
     focusEditor: () => {
       editorRef.focus()
       setCursorPosition(editorRef, promptLength(prompt.current()))
@@ -1213,7 +1213,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       setMode: (mode) => setStore("mode", mode),
       setPopover: (popover) => {
         if (!popover) return closePopover()
-        setStore({ popover, slashMenu: false, slashMenuQuery: "" })
+        setStore({ popover: Option.some(popover), slashMenu: false, slashMenuQuery: "" })
       },
       newSessionWorktree: () => props.newSessionWorktree,
       onNewSessionWorktreeReset: props.onNewSessionWorktreeReset,
@@ -1261,7 +1261,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
 
     if (event.key === "Escape") {
-      if (store.popover) {
+      if (Option.isSome(store.popover)) {
         closePopover()
         event.preventDefault()
         event.stopPropagation()
@@ -1313,7 +1313,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
 
-    if (store.popover) {
+    if (Option.isSome(store.popover)) {
       if (event.key === "Tab") {
         selectPopoverActive()
         event.preventDefault()
@@ -1322,12 +1322,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       const nav = event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "Enter"
       const ctrlNav = ctrl && (event.key === "n" || event.key === "p")
       if (nav || ctrlNav) {
-        if (store.popover === "at") {
+        if (Option.contains(store.popover, "at")) {
           atOnKeyDown(event)
           event.preventDefault()
           return
         }
-        if (store.popover === "slash") {
+        if (Option.contains(store.popover, "slash")) {
           slashOnKeyDown(event)
           if (event.key === "ArrowUp" || event.key === "ArrowDown" || ctrlNav) {
             scrollSlashActiveIntoView()
@@ -1339,7 +1339,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
 
     if (ctrl && event.code === "KeyG") {
-      if (store.popover) {
+      if (Option.isSome(store.popover)) {
         closePopover()
         event.preventDefault()
         return
@@ -1432,7 +1432,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   return (
     <div class="relative size-full flex flex-col gap-0">
       <PromptPopover
-        popover={store.popover}
+        popover={Option.getOrNull(store.popover)}
         setSlashPopoverRef={(el) => (slashPopoverRef = el)}
         atFlat={atFlat()}
         atActive={Option.getOrUndefined(Option.fromNullishOr(atActive()))}
@@ -1460,13 +1460,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         onSubmit={handleSubmit}
         classList={{
           "group/prompt-input": true,
-          "border-icon-info-active border-dashed": Predicate.isNotNull(store.draggingType),
+          "border-icon-info-active border-dashed": Option.isSome(store.draggingType),
           [props.class ?? ""]: !!props.class,
         }}
       >
         <PromptDragOverlay
           type={store.draggingType}
-          label={language.t(store.draggingType === "@mention" ? "prompt.dropzone.file.label" : "prompt.dropzone.label")}
+          label={language.t(
+            Option.contains(store.draggingType, "@mention") ? "prompt.dropzone.file.label" : "prompt.dropzone.label",
+          )}
         />
         <PromptContextItems
           items={contextItems()}

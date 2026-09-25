@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLocal, type ModelSelection } from "@/context/local"
@@ -29,7 +30,9 @@ export const useComposerCommands = (input: { model?: ModelSelection } = {}) => {
     const editor = document.querySelector<HTMLElement>('[data-component="prompt-input"]')
     const selection = window.getSelection()
     const cursor =
-      editor && selection?.rangeCount && editor.contains(selection.anchorNode) ? getCursorPosition(editor) : null
+      editor && selection?.rangeCount && editor.contains(selection.anchorNode)
+        ? Option.some(getCursorPosition(editor))
+        : Option.none<number>()
     const restoreComposer = () => {
       // Kobalte restores focus during its teardown effect; defer past it so the
       // composer keeps focus and the caret returns to where the user left it.
@@ -37,7 +40,7 @@ export const useComposerCommands = (input: { model?: ModelSelection } = {}) => {
         const editor = document.querySelector<HTMLElement>('[data-component="prompt-input"]')
         if (!editor) return
         editor.focus()
-        if (cursor !== null) setCursorPosition(editor, cursor)
+        if (Option.isSome(cursor)) setCursorPosition(editor, cursor.value)
       })
     }
     const { DialogSelectModel } = await import("@/components/dialog-select-model")

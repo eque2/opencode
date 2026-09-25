@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import type { Prompt } from "@/context/prompt"
 import {
   canNavigateHistoryAtCursor,
@@ -49,7 +50,7 @@ describe("prompt-input history", () => {
       historyIndex: -1,
       currentPrompt: text("draft"),
       currentComments: [comment("draft")],
-      savedPrompt: null,
+      savedPrompt: Option.none(),
     })
     expect(up.handled).toBe(true)
     if (!up.handled) throw new Error("expected handled")
@@ -86,7 +87,7 @@ describe("prompt-input history", () => {
       historyIndex: -1,
       currentPrompt: text("draft"),
       currentComments: [],
-      savedPrompt: null,
+      savedPrompt: Option.none(),
     })
 
     expect(up.handled).toBe(true)

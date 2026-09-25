@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import type { Prompt } from "@/context/prompt"
 import type { SelectedLineRange } from "@/context/file"
 
@@ -153,19 +154,19 @@ type HistoryNavInput = {
   historyIndex: number
   currentPrompt: Prompt
   currentComments: PromptHistoryComment[]
-  savedPrompt: PromptHistoryEntry | null
+  savedPrompt: Option.Option<PromptHistoryEntry>
 }
 
 type HistoryNavResult =
   | {
       handled: false
       historyIndex: number
-      savedPrompt: PromptHistoryEntry | null
+      savedPrompt: Option.Option<PromptHistoryEntry>
     }
   | {
       handled: true
       historyIndex: number
-      savedPrompt: PromptHistoryEntry | null
+      savedPrompt: Option.Option<PromptHistoryEntry>
       entry: PromptHistoryEntry
       cursor: "start" | "end"
     }
@@ -185,10 +186,10 @@ export function navigatePromptHistory(input: HistoryNavInput): HistoryNavResult 
       return {
         handled: true,
         historyIndex: 0,
-        savedPrompt: {
+        savedPrompt: Option.some({
           prompt: clonePromptParts(input.currentPrompt),
           comments: clonePromptHistoryComments(input.currentComments),
-        },
+        }),
         entry,
         cursor: "start",
       }
@@ -226,24 +227,14 @@ export function navigatePromptHistory(input: HistoryNavInput): HistoryNavResult 
   }
 
   if (input.historyIndex === 0) {
-    if (input.savedPrompt) {
-      return {
-        handled: true,
-        historyIndex: -1,
-        savedPrompt: null,
-        entry: input.savedPrompt,
-        cursor: "end",
-      }
-    }
-
     return {
       handled: true,
       historyIndex: -1,
-      savedPrompt: null,
-      entry: {
+      savedPrompt: Option.none(),
+      entry: Option.getOrElse(input.savedPrompt, () => ({
         prompt: DEFAULT_PROMPT,
         comments: [],
-      },
+      })),
       cursor: "end",
     }
   }

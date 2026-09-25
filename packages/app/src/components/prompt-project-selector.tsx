@@ -9,6 +9,7 @@ import {
   type ComponentProps,
 } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Predicate } from "effect"
 import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
@@ -257,7 +258,7 @@ export function PromptProjectSelector(props: {
       ),
     )
       .filter((element) => !contentRef?.contains(element) && !element.hasAttribute("data-focus-trap"))
-      .findLast((element) => element.offsetParent !== null)
+      .findLast((element) => Predicate.isNotNull(element.offsetParent))
     dismiss.preventTriggerRestore()
     target?.focus()
     queueMicrotask(() => {
