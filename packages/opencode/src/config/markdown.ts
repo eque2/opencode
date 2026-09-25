@@ -1,4 +1,6 @@
-import { Filesystem } from "@/util/filesystem"
+import { Effect } from "effect"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { FrontmatterError } from "@opencode-ai/core/v1/config/error"
 import { ConfigMarkdown as ConfigMarkdownCore } from "@opencode-ai/core/config/markdown"
 
@@ -17,20 +19,31 @@ export function shell(template: string) {
 // frontmatter, we need to fallback to a more permissive parser for those cases
 export const fallbackSanitization = ConfigMarkdownCore.sanitize
 
-export async function parse(filePath: string) {
-  const template = await Filesystem.readText(filePath)
+/** Reads a markdown file and parses its frontmatter. */
+export const read = Effect.fn("ConfigMarkdown.read")(function* (filePath: string) {
+  const fs = yield* FSUtil.Service
+  const template = yield* fs.readFileString(filePath)
+  return yield* Effect.try({
+    try: () => ConfigMarkdownCore.parse(template),
+    catch: (err) =>
+      new FrontmatterError(
+        {
+          path: filePath,
+          message: `${filePath}: Failed to parse YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
+        },
+        { cause: err },
+      ),
+  })
+})
 
-  try {
-    return ConfigMarkdownCore.parse(template)
-  } catch (err) {
-    throw new FrontmatterError(
-      {
-        path: filePath,
-        message: `${filePath}: Failed to parse YAML frontmatter: ${err instanceof Error ? err.message : String(err)}`,
-      },
-      { cause: err },
-    )
-  }
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+/**
+ * Promise form of read for callers outside Effect. It rejects with the FrontmatterError, or with the
+ * read error.
+ */
+export function parse(filePath: string) {
+  return Effect.runPromise(read(filePath).pipe(Effect.provide(fileSystemLayer)))
 }
 
 export * as ConfigMarkdown from "./markdown"

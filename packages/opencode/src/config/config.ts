@@ -6,7 +6,6 @@ import { pathToFileURL } from "url"
 import os from "os"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
-import fsNode from "fs/promises"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { Auth } from "../auth"
@@ -63,52 +62,38 @@ function normalizeLoadedConfig(data: unknown) {
   return copy
 }
 
-async function substituteWellKnownRemoteConfig(input: {
+const substituteWellKnownRemoteConfig = Effect.fnUntraced(function* (input: {
   value: unknown
   dir: string
   source: string
   env: Record<string, string>
 }) {
-  if (!isRecord(input.value) || typeof input.value.url !== "string") return undefined
+  if (!isRecord(input.value) || typeof input.value.url !== "string")
+    return Option.none<{ url: string; headers: Record<string, string> | undefined }>()
 
-  const url = await ConfigVariable.substitute({
-    text: input.value.url,
-    type: "virtual",
-    dir: input.dir,
-    source: input.source,
-    env: input.env,
-  })
+  const substitute = (text: string) =>
+    ConfigVariable.substitute({
+      text,
+      type: "virtual",
+      dir: input.dir,
+      source: input.source,
+      env: input.env,
+    })
+  const url = yield* substitute(input.value.url)
   const headers = isRecord(input.value.headers)
     ? Object.fromEntries(
-        await Promise.all(
-          Object.entries(input.value.headers)
-            .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-            .map(async ([key, value]) => [
-              key,
-              await ConfigVariable.substitute({
-                text: value,
-                type: "virtual",
-                dir: input.dir,
-                source: input.source,
-                env: input.env,
-              }),
-            ]),
+        yield* Effect.forEach(
+          Object.entries(input.value.headers).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+          ([key, value]) => substitute(value).pipe(Effect.map((text) => [key, text] as const)),
+          { concurrency: "unbounded" },
         ),
       )
     : undefined
 
-  return { url, headers }
-}
-
-async function resolveLoadedPlugins<T extends { plugin?: ConfigPluginV1.Spec[] }>(config: T, filepath: string) {
-  if (!config.plugin) return config
-  for (let i = 0; i < config.plugin.length; i++) {
-    // Normalize path-like plugin specs while we still know which config file declared them.
-    // This prevents `./plugin.ts` from being reinterpreted relative to some later merge location.
-    config.plugin[i] = await ConfigPlugin.resolvePluginSpec(config.plugin[i], filepath)
-  }
-  return config
-}
+  return Option.some({ url, headers })
+})
 
 // OPENCODE_CONFIG_CONTENT is read live, as the former process.env read was: tests and hosts set it
 // after start. An empty value counts as not set.
@@ -241,25 +226,26 @@ const layer = Layer.effect(
       env?: Record<string, string>,
     ) {
       const source = "path" in options ? options.path : options.source
-      const expanded = yield* Effect.promise(() =>
-        ConfigVariable.substitute(
-          "path" in options
-            ? { text, type: "path", path: options.path, env }
-            : { text, type: "virtual", ...options, env },
-        ),
-      )
+      const expanded = yield* ConfigVariable.substitute(
+        "path" in options ? { text, type: "path", path: options.path, env } : { text, type: "virtual", ...options, env },
+      ).pipe(Effect.provideService(FSUtil.Service, fs))
       const parsed = ConfigParse.jsonc(expanded, source)
       const data = yield* decodeConfig(parsed, source)
       if (!("path" in options)) return data
 
-      yield* Effect.promise(() => resolveLoadedPlugins(data, options.path))
+      if (data.plugin) {
+        // Normalize path-like plugin specs while we still know which config file declared them.
+        // This prevents `./plugin.ts` from being reinterpreted relative to some later merge location.
+        data.plugin = yield* Effect.forEach(data.plugin, (plugin) => ConfigPlugin.resolvePluginSpec(plugin, options.path))
+      }
       if (!data.$schema) {
         data.$schema = "https://opencode.ai/config.json"
         const updated = text.replace(/^\s*\{/, '{\n  "$schema": "https://opencode.ai/config.json",')
         yield* fs.writeFileString(options.path, updated).pipe(Effect.catch(() => Effect.void))
       }
       return data
-    })
+      // A substitution failure was a defect before (a rejected Promise); keep it one.
+    }, Effect.orDie)
 
     const loadFile = Effect.fnUntraced(function* (filepath: string, env?: Record<string, string>) {
       yield* Effect.logInfo("loading", { path: filepath })
@@ -287,18 +273,16 @@ const layer = Layer.effect(
 
       const legacy = path.join(Global.Path.config, "config")
       if (existsSync(legacy)) {
-        yield* Effect.promise(() =>
-          import(pathToFileURL(legacy).href, { with: { type: "toml" } })
-            .then(async (mod) => {
-              const { provider, model, ...rest } = mod.default
-              if (provider && model) result.model = `${provider}/${model}`
-              result["$schema"] = "https://opencode.ai/config.json"
-              result = mergeConfig(result, rest)
-              await fsNode.writeFile(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
-              await fsNode.unlink(legacy)
-            })
-            .catch(() => {}),
-        )
+        yield* Effect.gen(function* () {
+          const mod = yield* Effect.tryPromise(() => import(pathToFileURL(legacy).href, { with: { type: "toml" } }))
+          const { provider, model, ...rest } = mod.default
+          if (provider && model) result.model = `${provider}/${model}`
+          result["$schema"] = "https://opencode.ai/config.json"
+          result = mergeConfig(result, rest)
+          yield* fs.writeFileString(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
+          yield* fs.remove(legacy)
+          // The legacy migration is best effort: any failure, thrown or typed, leaves the config as loaded.
+        }).pipe(Effect.ignoreCause)
       }
 
       return result
@@ -386,22 +370,20 @@ const layer = Layer.effect(
             const wellknownURL = `${url}/.well-known/opencode`
             yield* Effect.logDebug("fetching remote config", { url: wellknownURL })
             const wellknown = yield* fetchRemoteJson(wellknownURL, undefined, ConfigV1.WellKnown, url)
-            const remote = yield* Effect.promise(() =>
-              substituteWellKnownRemoteConfig({
-                value: wellknown.remote_config,
-                dir: url,
-                source: wellknownURL,
-                env: authEnv,
-              }),
-            )
-            const fetchedConfig = remote
+            const remote = yield* substituteWellKnownRemoteConfig({
+              value: wellknown.remote_config,
+              dir: url,
+              source: wellknownURL,
+              env: authEnv,
+            })
+            const fetchedConfig = Option.isSome(remote)
               ? yield* Effect.gen(function* () {
-                  yield* Effect.logDebug("fetching remote config", { url: remote.url })
-                  const data = yield* fetchRemoteJson(remote.url, remote.headers, Schema.Json, url)
+                  yield* Effect.logDebug("fetching remote config", { url: remote.value.url })
+                  const data = yield* fetchRemoteJson(remote.value.url, remote.value.headers, Schema.Json, url)
                   if (isRecord(data) && isRecord(data.config)) return data.config
                   if (isRecord(data)) return data
                   return yield* Effect.die(
-                    new Error(`failed to decode remote config from ${remote.url}: expected object`),
+                    new Error(`failed to decode remote config from ${remote.value.url}: expected object`),
                   )
                 })
               : {}
@@ -484,12 +466,12 @@ const layer = Layer.effect(
             )
           deps.push(dep)
 
-          result.command = mergeDeep(result.command ?? {}, yield* Effect.promise(() => ConfigCommand.load(dir)))
-          result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.load(dir)))
-          result.agent = mergeDeep(result.agent ?? {}, yield* Effect.promise(() => ConfigAgent.loadMode(dir)))
+          result.command = mergeDeep(result.command ?? {}, yield* ConfigCommand.load(dir))
+          result.agent = mergeDeep(result.agent ?? {}, yield* ConfigAgent.load(dir))
+          result.agent = mergeDeep(result.agent ?? {}, yield* ConfigAgent.loadMode(dir))
           // Auto-discovered plugins under `.opencode/plugin(s)` are already local files, so ConfigPlugin.load
           // returns normalized Specs and we only need to attach origin metadata here.
-          const list = yield* Effect.promise(() => ConfigPlugin.load(dir))
+          const list = yield* ConfigPlugin.load(dir)
           yield* mergePluginOrigins(dir, list)
         }
 
@@ -551,13 +533,13 @@ const layer = Layer.effect(
         }
 
         // macOS managed preferences (.mobileconfig deployed via MDM) override everything
-        const managed = yield* Effect.promise(() => ConfigManaged.readManagedPreferences())
-        if (managed) {
+        const managed = yield* ConfigManaged.readManagedPreferences()
+        if (Option.isSome(managed)) {
           result = mergeConfigConcatArrays(
             result,
-            yield* loadConfig(managed.text, {
-              dir: path.dirname(managed.source),
-              source: managed.source,
+            yield* loadConfig(managed.value.text, {
+              dir: path.dirname(managed.value.source),
+              source: managed.value.source,
             }),
           )
         }

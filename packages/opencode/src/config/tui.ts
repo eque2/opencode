@@ -91,16 +91,19 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
       return {
         ...config,
         plugin: yield* Effect.forEach(plugins, (plugin) =>
-          Effect.promise(() => ConfigPlugin.resolvePluginSpec(plugin as ConfigPlugin.Origin["spec"], configFilepath)),
+          ConfigPlugin.resolvePluginSpec(plugin as ConfigPlugin.Origin["spec"], configFilepath),
         ),
       }
     })
 
   const load = (text: string, configFilepath: string): Effect.Effect<Info> =>
     Effect.gen(function* () {
-      const expanded = yield* Effect.promise(() =>
-        ConfigVariable.substitute({ text, type: "path", path: configFilepath, missing: "empty" }),
-      )
+      const expanded = yield* ConfigVariable.substitute({
+        text,
+        type: "path",
+        path: configFilepath,
+        missing: "empty",
+      }).pipe(Effect.provideService(FSUtil.Service, afs))
       const data = ConfigParse.jsonc(expanded, configFilepath)
       if (!isRecord(data)) return {} as Info
       // Flatten a nested "tui" key so users who wrote `{ "tui": { ... } }` inside tui.json
@@ -173,7 +176,7 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
   const directories = yield* ConfigPaths.directories(ctx.directory)
   // OPENCODE_CONFIG reads the ambient ConfigProvider. It is optional, so a ConfigError is a defect.
   const customConfig = yield* FlagConfig.OPENCODE_CONFIG.pipe(Effect.orDie)
-  yield* Effect.promise(() => migrateTuiConfig({ directories, cwd: ctx.directory, customConfig }))
+  yield* migrateTuiConfig({ directories, cwd: ctx.directory, customConfig })
 
   const projectFiles = (yield* ConfigPaths.projectConfigDisabled) ? [] : yield* ConfigPaths.files("tui", ctx.directory)
 
@@ -267,14 +270,15 @@ export const node = LayerNode.make({ service: Service, layer, deps: [Npm.node, F
 
 const { runPromise } = makeRuntime(Service, AppNodeBuilder.build(node))
 
-export async function waitForDependencies() {
-  await runPromise((svc) => svc.waitForDependencies())
+// Promise forms for callers outside Effect.
+export function waitForDependencies() {
+  return runPromise((svc) => svc.waitForDependencies())
 }
 
-export async function get() {
+export function get() {
   return runPromise((svc) => svc.get())
 }
 
-export async function pluginOrigins() {
+export function pluginOrigins() {
   return runPromise((svc) => svc.pluginOrigins())
 }

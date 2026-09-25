@@ -2,7 +2,8 @@ export * as ConfigVariable from "./variable"
 
 import path from "path"
 import os from "os"
-import { Filesystem } from "@/util/filesystem"
+import { Effect } from "effect"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InvalidError } from "@opencode-ai/core/v1/config/error"
 
 type ParseSource =
@@ -31,9 +32,10 @@ function dir(input: ParseSource) {
 }
 
 /** Apply {env:VAR} and {file:path} substitutions to config text. */
-export async function substitute(input: SubstituteInput) {
+export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
+  const fs = yield* FSUtil.Service
   const missing = input.missing ?? "error"
-  let text = input.text.replace(/\{env:([^}]+)\}/g, (_, varName) => {
+  const text = input.text.replace(/\{env:([^}]+)\}/g, (_, varName) => {
     return (input.env?.[varName] ?? process.env[varName]) || ""
   })
 
@@ -64,22 +66,25 @@ export async function substitute(input: SubstituteInput) {
     }
 
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(configDir, filePath)
+    const errMsg = `bad file reference: "${token}"`
     const fileContent = (
-      await Filesystem.readText(resolvedPath).catch((error: NodeJS.ErrnoException) => {
-        if (missing === "empty") return ""
-
-        const errMsg = `bad file reference: "${token}"`
-        if (error.code === "ENOENT") {
-          throw new InvalidError(
-            {
-              path: configSource,
-              message: errMsg + ` ${resolvedPath} does not exist`,
-            },
-            { cause: error },
-          )
-        }
-        throw new InvalidError({ path: configSource, message: errMsg }, { cause: error })
-      })
+      yield* fs.readFileString(resolvedPath).pipe(
+        Effect.catch((error) => {
+          if (missing === "empty") return Effect.succeed("")
+          if (error.reason._tag === "NotFound") {
+            return Effect.fail(
+              new InvalidError(
+                {
+                  path: configSource,
+                  message: errMsg + ` ${resolvedPath} does not exist`,
+                },
+                { cause: error },
+              ),
+            )
+          }
+          return Effect.fail(new InvalidError({ path: configSource, message: errMsg }, { cause: error }))
+        }),
+      )
     ).trim()
 
     out += JSON.stringify(fileContent).slice(1, -1)
@@ -88,4 +93,4 @@ export async function substitute(input: SubstituteInput) {
 
   out += text.slice(cursor)
   return out
-}
+})

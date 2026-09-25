@@ -3,6 +3,7 @@ export * as ConfigManaged from "./managed"
 import { existsSync } from "fs"
 import os from "os"
 import path from "path"
+import { Effect, Option } from "effect"
 import { Process } from "@/util/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
@@ -40,8 +41,9 @@ export function parseManagedPlist(json: string): string {
   return JSON.stringify(raw)
 }
 
-export async function readManagedPreferences() {
-  if (process.platform !== "darwin") return
+/** Reads the macOS managed preferences (.mobileconfig deployed via MDM). Other platforms have none. */
+export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPreferences")(function* () {
+  if (process.platform !== "darwin") return Option.none<{ source: string; text: string }>()
 
   const user = (() => {
     try {
@@ -57,13 +59,15 @@ export async function readManagedPreferences() {
 
   for (const plist of paths) {
     if (!existsSync(plist)) continue
-    const result = await Process.run(["plutil", "-convert", "json", "-o", "-", plist], { nothrow: true })
+    const result = yield* Effect.promise(() =>
+      Process.run(["plutil", "-convert", "json", "-o", "-", plist], { nothrow: true }),
+    )
     if (result.code !== 0) continue
-    return {
+    return Option.some({
       source: `mobileconfig:${plist}`,
       text: parseManagedPlist(result.stdout.toString()),
-    }
+    })
   }
 
-  return
-}
+  return Option.none<{ source: string; text: string }>()
+})

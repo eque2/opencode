@@ -1,10 +1,10 @@
 import path from "path"
 import { type ParseError as JsoncParseError, applyEdits, modify, parse as parseJsonc } from "jsonc-parser"
 import { unique } from "remeda"
-import { Option, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { TuiConfig } from "@opencode-ai/tui/config"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as ConfigPaths from "@/config/paths"
 
 const TUI_SCHEMA_URL = "https://opencode.ai/tui.json"
@@ -27,11 +27,14 @@ interface MigrateInput {
  * into dedicated tui.json files. Migration is performed per-directory and
  * skips only locations where a tui.json already exists.
  */
-export async function migrateTuiConfig(input: MigrateInput) {
-  const opencode = await opencodeFiles(input)
+export const migrateTuiConfig = Effect.fn("TuiConfig.migrate")(function* (input: MigrateInput) {
+  const fs = yield* FSUtil.Service
+  const opencode = yield* opencodeFiles(input)
   for (const file of opencode) {
-    const source = await Filesystem.readText(file).catch(() => undefined)
-    if (!source) continue
+    // A file that does not read, or is empty, is skipped.
+    const read = yield* fs.readFileString(file).pipe(Effect.option)
+    if (Option.isNone(read) || !read.value) continue
+    const source = read.value
     const errors: JsoncParseError[] = []
     const data = parseJsonc(source, errors, { allowTrailingComma: true })
     if (errors.length || !data || typeof data !== "object" || Array.isArray(data)) continue
@@ -48,8 +51,7 @@ export async function migrateTuiConfig(input: MigrateInput) {
     if (extracted.theme === undefined && extracted.keybinds === undefined && !tui) continue
 
     const target = path.join(path.dirname(file), "tui.json")
-    const targetExists = await Filesystem.exists(target)
-    if (targetExists) continue
+    if (yield* fs.existsSafe(target)) continue
 
     const payload: Record<string, unknown> = {
       $schema: TUI_SCHEMA_URL,
@@ -58,15 +60,15 @@ export async function migrateTuiConfig(input: MigrateInput) {
     if (extracted.keybinds !== undefined) payload.keybinds = extracted.keybinds
     if (tui) Object.assign(payload, tui)
 
-    const wrote = await Filesystem.write(target, JSON.stringify(payload, null, 2))
-      .then(() => true)
-      .catch(() => false)
+    const wrote = yield* fs.writeWithDirs(target, JSON.stringify(payload, null, 2)).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    )
     if (!wrote) continue
 
-    const stripped = await backupAndStripLegacy(file, source)
-    if (!stripped) continue
+    yield* backupAndStripLegacy(file, source)
   }
-}
+})
 
 function normalizeTui(data: Record<string, unknown>):
   | {
@@ -87,14 +89,15 @@ function normalizeTui(data: Record<string, unknown>):
     : parsed
 }
 
-async function backupAndStripLegacy(file: string, source: string) {
+const backupAndStripLegacy = Effect.fnUntraced(function* (file: string, source: string) {
+  const fs = yield* FSUtil.Service
   const backup = file + ".tui-migration.bak"
-  const hasBackup = await Filesystem.exists(backup)
-  const backed = hasBackup
-    ? true
-    : await Filesystem.write(backup, source)
-        .then(() => true)
-        .catch(() => false)
+  const backed =
+    (yield* fs.existsSafe(backup)) ||
+    (yield* fs.writeWithDirs(backup, source).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    ))
   if (!backed) return false
 
   const text = ["theme", "keybinds", "tui"].reduce((acc, key) => {
@@ -108,26 +111,29 @@ async function backupAndStripLegacy(file: string, source: string) {
     return applyEdits(acc, edits)
   }, source)
 
-  return Filesystem.write(file, text)
-    .then(() => true)
-    .catch(() => false)
-}
-
-async function opencodeFiles(input: MigrateInput) {
-  const files = [
-    ...ConfigPaths.fileInDirectory(Global.Path.config, "opencode"),
-    ...(await Filesystem.findUp(["opencode.json", "opencode.jsonc"], input.cwd, undefined, { rootFirst: true })),
-  ]
-  for (const dir of unique(input.directories)) {
-    files.push(...ConfigPaths.fileInDirectory(dir, "opencode"))
-  }
-  files.push(...Option.toArray(input.customConfig))
-
-  const existing = await Promise.all(
-    unique(files).map(async (file) => {
-      const ok = await Filesystem.exists(file)
-      return ok ? file : undefined
-    }),
+  return yield* fs.writeWithDirs(file, text).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
   )
-  return existing.filter((file): file is string => !!file)
+})
+
+const opencodeFiles = Effect.fnUntraced(function* (input: MigrateInput) {
+  const fs = yield* FSUtil.Service
+  // The project files, root first, as Filesystem.findUp with rootFirst listed them.
+  const projectFiles = ancestors(input.cwd)
+    .toReversed()
+    .flatMap((dir) => ["opencode.json", "opencode.jsonc"].map((name) => path.join(dir, name)))
+  const candidates = unique([
+    ...ConfigPaths.fileInDirectory(Global.Path.config, "opencode"),
+    ...projectFiles,
+    ...unique(input.directories).flatMap((dir) => ConfigPaths.fileInDirectory(dir, "opencode")),
+    ...Option.toArray(input.customConfig),
+  ])
+  return yield* Effect.filter(candidates, (file) => fs.existsSafe(file), { concurrency: "unbounded" })
+})
+
+/** The directory and each of its parents, closest first. */
+function ancestors(dir: string): string[] {
+  const parent = path.dirname(dir)
+  return parent === dir ? [dir] : [dir, ...ancestors(parent)]
 }

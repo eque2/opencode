@@ -1862,8 +1862,8 @@ describe("resolvePluginSpec", () => {
   test("keeps package specs unchanged", async () => {
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "opencode.json")
-    expect(await ConfigPlugin.resolvePluginSpec("oh-my-opencode@2.4.3", file)).toBe("oh-my-opencode@2.4.3")
-    expect(await ConfigPlugin.resolvePluginSpec("@scope/pkg", file)).toBe("@scope/pkg")
+    expect(await Effect.runPromise(ConfigPlugin.resolvePluginSpec("oh-my-opencode@2.4.3", file))).toBe("oh-my-opencode@2.4.3")
+    expect(await Effect.runPromise(ConfigPlugin.resolvePluginSpec("@scope/pkg", file))).toBe("@scope/pkg")
   })
 
   test("resolves windows-style relative plugin directory specs", async () => {
@@ -1878,7 +1878,7 @@ describe("resolvePluginSpec", () => {
     })
 
     const file = path.join(tmp.path, "opencode.json")
-    const hit = await ConfigPlugin.resolvePluginSpec(".\\plugin", file)
+    const hit = await Effect.runPromise(ConfigPlugin.resolvePluginSpec(".\\plugin", file))
     expect(ConfigPlugin.pluginSpecifier(hit)).toBe(pathToFileURL(path.join(tmp.path, "plugin", "index.ts")).href)
   })
 
@@ -1890,7 +1890,7 @@ describe("resolvePluginSpec", () => {
     })
 
     const file = path.join(tmp.path, "opencode.json")
-    const hit = await ConfigPlugin.resolvePluginSpec("./plugin.ts", file)
+    const hit = await Effect.runPromise(ConfigPlugin.resolvePluginSpec("./plugin.ts", file))
     expect(ConfigPlugin.pluginSpecifier(hit)).toBe(pathToFileURL(path.join(tmp.path, "plugin.ts")).href)
   })
 
@@ -1909,7 +1909,7 @@ describe("resolvePluginSpec", () => {
     })
 
     const file = path.join(tmp.path, "opencode.json")
-    const hit = await ConfigPlugin.resolvePluginSpec("./plugin", file)
+    const hit = await Effect.runPromise(ConfigPlugin.resolvePluginSpec("./plugin", file))
     expect(ConfigPlugin.pluginSpecifier(hit)).toBe(pathToFileURL(path.join(tmp.path, "plugin")).href)
   })
 
@@ -1923,7 +1923,7 @@ describe("resolvePluginSpec", () => {
     })
 
     const file = path.join(tmp.path, "opencode.json")
-    const hit = await ConfigPlugin.resolvePluginSpec("./plugin", file)
+    const hit = await Effect.runPromise(ConfigPlugin.resolvePluginSpec("./plugin", file))
     expect(ConfigPlugin.pluginSpecifier(hit)).toBe(pathToFileURL(path.join(tmp.path, "plugin", "index.ts")).href)
   })
 })
