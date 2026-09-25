@@ -460,14 +460,20 @@ function selectionKey(selection: Option.Option<EditorSelection>) {
   ].join("\0")
 }
 
+// Bun's WebSocket constructor takes Bun.WebSocketOptions, which carry request headers. This package loads
+// lib.dom, so bun-types falls back to the lib.dom constructor type, which declares only the protocols argument.
+type HeaderWebSocketConstructor = new (url: string, options?: Bun.WebSocketOptions) => WebSocket
+
 function openEditorSocket(connection: EditorConnection, WebSocketImpl: typeof WebSocket) {
   if (!connection.authToken) return new WebSocketImpl(connection.url)
 
-  return new WebSocketImpl(connection.url, {
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- bun-types WebSocket: with lib.dom loaded, the constructor type omits Bun's (url, Bun.WebSocketOptions) overload, which Bun accepts at run time
+  const HeaderWebSocket = WebSocketImpl as HeaderWebSocketConstructor
+  return new HeaderWebSocket(connection.url, {
     headers: {
       "x-claude-code-ide-authorization": connection.authToken,
     },
-  } as any)
+  })
 }
 
 // A text frame that is not JSON, or JSON that is not a JSON-RPC message, decodes to none.
