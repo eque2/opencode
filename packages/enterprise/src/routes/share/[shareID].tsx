@@ -124,13 +124,14 @@ const getData = query((shareID: string) => {
 
 const pad = (value: number) => value.toString().padStart(2, "0")
 
-// The same text as luxon toFormat("dd MMM yyyy, HH:mm"): local time zone, en-US month names.
+// The text of luxon toFormat("dd MMM yyyy, HH:mm"): local time zone, month name in the runtime locale.
+// Intl gives the stand-alone month form. Luxon took the format form, which differs in a few locales (de).
 function formatCreated(millis: number) {
   return Option.match(DateTime.makeZoned(millis, { timeZone: DateTime.zoneMakeLocal() }), {
     onNone: () => "Invalid DateTime",
     onSome: (created) => {
       const parts = DateTime.toParts(created)
-      const month = DateTime.format(created, { month: "short", locale: "en-US" })
+      const month = DateTime.format(created, { month: "short" })
       return `${pad(parts.day)} ${month} ${parts.year.toString().padStart(4, "0")}, ${pad(parts.hour)}:${pad(parts.minute)}`
     },
   })
