@@ -15,7 +15,7 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
-import { Data, Effect, Schema } from "effect"
+import { Data, Effect, Option, Schema } from "effect"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -80,10 +80,10 @@ export function providerOptions(list: { id: string; name: string }[]): ProviderO
   ]
 }
 
-export function normalizeCustomProviderID(value: string) {
+/** Trims the input and drops an "@ai-sdk/" prefix. The result is none when the id is not a valid provider id. */
+export function normalizeCustomProviderID(value: string): Option.Option<string> {
   const providerID = value.trim().replace(/^@ai-sdk\//, "")
-  if (!CUSTOM_PROVIDER_ID.test(providerID)) return
-  return providerID
+  return CUSTOM_PROVIDER_ID.test(providerID) ? Option.some(providerID) : Option.none()
 }
 
 export function createDialogProviderOptions() {
@@ -106,7 +106,7 @@ export function createDialogProviderOptions() {
     if (value === null) return
 
     const providerID = normalizeCustomProviderID(value)
-    if (providerID) return providerID
+    if (Option.isSome(providerID)) return providerID.value
 
     toast.show({
       variant: "error",
