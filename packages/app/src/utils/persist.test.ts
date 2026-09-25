@@ -20,7 +20,7 @@ function storageFailure(key: string, operation: StorageOperation): Option.Option
 
 function failStorage(key: string, operation: StorageOperation) {
   const failure = storageFailure(key, operation)
-  // eslint-disable-next-line effect/no-throw-use-effect -- the DOM Storage API reports quota and access failures only by throwing; this fake reproduces that contract
+  // eslint-disable-next-line effect/no-throw-use-effect -- (a) the DOM Storage API reports quota and access failures only by throwing; this fake reproduces that contract
   if (Option.isSome(failure)) throw failure.value
 }
 
