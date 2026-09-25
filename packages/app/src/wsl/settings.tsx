@@ -28,7 +28,7 @@ export function AddServerMenu(props: { onAddServer: () => void }) {
   const dialog = useDialog()
   const language = useLanguage()
   const openAddWsl = () => {
-    dialog.push(() => <DialogAddWslServer />)
+    void dialog.push(() => <DialogAddWslServer />)
   }
   return (
     <Show
