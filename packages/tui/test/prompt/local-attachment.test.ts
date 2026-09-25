@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Data, Effect, Option } from "effect"
 import path from "node:path"
 import { readLocalAttachment, readLocalAttachmentWith } from "../../src/component/prompt/local-attachment"
 import type { LocalFiles } from "../../src/component/prompt/local-attachment"
 import { tmpdir } from "../fixture/fixture"
+
+class ReadFailed extends Data.TaggedError("ReadFailed")<{ readonly path: string }> {}
 
 function files(input: { mime: string; text?: string; bytes?: Uint8Array }): LocalFiles {
   return {
@@ -41,7 +43,7 @@ describe("prompt local attachments", () => {
       await read(
         {
           ...files({ mime: "image/png" }),
-          readBytes: () => Effect.fail(new Error("missing")),
+          readBytes: (file) => Effect.fail(new ReadFailed({ path: file })),
         },
         "/tmp/missing.png",
       ),
