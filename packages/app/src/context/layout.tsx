@@ -1,4 +1,4 @@
-import { Predicate } from "effect"
+import { DateTime, Predicate } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -214,7 +214,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         if (typeof review.panelOpened === "boolean") return review
 
         const opened =
-          Predicate.isObject(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : DEFAULT_REVIEW_PANEL_OPENED
+          Predicate.isObject(fileTree) && typeof fileTree.opened === "boolean"
+            ? fileTree.opened
+            : DEFAULT_REVIEW_PANEL_OPENED
         return {
           ...review,
           panelOpened: opened,
@@ -381,7 +383,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     function touch(sessionKey: string) {
       usage.active = sessionKey
-      usage.used.set(sessionKey, Date.now())
+      usage.used.set(sessionKey, DateTime.toEpochMillis(DateTime.nowUnsafe()))
 
       if (!ready()) return
       if (usage.pruned) return
@@ -623,7 +625,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       handoff: {
         tabs: createMemo(() => store.handoff?.tabs),
         setTabs(dir: string, id: string) {
-          setStore("handoff", "tabs", { scope: serverSdk().scope, dir, id, at: Date.now() })
+          setStore("handoff", "tabs", {
+            scope: serverSdk().scope,
+            dir,
+            id,
+            at: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+          })
         },
         clearTabs() {
           if (!store.handoff?.tabs) return
@@ -765,7 +772,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       },
       pendingMessage: {
         set(sessionKey: string, messageID: string) {
-          const at = Date.now()
+          const at = DateTime.toEpochMillis(DateTime.nowUnsafe())
           touch(sessionKey)
           const current = store.sessionView[sessionKey]
           if (!current) {
@@ -802,7 +809,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             }),
           )
 
-          if (Date.now() - at > PENDING_MESSAGE_TTL_MS) return undefined
+          if (DateTime.toEpochMillis(DateTime.nowUnsafe()) - at > PENDING_MESSAGE_TTL_MS) return undefined
           return message
         },
       },
