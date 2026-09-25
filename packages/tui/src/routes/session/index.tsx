@@ -16,6 +16,7 @@ import {
 } from "solid-js"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
+import { HashSet } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -89,7 +90,7 @@ const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
 const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
 const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
-const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+const GO_UPSELL_PROVIDERS: HashSet.HashSet<string> = HashSet.make("opencode", "opencode-go")
 
 export const alwaysSeparate = new WeakSet<BoxRenderable>()
 
@@ -97,7 +98,7 @@ type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
 
 function goUpsellKeys(action: RetryAction) {
   if (!action) return
-  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+  if (!HashSet.has(GO_UPSELL_PROVIDERS, action.provider)) return
   if (action.reason === "free_tier_limit") {
     return {
       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
@@ -2623,7 +2624,7 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
-const toolDisplays = new Set([
+const toolDisplays: HashSet.HashSet<string> = HashSet.make(
   "bash",
   "glob",
   "read",
@@ -2638,10 +2639,10 @@ const toolDisplays = new Set([
   "question",
   "skill",
   "execute",
-])
+)
 
 export function toolDisplay(tool: string) {
-  return toolDisplays.has(tool) ? tool : "generic"
+  return HashSet.has(toolDisplays, tool) ? tool : "generic"
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
