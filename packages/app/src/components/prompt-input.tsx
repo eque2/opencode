@@ -320,7 +320,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       commentCount: commentCount(),
       example: suggest() ? (store.mode === "shell" ? "git status" : language.t(EXAMPLES[store.placeholder])) : "",
       suggest: suggest(),
-      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
+      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params),
     }),
   )
 
@@ -802,14 +802,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
         const prev = node.previousSibling
         const next = node.nextSibling
-        const prevIsBr = prev?.nodeType === Node.ELEMENT_NODE && (prev as HTMLElement).tagName === "BR"
+        const prevIsBr = prev instanceof Element && prev.tagName === "BR"
         return !!prevIsBr && !next
       }
-      if (node.nodeType !== Node.ELEMENT_NODE) return false
-      const el = node as HTMLElement
-      if (el.dataset.type === "file") return true
-      if (el.dataset.type === "agent") return true
-      return el.tagName === "BR"
+      if (!(node instanceof Element)) return false
+      if (node instanceof HTMLElement && node.dataset.type === "file") return true
+      if (node instanceof HTMLElement && node.dataset.type === "agent") return true
+      return node.tagName === "BR"
     })
 
   const renderEditor = (parts: Prompt) => {
@@ -825,7 +824,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
 
     const last = editorRef.lastChild
-    if (last?.nodeType === Node.ELEMENT_NODE && (last as HTMLElement).tagName === "BR") {
+    if (last instanceof Element && last.tagName === "BR") {
       editorRef.appendChild(document.createTextNode("\u200B"))
     }
   }
@@ -946,32 +945,31 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         buffer += node.textContent ?? ""
         return
       }
-      if (node.nodeType !== Node.ELEMENT_NODE) return
+      if (!(node instanceof Element)) return
 
-      const el = node as HTMLElement
-      if (el.dataset.type === "file") {
+      if (node instanceof HTMLElement && node.dataset.type === "file") {
         flushText()
-        pushFile(el)
+        pushFile(node)
         return
       }
-      if (el.dataset.type === "agent") {
+      if (node instanceof HTMLElement && node.dataset.type === "agent") {
         flushText()
-        pushAgent(el)
+        pushAgent(node)
         return
       }
-      if (el.tagName === "BR") {
+      if (node.tagName === "BR") {
         buffer += "\n"
         return
       }
 
-      for (const child of Array.from(el.childNodes)) {
+      for (const child of Array.from(node.childNodes)) {
         visit(child)
       }
     }
 
     const children = Array.from(editorRef.childNodes)
     children.forEach((child, index) => {
-      const isBlock = child.nodeType === Node.ELEMENT_NODE && ["DIV", "P"].includes((child as HTMLElement).tagName)
+      const isBlock = child instanceof Element && ["DIV", "P"].includes(child.tagName)
       visit(child)
       if (isBlock && index < children.length - 1) {
         buffer += "\n"
@@ -1091,7 +1089,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           }
         }
         if (last.nodeType !== Node.TEXT_NODE) {
-          const isBreak = last.nodeType === Node.ELEMENT_NODE && (last as HTMLElement).tagName === "BR"
+          const isBreak = last instanceof Element && last.tagName === "BR"
           const next = last.nextSibling
           const emptyText = next?.nodeType === Node.TEXT_NODE && (next.textContent ?? "") === ""
           if (isBreak && (!next || emptyText)) {

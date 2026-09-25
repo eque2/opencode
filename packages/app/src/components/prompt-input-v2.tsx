@@ -6,7 +6,7 @@ import { Icon } from "@opencode-ai/ui/v2/icon"
 import { KeybindV2 } from "@opencode-ai/ui/v2/keybind-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
-import { DateTime, Effect, HashMap, Option } from "effect"
+import { DateTime, Effect, HashMap, Option, Schema } from "effect"
 import { createEffect, createMemo, on, Show } from "solid-js"
 import { ModelSelectorPopoverV2 } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaidV2 } from "@/components/dialog-select-model-unpaid-v2"
@@ -33,6 +33,24 @@ import {
   createPromptInputV2State,
   type PromptInputV2Interaction,
 } from "@opencode-ai/session-ui/v2/prompt-input/interaction"
+
+// The history metadata that the V2 controller hands back to restore(): the comment list this composer captured.
+const PromptHistoryComments = Schema.Array(
+  Schema.Struct({
+    id: Schema.String.pipe(Schema.brand("PromptHistoryComment.ID")),
+    path: Schema.String,
+    selection: Schema.Struct({
+      start: Schema.Number,
+      end: Schema.Number,
+      side: Schema.optional(Schema.Literals(["additions", "deletions"])),
+      endSide: Schema.optional(Schema.Literals(["additions", "deletions"])),
+    }),
+    comment: Schema.String,
+    time: Schema.Number,
+    origin: Schema.optional(Schema.Literals(["review", "file"])),
+    preview: Schema.optional(Schema.String),
+  }),
+)
 
 export type PromptInputV2ComposerProps = {
   class?: string
@@ -139,12 +157,12 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       commentCount: commentCount(),
       example: mode() === "shell" ? "git status" : "",
       suggest: false,
-      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
+      t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params),
     }),
   )
   const designPlaceholder = () =>
     promptDesignPlaceholder(mode(), placeholder(), (key, params) =>
-      language.t(key as Parameters<typeof language.t>[0], params as never),
+      language.t(key as Parameters<typeof language.t>[0], params),
     )
 
   const historyComments = () => {
@@ -179,7 +197,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       ]
     })
   }
-  const restoreHistoryComments = (items: PromptHistoryComment[]) => {
+  const restoreHistoryComments = (items: ReadonlyArray<PromptHistoryComment>) => {
     comments.replace(
       items.map((item) => ({
         id: item.id,
@@ -343,7 +361,9 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
         }),
       add: (value, mode) => history.add(value, mode, mode === "shell" ? [] : historyComments()),
       capture: historyComments,
-      restore: (metadata) => restoreHistoryComments(metadata as PromptHistoryComment[]),
+      restore: (metadata) => {
+        if (Schema.is(PromptHistoryComments)(metadata)) restoreHistoryComments(metadata)
+      },
     },
     commands,
     context,
@@ -373,8 +393,9 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       if (item) openComment(item, props, sync, layout, files, comments)
     },
     onEditor(element) {
-      editor = element as HTMLDivElement
-      props.ref?.(editor)
+      if (!(element instanceof HTMLDivElement)) return
+      editor = element
+      props.ref?.(element)
     },
     onSuggestionSelect(item) {
       if (item.kind !== "command") return
@@ -433,7 +454,6 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       },
     },
   })
-  Object.defineProperty(controller, "model", { get: () => props.controls.model })
 
   command.register("prompt-input", () => [
     {
@@ -490,7 +510,12 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     ),
   )
 
-  return controller as PromptInputV2ComposerController
+  return {
+    ...controller,
+    get model() {
+      return props.controls.model
+    },
+  }
 }
 
 function PromptInputV2ModelControl(props: {

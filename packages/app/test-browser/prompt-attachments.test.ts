@@ -113,11 +113,7 @@ test("rejects a duplicate native clipboard attachment in the V2 prompt store", a
       onError: () => undefined,
       readClipboardImage: async () => files.shift() ?? null,
     })
-    const event = {
-      clipboardData: { items: [], getData: () => "" },
-      preventDefault: () => undefined,
-      stopPropagation: () => undefined,
-    } as unknown as ClipboardEvent
+    const event = new ClipboardEvent("paste", { clipboardData: new DataTransfer() })
 
     await attachments.handlePaste(event)
     await attachments.handlePaste(event)
