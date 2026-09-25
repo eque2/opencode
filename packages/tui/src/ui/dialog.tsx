@@ -221,7 +221,7 @@ export function DialogProvider(props: ParentProps) {
           evt.preventDefault()
           evt.stopPropagation()
         }}
-        onMouseUp={!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? copySelection : undefined}
+        {...(flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT ? {} : { onMouseUp: copySelection })}
       >
         <Show when={value.stack.length}>
           <Dialog onClose={() => value.clear()} size={value.size}>
