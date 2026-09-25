@@ -1,4 +1,4 @@
-import type { AgentPart as MessageAgentPart, FilePart, Part, TextPart } from "@opencode-ai/sdk/v2"
+import type { Part, TextPart } from "@opencode-ai/sdk/v2"
 import type { AgentPart, FileAttachmentPart, ImageAttachmentPart, Prompt } from "@/context/prompt"
 import { createLegacyBlobReference } from "@/utils/draft-store"
 
@@ -80,7 +80,7 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
 
   for (const part of parts) {
     if (part.type === "file") {
-      const filePart = part as FilePart
+      const filePart = part
       const sourceText = filePart.source?.text
       if (sourceText) {
         const value = sourceText.value
@@ -114,7 +114,7 @@ export function extractPromptFromParts(parts: Part[], opts?: { directory?: strin
     }
 
     if (part.type === "agent") {
-      const agentPart = part as MessageAgentPart
+      const agentPart = part
       const source = agentPart.source
       if (!source) continue
       inline.push({
