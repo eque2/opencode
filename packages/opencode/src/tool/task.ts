@@ -61,6 +61,10 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+class TaskError extends Schema.TaggedError<TaskError>()("TaskTool.TaskError", {
+  message: Schema.String,
+}) {}
+
 function renderOutput(input: {
   sessionID: SessionID
   state: "running" | "completed" | "error"
@@ -96,9 +100,9 @@ export const TaskTool = Tool.define(
       const cfg = yield* config.get()
       const runInBackground = params.background === true
       if (runInBackground && !flags.experimentalBackgroundSubagents) {
-        return yield* Effect.fail(
-          new Error("Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true"),
-        )
+        return yield* new TaskError({
+          message: "Background subagents require OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
+        })
       }
 
       const parent = yield* sessions.get(ctx.sessionID)
@@ -109,11 +113,9 @@ export const TaskTool = Tool.define(
         current = yield* sessions.get(current.parentID)
       }
       if (depth >= (cfg.subagent_depth ?? 1)) {
-        return yield* Effect.fail(
-          new Error(
-            `Subagent depth limit reached (${cfg.subagent_depth ?? 1}). Increase "subagent_depth" to allow nested subagents.`,
-          ),
-        )
+        return yield* new TaskError({
+          message: `Subagent depth limit reached (${cfg.subagent_depth ?? 1}). Increase "subagent_depth" to allow nested subagents.`,
+        })
       }
 
       if (!ctx.extra?.bypassAgentCheck) {
@@ -130,7 +132,9 @@ export const TaskTool = Tool.define(
 
       const next = yield* agent.get(params.subagent_type)
       if (!next) {
-        return yield* Effect.fail(new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`))
+        return yield* new TaskError({
+          message: `Unknown agent type: ${params.subagent_type} is not a valid agent type`,
+        })
       }
 
       const session = params.task_id
@@ -175,7 +179,7 @@ export const TaskTool = Tool.define(
         Effect.provideService(Database.Service, database),
         Effect.orDie,
       )
-      if (msg.info.role !== "assistant") return yield* Effect.fail(new Error("Not an assistant message"))
+      if (msg.info.role !== "assistant") return yield* new TaskError({ message: "Not an assistant message" })
       const variant = msg.info.variant
 
       const model = next.model ?? {
@@ -195,7 +199,7 @@ export const TaskTool = Tool.define(
       })
 
       const ops = ctx.extra?.promptOps as TaskPromptOps
-      if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
+      if (!ops) return yield* new TaskError({ message: "TaskTool requires promptOps in ctx.extra" })
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
         const parts = yield* ops.resolvePromptParts(params.prompt)
@@ -215,11 +219,13 @@ export const TaskTool = Tool.define(
             "message" in result.info.error.data && typeof result.info.error.data.message === "string"
               ? result.info.error.data.message
               : result.info.error.name
-          return yield* Effect.fail(new Error(`Subagent failed (task_id: ${nextSession.id}): ${message}`))
+          return yield* new TaskError({ message: `Subagent failed (task_id: ${nextSession.id}): ${message}` })
         }
         const failed = result.parts.findLast((item) => item.type === "tool" && item.state.status === "error")
         if (failed?.type === "tool" && failed.state.status === "error") {
-          return yield* Effect.fail(new Error(`Subagent failed (task_id: ${nextSession.id}): ${failed.state.error}`))
+          return yield* new TaskError({
+            message: `Subagent failed (task_id: ${nextSession.id}): ${failed.state.error}`,
+          })
         }
         return result.parts.findLast((item) => item.type === "text")?.text ?? ""
       })
@@ -336,8 +342,8 @@ export const TaskTool = Tool.define(
               background.waitForPromotion(nextSession.id),
             )
             if (result?.metadata?.background === true) return backgroundResult()
-            if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            if (result?.status === "error") return yield* new TaskError({ message: result.error ?? "Task failed" })
+            if (result?.status === "cancelled") return yield* new TaskError({ message: "Task cancelled" })
             return {
               title: params.description,
               metadata,

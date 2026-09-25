@@ -32,7 +32,7 @@ import { ApplyPatchTool } from "./apply_patch"
 import { Glob } from "@opencode-ai/core/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Option } from "effect"
+import { Effect, Layer, Context, Option, Result } from "effect"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Format } from "../format"
@@ -122,7 +122,7 @@ const layer = Layer.effect(
       Effect.fn("ToolRegistry.state")(function* (ctx) {
         const custom: Tool.Def[] = []
 
-        function fromPlugin(id: string, def: ToolDefinition): Tool.Def {
+        const fromPlugin = Effect.fnUntraced(function* (id: string, def: ToolDefinition) {
           // Plugin tools still expose Zod args publicly; keep that compatibility
           // boxed at the registry boundary and give the LLM the original JSON Schema.
           // Normalize missing args to `{}` once — pre-1.14.49 the code was
@@ -131,11 +131,13 @@ const layer = Layer.effect(
           const entries = Object.entries(args)
           const allZod = entries.every((entry) => isZodType(entry[1]))
           const zodParams = allZod ? z.object(args) : undefined
-          const jsonSchema = zodParams ? zodJsonSchema(zodParams) : legacyJsonSchema(entries)
+          const jsonSchema = zodParams
+            ? yield* Effect.fromResult(zodJsonSchema(zodParams)).pipe(Effect.orDie)
+            : legacyJsonSchema(entries)
           const parameters = zodParams
             ? Schema.declare<unknown>((u): u is unknown => zodParams.safeParse(u).success)
             : Schema.Unknown
-          return {
+          const tool: Tool.Def = {
             id,
             parameters,
             jsonSchema,
@@ -178,7 +180,8 @@ const layer = Layer.effect(
                 }),
               ),
           }
-        }
+          return tool
+        })
 
         const dirs = yield* config.directories()
         const matches = dirs.flatMap((dir) =>
@@ -192,14 +195,14 @@ const layer = Layer.effect(
           const mod = yield* Effect.promise(() => import(pathToFileURL(match).href))
           for (const [id, def] of Object.entries(mod)) {
             if (!isPluginTool(def)) continue
-            custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
+            custom.push(yield* fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
           }
         }
 
         const plugins = yield* plugin.list()
         for (const p of plugins) {
           for (const [id, def] of Object.entries(p.tool ?? {})) {
-            custom.push(fromPlugin(id, def))
+            custom.push(yield* fromPlugin(id, def))
           }
         }
 
@@ -285,9 +288,7 @@ const layer = Layer.effect(
       const ruleset = Permission.merge(input.agent.permission, input.permission ?? [])
       const tools = Permission.visibleTools(yield* mcp.tools(), ruleset)
       if (Object.keys(tools).length === 0) return Option.none<string>()
-      return Option.some(
-        codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)),
-      )
+      return Option.some(codeMode.describeCatalog(tools, Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)))
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
@@ -376,13 +377,21 @@ function legacyJsonSchema(entries: [string, unknown][]): JSONSchema7 {
   }
 }
 
-function zodJsonSchema(schema: z.ZodType): JSONSchema7 {
+class PluginSchemaError extends Schema.TaggedError<PluginSchemaError>()("ToolRegistry.PluginSchemaError", {
+  message: Schema.String,
+}) {}
+
+function zodJsonSchema(schema: z.ZodType): Result.Result<JSONSchema7, PluginSchemaError> {
   const result = normalizeZodJsonSchema(z.toJSONSchema(schema, { io: "input", metadata: zodMetadataRegistry(schema) }))
-  if (!isJsonSchemaObject(result)) throw new Error("plugin tool Zod schema produced a non-object JSON Schema")
+  if (!isJsonSchemaObject(result)) {
+    return Result.fail(new PluginSchemaError({ message: "plugin tool Zod schema produced a non-object JSON Schema" }))
+  }
   const { $defs, ...rest } = result
-  return (
-    $defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs as JSONSchema7["definitions"] } : rest
-  ) as JSONSchema7
+  return Result.succeed(
+    ($defs && isJsonSchemaObject($defs)
+      ? { ...rest, definitions: $defs as JSONSchema7["definitions"] }
+      : rest) as JSONSchema7,
+  )
 }
 
 function zodMetadataRegistry(schema: z.ZodType) {

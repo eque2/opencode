@@ -19,6 +19,14 @@ export const Parameters = Schema.Struct({
   }),
 })
 
+class McpToolError extends Schema.TaggedError<McpToolError>()("CodeMode.McpToolError", {
+  message: Schema.String,
+}) {}
+
+class ExecutionError extends Schema.TaggedError<ExecutionError>()("CodeMode.ExecutionError", {
+  message: Schema.String,
+}) {}
+
 type CallEntry = { tool: string; status: "running" | "completed" | "error"; input?: Record<string, unknown> }
 
 type Metadata = {
@@ -154,8 +162,8 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
   const result: CallToolResult = yield* Effect.gen(function* () {
     yield* input.ctx.ask({ permission: input.entry.key, metadata: {}, patterns: ["*"], always: ["*"] })
     // Deliberately mirrors McpCatalog.convertTool's transport call so the MCP service stays free of tool-loop concerns.
-    return yield* Effect.promise(async () => {
-      const raw = await input.entry.tool.client.callTool(
+    const raw = yield* Effect.promise(() =>
+      input.entry.tool.client.callTool(
         { name: input.entry.tool.def.name, arguments: input.args },
         CallToolResultSchema,
         {
@@ -165,16 +173,18 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
           // The MCP SDK only sends a progress token when this hook is present, enabling timeout resets.
           onprogress: () => {},
         },
-      )
-      if (raw.isError)
-        throw new Error(
+      ),
+    )
+    if (raw.isError) {
+      return yield* new McpToolError({
+        message:
           raw.content
             .flatMap((item) => (item.type === "text" ? [item.text] : []))
             .filter((text) => text.trim())
             .join("\n\n") || "MCP tool returned an error",
-        )
-      return raw
-    })
+      })
+    }
+    return raw
   }).pipe(
     Effect.withSpan("Tool.execute", {
       attributes: {
@@ -288,7 +298,7 @@ export const CodeModeTool = Tool.define(
             } satisfies Tool.ExecuteResult<Metadata>
           }
           const hints = (result.error.suggestions ?? []).filter((hint) => !result.error.message.includes(hint))
-          return yield* Effect.fail(new Error(withLogs([result.error.message, ...hints].join("\n"))))
+          return yield* new ExecutionError({ message: withLogs([result.error.message, ...hints].join("\n")) })
         }
 
         // The interpreter validates returned values as plain JSON, so stringify cannot throw;

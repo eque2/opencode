@@ -1,4 +1,4 @@
-import { HashSet, Schema } from "effect"
+import { Array, HashSet, Option, Result, Schema } from "effect"
 import DESCRIPTION from "./shell.txt"
 import { PositiveInt } from "@opencode-ai/core/schema"
 import { Global } from "@opencode-ai/core/global"
@@ -25,12 +25,23 @@ export function parameterSchema() {
 export const Parameters = parameterSchema()
 export type Parameters = Schema.Schema.Type<typeof Parameters>
 
-function renderPrompt(template: string, values: Record<string, string>) {
-  return template.replace(/\$\{(\w+)\}/g, (_, key: string) => {
-    const value = values[key]
-    if (value === undefined) throw new Error(`Missing shell prompt value: ${key}`)
-    return value
-  })
+export class MissingValueError extends Schema.TaggedError<MissingValueError>()("ShellPrompt.MissingValueError", {
+  key: Schema.String,
+}) {
+  override get message() {
+    return `Missing shell prompt value: ${this.key}`
+  }
+}
+
+const PLACEHOLDER = /\$\{(\w+)\}/g
+
+function renderPrompt(template: string, values: Record<string, string>): Result.Result<string, MissingValueError> {
+  const missing = Array.findFirst(
+    Array.fromIterable(template.matchAll(PLACEHOLDER)).map((match) => match[1]),
+    (key) => !Object.hasOwn(values, key),
+  )
+  if (Option.isSome(missing)) return Result.fail(new MissingValueError({ key: missing.value }))
+  return Result.succeed(template.replace(PLACEHOLDER, (_, key: string) => values[key]))
 }
 
 function shellDisplayName(name: string) {
@@ -270,10 +281,12 @@ function profile(name: string, platform: NodeJS.Platform, limits: Limits, defaul
   }
 }
 
+// The tool description and parameters, or MissingValueError when the template names a value
+// that the profile does not supply.
 export function render(name: string, platform: NodeJS.Platform, limits: Limits, defaultTimeoutMs: number) {
   const selected = profile(name, platform, limits, defaultTimeoutMs)
-  return {
-    description: renderPrompt(DESCRIPTION, {
+  return Result.map(
+    renderPrompt(DESCRIPTION, {
       intro: selected.intro,
       os: platform,
       shell: name,
@@ -286,8 +299,8 @@ export function render(name: string, platform: NodeJS.Platform, limits: Limits, 
       createPrInstruction: selected.createPrInstruction,
       createPrExample: selected.createPrExample,
     }),
-    parameters: parameterSchema(),
-  }
+    (description) => ({ description, parameters: parameterSchema() }),
+  )
 }
 
 export * as ShellPrompt from "./prompt"

@@ -1,4 +1,4 @@
-import { Array, Effect, HashSet, Option, Stream } from "effect"
+import { Array, Effect, HashSet, Option, Schema, Stream } from "effect"
 import os from "os"
 import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
@@ -23,6 +23,18 @@ import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
 
 export { Parameters } from "./shell/prompt"
+
+class ParseError extends Schema.TaggedError<ParseError>()("ShellTool.ParseError", {
+  message: Schema.String,
+}) {}
+
+class InvalidTimeoutError extends Schema.TaggedError<InvalidTimeoutError>()("ShellTool.InvalidTimeoutError", {
+  timeout: Schema.Number,
+}) {
+  override get message() {
+    return `Invalid timeout value: ${this.timeout}. Timeout must be a positive number.`
+  }
+}
 
 const MAX_METADATA_LENGTH = 30_000
 const CWD: HashSet.HashSet<string> = HashSet.make("cd", "chdir", "popd", "pushd", "push-location", "set-location")
@@ -267,7 +279,7 @@ function tail(text: string, maxLines: number, maxBytes: number) {
 
 const parse = Effect.fn("ShellTool.parse")(function* (command: string, ps: boolean) {
   const tree = yield* Effect.promise(() => parser().then((p) => (ps ? p.ps : p.bash).parse(command)))
-  if (!tree) throw new Error("Failed to parse command")
+  if (!tree) return yield* Effect.die(new ParseError({ message: "Failed to parse command" }))
   return tree
 })
 
@@ -627,7 +639,9 @@ export const ShellTool = Tool.define(
         const shell = yield* Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
-        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
+        const prompt = yield* Effect.fromResult(
+          ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs),
+        ).pipe(Effect.orDie)
         yield* Effect.logInfo("shell tool using shell", { shell })
 
         return {
@@ -640,7 +654,7 @@ export const ShellTool = Tool.define(
                 ? yield* resolvePath(params.workdir, instanceCtx.directory, shell)
                 : instanceCtx.directory
               if (params.timeout !== undefined && params.timeout < 0) {
-                throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
+                return yield* Effect.die(new InvalidTimeoutError({ timeout: params.timeout }))
               }
               const timeout = params.timeout ?? defaultTimeoutMs
               const ps = Shell.ps(shell)
