@@ -1,7 +1,7 @@
 import { useServerSync } from "@/context/server-sync"
 import { decode64 } from "@/utils/base64"
 import { useParams } from "@solidjs/router"
-import { HashSet, Iterable, pipe } from "effect"
+import { HashSet, Iterable } from "effect"
 import { createEffect, createMemo, type Accessor } from "solid-js"
 import { selectProviderCatalog } from "./provider-catalog"
 
@@ -43,16 +43,14 @@ export function useProviders(directory: Accessor<string | undefined>) {
     default: () => providers().default,
     defaultModel: () => providers().defaultModel,
     popular: () =>
-      pipe(
-        providers().all,
+      providers().all.pipe(
         Iterable.map(([, p]) => p),
         Iterable.filter((p) => HashSet.has(popularProviderSet, p.id)),
         (v) => Array.from(v),
       ),
     connected: () => {
       const connected = HashSet.fromIterable(providers().connected)
-      return pipe(
-        providers().all,
+      return providers().all.pipe(
         Iterable.map(([, p]) => p),
         Iterable.filter((p) => HashSet.has(connected, p.id)),
         (v) => Array.from(v),
