@@ -28,7 +28,7 @@ import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { WindowsAppMenu } from "./windows-app-menu"
-import { applyPath, backPath, forwardPath } from "./titlebar-history"
+import { applyPath, backPath, forwardPath, type TitlebarHistory } from "./titlebar-history"
 import { TitlebarTabStrip } from "@/components/titlebar-tab-strip"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -114,10 +114,10 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
   }
   const windowsControlsWidth = () => `${windowsControlsBaseWidth / Math.max(titlebarZoom(), 1)}px`
 
-  const [history, setHistory] = createStore({
-    stack: [] as string[],
+  const [history, setHistory] = createStore<TitlebarHistory>({
+    stack: [],
     index: 0,
-    action: undefined as "back" | "forward" | undefined,
+    action: Option.none(),
   })
 
   const path = () => `${location.pathname}${location.search}${location.hash}`
@@ -152,7 +152,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
       installing,
       label: language.t("titlebar.update"),
       ariaLabel: language.t("toast.update.action.installRestart"),
-      title: version ? language.t("titlebar.updateVersion", { version }) : undefined,
+      ...(version ? { title: language.t("titlebar.updateVersion", { version }) } : {}),
       onInstall: () => props.update?.install(),
     }
   })
@@ -193,7 +193,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
 
   return (
     <header
-      data-slot={useV2Titlebar() ? "titlebar-v2" : undefined}
+      {...(useV2Titlebar() ? { "data-slot": "titlebar-v2" } : {})}
       classList={{
         "shrink-0 relative flex flex-row": true,
         "h-9 bg-v2-background-bg-deep overflow-visible": useV2Titlebar(),
@@ -204,10 +204,14 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
         "min-height": minHeight(),
         // Keep native macOS traffic lights clear even when the desktop window is narrow.
         "padding-left": macTrafficLights() ? `${macTrafficLightsBaseWidth / zoom()}px` : 0,
-        width: windows() ? `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))` : undefined,
-        "max-width": windows() ? `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))` : undefined,
-        // Native Windows caption controls remain on the physical right in both writing directions.
-        "margin-right": windows() ? "auto" : undefined,
+        ...(windows()
+          ? {
+              width: `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))`,
+              "max-width": `env(titlebar-area-width, calc(100vw - ${windowsControlsWidth()}))`,
+              // Native Windows caption controls remain on the physical right in both writing directions.
+              "margin-right": "auto",
+            }
+          : {}),
       }}
       data-tauri-drag-region
     >
@@ -331,12 +335,12 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
               if (route.type === "home") {
                 const selection = layout.home.selection()
                 const conn = global.servers.list().find((item) => ServerConnection.key(item) === selection.server)
-                const project = conn
-                  ? global
-                      .ensureServerCtx(conn)
-                      .projects.list()
-                      .find((item) => item.worktree === selection.directory)
-                  : undefined
+                const project =
+                  conn &&
+                  global
+                    .ensureServerCtx(conn)
+                    .projects.list()
+                    .find((item) => item.worktree === selection.directory)
                 if (conn && project) {
                   openDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
                   return
@@ -434,7 +438,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                     size="large"
                     class="!w-9 shrink-0"
                     icon={<IconV2 name="grid-plus" />}
-                    state={layout.route().type === "home" ? "pressed" : undefined}
+                    {...(layout.route().type === "home" ? { state: "pressed" as const } : {})}
                     onClick={toggleHome}
                     aria-label={language.t("home.title")}
                     aria-pressed={layout.route().type === "home"}
@@ -540,7 +544,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   <Show when={params.dir}>
                     <div
                       class="flex items-center shrink-0 w-8 mr-1"
-                      aria-hidden={layout.sidebar.opened() ? "true" : undefined}
+                      {...(layout.sidebar.opened() ? { "aria-hidden": "true" as const } : {})}
                     >
                       <div
                         class="transition-opacity"
@@ -559,13 +563,13 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                             variant="ghost"
                             class="titlebar-icon w-8 h-6 p-0 box-border"
                             disabled={layout.sidebar.opened()}
-                            tabIndex={layout.sidebar.opened() ? -1 : undefined}
+                            {...(layout.sidebar.opened() ? { tabIndex: -1 } : {})}
                             onClick={() => {
                               if (!params.dir) return
                               navigate(`/${params.dir}/session`)
                             }}
                             aria-label={language.t("command.session.new")}
-                            aria-current={creating() ? "page" : undefined}
+                            {...(creating() ? { "aria-current": "page" as const } : {})}
                           >
                             <IconV2 name="edit" size="small" />
                           </Button>
