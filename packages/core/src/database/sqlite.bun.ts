@@ -48,7 +48,7 @@ const nativeDatabase = Effect.gen(function* () {
  * run time and accepts more than SQLQueryBindings declares (it binds undefined as NULL), so the values pass as is.
  */
 const bindings = (params: ReadonlyArray<unknown>) =>
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- effect/unstable/sql Connection gives params as ReadonlyArray<unknown>; bun:sqlite Statement.all/values declare SQLQueryBindings[] and validate each value at run time
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) effect/unstable/sql gives params as ReadonlyArray<unknown>; bun:sqlite all/values declare SQLQueryBindings[] and check each value at run time
   params as SQLQueryBindings[]
 
 const executeError = (cause: unknown) =>
