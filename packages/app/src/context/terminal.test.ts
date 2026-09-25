@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect, Schema } from "effect"
 import { ServerScope } from "@/utils/server-scope"
 
 let getWorkspaceTerminalCacheKey: typeof import("./terminal").getWorkspaceTerminalCacheKey
@@ -55,21 +55,23 @@ describe("getLegacyTerminalStorageKeys", () => {
   })
 })
 
+/** Decodes persisted JSON text into the unknown value that the persist layer hands to migrate. */
+const decodePersisted = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+
 describe("migrateTerminalState", () => {
   test("drops invalid terminals and restores a valid active terminal", () => {
-    expect(
-      migrateTerminalState({
-        active: "missing",
-        all: [
-          // A null entry in the persisted list.
-          Option.getOrNull(Option.none()),
-          { id: "one", title: "Terminal 2" },
-          { id: "one", title: "duplicate", titleNumber: 9 },
-          { id: "two", title: "logs", titleNumber: 4, rows: 24, cols: 80 },
-          { title: "no-id" },
-        ],
-      }),
-    ).toEqual({
+    // The persisted list holds a null entry, a duplicate id and an entry without an id.
+    const persisted = decodePersisted(`{
+      "active": "missing",
+      "all": [
+        null,
+        { "id": "one", "title": "Terminal 2" },
+        { "id": "one", "title": "duplicate", "titleNumber": 9 },
+        { "id": "two", "title": "logs", "titleNumber": 4, "rows": 24, "cols": 80 },
+        { "title": "no-id" }
+      ]
+    }`)
+    expect(migrateTerminalState(persisted)).toEqual({
       active: "one",
       all: [
         { id: "one", title: "Terminal 2", titleNumber: 2 },
