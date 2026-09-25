@@ -28,13 +28,13 @@ describe("MCP queries", () => {
   test("loads current servers for the requested location", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: ReadonlyArray<unknown> = []
         const queryClient = new QueryClient()
         const result = yield* Effect.promise(() =>
           queryClient.fetchQuery(
             loadMcpQuery(ServerScope.local, "/project", {
               list: (input: McpListInput = {}) => {
-                calls.push(input)
+                calls = [...calls, input]
                 return Effect.runPromise(
                   Effect.succeed<McpListOutput>({
                     location: { directory: "/project", project: { id: "project", directory: "/project" } },
@@ -57,14 +57,14 @@ describe("MCP queries", () => {
   test("loads and keys the current resource catalog", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: unknown[] = []
+        let calls: ReadonlyArray<unknown> = []
         const queryClient = new QueryClient()
         const result = yield* Effect.promise(() =>
           queryClient.fetchQuery(
             loadMcpResourcesQuery(ServerScope.local, "/project", {
               resource: {
                 catalog: (input: McpResourceCatalogInput = {}) => {
-                  calls.push(input)
+                  calls = [...calls, input]
                   return Effect.runPromise(
                     Effect.succeed<McpResourceCatalogOutput>({
                       location: { directory: "/project", project: { id: "project", directory: "/project" } },
@@ -155,12 +155,12 @@ describe("loadRootSessions", () => {
   test("loads and normalizes a limited page of root sessions", () =>
     Effect.runPromise(
       Effect.gen(function* () {
-        const calls: SessionListInput[] = []
+        let calls: ReadonlyArray<SessionListInput> = []
 
         const result = yield* loadRootSessions({
           api: {
             list: (query = {}) => {
-              calls.push(query)
+              calls = [...calls, query]
               return Effect.runPromise(Effect.succeed({ data: [sessionInfo("session-1")], cursor: {} }))
             },
           } satisfies Pick<SessionApi, "list">,
