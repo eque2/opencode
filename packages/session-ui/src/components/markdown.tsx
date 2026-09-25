@@ -241,18 +241,19 @@ function markCodeLinks(root: HTMLDivElement) {
   const codeNodes = Array.from(root.querySelectorAll(":not(pre) > code"))
   for (const code of codeNodes) {
     const href = codeUrl(code.textContent ?? "")
-    const parentLink =
-      code.parentElement instanceof HTMLAnchorElement && code.parentElement.classList.contains("external-link")
-        ? code.parentElement
-        : null
+    const parentLink = Option.liftPredicate(
+      code.parentElement,
+      (parent): parent is HTMLAnchorElement =>
+        parent instanceof HTMLAnchorElement && parent.classList.contains("external-link"),
+    )
 
     if (!href) {
-      if (parentLink) parentLink.replaceWith(code)
+      if (Option.isSome(parentLink)) parentLink.value.replaceWith(code)
       continue
     }
 
-    if (parentLink) {
-      parentLink.href = href
+    if (Option.isSome(parentLink)) {
+      parentLink.value.href = href
       continue
     }
 
