@@ -142,6 +142,7 @@ async function renderDiffViewer(vcsDiff: unknown[], height = 20, initialRoute?: 
       return registerLayer(layer)
     }
     const base = createTuiPluginApi({
+      renderer,
       keymap,
       client,
       state: {
