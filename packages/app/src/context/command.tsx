@@ -3,7 +3,7 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { type Accessor, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { HashSet, MutableHashSet } from "effect"
+import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { dict as en } from "@/i18n/en"
@@ -356,7 +356,7 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
     })
 
     const keymap = createMemo(() => {
-      const map = new Map<string, CommandOption[]>()
+      const map = MutableHashMap.empty<string, CommandOption[]>()
       for (const option of options()) {
         if (option.id.startsWith(SUGGESTED_PREFIX)) continue
         if (option.disabled) continue
@@ -366,29 +366,25 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
         for (const kb of keybinds) {
           if (!kb.key) continue
           const sig = signature(kb.key, kb.ctrl, kb.meta, kb.shift, kb.alt)
-          const existing = map.get(sig)
-          if (existing) {
-            existing.push(option)
-            continue
-          }
-          map.set(sig, [option])
+          const existing = MutableHashMap.get(map, sig)
+          MutableHashMap.set(map, sig, Option.isSome(existing) ? [...existing.value, option] : [option])
         }
       }
       return map
     })
 
     const optionMap = createMemo(() => {
-      const map = new Map<string, CommandOption>()
+      const map = MutableHashMap.empty<string, CommandOption>()
       for (const option of options()) {
-        map.set(option.id, option)
-        map.set(actionId(option.id), option)
+        MutableHashMap.set(map, option.id, option)
+        MutableHashMap.set(map, actionId(option.id), option)
       }
       return map
     })
 
     const run = (id: string, source?: CommandSource) => {
-      const option = optionMap().get(id)
-      option?.onSelect?.(source)
+      const option = MutableHashMap.get(optionMap(), id)
+      if (Option.isSome(option)) option.value.onSelect?.(source)
     }
 
     const showPalette = () => {
@@ -400,7 +396,10 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
 
       const sig = signatureFromEvent(event)
       const isPalette = HashSet.has(palette(), sig)
-      const option = resolveKeybindOption(keymap().get(sig), event)
+      const option = resolveKeybindOption(
+        Option.getOrElse(MutableHashMap.get(keymap(), sig), () => []),
+        event,
+      )
       const modified = event.ctrlKey || event.metaKey || event.altKey
       const isTab = event.key === "Tab"
 
