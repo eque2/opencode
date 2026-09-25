@@ -1,5 +1,5 @@
 import { useI18n } from "@opencode-ai/ui/context/i18n"
-import { Effect, Fiber, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Effect, Fiber, HashSet, MutableHashMap, MutableHashSet, Option, Result } from "effect"
 import morphdom from "morphdom"
 import { checksum } from "@opencode-ai/core/util/encode"
 import {
@@ -121,15 +121,11 @@ const copyResets = new WeakMap<HTMLElement, Fiber.Fiber<void>>()
 
 const urlPattern = /^https?:\/\/[^\s<>()`"']+$/
 
-function codeUrl(text: string) {
+function codeUrl(text: string): Option.Option<string> {
   const href = text.trim().replace(/[),.;!?]+$/, "")
-  if (!urlPattern.test(href)) return
-  try {
-    const url = new URL(href)
-    return url.toString()
-  } catch {
-    return
-  }
+  if (!urlPattern.test(href)) return Option.none()
+  // The URL constructor throws on an invalid URL; that text stays plain code.
+  return Result.getSuccess(Result.try(() => new URL(href).toString()))
 }
 
 function createCopyButton(labels: CopyLabels) {
@@ -285,18 +281,18 @@ function markCodeLinks(root: HTMLDivElement) {
         parent instanceof HTMLAnchorElement && parent.classList.contains("external-link"),
     )
 
-    if (!href) {
+    if (Option.isNone(href)) {
       if (Option.isSome(parentLink)) parentLink.value.replaceWith(code)
       continue
     }
 
     if (Option.isSome(parentLink)) {
-      parentLink.value.href = href
+      parentLink.value.href = href.value
       continue
     }
 
     const link = document.createElement("a")
-    link.href = href
+    link.href = href.value
     link.className = "external-link"
     link.target = "_blank"
     link.rel = "noopener noreferrer"
