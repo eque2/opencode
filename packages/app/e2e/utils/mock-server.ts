@@ -1,8 +1,18 @@
-import type { Page, Route } from "@playwright/test"
+import type { Request, Route } from "@playwright/test"
 import { Predicate } from "effect"
 
 const emptyList = new Set(["/skill", "/command", "/lsp", "/formatter", "/vcs/status", "/vcs/diff"])
 const emptyObject = new Set(["/global/config", "/config", "/provider/auth", "/mcp", "/experimental/resource"])
+
+/** The part of a Playwright Route that the mock server uses. */
+export type MockRoute = Pick<Route, "fulfill" | "fallback"> & {
+  request(): Pick<Request, "url" | "method" | "postDataJSON">
+}
+
+/** The part of a Playwright Page that the mock server uses. A real Page fits it. */
+export type MockPage = {
+  route(url: string, handler: (route: MockRoute) => Promise<void>): Promise<unknown>
+}
 
 /** A provider list response body. The mock serves it as JSON. */
 export type MockProviderList = Record<string, unknown>
@@ -35,7 +45,7 @@ export interface MockServerConfig {
   sessionStatus?: Record<string, unknown> | (() => Record<string, unknown>)
 }
 
-export async function mockOpenCodeServer(page: Page, config: MockServerConfig) {
+export async function mockOpenCodeServer(page: MockPage, config: MockServerConfig) {
   const cursors = new Map<string, string>()
   let nextCursor = 0
   const staticRoutes: Record<string, unknown> = {
@@ -430,7 +440,7 @@ function currentMessage(value: unknown) {
   }
 }
 
-function json(route: Route, body: unknown, headers?: Record<string, string>, status = 200) {
+function json(route: Pick<Route, "fulfill">, body: unknown, headers?: Record<string, string>, status = 200) {
   return route.fulfill({
     status,
     contentType: "application/json",
@@ -443,7 +453,7 @@ function json(route: Route, body: unknown, headers?: Record<string, string>, sta
   })
 }
 
-function sse(route: Route, events?: unknown[], retry?: number) {
+function sse(route: Pick<Route, "fulfill">, events?: unknown[], retry?: number) {
   return route.fulfill({
     status: 200,
     contentType: "text/event-stream",

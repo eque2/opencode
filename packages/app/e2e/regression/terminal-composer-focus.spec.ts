@@ -90,7 +90,10 @@ test("routes typing to the composer unless the open terminal is focused", async 
   await expect(composer).toHaveText("")
 
   await page.waitForTimeout(300)
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.evaluate(() => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement || active instanceof SVGElement) active.blur()
+  })
   await page.keyboard.type("a")
 
   await expect(composer).toBeFocused()

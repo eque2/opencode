@@ -142,15 +142,19 @@ async function openReview(page: Page) {
   await expectAppVisible(page.getByRole("button", { name: /preview\.png/ }))
 }
 
+type ReviewFlashSample = {
+  observedAtMs: number
+  blank: boolean
+  blackCenter: boolean
+  text: string
+  background: string
+}
+
+type ReviewFlashWindow = Window & { __reviewImageFlash?: { samples: ReviewFlashSample[]; startedAt: number } }
+
 async function installReviewFlashProbe(page: Page) {
   await page.evaluate(() => {
-    const samples: Array<{
-      observedAtMs: number
-      blank: boolean
-      blackCenter: boolean
-      text: string
-      background: string
-    }> = []
+    const samples: ReviewFlashSample[] = []
     const startedAt = performance.now()
     const sample = () => {
       const panel = document.querySelector<HTMLElement>('#review-panel [data-component="session-review-v2"]')
@@ -177,26 +181,19 @@ async function installReviewFlashProbe(page: Page) {
       },
       { capture: true, once: true },
     )
-    ;(window as Window & { __reviewImageFlash?: { samples: typeof samples; startedAt: number } }).__reviewImageFlash = {
-      samples,
-      startedAt,
-    }
+    ;(window as ReviewFlashWindow).__reviewImageFlash = { samples, startedAt }
   })
 }
 
 async function waitForReviewFlashProbe(page: Page, durationMs: number) {
   await page.waitForFunction((durationMs) => {
-    const state = (window as Window & { __reviewImageFlash?: { samples: unknown[]; startedAt: number } })
-      .__reviewImageFlash
+    const state = (window as ReviewFlashWindow).__reviewImageFlash
     return !!state && state.samples.length > 0 && performance.now() - state.startedAt >= durationMs
   }, durationMs)
 }
 
 async function collectReviewFlashProbe(page: Page) {
   return page.evaluate(() => {
-    return (window as Window & { __reviewImageFlash?: { samples: unknown[]; startedAt: number } }).__reviewImageFlash!
-  }) as Promise<{
-    startedAt: number
-    samples: Array<{ observedAtMs: number; blank: boolean; blackCenter: boolean; text: string; background: string }>
-  }>
+    return (window as ReviewFlashWindow).__reviewImageFlash!
+  })
 }

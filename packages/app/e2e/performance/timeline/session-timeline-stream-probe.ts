@@ -165,9 +165,10 @@ export async function installTimelineStreamProbe(
         state.layoutShifts.push(
           ...entries
             .map((entry) => {
-              const shift = entry as LayoutShiftEntry
-              if (shift.startTime < state.started || shift.hadRecentInput) return undefined
-              return shift.value
+              if (!("value" in entry) || typeof entry.value !== "number") return undefined
+              if (entry.startTime < state.started || ("hadRecentInput" in entry && entry.hadRecentInput))
+                return undefined
+              return entry.value
             })
             .filter((value): value is number => value !== undefined),
         )

@@ -72,8 +72,14 @@ test.describe("timeline tool state stability", () => {
         [80, 240, 100, 360, 140][index],
       )
     }
-    for (const [index, id] of ["skill", "webfetch", "custom", "task", "websearch"].entries()) {
-      const key = id as (typeof ids)[number]
+    const completionOrder = [
+      "skill",
+      "webfetch",
+      "custom",
+      "task",
+      "websearch",
+    ] as const satisfies readonly (typeof ids)[number][]
+    for (const [index, key] of completionOrder.entries()) {
       const metadata = key === "task" ? { sessionId: childID } : key === "websearch" ? { provider: "exa" } : {}
       const output = key === "websearch" ? "Result https://example.com/result" : "Completed"
       await timeline.send(
@@ -155,10 +161,7 @@ test.describe("timeline tool state stability", () => {
     }
     await timeline.send(partUpdated(toolPart(ids[1], tools[1], "completed", inputs[1])), 130)
     await timeline.send(partUpdated(toolPart(ids[3], tools[3], "completed", inputs[3])), 210)
-    await timeline.send(
-      partUpdated(toolPart(ids[0], tools[0], "error", inputs[0], { error: "Read interrupted" })),
-      110,
-    )
+    await timeline.send(partUpdated(toolPart(ids[0], tools[0], "error", inputs[0], { error: "Read interrupted" })), 110)
     await timeline.send(partUpdated(toolPart(ids[2], tools[2], "completed", inputs[2])), 250)
     await expect(group.locator('[data-component="tool-status-title"]')).toHaveAttribute("aria-label", "Explored")
     await timeline.send(status("idle"), 700)

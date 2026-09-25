@@ -58,9 +58,10 @@ export async function installCachedRepaintProbe(
               entry.startTime > state.startedAtPerformanceMs + state.windowMs
             )
               return undefined
+            if (!("value" in entry) || typeof entry.value !== "number") return undefined
             return {
               occurredAtMs: entry.startTime - state.startedAtPerformanceMs,
-              value: (entry as PerformanceEntry & { value: number }).value,
+              value: entry.value,
             }
           })
           .filter((entry): entry is { occurredAtMs: number; value: number } => entry !== undefined),

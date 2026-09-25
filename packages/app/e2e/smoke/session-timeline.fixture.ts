@@ -302,8 +302,15 @@ export const fixture = {
   },
 }
 
+const messagesBySession: Partial<Record<string, Message[]>> = fixture.messages
+
+/** Returns the seeded messages of a session, or no messages for an unknown session ID. */
+export function sessionMessages(sessionID: string) {
+  return messagesBySession[sessionID] ?? []
+}
+
 export function pageMessages(sessionID: string, limit: number, before?: string) {
-  const messages = fixture.messages[sessionID as keyof typeof fixture.messages] ?? []
+  const messages = sessionMessages(sessionID)
   const end = before
     ? Math.max(
         0,
