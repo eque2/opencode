@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { createMemo, createRoot } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Option } from "effect"
+import { Array as Arr, Option } from "effect"
 import {
   SESSION_OPEN_FILE_TAB,
   createOpenReviewFile,
@@ -21,16 +21,24 @@ describe("shouldShowFileTree", () => {
 
 describe("createOpenReviewFile", () => {
   test("opens and loads selected review file", () => {
-    const calls: string[] = []
+    let calls: string[] = []
     const openReviewFile = createOpenReviewFile({
-      showAllFiles: () => calls.push("show"),
+      showAllFiles: () => {
+        calls = Arr.append(calls, "show")
+      },
       tabForPath: (path) => {
-        calls.push(`tab:${path}`)
+        calls = Arr.append(calls, `tab:${path}`)
         return `file://${path}`
       },
-      openTab: (tab) => calls.push(`open:${tab}`),
-      setActive: (tab) => calls.push(`active:${tab}`),
-      loadFile: (path) => calls.push(`load:${path}`),
+      openTab: (tab) => {
+        calls = Arr.append(calls, `open:${tab}`)
+      },
+      setActive: (tab) => {
+        calls = Arr.append(calls, `active:${tab}`)
+      },
+      loadFile: (path) => {
+        calls = Arr.append(calls, `load:${path}`)
+      },
     })
 
     openReviewFile("src/a.ts")
@@ -41,20 +49,28 @@ describe("createOpenReviewFile", () => {
 
 describe("createOpenSessionFileTab", () => {
   test("activates the opened file tab", () => {
-    const calls: string[] = []
+    let calls: string[] = []
     const openTab = createOpenSessionFileTab({
       normalizeTab: (value) => {
-        calls.push(`normalize:${value}`)
+        calls = Arr.append(calls, `normalize:${value}`)
         return `file://${value}`
       },
-      openTab: (tab) => calls.push(`open:${tab}`),
+      openTab: (tab) => {
+        calls = Arr.append(calls, `open:${tab}`)
+      },
       pathFromTab: (tab) => {
-        calls.push(`path:${tab}`)
+        calls = Arr.append(calls, `path:${tab}`)
         return tab.slice("file://".length)
       },
-      loadFile: (path) => calls.push(`load:${path}`),
-      openReviewPanel: () => calls.push("review"),
-      setActive: (tab) => calls.push(`active:${tab}`),
+      loadFile: (path) => {
+        calls = Arr.append(calls, `load:${path}`)
+      },
+      openReviewPanel: () => {
+        calls = Arr.append(calls, "review")
+      },
+      setActive: (tab) => {
+        calls = Arr.append(calls, `active:${tab}`)
+      },
     })
 
     openTab("src/a.ts")
