@@ -23,6 +23,7 @@ import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
 import { useEvent } from "./event"
 import { createSignal, onCleanup, onMount } from "solid-js"
+import { Schema } from "effect"
 
 type LocationData = {
   agent?: AgentV2Info[]
@@ -47,8 +48,14 @@ type Data = {
   location: Record<string, LocationData>
 }
 
+// Store key for a location: the JSON text of [directory, workspaceID].
+const LocationKey = Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.UndefinedOr(Schema.String)])).annotate({
+  identifier: "TuiData.LocationKey",
+})
+const encodeLocationKey = Schema.encodeSync(LocationKey)
+
 function locationKey(location: LocationRef) {
-  return JSON.stringify([location.directory, location.workspaceID])
+  return encodeLocationKey([location.directory, location.workspaceID])
 }
 
 function locationQuery(ref?: LocationRef) {
