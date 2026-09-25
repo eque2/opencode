@@ -19,7 +19,11 @@ test("rejects when the external editor cannot start", async () => {
     currentRenderBuffer: { clear() {} },
   }
 
-  await expect(openEditor({ value: "original", renderer: renderer as never })).rejects.toThrow()
+  const outcome = await openEditor({ value: "original", renderer }).then(
+    () => "resolved",
+    (error: unknown) => error,
+  )
+  expect(outcome).toBeInstanceOf(Error)
 })
 
 test("normalizes a single trailing editor newline for one-line prompts", () => {

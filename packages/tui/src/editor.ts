@@ -32,7 +32,12 @@ class EditorExitError extends Schema.TaggedError<EditorExitError>()("TuiEditor.E
   message: Schema.String,
 }) {}
 
-type OpenEditorInput = { value: string; renderer: CliRenderer; cwd?: string; stdin?: EditorStdio }
+// The renderer calls that openEditor makes. A CliRenderer has all of them.
+type EditorRenderer = Pick<CliRenderer, "suspend" | "resume" | "requestRender"> & {
+  readonly currentRenderBuffer: Pick<CliRenderer["currentRenderBuffer"], "clear">
+}
+
+type OpenEditorInput = { value: string; renderer: EditorRenderer; cwd?: string; stdin?: EditorStdio }
 
 // A Claude Code IDE lock file. A transport other than "ws", or folders that are not an array, skip the lock.
 const LockFileSchema = Schema.Struct({
