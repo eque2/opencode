@@ -15,7 +15,7 @@ import {
   useContext,
 } from "solid-js"
 import path from "node:path"
-import { Data, DateTime, Effect, Fiber, FileSystem, HashSet, Option, Predicate } from "effect"
+import { Data, DateTime, Effect, Fiber, FileSystem, HashMap, HashSet, Option, Predicate } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -183,7 +183,7 @@ const context = createContext<{
   showDetails: () => boolean
   showGenericToolOutput: () => boolean
   diffWrapMode: () => "word" | "none"
-  providers: () => ReadonlyMap<string, Provider>
+  providers: () => HashMap.HashMap<string, Provider>
   sync: ReturnType<typeof useSync>
   tui: ReturnType<typeof useTuiConfig>
 }>()

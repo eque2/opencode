@@ -1,5 +1,5 @@
 import type { AssistantMessage, Part, Provider, UserMessage } from "@opencode-ai/sdk/v2"
-import { DateTime, Schema } from "effect"
+import { DateTime, HashMap, Schema } from "effect"
 import { Locale } from "./locale"
 import * as Model from "./model"
 
@@ -58,7 +58,7 @@ export function formatMessage(
   msg: UserMessage | AssistantMessage,
   parts: Part[],
   options: TranscriptOptions,
-  providers?: Provider[] | ReadonlyMap<string, Provider>,
+  providers?: Provider[] | HashMap.HashMap<string, Provider>,
 ): string {
   let result = ""
 
@@ -78,7 +78,7 @@ export function formatMessage(
 export function formatAssistantHeader(
   msg: AssistantMessage,
   includeMetadata: boolean,
-  providers?: Provider[] | ReadonlyMap<string, Provider>,
+  providers?: Provider[] | HashMap.HashMap<string, Provider>,
 ): string {
   if (!includeMetadata) {
     return `## Assistant\n\n`
