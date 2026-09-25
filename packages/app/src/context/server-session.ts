@@ -12,7 +12,7 @@ import type {
   Todo,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Data, HashSet, MutableHashMap, MutableHashSet, Option } from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
@@ -25,6 +25,12 @@ import { createV2SessionReducer, type V2SessionReduction } from "./server-sessio
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
+
+class MessageNotFoundError extends Data.TaggedError("App.MessageNotFoundError")<{ readonly message: string }> {}
+
+class AssistantParentError extends Data.TaggedError("App.AssistantParentError")<{ readonly message: string }> {}
+
+class SessionParentCycleError extends Data.TaggedError("App.SessionParentCycleError")<{ readonly message: string }> {}
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const SKIP_PARTS: HashSet.HashSet<string> = HashSet.make("patch", "step-start", "step-finish")
@@ -389,7 +395,8 @@ export function createServerSession(
     const visited = MutableHashSet.make(session.id)
     let root = session
     while (root.parentID) {
-      if (MutableHashSet.has(visited, root.parentID)) throw new Error(`Session parent cycle: ${root.parentID}`)
+      if (MutableHashSet.has(visited, root.parentID))
+        throw new SessionParentCycleError({ message: `Session parent cycle: ${root.parentID}` })
       MutableHashSet.add(visited, root.parentID)
       const parent = data.info[root.parentID]
       if (!parent) return
@@ -638,14 +645,14 @@ export function createServerSession(
       })
       const normalized = normalizeSessionMessages(sessionID, [response])
       const message = normalized.messages[0]
-      if (!message) throw new Error(`Message not found: ${messageID}`)
+      if (!message) throw new MessageNotFoundError({ message: `Message not found: ${messageID}` })
       return { message, parts: normalized.parts.get(messageID) ?? [] }
     }
     const response = await (options?.retry ?? retry)(() => {
       onAttempt?.()
       return client.session.message({ sessionID, messageID })
     })
-    if (!response.data?.info?.id) throw new Error(`Message not found: ${messageID}`)
+    if (!response.data?.info?.id) throw new MessageNotFoundError({ message: `Message not found: ${messageID}` })
     return {
       message: cleanMessage(response.data.info),
       parts: response.data.parts.filter((part) => !!part?.id).sort((a, b) => cmp(a.id, b.id)),
@@ -855,7 +862,8 @@ export function createServerSession(
             throw error
           })
           if (!parent) continue
-          if (parent.message.role !== "user") throw new Error(`Assistant parent is not a user message: ${parentID}`)
+          if (parent.message.role !== "user")
+            throw new AssistantParentError({ message: `Assistant parent is not a user message: ${parentID}` })
           parents.push(parent)
         }
       }
