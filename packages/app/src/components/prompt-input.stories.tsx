@@ -1,9 +1,35 @@
 // @ts-nocheck
 import { createStore } from "solid-js/store"
-import type { Todo } from "@opencode-ai/sdk/v2"
+import type { PermissionRequest, QuestionRequest, Todo } from "@opencode-ai/sdk/v2"
 import { createPromptState } from "@/context/prompt"
 import { SessionComposerRegion, createSessionComposerRegionController } from "@/pages/session/composer"
+import type {
+  SessionComposerFollowupDock,
+  SessionComposerRevertDock,
+} from "@/pages/session/composer/session-composer-region-controller"
 import { createPromptInputHistory, PromptInput } from "./prompt-input"
+
+// Story state leaves an absent value out of the store; reading the missing key gives the undefined the
+// prompt controls expect.
+type PromptInputStoryControls = {
+  agent: string
+  variant?: string
+  comments: number
+  tabs: string[]
+  activeTab?: string
+  reviewOpen: boolean
+}
+
+type PromptInputDockStoryControls = {
+  agent: string
+  variant?: string
+  activeTab?: string
+  todoCollapsed: boolean
+  questionRequest?: QuestionRequest
+  permissionRequest?: PermissionRequest
+  followup?: SessionComposerFollowupDock
+  revert?: SessionComposerRevertDock
+}
 
 function createPromptInputStoryRuntime() {
   const state = createPromptState()
@@ -22,12 +48,10 @@ function createPromptInputStoryRuntime() {
 
 function PromptInputExample() {
   const input = createPromptInputStoryRuntime()
-  const [controls, setControls] = createStore({
+  const [controls, setControls] = createStore<PromptInputStoryControls>({
     agent: "build",
-    variant: undefined as string | undefined,
     comments: 0,
-    tabs: [] as string[],
-    activeTab: undefined as string | undefined,
+    tabs: [],
     reviewOpen: false,
   })
   const storyModel = {
@@ -119,9 +143,8 @@ const todos: Todo[] = [
 
 function PromptInputWithOpenDock() {
   const input = createPromptInputStoryRuntime()
-  const [controls, setControls] = createStore({
+  const [controls, setControls] = createStore<PromptInputDockStoryControls>({
     agent: "build",
-    activeTab: undefined as string | undefined,
     todoCollapsed: false,
   })
   const inputControls = {
@@ -138,7 +161,7 @@ function PromptInputWithOpenDock() {
     model: {
       selection: {
         current: () => ({ id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", provider: { id: "anthropic" } }),
-        variant: { list: () => [], current: () => undefined, set: () => {} },
+        variant: { list: () => [], current: () => controls.variant, set: () => {} },
       },
       paid: true,
       loading: false,
@@ -156,8 +179,8 @@ function PromptInputWithOpenDock() {
   }
   const state = {
     blocked: () => false,
-    questionRequest: () => undefined,
-    permissionRequest: () => undefined,
+    questionRequest: () => controls.questionRequest,
+    permissionRequest: () => controls.permissionRequest,
     permissionResponding: () => false,
     decide: () => {},
     todos: () => todos,
@@ -178,8 +201,8 @@ function PromptInputWithOpenDock() {
           collapsed: () => controls.todoCollapsed,
           onToggle: () => setControls("todoCollapsed", (collapsed) => !collapsed),
         },
-        followup: () => undefined,
-        revert: () => undefined,
+        followup: () => controls.followup,
+        revert: () => controls.revert,
         onResponseSubmit: () => {},
         openParent: () => {},
         setPromptRef: () => {},

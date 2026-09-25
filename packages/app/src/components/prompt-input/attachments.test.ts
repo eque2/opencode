@@ -56,18 +56,18 @@ describe("pickAttachmentFiles", () => {
         pickAttachmentFiles({
           picker,
           directory: () => directory,
-          fallback: () => undefined,
+          fallback: () => {},
           onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
-          onError: () => undefined,
+          onError: () => {},
         })
         yield* Effect.yieldNow
         directory = "C:\\Projects\\DolorSit"
         pickAttachmentFiles({
           picker,
           directory: () => directory,
-          fallback: () => undefined,
+          fallback: () => {},
           onFile: (selected) => Effect.runPromise(Effect.sync(() => files.push(selected))),
-          onError: () => undefined,
+          onError: () => {},
         })
         yield* Effect.yieldNow
         expect(files).toEqual([file, file])
@@ -83,7 +83,7 @@ describe("pickAttachmentFiles", () => {
         fallback += 1
       },
       onFile: () => Effect.runPromise(Effect.void),
-      onError: () => undefined,
+      onError: () => {},
     })
     expect(fallback).toBe(1)
   })
@@ -97,7 +97,7 @@ describe("pickAttachmentFiles", () => {
         pickAttachmentFiles({
           picker: () => Promise.reject(error),
           directory: () => "C:\\Projects\\LoremIpsum",
-          fallback: () => undefined,
+          fallback: () => {},
           onFile: () => Effect.runPromise(Effect.void),
           onError: (cause) => {
             errors.push(cause)

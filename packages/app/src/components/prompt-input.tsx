@@ -225,7 +225,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       return [...paths, path]
     }, [])
   })
-  const info = createMemo(() => (props.controls.session.id ? sync().session.get(props.controls.session.id) : undefined))
+  const info = createMemo(() => {
+    const id = props.controls.session.id
+    if (!id) return undefined
+    return sync().session.get(id)
+  })
   const working = createMemo(() => sync().data.session_working(props.controls.session.id ?? ""))
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
@@ -875,19 +879,21 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     const pushFile = (file: HTMLElement) => {
       const content = file.textContent ?? ""
-      const source =
+      const resource =
         file.dataset.sourceType === "resource" && file.dataset.sourceClientName && file.dataset.sourceUri
           ? {
-              type: "resource" as const,
-              text: {
-                value: content,
-                start: position,
-                end: position + content.length,
+              source: {
+                type: "resource" as const,
+                text: {
+                  value: content,
+                  start: position,
+                  end: position + content.length,
+                },
+                clientName: file.dataset.sourceClientName,
+                uri: file.dataset.sourceUri,
               },
-              clientName: file.dataset.sourceClientName,
-              uri: file.dataset.sourceUri,
             }
-          : undefined
+          : {}
       parts.push({
         type: "file",
         path: file.dataset.path!,
@@ -897,7 +903,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         ...(file.dataset.mime ? { mime: file.dataset.mime } : {}),
         ...(file.dataset.filename ? { filename: file.dataset.filename } : {}),
         ...(file.dataset.url ? { url: file.dataset.url } : {}),
-        ...(source ? { source } : {}),
+        ...resource,
       })
       position += content.length
     }
@@ -1411,12 +1417,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         popover={store.popover}
         setSlashPopoverRef={(el) => (slashPopoverRef = el)}
         atFlat={atFlat()}
-        atActive={atActive() ?? undefined}
+        atActive={Option.getOrUndefined(Option.fromNullishOr(atActive()))}
         atKey={atKey}
         setAtActive={setAtActive}
         onAtSelect={handleAtSelect}
         slashFlat={slashFlat()}
-        slashActive={slashActive() ?? undefined}
+        slashActive={Option.getOrUndefined(Option.fromNullishOr(slashActive()))}
         setSlashActive={setSlashActive}
         onSlashSelect={handleSlashSelect}
         slashMenu={store.slashMenu}
@@ -1516,7 +1522,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             <div
               class="absolute top-0 inset-x-0 pl-3 pr-2 pt-2 text-14-regular text-text-weak pointer-events-none whitespace-nowrap truncate"
               classList={{ "font-mono!": store.mode === "shell" }}
-              style={{ "padding-bottom": space, display: prompt.dirty() ? "none" : undefined }}
+              style={{ "padding-bottom": space, ...(prompt.dirty() ? { display: "none" } : {}) }}
             >
               {placeholder()}
             </div>
@@ -1552,7 +1558,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   data-action="prompt-submit"
                   type="submit"
                   disabled={!working() && blank()}
-                  tabIndex={store.mode === "normal" ? undefined : -1}
+                  {...(store.mode === "normal" ? {} : { tabIndex: -1 })}
                   icon={stopping() ? "stop" : store.mode === "shell" ? "arrow-undo-down" : "arrow-up"}
                   variant="primary"
                   class="size-8"
@@ -1583,7 +1589,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                   style={buttons()}
                   onClick={pick}
                   disabled={store.mode !== "normal"}
-                  tabIndex={store.mode === "normal" ? undefined : -1}
+                  {...(store.mode === "normal" ? {} : { tabIndex: -1 })}
                   aria-label={language.t("prompt.action.attachFile")}
                 >
                   <Icon name="plus" class="size-4.5" />
@@ -1741,7 +1747,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                             current={props.controls.model.selection.variant.current() ?? "default"}
                             label={(x) => (x === "default" ? language.t("common.default") : x)}
                             onSelect={(value) => {
-                              props.controls.model.selection.variant.set(value === "default" ? undefined : value)
+                              props.controls.model.selection.variant.set(
+                                Option.fromNullishOr(value).pipe(
+                                  Option.filter((variant) => variant !== "default"),
+                                  Option.getOrUndefined,
+                                ),
+                              )
                               restoreFocus()
                             }}
                             class="capitalize max-w-[160px] text-text-base"

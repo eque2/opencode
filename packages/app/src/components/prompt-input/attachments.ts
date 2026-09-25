@@ -56,11 +56,12 @@ export function createPromptAttachmentsCore(input: PromptAttachmentsCoreInput) {
       }
 
       const draftStore = input.draftStore
+      const sourcePath = Option.fromNullishOr(input.getPathForFile?.(file)).pipe(Option.filter((path) => path !== ""))
       const attachment: ImageAttachmentPart = {
         type: "image",
         id: uuid(),
         filename: file.name,
-        sourcePath: input.getPathForFile?.(file) || undefined,
+        sourcePath: Option.getOrUndefined(sourcePath),
         mime: mime.value,
         blob: yield* Effect.promise(() => (draftStore ? draftStore.putBlob(file) : createBlobReference(file))),
       }

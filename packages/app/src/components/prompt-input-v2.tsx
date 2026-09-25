@@ -112,7 +112,11 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       return [...result, path]
     }, [])
   })
-  const info = createMemo(() => (props.controls.session.id ? sync().session.get(props.controls.session.id) : undefined))
+  const info = createMemo(() => {
+    const id = props.controls.session.id
+    if (!id) return undefined
+    return sync().session.get(id)
+  })
   const working = createMemo(() => sync().data.session_working(props.controls.session.id ?? ""))
   const attachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
@@ -401,19 +405,24 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
     view: {
       placeholder: designPlaceholder,
       get agent() {
-        return props.controls.agents.visible && props.controls.agents.options.length > 0
-          ? {
-              options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
-              current: () => props.controls.agents.current,
-              onSelect: (value: string) => props.controls.agents.select(value),
-              keybind: () => command.keybindParts("agent.cycle"),
-            }
-          : undefined
+        if (!props.controls.agents.visible || props.controls.agents.options.length === 0) return undefined
+        return {
+          options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
+          current: () => props.controls.agents.current,
+          onSelect: (value: string) => props.controls.agents.select(value),
+          keybind: () => command.keybindParts("agent.cycle"),
+        }
       },
       variant: {
         options: () => variants().map((value) => ({ id: value, label: value })),
         current: () => props.controls.model.selection.variant.current() ?? "default",
-        onSelect: (value) => props.controls.model.selection.variant.set(value === "default" ? undefined : value),
+        onSelect: (value) =>
+          props.controls.model.selection.variant.set(
+            Option.fromNullishOr(value).pipe(
+              Option.filter((variant) => variant !== "default"),
+              Option.getOrUndefined,
+            ),
+          ),
         keybind: () => command.keybindParts("model.variant.cycle"),
       },
       submit: {
@@ -587,9 +596,11 @@ function openComment(
       })
     })
   }
-  const diffs = props.controls.session.id ? sync().data.session_diff[props.controls.session.id] : undefined
+  const sessionID = props.controls.session.id
+  const diffs = sessionID ? Option.fromNullishOr(sync().data.session_diff[sessionID]) : Option.none()
   const review =
-    item.commentOrigin === "review" || (item.commentOrigin !== "file" && diffs?.some((diff) => diff.file === item.path))
+    item.commentOrigin === "review" ||
+    (item.commentOrigin !== "file" && Option.exists(diffs, (list) => list.some((diff) => diff.file === item.path)))
   if (!props.controls.session.reviewPanel.opened()) props.controls.session.reviewPanel.open()
   if (review) {
     layout.fileTree.setTab("changes")
