@@ -1,5 +1,5 @@
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
-import { DateTime } from "effect"
+import { DateTime, HashSet } from "effect"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { Dialog, DialogBody } from "@opencode-ai/ui/v2/dialog-v2"
@@ -141,8 +141,10 @@ function CommandPaletteView(props: {
   const visibleEntries = createMemo(() => uniqueCommandPaletteEntries(entries.latest ?? []))
   const groupedEntries = createMemo(() => groups(visibleEntries()))
   const activeEntry = createMemo(() => visibleEntries()[active()])
-  const openSessions = createMemo(
-    () => new Set(tabs.store.flatMap((tab) => (tab.type === "session" ? [`${tab.server}\0${tab.sessionId}`] : []))),
+  const openSessions = createMemo(() =>
+    HashSet.fromIterable(
+      tabs.store.flatMap((tab) => (tab.type === "session" ? [`${tab.server}\0${tab.sessionId}`] : [])),
+    ),
   )
 
   createEffect(() => {
@@ -228,7 +230,7 @@ function CommandPaletteView(props: {
                           language={language}
                           sessionOpen={
                             item.server && item.sessionID
-                              ? openSessions().has(`${item.server}\0${item.sessionID}`)
+                              ? HashSet.has(openSessions(), `${item.server}\0${item.sessionID}`)
                               : false
                           }
                           onActive={() => setActive(visibleEntries().findIndex((entry) => entry.id === item.id))}

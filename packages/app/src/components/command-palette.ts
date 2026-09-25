@@ -2,6 +2,7 @@ import { getFilename } from "@opencode-ai/core/util/path"
 import type { Project } from "@opencode-ai/sdk/v2/client"
 import type { SessionInfo } from "@opencode-ai/client/promise"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { MutableHashSet } from "effect"
 import { createMemo, onCleanup } from "solid-js"
 import { commandPaletteOptions, useCommand, type CommandOption } from "@/context/command"
 import { useFile } from "@/context/file"
@@ -44,10 +45,10 @@ const COMMON_COMMAND_IDS = [
 ] as const
 
 export function uniqueCommandPaletteEntries(items: CommandPaletteEntry[]) {
-  const seen = new Set<string>()
+  const seen = MutableHashSet.empty<string>()
   return items.filter((item) => {
-    if (seen.has(item.id)) return false
-    seen.add(item.id)
+    if (MutableHashSet.has(seen, item.id)) return false
+    MutableHashSet.add(seen, item.id)
     return true
   })
 }
@@ -119,13 +120,13 @@ export function createCommandPaletteModel(props: { filesOnly?: () => boolean; on
     const all = tabState.openedTabs()
     const active = tabState.activeFileTab()
     const order = active ? [active, ...all.filter((item) => item !== active)] : all
-    const seen = new Set<string>()
+    const seen = MutableHashSet.empty<string>()
     const category = language.t("palette.group.files")
     return order
       .map((item) => file.pathFromTab(item))
       .filter((path): path is string => {
-        if (!path || seen.has(path)) return false
-        seen.add(path)
+        if (!path || MutableHashSet.has(seen, path)) return false
+        MutableHashSet.add(seen, path)
         return true
       })
       .slice(0, ENTRY_LIMIT)
