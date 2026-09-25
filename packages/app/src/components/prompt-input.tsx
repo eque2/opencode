@@ -422,7 +422,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const pick = () => {
     pickAttachmentFiles({
-      picker: platform.openAttachmentPickerDialog,
+      picker: platform.openAttachmentPickerDialog?.bind(platform),
       directory: () => sdk().directory,
       fallback: () => fileInputRef?.click(),
       onFile: addAttachment,
@@ -1182,8 +1182,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       setCursorPosition(editorRef, promptLength(prompt.current()))
     },
     addPart,
-    readClipboardImage: platform.readClipboardImage,
-    getPathForFile: platform.getPathForFile,
+    readClipboardImage: platform.readClipboardImage?.bind(platform),
+    getPathForFile: platform.getPathForFile?.bind(platform),
   })
 
   const variants = createMemo(() => ["default", ...props.controls.model.selection.variant.list()])
@@ -1452,8 +1452,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           slashOnInput(value)
         }}
         onSlashMenuKeyDown={handleSlashMenuKeyDown}
-        commandKeybind={command.keybind}
-        commandKeybindParts={command.keybindParts}
+        commandKeybind={(id) => command.keybind(id)}
+        commandKeybindParts={(id) => command.keybindParts(id)}
         newLayoutDesigns={false}
         t={(key) => language.t(key as Parameters<typeof language.t>[0])}
       />
