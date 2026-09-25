@@ -150,7 +150,7 @@ const layer = Layer.effect(
           if (Option.isSome(existing)) return existing.value
           const created: ProviderRecord = {
             provider: ProviderV2.Info.empty(providerID) as ProviderV2.MutableInfo,
-            // eslint-disable-next-line effect/no-map-use-hashmap -- @opencode-ai/plugin CatalogProviderRecord.models is a ReadonlyMap that plugins read from the catalog draft
+            // eslint-disable-next-line effect/no-map-use-hashmap -- (a) @opencode-ai/plugin CatalogProviderRecord.models is a ReadonlyMap; plugins call has/get/values on this live draft record
             models: new Map<ModelV2.ID, ModelV2.MutableInfo>(),
           }
           MutableHashMap.set(draft.providers, providerID, created)
