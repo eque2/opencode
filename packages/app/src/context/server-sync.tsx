@@ -58,7 +58,7 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
-import { Data, HashMap, MutableHashMap, Option } from "effect"
+import { Data, DateTime, HashMap, MutableHashMap, Option } from "effect"
 
 /** Raised when the server sync context is created outside a Solid owner, which it needs for its child stores. */
 class ServerSyncOwnerError extends Data.TaggedError("ServerSyncOwnerError")<{ readonly message: string }> {}
@@ -335,7 +335,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         setGlobalStore,
         queryClient,
       })
-      bootedAt = Date.now()
+      bootedAt = DateTime.toEpochMillis(DateTime.nowUnsafe())
       return bootedAt
     },
   }))
@@ -537,7 +537,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const key = directoryKey(directory)
     const event = e.details
     const eventType: string = event.type
-    const recent = bootingRoot || Date.now() - bootedAt < 1500
+    const recent = bootingRoot || DateTime.toEpochMillis(DateTime.nowUnsafe()) - bootedAt < 1500
 
     if (event.current) session.applyV2(event.current)
     session.apply(event)
