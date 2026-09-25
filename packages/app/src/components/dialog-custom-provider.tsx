@@ -13,10 +13,25 @@ import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { type FormState, headerRow, modelRow, validateCustomProvider } from "./dialog-custom-provider-form"
-import { HashMap, HashSet } from "effect"
+import { Data, Effect, HashMap, HashSet } from "effect"
 
 type Props = {
   onBack: () => void
+}
+
+/** Saving the custom provider failed. `message` is the text the failure toast shows. */
+class CustomProviderSaveError extends Data.TaggedError("CustomProviderSaveError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+/** Runs one save request. The failure keeps the rejection's own message, which the toast shows. */
+function request<A>(run: () => PromiseLike<A>) {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new CustomProviderSaveError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  })
 }
 
 export function DialogCustomProvider(props: Props) {
@@ -111,27 +126,40 @@ export function CustomProviderForm(props: { autofocus?: boolean } = {}) {
   }
 
   const saveMutation = useMutation(() => ({
-    mutationFn: async (result: NonNullable<ReturnType<typeof validate>>) => {
-      if ((await serverSDK().protocol) !== "v1") throw new Error(language.t("provider.custom.unavailable"))
-      const disabledProviders = serverSync().data.config.disabled_providers ?? []
-      const nextDisabled = disabledProviders.filter((id) => id !== result.providerID)
+    mutationFn: (result: NonNullable<ReturnType<typeof validate>>) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const protocol = yield* request(() => serverSDK().protocol)
+          if (protocol !== "v1") {
+            return yield* Effect.fail(
+              new CustomProviderSaveError({ message: language.t("provider.custom.unavailable") }),
+            )
+          }
+          const disabledProviders = serverSync().data.config.disabled_providers ?? []
+          const nextDisabled = disabledProviders.filter((id) => id !== result.providerID)
+          const key = result.key
 
-      if (result.key) {
-        await serverSDK().client.auth.set({
-          providerID: result.providerID,
-          auth: {
-            type: "api",
-            key: result.key,
-          },
-        })
-      }
+          if (key) {
+            yield* request(() =>
+              serverSDK().client.auth.set({
+                providerID: result.providerID,
+                auth: {
+                  type: "api",
+                  key,
+                },
+              }),
+            )
+          }
 
-      await serverSync().updateConfig({
-        provider: { [result.providerID]: result.config },
-        disabled_providers: nextDisabled,
-      })
-      return result
-    },
+          yield* request(() =>
+            serverSync().updateConfig({
+              provider: { [result.providerID]: result.config },
+              disabled_providers: nextDisabled,
+            }),
+          )
+          return result
+        }),
+      ),
     onSuccess: (result) => {
       dialog.close()
       showToast({
