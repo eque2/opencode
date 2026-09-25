@@ -11,7 +11,7 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { Data, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
+import { Clock, Data, DateTime, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -171,7 +171,7 @@ export default function LegacyLayout(props: ParentProps) {
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
     nav: undefined as HTMLElement | undefined,
-    sortNow: Date.now(),
+    sortNow: DateTime.toEpochMillis(DateTime.nowUnsafe()),
     sizing: false,
     peek: undefined as string | undefined,
     peeked: false,
@@ -456,7 +456,7 @@ export default function LegacyLayout(props: ParentProps) {
             : language.t("notification.question.description", { sessionTitle, projectName })
         const href = `/${base64Encode(directory)}/session/${props.sessionID}`
 
-        const now = Date.now()
+        const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
         const lastAlerted = Option.getOrElse(MutableHashMap.get(alertedAtBySession, sessionKey), () => 0)
         if (now - lastAlerted < cooldownMs) return
         MutableHashMap.set(alertedAtBySession, sessionKey, now)
@@ -645,7 +645,7 @@ export default function LegacyLayout(props: ParentProps) {
   })
 
   const currentSessions = createMemo(() => {
-    const now = Date.now()
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
     const dirs = visibleSessionDirs()
     if (dirs.length === 0) return [] as Session[]
 
@@ -913,11 +913,12 @@ export default function LegacyLayout(props: ParentProps) {
         const index = sessions.findIndex((s) => s.id === session.id)
         const nextSession = sessions[index + 1] ?? sessions[index - 1]
 
+        const archived = yield* Clock.currentTimeMillis
         yield* Effect.promise(() =>
           serverSDK().client.session.update({
             sessionID: session.id,
             directory: session.directory,
-            time: { archived: Date.now() },
+            time: { archived },
           }),
         )
         setStore(
@@ -1179,7 +1180,7 @@ export default function LegacyLayout(props: ParentProps) {
   }
 
   function rememberSessionRoute(directory: string, id: string, root = activeProjectRoot(directory)) {
-    setStore("lastProjectSession", root, { directory, id, at: Date.now() })
+    setStore("lastProjectSession", root, { directory, id, at: DateTime.toEpochMillis(DateTime.nowUnsafe()) })
     return root
   }
 
@@ -1238,7 +1239,11 @@ export default function LegacyLayout(props: ParentProps) {
       if (!canOpen(target.directory)) return false
       const sync = serverSync().ensureDirSyncContext(target.directory)
       if (sync.session.get(target.id)) {
-        setStore("lastProjectSession", root, { directory: target.directory, id: target.id, at: Date.now() })
+        setStore("lastProjectSession", root, {
+          directory: target.directory,
+          id: target.id,
+          at: yield* Clock.currentTimeMillis,
+        })
         navigateWithSidebarReset(`/${base64Encode(target.directory)}/session/${target.id}`)
         return true
       }
@@ -1251,7 +1256,7 @@ export default function LegacyLayout(props: ParentProps) {
       setStore("lastProjectSession", root, {
         directory: session.value.directory,
         id: session.value.id,
-        at: Date.now(),
+        at: yield* Clock.currentTimeMillis,
       })
       navigateWithSidebarReset(`/${base64Encode(session.value.directory)}/session/${session.value.id}`)
       return true
@@ -1267,7 +1272,7 @@ export default function LegacyLayout(props: ParentProps) {
 
     const latest = latestRootSession(
       dirs.map((item) => serverSync().child(item, { bootstrap: false })[0]),
-      Date.now(),
+      yield* Clock.currentTimeMillis,
     )
     if (latest && (yield* openSession(latest))) {
       return
@@ -1288,7 +1293,7 @@ export default function LegacyLayout(props: ParentProps) {
         ),
       { concurrency: "unbounded" },
     )
-    const fetched = latestRootSession(listed, Date.now())
+    const fetched = latestRootSession(listed, yield* Clock.currentTimeMillis)
     if (fetched && (yield* openSession(fetched))) {
       return
     }
@@ -1562,7 +1567,8 @@ export default function LegacyLayout(props: ParentProps) {
       return
     }
 
-    if ((yield* Effect.promise(() => serverSDK().protocol)) === "v1")
+    if ((yield* Effect.promise(() => serverSDK().protocol)) === "v1") {
+      const archived = yield* Clock.currentTimeMillis
       yield* Effect.forEach(
         sessions.filter((session) => session.time.archived === undefined),
         (session) =>
@@ -1570,11 +1576,12 @@ export default function LegacyLayout(props: ParentProps) {
             serverSDK().client.session.update({
               sessionID: session.id,
               directory: session.directory,
-              time: { archived: Date.now() },
+              time: { archived },
             }),
           ).pipe(Effect.ignore),
         { concurrency: "unbounded", discard: true },
       )
+    }
 
     setBusy(directory, false)
     dismiss()
