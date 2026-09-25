@@ -5,6 +5,7 @@ import type {
   TuiPluginStatus,
 } from "@opencode-ai/plugin/tui"
 import type { TuiConfig } from "../config"
+import { MissingProviderError } from "../context/errors"
 import { Effect } from "effect"
 import { createContext, createSignal, useContext, type JSX, type ParentProps } from "solid-js"
 import { createPluginRoutes } from "./api"
@@ -77,6 +78,9 @@ export function PluginRuntimeProvider(props: ParentProps<{ value: PluginRuntime 
 
 export function usePluginRuntime() {
   const runtime = useContext(Context)
-  if (!runtime) throw new Error("usePluginRuntime must be used within PluginRuntimeProvider")
+  if (!runtime) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "usePluginRuntime must be used within PluginRuntimeProvider" })
+  }
   return runtime
 }
