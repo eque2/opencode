@@ -1,11 +1,11 @@
 // Legacy `api.command` bridge for v1 plugins; remove in v2.
 import type { TuiCommand, TuiPluginApi } from "@opencode-ai/plugin/tui"
-import { Effect } from "effect"
+import { Effect, MutableHashSet } from "effect"
 import { TuiKeybind } from "../config/keybind"
 import type { DialogContext } from "../ui/dialog"
 
 const COMMAND_PALETTE_SHOW = "command.palette.show"
-const warned = new Set<string>()
+const warned = MutableHashSet.empty<string>()
 
 type Warn = (api: string, replacement: string) => void
 type LegacyDialog = TuiPluginApi["ui"]["dialog"]
@@ -42,8 +42,8 @@ function createCommandShimDialog(dialog: CommandShimDialog): LegacyDialog {
 }
 
 function warnOnce(api: string, replacement: string, warn: Warn) {
-  if (warned.has(api)) return
-  warned.add(api)
+  if (MutableHashSet.has(warned, api)) return
+  MutableHashSet.add(warned, api)
   warn(api, replacement)
 }
 

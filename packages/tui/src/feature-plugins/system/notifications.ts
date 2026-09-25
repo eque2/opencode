@@ -1,7 +1,7 @@
 import type { Event } from "@opencode-ai/sdk/v2"
 import type { TuiAttentionSoundName, TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
-import { Effect } from "effect"
+import { Effect, MutableHashSet } from "effect"
 
 const id = "internal:notifications"
 
@@ -30,49 +30,49 @@ function sessionErrorMessage(error: SessionError) {
 const tui: TuiPlugin = (api) =>
   Effect.runPromise(
     Effect.sync(() => {
-      const active = new Set<string>()
-      const errored = new Set<string>()
-      const questions = new Set<string>()
-      const permissions = new Set<string>()
+      const active = MutableHashSet.empty<string>()
+      const errored = MutableHashSet.empty<string>()
+      const questions = MutableHashSet.empty<string>()
+      const permissions = MutableHashSet.empty<string>()
 
       api.event.on("question.asked", (event) => {
-        if (questions.has(event.properties.id)) return
-        questions.add(event.properties.id)
+        if (MutableHashSet.has(questions, event.properties.id)) return
+        MutableHashSet.add(questions, event.properties.id)
         notify(api, event.properties.sessionID, "Question needs input", "question")
       })
 
       api.event.on("question.replied", (event) => {
-        questions.delete(event.properties.requestID)
+        MutableHashSet.remove(questions, event.properties.requestID)
       })
 
       api.event.on("question.rejected", (event) => {
-        questions.delete(event.properties.requestID)
+        MutableHashSet.remove(questions, event.properties.requestID)
       })
 
       api.event.on("permission.asked", (event) => {
-        if (permissions.has(event.properties.id)) return
-        permissions.add(event.properties.id)
+        if (MutableHashSet.has(permissions, event.properties.id)) return
+        MutableHashSet.add(permissions, event.properties.id)
         notify(api, event.properties.sessionID, "Permission needs input", "permission")
       })
 
       api.event.on("permission.replied", (event) => {
-        permissions.delete(event.properties.requestID)
+        MutableHashSet.remove(permissions, event.properties.requestID)
       })
 
       api.event.on("session.status", (event) => {
         const sessionID = event.properties.sessionID
         if (event.properties.status.type === "busy" || event.properties.status.type === "retry") {
-          active.add(sessionID)
-          errored.delete(sessionID)
+          MutableHashSet.add(active, sessionID)
+          MutableHashSet.remove(errored, sessionID)
           return
         }
 
         if (event.properties.status.type !== "idle") return
-        if (!active.has(sessionID)) return
-        active.delete(sessionID)
+        if (!MutableHashSet.has(active, sessionID)) return
+        MutableHashSet.remove(active, sessionID)
 
-        if (errored.has(sessionID)) {
-          errored.delete(sessionID)
+        if (MutableHashSet.has(errored, sessionID)) {
+          MutableHashSet.remove(errored, sessionID)
           return
         }
 
@@ -83,8 +83,8 @@ const tui: TuiPlugin = (api) =>
       api.event.on("session.error", (event) => {
         const sessionID = event.properties.sessionID
         if (!sessionID) return
-        if (!active.has(sessionID)) return
-        errored.add(sessionID)
+        if (!MutableHashSet.has(active, sessionID)) return
+        MutableHashSet.add(errored, sessionID)
         notify(api, sessionID, sessionErrorMessage(event.properties.error), "error")
       })
     }),
