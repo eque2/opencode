@@ -30,16 +30,13 @@ export const AcpCommand = effectCmd({
     })
 
     const input = new WritableStream<Uint8Array>({
+      // The stream sink awaits each write, so the write Effect runs to a Promise here.
       write(chunk) {
-        return new Promise<void>((resolve, reject) => {
-          process.stdout.write(chunk, (err) => {
-            if (err) {
-              reject(err)
-            } else {
-              resolve()
-            }
-          })
-        })
+        return Effect.runPromise(
+          Effect.callback<void, Error>((resume) => {
+            process.stdout.write(chunk, (err) => resume(err ? Effect.fail(err) : Effect.void))
+          }),
+        )
       },
     })
     const output = new ReadableStream<Uint8Array>({
@@ -62,12 +59,10 @@ export const AcpCommand = effectCmd({
 
     yield* Effect.logInfo("setup connection")
     process.stdin.resume()
-    yield* Effect.promise(
-      () =>
-        new Promise<void>((resolve, reject) => {
-          process.stdin.on("end", () => resolve())
-          process.stdin.on("error", reject)
-        }),
-    )
+    // A stdin error stays a defect, as it was when this wait was a rejected Promise.
+    yield* Effect.callback<void>((resume) => {
+      process.stdin.on("end", () => resume(Effect.void))
+      process.stdin.on("error", (err) => resume(Effect.die(err)))
+    })
   }),
 })
