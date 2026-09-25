@@ -1,14 +1,15 @@
 import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
+import { MutableHashSet } from "effect"
 import type { SummaryDiff } from "./timeline-row"
 
 export function uniqueSummaryDiffs(diffs: SnapshotFileDiff[] | undefined) {
-  const files = new Set<string>()
+  const files = MutableHashSet.empty<string>()
   return (diffs ?? [])
     .reduceRight<SummaryDiff[]>((result, diff) => {
       if (!isSummaryDiff(diff)) return result
       const file = diff.file
-      if (files.has(file)) return result
-      files.add(file)
+      if (MutableHashSet.has(files, file)) return result
+      MutableHashSet.add(files, file)
       result.push(diff)
       return result
     }, [])

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { PartGroup } from "@opencode-ai/session-ui/message-part"
+import { HashSet } from "effect"
 import { reuseTimelineRows } from "./row-reconciliation"
 import { TimelineRow } from "./timeline-row"
 
@@ -90,7 +91,7 @@ describe("reuseTimelineRows", () => {
     const result = reuseTimelineRows([...previous], [...rows])
 
     expect(keys(result)).toEqual([...expected])
-    expect(new Set(keys(result)).size).toBe(result.length)
+    expect(HashSet.size(HashSet.fromIterable(keys(result)))).toBe(result.length)
     reused.forEach(([resultIndex, previousIndex]) => expect(result[resultIndex]).toBe(previous[previousIndex]))
   })
 })

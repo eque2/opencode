@@ -1,4 +1,4 @@
-import { HashMap, Option } from "effect"
+import { HashMap, MutableHashSet, Option } from "effect"
 import { TimelineRow } from "./timeline-row"
 
 type ContextRow = Extract<TimelineRow.TimelineRow, { _tag: "AssistantPart" }>
@@ -23,7 +23,7 @@ export function reuseTimelineRows(previous: TimelineRow.TimelineRow[] | undefine
       if (HashMap.has(byKey, key) && !HashMap.has(result, key)) HashMap.set(result, key, index)
     }),
   )
-  const claimed = new Set<string>()
+  const claimed = MutableHashSet.empty<string>()
   const next = rows.map((input, index) => {
     const row = stabilizeContextKey(contextByPart, reserved, input, index, claimed)
     const existing = HashMap.get(byKey, TimelineRow.key(row))
@@ -39,21 +39,21 @@ function stabilizeContextKey(
   reserved: HashMap.HashMap<string, number>,
   row: TimelineRow.TimelineRow,
   rowIndex: number,
-  claimed: Set<string>,
+  claimed: MutableHashSet.MutableHashSet<string>,
 ) {
   if (row._tag !== "AssistantPart" || row.group.type !== "context") return row
   const existing = row.group.refs.reduce<PriorContext | undefined>((result, ref) => {
     const candidate = HashMap.get(contextByPart, `${row.userMessageID}:${ref.partID}`)
     if (Option.isNone(candidate)) return result
     const key = TimelineRow.key(candidate.value.row)
-    if (claimed.has(key)) return result
+    if (MutableHashSet.has(claimed, key)) return result
     const owner = HashMap.get(reserved, key)
     if (Option.isSome(owner) && owner.value !== rowIndex) return result
     return !result || candidate.value.index < result.index ? candidate.value : result
   }, undefined)
   if (!existing) return row
   const key = TimelineRow.key(existing.row)
-  claimed.add(key)
+  MutableHashSet.add(claimed, key)
   if (row.group.key === existing.row.group.key) return row
   return new TimelineRow.AssistantPart({
     ...row,

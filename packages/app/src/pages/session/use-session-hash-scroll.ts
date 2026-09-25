@@ -1,6 +1,6 @@
 import type { UserMessage } from "@opencode-ai/sdk/v2"
 import { useLocation, useNavigate } from "@solidjs/router"
-import { HashMap, Option } from "effect"
+import { HashMap, MutableHashSet, Option } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { messageIdFromHash } from "./message-id-from-hash"
 
@@ -31,17 +31,17 @@ export const useSessionHashScroll = (input: {
   const location = useLocation()
   const navigate = useNavigate()
 
-  const frames = new Set<number>()
+  const frames = MutableHashSet.empty<number>()
   const queue = (fn: () => void) => {
     const id = requestAnimationFrame(() => {
-      frames.delete(id)
+      MutableHashSet.remove(frames, id)
       fn()
     })
-    frames.add(id)
+    MutableHashSet.add(frames, id)
   }
   const cancel = () => {
     for (const id of frames) cancelAnimationFrame(id)
-    frames.clear()
+    MutableHashSet.clear(frames)
   }
 
   const clearMessageHash = () => {
