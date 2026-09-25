@@ -41,26 +41,30 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
           return {
             data: sessions,
             cursor: {
-              previous: first
-                ? SessionsCursor.make({
-                    ...query,
-                    anchor: {
-                      id: first.id,
-                      time: DateTime.toEpochMillis(first.time.created),
-                      direction: "previous",
-                    },
-                  })
-                : undefined,
-              next: last
-                ? SessionsCursor.make({
-                    ...query,
-                    anchor: {
-                      id: last.id,
-                      time: DateTime.toEpochMillis(last.time.created),
-                      direction: "next",
-                    },
-                  })
-                : undefined,
+              ...(first
+                ? {
+                    previous: SessionsCursor.make({
+                      ...query,
+                      anchor: {
+                        id: first.id,
+                        time: DateTime.toEpochMillis(first.time.created),
+                        direction: "previous",
+                      },
+                    }),
+                  }
+                : {}),
+              ...(last
+                ? {
+                    next: SessionsCursor.make({
+                      ...query,
+                      anchor: {
+                        id: last.id,
+                        time: DateTime.toEpochMillis(last.time.created),
+                        direction: "next",
+                      },
+                    }),
+                  }
+                : {}),
             },
           }
         }),

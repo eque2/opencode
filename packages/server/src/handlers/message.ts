@@ -82,8 +82,8 @@ export const MessageHandler = HttpApiBuilder.group(Api, "server.message", (handl
         return {
           data: messages,
           cursor: {
-            previous: first ? cursor.encode(first, order, "previous") : undefined,
-            next: last ? cursor.encode(last, order, "next") : undefined,
+            ...(first ? { previous: cursor.encode(first, order, "previous") } : {}),
+            ...(last ? { next: cursor.encode(last, order, "next") } : {}),
           },
         }
       }),
