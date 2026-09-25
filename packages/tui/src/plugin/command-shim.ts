@@ -65,12 +65,21 @@ function toCommand(item: TuiCommand, dialog: LegacyDialog) {
   }
 }
 
+function isLegacyKeybindName(name: string): name is keyof typeof TuiKeybind.CommandMap {
+  return Object.hasOwn(TuiKeybind.CommandMap, name)
+}
+
+// Map a v1 keybind name (for example `app_exit`) to its command name; other names pass through.
+function keybindCommand(name: string) {
+  return isLegacyKeybindName(name) ? TuiKeybind.CommandMap[name] : name
+}
+
 function toBindings(commands: TuiCommand[], keybinds: LegacyKeybinds) {
   return commands.flatMap((item) =>
     item.keybind
-      ? keybinds.has(TuiKeybind.CommandMap[item.keybind as keyof typeof TuiKeybind.CommandMap] ?? item.keybind)
+      ? keybinds.has(keybindCommand(item.keybind))
         ? keybinds
-            .get(TuiKeybind.CommandMap[item.keybind as keyof typeof TuiKeybind.CommandMap] ?? item.keybind)
+            .get(keybindCommand(item.keybind))
             .map((binding) => ({ ...binding, cmd: item.value, desc: binding.desc ?? item.title }))
         : [
             {
