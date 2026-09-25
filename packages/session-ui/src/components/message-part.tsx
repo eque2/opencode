@@ -8,7 +8,6 @@ import {
   onMount,
   Show,
   Switch,
-  onCleanup,
   Index,
   type JSX,
   type ComponentProps,
@@ -64,6 +63,7 @@ import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText } from "./message-part-text"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
+import { createFiberSlot } from "./fiber-slot"
 
 function copyWithTextarea(text: string) {
   if (typeof document === "undefined" || !document.body) return false
@@ -270,7 +270,7 @@ type PartDisplayProps<P extends PartType> = Omit<MessagePartProps, "part"> & { p
 
 export const PART_MAPPING: Record<string, PartComponent | undefined> = {}
 
-const TEXT_RENDER_PACE_MS = 24
+const TEXT_RENDER_PACE = "24 millis"
 const TEXT_RENDER_IMMEDIATE = 512
 const TEXT_RENDER_SNAP = /[\s.,!?;:)\]]/
 
@@ -293,12 +293,13 @@ function next(text: string, start: number) {
 function createPacedValue(getValue: () => string, live?: () => boolean) {
   const [value, setValue] = createSignal(getValue())
   let shown = getValue()
-  let timeout: ReturnType<typeof setTimeout> | undefined
+  // One pacing fiber at most. The slot interrupts it on clear and when the owner is disposed.
+  const pacer = createFiberSlot()
+  let pacing = false
 
   const clear = () => {
-    if (!timeout) return
-    clearTimeout(timeout)
-    timeout = undefined
+    pacing = false
+    pacer.interrupt()
   }
 
   const sync = (text: string) => {
@@ -306,25 +307,36 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
     setValue(text)
   }
 
-  const run = () => {
-    timeout = undefined
+  // Shows the next chunk and returns whether another chunk is still due.
+  const step = () => {
     const text = getValue()
     if (!live?.()) {
       sync(text)
-      return
+      return false
     }
     if (!text.startsWith(shown) || text.length <= shown.length) {
       sync(text)
-      return
+      return false
     }
     if (text.length - shown.length <= TEXT_RENDER_IMMEDIATE) {
       sync(text)
-      return
+      return false
     }
     const end = next(text, shown.length)
     sync(text.slice(0, end))
-    if (end < text.length) timeout = setTimeout(run, TEXT_RENDER_PACE_MS)
+    return end < text.length
   }
+
+  const pace: Effect.Effect<void> = Effect.sleep(TEXT_RENDER_PACE).pipe(
+    Effect.andThen(Effect.sync(step)),
+    Effect.flatMap((more) =>
+      more
+        ? Effect.suspend(() => pace)
+        : Effect.sync(() => {
+            pacing = false
+          }),
+    ),
+  )
 
   createEffect(() => {
     const text = getValue()
@@ -343,12 +355,9 @@ function createPacedValue(getValue: () => string, live?: () => boolean) {
       sync(text)
       return
     }
-    if (text.length === shown.length || timeout) return
-    timeout = setTimeout(run, TEXT_RENDER_PACE_MS)
-  })
-
-  onCleanup(() => {
-    clear()
+    if (text.length === shown.length || pacing) return
+    pacing = true
+    pacer.run(pace)
   })
 
   return value
