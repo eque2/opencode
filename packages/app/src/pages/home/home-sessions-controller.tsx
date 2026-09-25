@@ -2,7 +2,7 @@ import type { Session } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useQuery } from "@tanstack/solid-query"
-import { DateTime } from "luxon"
+import { DateTime } from "effect"
 import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTransition } from "solid-js"
 import { produce } from "solid-js/store"
 import { useCommand } from "@/context/command"
@@ -22,6 +22,7 @@ import { showToast } from "@/utils/toast"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
+import { sessionDayOf, type SessionDay } from "./home-time"
 
 const HOME_SESSION_LIMIT = 64
 export type HomeSessionRecord = {
@@ -276,18 +277,12 @@ export function homeSessionSearchKey(record: HomeSessionRecord) {
 }
 
 function groupSessions(records: HomeSessionRecord[], language: ReturnType<typeof useLanguage>): HomeSessionGroup[] {
-  const now = DateTime.local()
-  const yesterday = now.minus({ days: 1 })
-  const todaySessions = records.filter((record) =>
-    DateTime.fromMillis(record.session.time.updated ?? record.session.time.created).hasSame(now, "day"),
-  )
-  const yesterdaySessions = records.filter((record) =>
-    DateTime.fromMillis(record.session.time.updated ?? record.session.time.created).hasSame(yesterday, "day"),
-  )
-  const olderSessions = records.filter((record) => {
-    const time = DateTime.fromMillis(record.session.time.updated ?? record.session.time.created)
-    return !time.hasSame(now, "day") && !time.hasSame(yesterday, "day")
-  })
+  const dayOf = sessionDayOf(DateTime.nowUnsafe(), DateTime.zoneMakeLocal())
+  const days = records.map((record) => dayOf(record.session.time.updated ?? record.session.time.created))
+  const sessionsOn = (day: SessionDay) => records.filter((_, index) => days[index] === day)
+  const todaySessions = sessionsOn("today")
+  const yesterdaySessions = sessionsOn("yesterday")
+  const olderSessions = sessionsOn("older")
   const olderTitle =
     todaySessions.length === 0 && yesterdaySessions.length === 0
       ? language.t("sidebar.project.recentSessions")
