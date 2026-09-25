@@ -78,6 +78,7 @@ test("app.exit prints the session epilogue after scoped cleanup", async () => {
           time: { created: 0, updated: 0 },
         },
       ])
+    return undefined
   })
   const originalWrite = process.stdout.write.bind(process.stdout)
   let stdout = ""
