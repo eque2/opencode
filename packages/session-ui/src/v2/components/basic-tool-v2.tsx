@@ -38,6 +38,12 @@ const isTriggerTitle = (val: unknown): val is BasicToolV2TriggerTitle =>
   "title" in val &&
   (typeof Node === "undefined" || !(val instanceof Node))
 
+// The Show fallback renders only when the trigger is not a title object.
+function triggerElement(trigger: BasicToolV2TriggerTitle | JSX.Element): JSX.Element {
+  if (isTriggerTitle(trigger)) return undefined
+  return trigger
+}
+
 export interface BasicToolV2Props extends Omit<ComponentProps<"div">, "children" | "title"> {
   trigger: BasicToolV2TriggerTitle | JSX.Element
   children?: JSX.Element
@@ -87,7 +93,7 @@ export function BasicToolV2(props: BasicToolV2Props) {
     >
       <Collapsible.Trigger as="div" role="button" data-slot="basic-tool-v2-trigger">
         <div data-slot="basic-tool-v2-labels">
-          <Show when={isTriggerTitle(local.trigger) && local.trigger} fallback={local.trigger as JSX.Element}>
+          <Show when={isTriggerTitle(local.trigger) && local.trigger} fallback={triggerElement(local.trigger)}>
             {(title) => (
               <>
                 <span data-slot="basic-tool-v2-title">

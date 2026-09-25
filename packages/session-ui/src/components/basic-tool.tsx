@@ -22,6 +22,12 @@ const isTriggerTitle = (val: any): val is TriggerTitle => {
   )
 }
 
+// The last Match renders the trigger only when it is neither a render function nor a title object.
+function triggerElement(trigger: BasicToolProps["trigger"]): JSX.Element {
+  if (typeof trigger === "function" || isTriggerTitle(trigger)) return undefined
+  return trigger
+}
+
 export interface BasicToolProps {
   icon: IconProps["name"]
   trigger: TriggerTitle | JSX.Element | ((open: Accessor<boolean>) => JSX.Element)
@@ -244,7 +250,7 @@ export function BasicTool(props: BasicToolProps) {
                 </div>
               )}
             </Match>
-            <Match when={true}>{props.trigger as JSX.Element}</Match>
+            <Match when={true}>{triggerElement(props.trigger)}</Match>
           </Switch>
         </div>
       </div>
