@@ -20,7 +20,7 @@ import {
   type Theme,
   type ThemeJson,
 } from "../theme"
-import { Duration, Effect, Fiber, MutableHashSet, Option, Result, Schema } from "effect"
+import { Duration, Effect, Fiber, FileSystem, MutableHashSet, Option, Result, Schema } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -28,39 +28,65 @@ import { useKV } from "./kv"
 import { useTuiConfig } from "../config"
 import { Global } from "@opencode-ai/core/global"
 import { Glob } from "@opencode-ai/core/util/glob"
-import { readFile } from "node:fs/promises"
+import { LayerNodePlatform } from "@opencode-ai/core/effect/app-node-platform"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import path from "node:path"
 
+/** Listing or reading the custom theme files failed. */
+export class ThemeDiscoveryError extends Schema.TaggedError<ThemeDiscoveryError>()("TuiTheme.DiscoveryError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export type ThemeSource = Readonly<{
-  discover(): Promise<Record<string, unknown>>
+  /** The custom theme files by name, as parsed JSON. */
+  discover: Effect.Effect<Record<string, unknown>, ThemeDiscoveryError>
   subscribeRefresh?(refresh: () => void): () => void
 }>
 
+const filesystem = LayerNode.compile(LayerNodePlatform.filesystem)
+
+// The .opencode directory in `directory` and in each of its ancestors, nearest first.
+function projectConfigDirectories(directory: string): ReadonlyArray<string> {
+  const parent = path.dirname(directory)
+  const own = path.join(directory, ".opencode")
+  return parent === directory ? [own] : [own, ...projectConfigDirectories(parent)]
+}
+
 const themeSource: ThemeSource = {
-  async discover() {
-    const directories = [Global.Path.config]
-    for (let current = process.cwd(); ; current = path.dirname(current)) {
-      directories.push(path.join(current, ".opencode"))
-      if (path.dirname(current) === current) break
-    }
-    return discoverThemes(directories)
-  },
+  discover: Effect.suspend(() =>
+    discoverThemes([Global.Path.config, ...projectConfigDirectories(process.cwd())]),
+  ).pipe(Effect.provide(filesystem)),
   subscribeRefresh(refresh) {
     process.on("SIGUSR2", refresh)
     return () => process.off("SIGUSR2", refresh)
   },
 }
 
-export async function discoverThemes(directories: string[]) {
-  const result: Record<string, unknown> = {}
-  for (const directory of directories) {
-    const files = await Glob.scan("themes/*.json", { cwd: directory, absolute: true, dot: true, symlink: true })
-    for (const file of files) {
-      result[path.basename(file, ".json")] = JSON.parse(await readFile(file, "utf8")) as unknown
-    }
-  }
-  return result
-}
+// Theme files are untyped JSON here; isTheme checks each one before it is used.
+const decodeThemeFile = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+
+/** Reads `themes/*.json` in each directory. A later directory wins for the same theme name. */
+export const discoverThemes = Effect.fn("TuiTheme.discoverThemes")(function* (directories: ReadonlyArray<string>) {
+  const fs = yield* FileSystem.FileSystem
+  const found = yield* Effect.forEach(directories, (directory) =>
+    Effect.tryPromise({
+      try: () => Glob.scan("themes/*.json", { cwd: directory, absolute: true, dot: true, symlink: true }),
+      catch: (cause) => new ThemeDiscoveryError({ message: `Failed to list the themes in ${directory}`, cause }),
+    }).pipe(
+      Effect.flatMap((files) =>
+        Effect.forEach(files, (file) =>
+          fs.readFileString(file).pipe(
+            Effect.flatMap(decodeThemeFile),
+            Effect.map((theme): readonly [string, unknown] => [path.basename(file, ".json"), theme]),
+            Effect.mapError((cause) => new ThemeDiscoveryError({ message: `Failed to read the theme ${file}`, cause })),
+          ),
+        ),
+      ),
+    ),
+  )
+  return Object.fromEntries(found.flat())
+})
 
 export {
   DEFAULT_THEMES,
@@ -144,8 +170,7 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
     })
 
     function syncCustomThemes() {
-      return themes
-        .discover()
+      return Effect.runPromise(themes.discover)
         .then((themes) => {
           setCustomThemes(
             Object.entries(themes).reduce<Record<string, ThemeJson>>((result, [name, theme]) => {
