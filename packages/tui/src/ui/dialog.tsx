@@ -7,7 +7,10 @@ import { useToast } from "./toast"
 import { useTuiFlags } from "../context/runtime"
 import { useBindings, useOpencodeModeStack } from "../keymap"
 import { useClipboard } from "../context/clipboard"
-import { Effect, Fiber, Option } from "effect"
+import { Effect, Fiber, Option, Schema } from "effect"
+
+// OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
+const isMouseButton = Schema.is(Schema.Enum(MouseButton))
 
 export function Dialog(
   props: ParentProps<{
@@ -215,7 +218,7 @@ export function DialogProvider(props: ParentProps) {
         zIndex={3000}
         onMouseDown={(evt: { button: number; preventDefault(): void; stopPropagation(): void }) => {
           if (!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
-          if (evt.button !== MouseButton.RIGHT) return
+          if (!isMouseButton(evt.button) || evt.button !== MouseButton.RIGHT) return
 
           if (!copySelection()) return
           evt.preventDefault()

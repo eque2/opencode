@@ -1,7 +1,7 @@
 import { render, TimeToFirstDraw, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { registerOpencodeSpinner } from "./component/register-spinner"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
-import { Config, Deferred, Effect } from "effect"
+import { Config, Deferred, Effect, Schema } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
@@ -95,6 +95,9 @@ import { destroyRenderer } from "./util/renderer"
 import { cliErrorMessage, errorFormat } from "./util/error"
 
 registerOpencodeSpinner()
+
+// OpenTUI types a mouse event button as a plain number; narrow it to MouseButton before comparing.
+const isMouseButton = Schema.is(Schema.Enum(MouseButton))
 
 const appGlobalBindingCommands = [
   "session.list",
@@ -1112,7 +1115,7 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
       backgroundColor={theme.background}
       onMouseDown={(evt) => {
         if (!flags.OPENCODE_EXPERIMENTAL_DISABLE_COPY_ON_SELECT) return
-        if (evt.button !== MouseButton.RIGHT) return
+        if (!isMouseButton(evt.button) || evt.button !== MouseButton.RIGHT) return
 
         if (!Selection.copy(renderer, toast, clipboard)) return
         evt.preventDefault()
