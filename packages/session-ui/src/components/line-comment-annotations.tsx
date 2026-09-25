@@ -145,7 +145,7 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
 
   // Pierre's renderAnnotation API takes `HTMLElement | undefined`; undefined
   // means "no annotation element" (no DOM during SSR).
-  const render = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotation: A): HTMLDivElement | undefined => {
+  const render = (annotation: { metadata: LineCommentAnnotationMeta<T> }): HTMLDivElement | undefined => {
     const meta = annotation.metadata
     const node = Option.orElse(MutableHashMap.get(nodes, meta.key), () => mount(meta))
     if (Option.isNone(node)) return undefined
@@ -153,7 +153,7 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
     return node.value.host
   }
 
-  const reconcile = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotations: A[]) => {
+  const reconcile = (annotations: ReadonlyArray<{ metadata: LineCommentAnnotationMeta<T> }>) => {
     const next = HashSet.fromIterable(annotations.map((annotation) => annotation.metadata.key))
     for (const [key, node] of nodes) {
       if (HashSet.has(next, key)) continue
