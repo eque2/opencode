@@ -1,7 +1,7 @@
 import { Component, For, Show, createMemo, lazy, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { HashMap, MutableHashMap, Option } from "effect"
+import { HashMap, MutableHashMap, Option, Predicate } from "effect"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -122,9 +122,12 @@ function signatures(config: string | undefined) {
   })
 }
 
+/** The string overrides in a persisted keybinds value. Every reader skips a non-string value, so it is left out here. */
 function keybinds(value: unknown): KeybindMap {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as KeybindMap
+  if (!Predicate.isObject(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  )
 }
 
 function listFor(command: Pick<CommandContext, "catalog" | "options">, map: KeybindMap, palette: string) {
