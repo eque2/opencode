@@ -66,9 +66,9 @@ export const WorkspaceDragOverlay = (props: {
   const language = useLanguage()
   const label = createMemo(() => {
     const project = props.sidebarProject()
-    if (!project) return
+    if (!project) return undefined
     const directory = props.activeWorkspace()
-    if (!directory) return
+    if (!directory) return undefined
 
     const [workspaceStore] = serverSync().child(directory, { bootstrap: false })
     const kind =

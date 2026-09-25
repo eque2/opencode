@@ -97,9 +97,9 @@ export type LayoutRoute =
 
 const sessionPath = (key: string) => {
   const dir = SessionStateKey.route(key).split("/")[0]
-  if (!dir) return
+  if (!dir) return undefined
   const root = decode64(dir)
-  if (!root) return
+  if (!root) return undefined
   return createPathHelpers(() => root)
 }
 
@@ -791,7 +791,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
           const current = store.sessionView[sessionKey]
           const message = current?.pendingMessage
           const at = current?.pendingMessageAt
-          if (!message || !at) return
+          if (!message || !at) return undefined
 
           setStore(
             "sessionView",
@@ -802,7 +802,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             }),
           )
 
-          if (Date.now() - at > PENDING_MESSAGE_TTL_MS) return
+          if (Date.now() - at > PENDING_MESSAGE_TTL_MS) return undefined
           return message
         },
       },
@@ -812,10 +812,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const reviewMode = createMemo(() => {
           const mode = s().reviewMode
           if (mode === "git" || mode === "branch" || mode === "turn") return mode
+          return undefined
         })
         const reviewFile = createMemo(() => {
           const file = s().reviewFile
           if (typeof file === "string") return file
+          return undefined
         })
         const terminalOpened = createMemo(() => store.terminal?.opened ?? false)
         const reviewPanelOpened = createMemo(() => store.review?.panelOpened ?? DEFAULT_REVIEW_PANEL_OPENED)

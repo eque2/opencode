@@ -172,7 +172,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   )
   const tooltip = createMemo(() => props.showTooltip ?? (props.mobile || !props.sidebarExpanded()))
   const currentChild = createMemo(() => {
-    if (!props.showChild) return
+    if (!props.showChild) return undefined
     return childSessionOnPath(sessionStore.session, props.session.id, params.id)
   })
 

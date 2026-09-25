@@ -79,7 +79,7 @@ export type ProjectDirString = Schema.Schema.Type<typeof ProjectDirString>
 
 export function decodeDirectory(dir: string): ProjectDirString | undefined {
   const decoded = decode64(dir)
-  if (!decoded) return
+  if (!decoded) return undefined
   return ProjectDirString.make(decoded)
 }
 

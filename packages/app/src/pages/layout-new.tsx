@@ -15,7 +15,7 @@ export default function NewLayout(props: ParentProps) {
   const update: TitlebarUpdate = {
     version: () => {
       const state = platform.updater?.state()
-      if (state?.status !== "ready") return
+      if (state?.status !== "ready") return undefined
       return state.version
     },
     installing: () => platform.updater?.state().status === "installing",

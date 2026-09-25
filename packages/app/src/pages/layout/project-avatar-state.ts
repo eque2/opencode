@@ -17,6 +17,7 @@ export function useSessionTabAvatarState(
   const sync = createMemo(() => {
     const conn = connection()
     if (conn) return global.ensureServerCtx(conn).sync
+    return undefined
   })
   const hasPermissions = createMemo(() => {
     const serverSync = sync()
@@ -35,7 +36,7 @@ export function useSessionTabAvatarState(
   })
   const needsAttention = createMemo(() => hasPermissions() || hasQuestions())
   const notificationState = createMemo(() => {
-    if (!connection()) return
+    if (!connection()) return undefined
     return notification.ensureServerState(server())
   })
   const unread = createMemo(() => needsAttention() || (notificationState()?.session.unseenCount(sessionId()) ?? 0) > 0)
