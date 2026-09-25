@@ -1,7 +1,7 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useParams, useSearchParams } from "@solidjs/router"
-import { Array as Arr, MutableHashMap, Option } from "effect"
+import { Array as Arr, Effect, MutableHashMap, Option } from "effect"
 import { createMemo, createResource, createRoot, getOwner, onCleanup } from "solid-js"
 import { requireServerKey } from "@/utils/session-route"
 import { ServerConnection } from "./server"
@@ -137,12 +137,17 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const pick = (scope?: PromptScope) => (scope ? load(scope) : session())
     const ready = createPromptReady(session)
 
+    // The source reads the value now, so the resource tracks it, and resolves once the session is ready.
     const withSuspense = <T,>(cb: () => T): (() => T) =>
       createResource(
-        async () => {
+        () => {
           const value = cb()
-          await session().ready.promise
-          return value
+          return Effect.runPromise(
+            Option.match(Option.fromNullishOr(session().ready.promise), {
+              onNone: () => Effect.succeed(value),
+              onSome: (promise) => Effect.promise(() => promise).pipe(Effect.as(value)),
+            }),
+          )
         },
         cb,
         { initialValue: cb() },
