@@ -104,7 +104,7 @@ export interface SessionReviewProps {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
   focusedFile?: string
   open?: string[]
   onOpenChange?: (open: string[]) => void
@@ -332,7 +332,7 @@ export const SessionReview = (props: SessionReviewProps) => {
 
       requestAnimationFrame(() => scrollTo(0))
 
-      requestAnimationFrame(() => props.onFocusedCommentChange?.(null))
+      requestAnimationFrame(() => props.onFocusedCommentChange?.(Option.none()))
     })
   })
 

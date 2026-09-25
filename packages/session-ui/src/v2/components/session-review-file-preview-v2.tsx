@@ -43,7 +43,7 @@ export type SessionReviewFilePreviewV2Props = {
   lineCommentActions?: SessionReviewCommentActions
   comments?: SessionReviewComment[]
   focusedComment?: SessionReviewFocus | null
-  onFocusedCommentChange?: (focus: SessionReviewFocus | null) => void
+  onFocusedCommentChange?: (focus: Option.Option<SessionReviewFocus>) => void
 }
 
 function statusLabel(status: ViewDiff["status"]) {
@@ -181,7 +181,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         const token = focusToken
         requestAnimationFrame(() => {
           if (token !== focusToken) return
-          props.onFocusedCommentChange?.(null)
+          props.onFocusedCommentChange?.(Option.none())
         })
       })
       return
@@ -211,7 +211,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       requestAnimationFrame(() => scrollTo(0))
       requestAnimationFrame(() => {
         if (token !== focusToken) return
-        props.onFocusedCommentChange?.(null)
+        props.onFocusedCommentChange?.(Option.none())
       })
     })
   })
