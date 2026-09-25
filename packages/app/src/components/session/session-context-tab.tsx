@@ -114,17 +114,15 @@ export function SessionContextTab() {
     () => {
       const id = params.id
       if (!id) return emptyMessages
-      return (sync().data.message[id] ?? []) as Message[]
+      return sync().data.message[id] ?? []
     },
     emptyMessages,
     { equals: same },
   )
 
-  const userMessages = createMemo(
-    () => messages().filter((m) => m.role === "user") as UserMessage[],
-    emptyUserMessages,
-    { equals: same },
-  )
+  const userMessages = createMemo(() => messages().filter((m) => m.role === "user"), emptyUserMessages, {
+    equals: same,
+  })
 
   const visibleUserMessages = createMemo(
     () => {
@@ -293,7 +291,7 @@ export function SessionContextTab() {
   let scroll: HTMLDivElement | undefined
   let frame: Option.Option<number> = Option.none()
   let pending: Option.Option<{ x: number; y: number }> = Option.none()
-  const getParts = (id: string) => (sync().data.part[id] ?? []) as Part[]
+  const getParts = (id: string) => sync().data.part[id] ?? []
 
   const restoreScroll = () => {
     const el = scroll
