@@ -21,11 +21,11 @@ export function DialogStatus() {
       if (value.startsWith("file://")) {
         const path = fileURLToPath(value)
         const parts = path.split("/")
-        const filename = parts.pop() || path
+        const filename = parts.at(-1) || path
         if (!filename.includes(".")) return { name: filename }
         const basename = filename.split(".")[0]
         if (basename === "index") {
-          const dirname = parts.pop()
+          const dirname = parts.at(-2)
           const name = dirname || basename
           return { name }
         }
