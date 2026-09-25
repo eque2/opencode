@@ -1289,7 +1289,7 @@ export function createServerSession(
             const messages = draft.message[props.sessionID]
             if (messages) {
               const index = messages.findIndex((message) => message.id === props.messageID)
-              if (index >= 0) messages.splice(index, 1)
+              if (index >= 0) draft.message[props.sessionID] = messages.toSpliced(index, 1)
             }
             deleteMessageParts(draft, props.messageID)
           }),
@@ -1372,8 +1372,12 @@ export function createServerSession(
             const parts = draft.part[props.messageID]
             if (!parts) return
             const result = Binary.search(parts, props.partID, (part) => part.id)
-            if (result.found) parts.splice(result.index, 1)
-            if (parts.length === 0) delete draft.part[props.messageID]
+            const next = result.found ? parts.toSpliced(result.index, 1) : parts
+            if (next.length === 0) {
+              delete draft.part[props.messageID]
+              return
+            }
+            if (result.found) draft.part[props.messageID] = next
           }),
         )
         return
