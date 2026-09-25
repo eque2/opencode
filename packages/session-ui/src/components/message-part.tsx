@@ -366,7 +366,7 @@ function getDirectory(path: string | undefined) {
 }
 
 import type { IconProps } from "@opencode-ai/ui/icon"
-import { resolveFileDiff } from "./session-diff"
+import { resolveFileDiff, type DiffSource } from "./session-diff"
 
 export type ToolInfo = {
   icon: IconProps["name"]
@@ -442,9 +442,9 @@ function taskAgent(
   if (typeof raw !== "string" || !raw) return {}
   const key = raw.toLowerCase()
   const item = list?.find((entry) => entry.name === raw || entry.name.toLowerCase() === key)
-  const v2Tone = item?.color ? undefined : v2AgentTones[key]
-  const color = agentColor(item?.color, agentThemeColors) ?? agentTones[key] ?? tone(key)
-  const v2Color = agentColor(item?.color, v2AgentThemeColors) ?? v2Tone ?? color
+  const custom = Option.liftPredicate(item?.color, isNonEmptyString)
+  const color = Option.getOrElse(agentColor(custom, agentThemeColors), () => agentTones[key] ?? tone(key))
+  const v2Color = Option.getOrElse(agentColor(custom, v2AgentThemeColors), () => v2AgentTones[key] ?? color)
   return {
     name: item?.name ?? `${raw[0].toUpperCase()}${raw.slice(1)}`,
     color,
@@ -452,9 +452,12 @@ function taskAgent(
   }
 }
 
-function agentColor(value: string | undefined, themeColors: Record<string, string>) {
-  if (!value) return
-  return themeColors[value] ?? value
+function agentColor(value: Option.Option<string>, themeColors: Record<string, string>) {
+  return Option.map(value, (name) => themeColors[name] ?? name)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return Predicate.isString(value) && value !== ""
 }
 
 function newLayout() {
@@ -579,9 +582,8 @@ function urls(text: string | undefined) {
   )
 }
 
-function sessionLink(id: string | undefined, href?: (id: string) => string | undefined) {
-  if (!id) return undefined
-  return href?.(id)
+function sessionLink(id: Option.Option<string>, href?: (id: string) => string | undefined) {
+  return Option.flatMap(id, (value) => Option.fromNullishOr(href?.(value)))
 }
 
 function taskSession(
@@ -589,15 +591,18 @@ function taskSession(
   parentID: string | undefined,
   sessions: Session[] | undefined,
   agents?: readonly { name: string; color?: string }[],
-) {
-  if (!parentID) return undefined
+): Option.Option<string> {
+  if (!parentID) return Option.none()
   const description = typeof input.description === "string" ? input.description : ""
   const agent = taskAgent(input.subagent_type, agents).name
-  return (sessions ?? [])
-    .filter((session) => session.parentID === parentID && !session.time?.archived)
-    .filter((session) => (description ? session.title.startsWith(description) : true))
-    .filter((session) => (agent ? session.title.includes(`@${agent}`) : true))
-    .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0))[0]?.id
+  const latest = Array.head(
+    (sessions ?? [])
+      .filter((session) => session.parentID === parentID && !session.time?.archived)
+      .filter((session) => (description ? session.title.startsWith(description) : true))
+      .filter((session) => (agent ? session.title.includes(`@${agent}`) : true))
+      .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0)),
+  )
+  return Option.map(latest, (session) => session.id)
 }
 
 const CONTEXT_GROUP_TOOLS = HashSet.make("read", "glob", "grep", "list")
@@ -1553,21 +1558,15 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
   const input = () => part().state?.input ?? emptyInput
   // @ts-expect-error
   const partMetadata = () => part().state?.metadata ?? emptyMetadata
-  const taskId = createMemo(() => {
-    if (part().tool !== "task") return
-    const value = partMetadata().sessionId
-    if (typeof value === "string" && value) return value
-  })
-  const taskHref = createMemo(() => {
-    if (part().tool !== "task") return
-    return sessionLink(taskId(), data.sessionHref)
-  })
-  const taskSubtitle = createMemo(() => {
-    if (part().tool !== "task") return undefined
-    const value = input().description
-    if (typeof value === "string" && value) return value
-    return taskId()
-  })
+  const taskId = createMemo(() =>
+    part().tool === "task" ? Option.liftPredicate(partMetadata().sessionId, isNonEmptyString) : Option.none(),
+  )
+  const taskHref = createMemo(() => sessionLink(taskId(), data.sessionHref))
+  const taskSubtitle = createMemo(() =>
+    part().tool === "task"
+      ? Option.liftPredicate(input().description, isNonEmptyString).pipe(Option.orElse(taskId))
+      : Option.none(),
+  )
 
   const errorText = () => {
     const state = part().state
@@ -1604,15 +1603,15 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
                   defaultOpen={props.defaultOpen}
                   open={controlledOpen()}
                   onOpenChange={props.onToolOpenChange ? handleToolOpenChange : undefined}
-                  subtitle={taskSubtitle()}
-                  href={taskHref()}
+                  subtitle={Option.getOrUndefined(taskSubtitle())}
+                  href={Option.getOrUndefined(taskHref())}
                   onSubtitleClick={(event) => {
                     if (!data.navigateToSession) return
                     if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
                     const id = taskId()
-                    if (!id) return
+                    if (Option.isNone(id)) return
                     event.preventDefault()
-                    data.navigateToSession(id)
+                    data.navigateToSession(id.value)
                   }}
                 />
               )
@@ -2007,33 +2006,32 @@ ToolRegistry.register({
   render(props) {
     const data = useData()
     const i18n = useI18n()
-    const childSessionId = createMemo(() => {
-      const value = props.metadata.sessionId
-      if (typeof value === "string" && value) return value
-      return taskSession(props.input, data.sessionID, data.store.session, data.store.agent)
-    })
+    const childSessionId = createMemo(() =>
+      Option.liftPredicate(props.metadata.sessionId, isNonEmptyString).pipe(
+        Option.orElse(() => taskSession(props.input, data.sessionID, data.store.session, data.store.agent)),
+        Option.filter(isNonEmptyString),
+      ),
+    )
     const agent = createMemo(() => taskAgent(props.input.subagent_type, data.store.agent))
     const title = createMemo(() => agent().name ?? i18n.t("ui.tool.agent.default"))
     const tone = createMemo(() => agent().color)
     const v2Tone = createMemo(() => agent().v2Color)
-    const subtitle = createMemo(() => {
-      const value =
-        typeof props.input.description === "string" && props.input.description
-          ? props.input.description
-          : childSessionId()
-      if (!value) return value
-      if (props.metadata.background === true) return `${value} (background)`
-      return value
-    })
+    const subtitle = createMemo(() =>
+      Option.liftPredicate(props.input.description, isNonEmptyString).pipe(
+        Option.orElse(childSessionId),
+        Option.map((value) => (props.metadata.background === true ? `${value} (background)` : value)),
+      ),
+    )
     const running = createMemo(() => props.status === "pending" || props.status === "running")
 
     const href = createMemo(() => sessionLink(childSessionId(), data.sessionHref))
-    const clickable = createMemo(() => !!(childSessionId() && (data.navigateToSession || href())))
+    const linked = () => Option.exists(href(), isNonEmptyString)
+    const clickable = createMemo(() => Option.isSome(childSessionId()) && (!!data.navigateToSession || linked()))
 
     const open = () => {
       const id = childSessionId()
-      if (!id) return
-      data.navigateToSession?.(id)
+      if (Option.isNone(id)) return
+      data.navigateToSession?.(id.value)
     }
 
     const navigate = (event: MouseEvent) => {
@@ -2043,7 +2041,7 @@ ToolRegistry.register({
       open()
     }
     const navigateKey = (event: KeyboardEvent) => {
-      if (!clickable() || href()) return
+      if (!clickable() || linked()) return
       if (event.key !== "Enter" && event.key !== " ") return
       event.preventDefault()
       open()
@@ -2079,8 +2077,8 @@ ToolRegistry.register({
                 </span>
               </Show>
               <span data-component="task-tool-title">{title()}</span>
-              <Show when={subtitle()}>
-                <span data-slot="basic-tool-tool-subtitle">{subtitle()}</span>
+              <Show when={Option.getOrUndefined(subtitle())}>
+                {(subtitle) => <span data-slot="basic-tool-tool-subtitle">{subtitle()}</span>}
               </Show>
             </div>
           </div>
@@ -2100,7 +2098,7 @@ ToolRegistry.register({
         trigger={trigger()}
         hideDetails
         triggerAsLink
-        triggerHref={href()}
+        triggerHref={Option.getOrUndefined(href())}
         clickable={clickable()}
         onTriggerClick={navigate}
         onTriggerKeyDown={navigateKey}
@@ -2179,6 +2177,10 @@ ToolRegistry.register({
   },
 })
 
+function sameDiffSource(a: DiffSource, b: DiffSource) {
+  return a.file === b.file && a.patch === b.patch && a.before === b.before && a.after === b.after
+}
+
 ToolRegistry.register({
   name: "edit",
   render(props) {
@@ -2189,28 +2191,25 @@ ToolRegistry.register({
     const filename = () => getFilename(props.input.filePath ?? "")
     const pending = () => props.status === "pending" || props.status === "running"
     const diffSource = createMemo(
-      () => {
+      (): Option.Option<DiffSource> => {
         const filediff = props.metadata?.filediff
-        if (!filediff) return
-        return {
+        if (!filediff) return Option.none()
+        return Option.some({
           file: filediff.file || props.input.filePath || "",
           patch: typeof filediff.patch === "string" ? filediff.patch : undefined,
           before: typeof filediff.before === "string" ? filediff.before : undefined,
           after: typeof filediff.after === "string" ? filediff.after : undefined,
-        }
+        })
       },
-      undefined,
-      {
-        equals: (a, b) =>
-          a?.file === b?.file && a?.patch === b?.patch && a?.before === b?.before && a?.after === b?.after,
-      },
+      Option.none(),
+      { equals: Option.makeEquivalence(sameDiffSource) },
     )
 
     const fileCompProps = createMemo(() => {
       try {
         const source = diffSource()
-        if (source) {
-          const fileDiff = resolveFileDiff(source)
+        if (Option.isSome(source)) {
+          const fileDiff = resolveFileDiff(source.value)
           if (fileDiff) return { fileDiff, hunkSeparators: fileDiff.isPartial ? "simple" : "line-info-basic" }
         }
       } catch {}
@@ -2354,8 +2353,7 @@ ToolRegistry.register({
     const pending = createMemo(() => props.status === "pending" || props.status === "running")
     const single = createMemo(() => {
       const list = files()
-      if (list.length !== 1) return
-      return list[0]
+      return list.length === 1 ? Array.head(list) : Option.none()
     })
     const [expanded, setExpanded] = createSignal<string[]>([])
     let seeded = false
@@ -2376,7 +2374,7 @@ ToolRegistry.register({
 
     return (
       <Show
-        when={single()}
+        when={Option.getOrUndefined(single())}
         fallback={
           <div data-component="apply-patch-tool">
             <BasicTool
@@ -2477,73 +2475,75 @@ ToolRegistry.register({
           </div>
         }
       >
-        <div data-component="apply-patch-tool">
-          <BasicTool
-            {...props}
-            icon="code-lines"
-            defer={props.deferContent !== false}
-            trigger={
-              <div data-component="edit-trigger">
-                <div data-slot="message-part-title-area">
-                  <div data-slot="message-part-title">
-                    <span data-slot="message-part-title-text">
-                      <TextShimmer text={i18n.t("ui.tool.patch")} active={pending()} />
-                    </span>
-                    <Show when={!pending()}>
-                      <span data-slot="message-part-title-filename">{getFilename(single()!.relativePath)}</span>
+        {(sole) => (
+          <div data-component="apply-patch-tool">
+            <BasicTool
+              {...props}
+              icon="code-lines"
+              defer={props.deferContent !== false}
+              trigger={
+                <div data-component="edit-trigger">
+                  <div data-slot="message-part-title-area">
+                    <div data-slot="message-part-title">
+                      <span data-slot="message-part-title-text">
+                        <TextShimmer text={i18n.t("ui.tool.patch")} active={pending()} />
+                      </span>
+                      <Show when={!pending()}>
+                        <span data-slot="message-part-title-filename">{getFilename(sole().relativePath)}</span>
+                      </Show>
+                    </div>
+                    <Show when={!pending() && sole().relativePath.includes("/")}>
+                      <div data-slot="message-part-path">
+                        <span data-slot="message-part-directory">{getDirectory(sole().relativePath)}</span>
+                      </div>
                     </Show>
                   </div>
-                  <Show when={!pending() && single()!.relativePath.includes("/")}>
-                    <div data-slot="message-part-path">
-                      <span data-slot="message-part-directory">{getDirectory(single()!.relativePath)}</span>
-                    </div>
-                  </Show>
+                  <div data-slot="message-part-actions">
+                    <Show when={!pending()}>
+                      <DiffChanges changes={{ additions: sole().additions, deletions: sole().deletions }} />
+                    </Show>
+                  </div>
                 </div>
-                <div data-slot="message-part-actions">
-                  <Show when={!pending()}>
-                    <DiffChanges changes={{ additions: single()!.additions, deletions: single()!.deletions }} />
-                  </Show>
-                </div>
-              </div>
-            }
-          >
-            <ToolFileAccordion
-              path={single()!.relativePath}
-              actions={
-                <Switch>
-                  <Match when={single()!.type === "add"}>
-                    <span data-slot="apply-patch-change" data-type="added">
-                      {i18n.t("ui.patch.action.created")}
-                    </span>
-                  </Match>
-                  <Match when={single()!.type === "delete"}>
-                    <span data-slot="apply-patch-change" data-type="removed">
-                      {i18n.t("ui.patch.action.deleted")}
-                    </span>
-                  </Match>
-                  <Match when={single()!.type === "move"}>
-                    <span data-slot="apply-patch-change" data-type="modified">
-                      {i18n.t("ui.patch.action.moved")}
-                    </span>
-                  </Match>
-                  <Match when={true}>
-                    <DiffChanges changes={{ additions: single()!.additions, deletions: single()!.deletions }} />
-                  </Match>
-                </Switch>
               }
             >
-              <div data-component="apply-patch-file-diff">
-                <Dynamic
-                  component={fileComponent}
-                  mode="diff"
-                  virtualize={props.virtualizeDiff}
-                  fileDiff={single()!.view.fileDiff}
-                  onRendered={props.onContentRendered}
-                />
-              </div>
-            </ToolFileAccordion>
-          </BasicTool>
-        </div>
+              <ToolFileAccordion
+                path={sole().relativePath}
+                actions={
+                  <Switch>
+                    <Match when={sole().type === "add"}>
+                      <span data-slot="apply-patch-change" data-type="added">
+                        {i18n.t("ui.patch.action.created")}
+                      </span>
+                    </Match>
+                    <Match when={sole().type === "delete"}>
+                      <span data-slot="apply-patch-change" data-type="removed">
+                        {i18n.t("ui.patch.action.deleted")}
+                      </span>
+                    </Match>
+                    <Match when={sole().type === "move"}>
+                      <span data-slot="apply-patch-change" data-type="modified">
+                        {i18n.t("ui.patch.action.moved")}
+                      </span>
+                    </Match>
+                    <Match when={true}>
+                      <DiffChanges changes={{ additions: sole().additions, deletions: sole().deletions }} />
+                    </Match>
+                  </Switch>
+                }
+              >
+                <div data-component="apply-patch-file-diff">
+                  <Dynamic
+                    component={fileComponent}
+                    mode="diff"
+                    virtualize={props.virtualizeDiff}
+                    fileDiff={sole().view.fileDiff}
+                    onRendered={props.onContentRendered}
+                  />
+                </div>
+              </ToolFileAccordion>
+            </BasicTool>
+          </div>
+        )}
       </Show>
     )
   },
