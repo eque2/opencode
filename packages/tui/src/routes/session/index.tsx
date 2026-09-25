@@ -15,8 +15,7 @@ import {
   useContext,
 } from "solid-js"
 import path from "node:path"
-import { mkdir, writeFile } from "node:fs/promises"
-import { DateTime, Effect, Fiber, HashSet, Option, Predicate } from "effect"
+import { DateTime, Effect, Fiber, FileSystem, HashSet, Option, Predicate } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -64,6 +63,7 @@ import stripAnsi from "strip-ansi"
 import { usePromptRef } from "../../context/prompt"
 import { useEpilogue } from "../../context/epilogue"
 import { normalizePath } from "../../util/path"
+import { fileSystemLayer } from "../../util/persistence"
 import { PermissionPrompt } from "./permission"
 import { QuestionPrompt } from "./question"
 import { DialogExportOptions } from "../../ui/dialog-export-options"
@@ -178,10 +178,12 @@ function use() {
 export function Session() {
   const setEpilogue = useEpilogue()
   const clipboard = useClipboard()
-  const writeExport = async (file: string, content: string) => {
-    await mkdir(path.dirname(file), { recursive: true })
-    await writeFile(file, content)
-  }
+  const writeExport = (file: string, content: string) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      yield* fs.makeDirectory(path.dirname(file), { recursive: true })
+      yield* fs.writeFileString(file, content)
+    }).pipe(Effect.provide(fileSystemLayer))
   const pluginRuntime = usePluginRuntime()
   const route = useRouteData("session")
   const { navigate } = useRoute()
@@ -1015,7 +1017,7 @@ export function Session() {
             const filename = options.filename.trim()
             const filepath = path.join(exportDir, filename)
 
-            await writeExport(filepath, transcript)
+            await Effect.runPromise(writeExport(filepath, transcript))
 
             // Open with EDITOR if available
             const result = await openEditor({
@@ -1027,7 +1029,7 @@ export function Session() {
                 paths.cwd,
             })
             if (result !== undefined) {
-              await writeExport(filepath, result)
+              await Effect.runPromise(writeExport(filepath, result))
             }
 
             toast.show({ message: `Session exported to ${filename}`, variant: "success" })
@@ -2613,13 +2615,26 @@ function Skill(props: ToolProps) {
 function Diagnostics(props: { diagnostics: unknown; filePath: string }) {
   const { theme } = useTheme()
   const terminalEnvironment = useTuiTerminalEnvironment()
-  const errors = createMemo(() => {
-    const normalized = normalizePath(
-      typeof props.filePath === "string" ? props.filePath : "",
-      terminalEnvironment.platform,
+  // Diagnostics are keyed by the normalized path. On Windows it comes from the file system, so it
+  // arrives from a fiber; a new path or unmount stops the previous lookup.
+  const [normalized, setNormalized] = createSignal(Option.none<string>())
+  createEffect(() => {
+    const lookup = Effect.runFork(
+      normalizePath(typeof props.filePath === "string" ? props.filePath : "", terminalEnvironment.platform).pipe(
+        Effect.tap((file) => Effect.sync(() => setNormalized(Option.some(file)))),
+        Effect.provide(fileSystemLayer),
+      ),
     )
-    return parseDiagnostics(props.diagnostics, normalized)
+    onCleanup(() => {
+      Effect.runFork(Fiber.interrupt(lookup))
+    })
   })
+  const errors = createMemo(() =>
+    Option.match(normalized(), {
+      onNone: () => [],
+      onSome: (file) => parseDiagnostics(props.diagnostics, file),
+    }),
+  )
 
   return (
     <Show when={errors().length}>
