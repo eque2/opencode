@@ -1,6 +1,6 @@
 import * as Tool from "./tool"
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js"
-import { Cause, Effect, Option, Predicate, Schema } from "effect"
+import { Array, Cause, Effect, Option, Predicate, Schema } from "effect"
 import { CodeMode, Tool as SandboxTool, toolError } from "@opencode-ai/codemode"
 import { MCP } from "@/mcp"
 import { McpCatalog } from "@/mcp/catalog"
@@ -46,29 +46,33 @@ type CatalogEntry = {
   tool: MCP.McpTool
 }
 
-function groupByServer(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): Map<string, CatalogEntry[]> {
+// The catalog entries in key order, grouped by server in the order each server first appears.
+function catalogEntries(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): CatalogEntry[] {
   const byLongest = [...servers].sort((a, b) => b.length - a.length)
-  const groups = new Map<string, CatalogEntry[]>()
-  for (const key of Object.keys(mcpTools).sort((a, b) => a.localeCompare(b))) {
-    const server =
-      byLongest.find((name) => key.startsWith(name + "_")) ?? (key.includes("_") ? key.slice(0, key.indexOf("_")) : key)
-    const local = server && key.startsWith(server + "_") ? key.slice(server.length + 1) : key
-    const entry: CatalogEntry = {
-      path: `${server}.${local}`,
-      key,
-      server,
-      local,
-      tool: mcpTools[key]!,
-    }
-    groups.set(server, [...(groups.get(server) ?? []), entry])
-  }
-  return groups
+  const entries = Object.keys(mcpTools)
+    .sort((a, b) => a.localeCompare(b))
+    .map((key): CatalogEntry => {
+      const server =
+        byLongest.find((name) => key.startsWith(name + "_")) ??
+        (key.includes("_") ? key.slice(0, key.indexOf("_")) : key)
+      const local = server && key.startsWith(server + "_") ? key.slice(server.length + 1) : key
+      return {
+        path: `${server}.${local}`,
+        key,
+        server,
+        local,
+        tool: mcpTools[key]!,
+      }
+    })
+  return Array.dedupe(entries.map((entry) => entry.server)).flatMap((server) =>
+    entries.filter((entry) => entry.server === server),
+  )
 }
 
 export function describeCatalog(mcpTools: Record<string, MCP.McpTool>, servers: readonly string[]): string {
   return CodeMode.make({
     tools: toolTree(
-      [...groupByServer(mcpTools, servers).values()].flat(),
+      catalogEntries(mcpTools, servers),
       () => () => Effect.fail(toolError("Tool preview is not executable.")),
     ),
   }).instructions()
@@ -239,7 +243,7 @@ export const CodeModeTool = Tool.define(
         const ruleset = Permission.merge(agent.permission, session.permission ?? [])
         const mcpTools = Permission.visibleTools(yield* mcp.tools(), ruleset)
         const servers = Object.keys(yield* mcp.clients()).map(McpCatalog.sanitize)
-        const catalog = [...groupByServer(mcpTools, servers).values()].flat()
+        const catalog = catalogEntries(mcpTools, servers)
 
         const calls: CallEntry[] = []
         let attachments: Attachment[] = []
