@@ -1,4 +1,5 @@
 import { useMutation } from "@tanstack/solid-query"
+import { Option } from "effect"
 import { createEffect } from "solid-js"
 import type { Accessor } from "solid-js"
 import {
@@ -16,7 +17,7 @@ export function useWslAddServerProbes(input: {
   view: Accessor<WslAddServerView>
   adding: Accessor<boolean>
   busy: Accessor<boolean>
-  selectedDistro: Accessor<string | null>
+  selectedDistro: Accessor<Option.Option<string>>
   addableInstalledDistros: Accessor<WslInstalledDistro[]>
   onError: (error: unknown) => void
 }) {
@@ -45,9 +46,8 @@ export function useWslAddServerProbes(input: {
       busy: input.busy(),
       selectedDistro: input.selectedDistro(),
       addableInstalledDistros: input.addableInstalledDistros(),
-    })
-    if (!command || !gate.accepts(command.key)) return
-    probe.mutate(command)
+    }).pipe(Option.filter((plan) => gate.accepts(plan.key)))
+    if (Option.isSome(command)) probe.mutate(command.value)
   })
 
   return {

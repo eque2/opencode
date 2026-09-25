@@ -6,6 +6,7 @@ import { DividerV2 } from "@opencode-ai/ui/v2/divider-v2"
 import { LoaderV2 } from "@opencode-ai/ui/v2/loader-v2"
 import { RadioGroupV2, RadioItemV2 } from "@opencode-ai/ui/v2/radio-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
+import { Array as Arr, HashMap, Option } from "effect"
 import { createMemo, For, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
@@ -15,9 +16,11 @@ import { useWslServers } from "./context"
 import { addServerViewModel, type AddServerText } from "./settings-model"
 import "./dialog-add-wsl-server.css"
 
-function isWslRuntimeMissing(error: string | null | undefined) {
-  if (!error) return true
-  return /WSL is not installed|not been installed|wsl(?:\.exe)? --install/i.test(error)
+function isWslRuntimeMissing(error: Option.Option<string>) {
+  return Option.match(error, {
+    onNone: () => true,
+    onSome: (text) => !text || /WSL is not installed|not been installed|wsl(?:\.exe)? --install/i.test(text),
+  })
 }
 
 function translate(language: ReturnType<typeof useLanguage>, value: AddServerText) {
@@ -34,11 +37,7 @@ export function DialogAddWslServer(props: DialogWslServerProps = {}) {
   const controller = useWslAddServerController(props)
   const model = controller.model
   const primaryButton = () => model().primaryButton
-  const primaryButtonStyle = () => {
-    const width = primaryButton().width
-    if (!width) return undefined
-    return { width }
-  }
+  const primaryButtonStyle = () => Option.getOrUndefined(Option.map(primaryButton().width, (width) => ({ width })))
 
   return (
     <Show
@@ -104,7 +103,7 @@ export function DialogAddWslServer(props: DialogWslServerProps = {}) {
                       hideLabel
                       class="settings-v2-wsl-distro-group"
                       label={language.t("wsl.onboarding.installDistro")}
-                      value={model().catalogTarget ?? undefined}
+                      value={Option.getOrUndefined(model().catalogTarget)}
                       onChange={controller.setCatalogTarget}
                       disabled={model().busy}
                     >
@@ -127,7 +126,9 @@ export function DialogAddWslServer(props: DialogWslServerProps = {}) {
                   </ButtonV2>
                   <ButtonV2
                     variant={model().installingCatalogDistro ? "loading" : "contrast"}
-                    disabled={!model().installingCatalogDistro && (model().busy || !model().catalogTarget)}
+                    disabled={
+                      !model().installingCatalogDistro && (model().busy || Option.isNone(model().catalogTarget))
+                    }
                     style={{ width: "99px" }}
                     onClick={controller.installCatalogDistro}
                   >
@@ -169,13 +170,13 @@ export function DialogAddWslServer(props: DialogWslServerProps = {}) {
                     hideLabel
                     class="settings-v2-wsl-distro-group"
                     label={language.t("wsl.onboarding.installedDistros")}
-                    value={model().selectedDistro ?? undefined}
+                    value={Option.getOrUndefined(model().selectedDistro)}
                     onChange={controller.setSelectedDistro}
                     disabled={model().busy}
                   >
                     <For each={model().addableInstalledDistros}>
                       {(item) => {
-                        const status = () => model().distroStatuses[item.name] ?? null
+                        const status = () => Option.getOrUndefined(HashMap.get(model().distroStatuses, item.name))
                         return (
                           <RadioItemV2
                             class={`settings-v2-wsl-distro-row${item.version === 1 ? " settings-v2-wsl-distro-row--unsupported" : ""}`}
@@ -259,9 +260,9 @@ function useWslAddServerController(props: DialogWslServerProps) {
   const api = platform.wslServers!
   const [store, setStore] = createStore({
     view: "main" as "main" | "catalog",
-    selectedDistro: null as string | null,
+    selectedDistro: Option.none<string>(),
     catalogSearch: "",
-    catalogTarget: null as string | null,
+    catalogTarget: Option.none<string>(),
     adding: false,
   })
   const current = () => wslServers.data
@@ -289,11 +290,10 @@ function useWslAddServerController(props: DialogWslServerProps) {
   const model = createMemo(() => viewModel(probes.probingAddable()))
 
   const openCatalog = () => {
-    const first = model().installableDistros[0]
     setStore({
       view: "catalog",
       catalogSearch: "",
-      catalogTarget: first?.name ?? null,
+      catalogTarget: Option.map(Arr.head(model().installableDistros), (item) => item.name),
     })
   }
 
@@ -323,21 +323,21 @@ function useWslAddServerController(props: DialogWslServerProps) {
   const installCatalogDistro = () => {
     if (model().installingCatalogDistro) return
     const name = model().catalogTarget
-    if (!name) return
-    installDistro(name)
+    if (Option.isNone(name)) return
+    installDistro(name.value)
   }
 
   const closeCatalog = () => {
     probes.resetProbeFailure()
-    setStore({ view: "main", catalogSearch: "", catalogTarget: null })
+    setStore({ view: "main", catalogSearch: "", catalogTarget: Option.none() })
   }
 
   const runPrimary = async () => {
     const button = model().primaryButton
     if (button.loading) return
-    const distro = model().selectedDistro
-    const action = button.action
-    if (!distro || !action) return
+    const target = Option.all({ distro: model().selectedDistro, action: button.action })
+    if (Option.isNone(target)) return
+    const { distro, action } = target.value
     if (action === "install-opencode") {
       await run(() => api.installOpencode(distro))
       return
@@ -367,13 +367,13 @@ function useWslAddServerController(props: DialogWslServerProps) {
     wslServers,
     model,
     loadError,
-    runtimeError: () => current()?.runtime?.error ?? null,
+    runtimeError: () => Option.fromNullishOr(current()?.runtime?.error),
     view: () => store.view,
     catalogSearch: () => store.catalogSearch,
     adding: () => store.adding,
     setCatalogSearch: (value: string) => setStore("catalogSearch", value),
-    setCatalogTarget: (value: string) => setStore("catalogTarget", value),
-    setSelectedDistro: (value: string) => setStore("selectedDistro", value),
+    setCatalogTarget: (value: string) => setStore("catalogTarget", Option.some(value)),
+    setSelectedDistro: (value: string) => setStore("selectedDistro", Option.some(value)),
     openCatalog,
     closeCatalog,
     refreshDistros,
@@ -386,7 +386,7 @@ function useWslAddServerController(props: DialogWslServerProps) {
 
 function DialogWslSetup(props: {
   state: string
-  error: string | null
+  error: Option.Option<string>
   installable: boolean
   busy: boolean
   onInstall: () => void
@@ -399,6 +399,8 @@ function DialogWslSetup(props: {
       : props.installable
         ? language.t("wsl.onboarding.wslNotInstalled.title")
         : language.t("wsl.onboarding.wslUnavailable.title")
+  const visibleError = () =>
+    props.installable ? Option.none<string>() : Option.filter(props.error, (text) => text.length > 0)
   const description = () => {
     if (props.state === "pendingRestart") return language.t("wsl.onboarding.windowsRestartRequired")
     if (!props.installable) return language.t("wsl.onboarding.wslUnavailable.description")
@@ -434,8 +436,8 @@ function DialogWslSetup(props: {
           </svg>
           <h2 class="settings-v2-wsl-not-installed-title">{title()}</h2>
           <p class="settings-v2-wsl-not-installed-description">{description()}</p>
-          <Show when={!props.installable && props.error}>
-            <p class="settings-v2-wsl-unavailable-error">{props.error}</p>
+          <Show when={Option.getOrUndefined(visibleError())}>
+            {(error) => <p class="settings-v2-wsl-unavailable-error">{error()}</p>}
           </Show>
         </div>
         <Show when={props.state === "unavailable" && props.installable}>
