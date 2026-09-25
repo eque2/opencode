@@ -51,9 +51,7 @@ const listServersByHealth = (
   })
 }
 
-const useDefaultServerKey = (
-  get: (() => string | Promise<string | null | undefined> | null | undefined) | undefined,
-) => {
+const useDefaultServerKey = (get: () => string | Promise<string | null | undefined> | null | undefined) => {
   const [state, setState] = createStore({
     key: undefined as ServerConnection.Key | undefined,
     tick: 0,
@@ -62,7 +60,7 @@ const useDefaultServerKey = (
   createEffect(() => {
     state.tick
     let dead = false
-    const result = get?.()
+    const result = get()
     if (!result) {
       setState("key", undefined)
       onCleanup(() => {
@@ -130,7 +128,7 @@ export function StatusPopoverServerBody() {
   })
 
   const sortedServers = createMemo(() => listServersByHealth(global.servers.list(), server.key, global.servers.health))
-  const defaultServer = useDefaultServerKey(platform.getDefaultServer)
+  const defaultServer = useDefaultServerKey(() => platform.getDefaultServer?.())
   const serverItems = createMemo(() =>
     sortedServers().map((conn) => {
       const key = ServerConnection.key(conn)
@@ -276,7 +274,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     return listServersByHealth(list, server.key, global.servers.health)
   })
   const toggleMcp = useMcpToggle()
-  const defaultServer = useDefaultServerKey(platform.getDefaultServer)
+  const defaultServer = useDefaultServerKey(() => platform.getDefaultServer?.())
   const mcpNames = createMemo(() => Object.keys(sync().data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync().data.mcp?.[name]?.status
   const mcpConnected = createMemo(() => mcpNames().filter((name) => mcpStatus(name) === "connected").length)

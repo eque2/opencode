@@ -29,7 +29,7 @@ export function createTabMemory(owner: Owner | null) {
       return entry.value
     },
     remove,
-    dispose() {
+    dispose: () => {
       for (const key of entries.keys()) remove(key)
     },
   }
