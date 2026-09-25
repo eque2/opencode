@@ -1,4 +1,4 @@
-import { Data, Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
+import { Clock, Data, Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
 import type { ServerApi } from "./server"
 import type { ServerProtocol } from "./server-protocol"
 import type { AgentPartInput, FilePartInput, OpencodeClient, Session, TextPartInput } from "@opencode-ai/sdk/v2/client"
@@ -301,11 +301,12 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 ],
               }),
             )
+            const timeCreated = yield* Clock.currentTimeMillis
             const output: SessionPromptOutput = {
               admittedSeq: 0,
               id: value.id ?? "",
               sessionID: value.sessionID,
-              timeCreated: Date.now(),
+              timeCreated,
               type: "user",
               data: { text: value.text },
               delivery: value.delivery ?? "steer",
@@ -333,11 +334,12 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 })),
               }),
             )
+            const timeCreated = yield* Clock.currentTimeMillis
             const output: SessionCommandOutput = {
               admittedSeq: 0,
               id: value.id ?? "",
               sessionID: value.sessionID,
-              timeCreated: Date.now(),
+              timeCreated,
               type: "user",
               data: { text: `/${value.command} ${value.arguments ?? ""}`.trim() },
               delivery: value.delivery ?? "steer",
@@ -369,11 +371,12 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
                 modelID: model.modelID,
               }),
             )
+            const timeCreated = yield* Clock.currentTimeMillis
             const output: SessionCompactOutput = {
               admittedSeq: 0,
               id: value.id ?? "",
               sessionID: value.sessionID,
-              timeCreated: Date.now(),
+              timeCreated,
               type: "compaction",
             }
             return output
@@ -536,13 +539,14 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
               )
               if (!result.data)
                 return yield* new LegacyMissingDataError({ message: "Failed to start OAuth authorization" })
+              const now = yield* Clock.currentTimeMillis
               return located(
                 {
                   attemptID: `${value.integrationID}:${method}`,
                   url: result.data.url,
                   instructions: result.data.instructions,
                   mode: result.data.method,
-                  time: { created: Date.now(), expires: Date.now() + 10 * 60 * 1000 },
+                  time: { created: now, expires: now + 10 * 60 * 1000 },
                 },
                 value.location,
               )
@@ -574,10 +578,8 @@ function createV1Api(input: CompatibleInput): CompatibleApi {
               )
               yield* request(() => legacy(value.location).instance.dispose())
               yield* request(() => input.legacy().instance.dispose())
-              return located(
-                { status: "complete" as const, time: { created: Date.now(), expires: Date.now() } },
-                value.location,
-              )
+              const now = yield* Clock.currentTimeMillis
+              return located({ status: "complete" as const, time: { created: now, expires: now } }, value.location)
             }),
           ),
       },
