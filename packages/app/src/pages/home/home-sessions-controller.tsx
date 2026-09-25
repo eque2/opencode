@@ -84,7 +84,7 @@ export function createHomeSessionsController(home: HomeController) {
     retainHomeSessions(
       homeSessions().sessions(sessionLoad.data, sessionEventLoad.data),
       HOME_SESSION_LIMIT,
-      Date.now(),
+      DateTime.toEpochMillis(DateTime.nowUnsafe()),
     ),
   )
   const allRecords = createMemo(() =>
@@ -218,7 +218,7 @@ export function createHomeSessionsController(home: HomeController) {
             ctx.sdk.client.session.update({
               sessionID,
               directory: session.directory,
-              time: { archived: Date.now() },
+              time: { archived: DateTime.toEpochMillis(DateTime.nowUnsafe()) },
             }),
           remove: () => {
             setStore(

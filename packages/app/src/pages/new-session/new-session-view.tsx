@@ -3,6 +3,7 @@ import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { WordmarkV2 } from "@opencode-ai/ui/v2/wordmark-v2"
+import { DateTime } from "effect"
 import { Show, createMemo, createSignal, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
@@ -107,7 +108,7 @@ function ProviderTip() {
       serverSync().child(sdk().directory)[0].provider_ready &&
       persistedReady() &&
       providers.paid().length === 0 &&
-      Date.now() - persistedState.dismissedAt >= providerTipDismissalDuration,
+      DateTime.toEpochMillis(DateTime.nowUnsafe()) - persistedState.dismissedAt >= providerTipDismissalDuration,
   )
   const [ref, setRef] = createSignal<HTMLDivElement>()
   const presence = createPresence({
@@ -150,7 +151,7 @@ function ProviderTip() {
               type="button"
               class="flex size-6 items-center justify-center rounded-[4px] text-v2-icon-icon-muted transition-[background-color,color] duration-150 ease-in-out hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-icon-icon-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-icon-icon-base focus-visible:outline-none"
               aria-label={language.t("common.dismiss")}
-              onClick={() => setPersistedState("dismissedAt", Date.now())}
+              onClick={() => setPersistedState("dismissedAt", DateTime.toEpochMillis(DateTime.nowUnsafe()))}
             >
               <IconV2 name="xmark-small" />
             </button>
