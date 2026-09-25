@@ -62,10 +62,11 @@ export type HomeProjectsViewProps = {
 }
 
 export function HomeProjectsView(props: HomeProjectsViewProps) {
-  const [contextMenu, setContextMenu] = createStore({ open: undefined as string | undefined })
+  // The ID of the row whose context menu is open.
+  const [contextMenu, setContextMenu] = createStore({ open: Option.none<string>() })
   const contextMenuProps = {
-    contextMenuOpen: (id: string) => contextMenu.open === id,
-    onSetContextMenuOpen: (id: string, open: boolean) => setContextMenu("open", open ? id : undefined),
+    contextMenuOpen: (id: string) => Option.contains(contextMenu.open, id),
+    onSetContextMenuOpen: (id: string, open: boolean) => setContextMenu("open", open ? Option.some(id) : Option.none()),
   }
   return (
     <aside
@@ -213,7 +214,7 @@ function HomeServerRow(props: {
       <HomeProjectNavButton
         type="button"
         class="pr-16 disabled:opacity-60"
-        data-selected={props.selected ? "" : undefined}
+        {...(props.selected ? { "data-selected": "" } : {})}
         disabled={!healthy()}
         onClick={() => props.onFocusServer(props.server)}
       >
@@ -231,7 +232,7 @@ function HomeServerRow(props: {
             props.collapsed ? props.language.t("home.server.expand") : props.language.t("home.server.collapse")
           }
           aria-disabled={!canToggle()}
-          aria-expanded={canToggle() ? !props.collapsed : undefined}
+          {...(canToggle() ? { "aria-expanded": !props.collapsed } : {})}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
@@ -466,7 +467,8 @@ function HomeProjectRow(
       return props.index()
     },
   })
-  let pointerDownSelected: boolean | undefined
+  // Whether the row was selected at the last mouse pointerdown; none when no mouse press is pending.
+  let pointerDownSelected = Option.none<boolean>()
   const contextMenuID = () => projectContextMenuID(props.server, props.project.worktree)
   onCleanup(() => {
     const id = contextMenuID()
@@ -489,8 +491,7 @@ function HomeProjectRow(
         classList={{
           "bg-v2-background-bg-layer-01 text-v2-text-text-base": sortable.isDragSource(),
         }}
-        data-selected={props.selected ? "" : undefined}
-        aria-current={props.selected ? "page" : undefined}
+        {...(props.selected ? { "data-selected": "", "aria-current": "page" as const } : {})}
         disabled={serverUnreachable()}
         onPointerDown={(event) => {
           // Same-server mouse selection happens on pointerdown (like tabs),
@@ -499,10 +500,10 @@ function HomeProjectRow(
           // selection waits for click so reordering a remote server's projects
           // does not focus that server and load its session index. Touch is
           // excluded so flick-scrolling the list cannot select rows.
-          pointerDownSelected = undefined
+          pointerDownSelected = Option.none()
           if (event.button !== 0 || event.pointerType === "touch") return
           if (!props.serverSelected) return
-          pointerDownSelected = props.selected
+          pointerDownSelected = Option.some(props.selected)
           if (!props.selected) props.onSelectProject(props.server, props.project.worktree)
         }}
         onClick={(event) => {
@@ -510,14 +511,14 @@ function HomeProjectRow(
           // toggle selection as part of a reorder.
           if (event.defaultPrevented) return
           // Keyboard activation and touch taps keep the original toggle.
-          if (event.detail === 0 || pointerDownSelected === undefined) {
+          if (event.detail === 0 || Option.isNone(pointerDownSelected)) {
             props.onSelectProject(props.server, props.project.worktree)
             return
           }
           // Mouse: pointerdown already selected unselected rows; a plain click
           // on an already-selected row toggles it off.
-          if (pointerDownSelected) props.onSelectProject(props.server, props.project.worktree)
-          pointerDownSelected = undefined
+          if (pointerDownSelected.value) props.onSelectProject(props.server, props.project.worktree)
+          pointerDownSelected = Option.none()
         }}
       >
         <HomeProjectAvatar project={props.project} />
@@ -614,7 +615,7 @@ function HomeProjectAvatar(props: { project: LocalProject; outline?: boolean }) 
   return (
     <ProjectAvatar
       fallback={name()}
-      src={props.outline ? undefined : getProjectAvatarSource(props.project.id, props.project.icon)}
+      {...(props.outline ? {} : { src: getProjectAvatarSource(props.project.id, props.project.icon) })}
       variant={props.outline ? "outline" : getProjectAvatarVariant(props.project.icon?.color)}
     />
   )
