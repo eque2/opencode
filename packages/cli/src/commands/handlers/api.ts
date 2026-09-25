@@ -1,18 +1,33 @@
 import { EOL } from "node:os"
-import { Effect, HashSet, Option } from "effect"
+import { Effect, HashSet, Option, Schema } from "effect"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { Daemon } from "../../services/daemon"
 
 const methods = HashSet.make("delete", "get", "head", "options", "patch", "post", "put")
 
-type Operation = {
-  operationId?: string
-}
+// The CLI reads only the operation IDs. The structs ignore every other key of a
+// path item or an operation, such as parameters, summary and responses.
+const Operation = Schema.Struct({
+  operationId: Schema.optional(Schema.String),
+}).annotate({ identifier: "CliApi.Operation" })
 
-type OpenApi = {
-  paths?: Record<string, Record<string, Operation>>
-}
+const PathItem = Schema.Struct({
+  delete: Schema.optional(Operation),
+  get: Schema.optional(Operation),
+  head: Schema.optional(Operation),
+  options: Schema.optional(Operation),
+  patch: Schema.optional(Operation),
+  post: Schema.optional(Operation),
+  put: Schema.optional(Operation),
+}).annotate({ identifier: "CliApi.PathItem" })
+
+const OpenApi = Schema.Struct({
+  paths: Schema.optional(Schema.Record(Schema.String, PathItem)),
+}).annotate({ identifier: "CliApi.OpenApi" })
+type OpenApi = typeof OpenApi.Type
+
+const decodeOpenApi = Schema.decodeEffect(Schema.fromJsonString(OpenApi))
 
 export default Runtime.handler(
   Commands.commands.api,
@@ -45,7 +60,7 @@ export default Runtime.handler(
 export function resolveOperation(spec: OpenApi, operationID: string, params: Record<string, string>) {
   for (const [path, operations] of Object.entries(spec.paths ?? {})) {
     for (const [method, operation] of Object.entries(operations)) {
-      if (!HashSet.has(methods, method) || operation.operationId !== operationID) continue
+      if (!HashSet.has(methods, method) || operation?.operationId !== operationID) continue
       return { method: method.toUpperCase(), path: interpolate(path, params) }
     }
   }
@@ -57,20 +72,21 @@ export function rawRequest(input: readonly string[]) {
   return { method: input[0].toUpperCase(), path: input[1] }
 }
 
-function resolveRequest(
+const resolveRequest = Effect.fnUntraced(function* (
   transport: { url: string; headers: RequestInit["headers"] },
   input: readonly string[],
   params: Record<string, string>,
 ) {
   const raw = rawRequest(input)
-  if (raw) return Effect.succeed(raw)
-  if (input.length !== 1) return Effect.fail(new Error("Expected an operation name or an HTTP method and path"))
-  return Effect.tryPromise(async () => {
-    const response = await fetch(new URL("/openapi.json", transport.url), { headers: transport.headers })
-    if (!response.ok) throw new Error(`Failed to load OpenAPI document: HTTP ${response.status}`)
-    return resolveOperation((await response.json()) as OpenApi, input[0], params)
-  })
-}
+  if (raw) return raw
+  if (input.length !== 1) return yield* Effect.fail(new Error("Expected an operation name or an HTTP method and path"))
+  const response = yield* Effect.tryPromise(() =>
+    fetch(new URL("/openapi.json", transport.url), { headers: transport.headers }),
+  )
+  if (!response.ok) return yield* Effect.fail(new Error(`Failed to load OpenAPI document: HTTP ${response.status}`))
+  const spec = yield* Effect.tryPromise(() => response.text()).pipe(Effect.flatMap(decodeOpenApi))
+  return yield* Effect.try(() => resolveOperation(spec, input[0], params))
+})
 
 function interpolate(path: string, params: Record<string, string>) {
   const used = HashSet.fromIterable(Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]))
