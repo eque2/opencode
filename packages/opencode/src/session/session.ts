@@ -35,7 +35,20 @@ import { SessionID, MessageID, PartID } from "./schema"
 
 import type { Provider } from "@/provider/provider"
 import { Global } from "@opencode-ai/core/global"
-import { Array as Arr, Clock, DateTime, Effect, Layer, Option, Context, Predicate, Schema, Types } from "effect"
+import {
+  Array as Arr,
+  Clock,
+  DateTime,
+  Effect,
+  HashMap,
+  Layer,
+  MutableHashMap,
+  Option,
+  Context,
+  Predicate,
+  Schema,
+  Types,
+} from "effect"
 import { NonNegativeInt, optional } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { ProviderV2 } from "@opencode-ai/core/provider"
@@ -583,25 +596,28 @@ const layer: Layer.Layer<
         .all()
         .pipe(Effect.orDie)
       const ids = Arr.dedupe(rows.map((row) => row.project_id))
-      const projects = new Map<string, ProjectInfo>()
-      if (ids.length > 0) {
-        const items = yield* db
-          .select({ id: ProjectTable.id, name: ProjectTable.name, worktree: ProjectTable.worktree })
-          .from(ProjectTable)
-          .where(inArray(ProjectTable.id, ids))
-          .all()
-          .pipe(Effect.orDie)
-        for (const item of items) {
-          projects.set(item.id, {
+      const items =
+        ids.length > 0
+          ? yield* db
+              .select({ id: ProjectTable.id, name: ProjectTable.name, worktree: ProjectTable.worktree })
+              .from(ProjectTable)
+              .where(inArray(ProjectTable.id, ids))
+              .all()
+              .pipe(Effect.orDie)
+          : []
+      const projects = HashMap.fromIterable(
+        items.map((item): readonly [string, ProjectInfo] => [
+          item.id,
+          {
             id: item.id,
             ...(Predicate.isNotNull(item.name) ? { name: item.name } : {}),
             worktree: item.worktree,
-          })
-        }
-      }
+          },
+        ]),
+      )
       return rows.map((row) => ({
         ...fromRow(row),
-        project: Option.getOrNull(Option.fromUndefinedOr(projects.get(row.project_id))),
+        project: Option.getOrNull(HashMap.get(projects, row.project_id)),
       }))
     })
 
@@ -712,15 +728,14 @@ const layer: Layer.Layer<
         metadata: structuredClone(original.metadata),
       })
       const msgs = yield* messages({ sessionID: input.sessionID })
-      const idMap = new Map<string, MessageID>()
+      const idMap = MutableHashMap.empty<string, MessageID>()
       const target = input.messageID ? msgs.findIndex((msg) => msg.info.id === input.messageID) : msgs.length
 
       for (const msg of msgs.slice(0, target < 0 ? msgs.length : target)) {
         const newID = MessageID.ascending()
-        idMap.set(msg.info.id, newID)
+        MutableHashMap.set(idMap, msg.info.id, newID)
 
-        const parentID =
-          msg.info.role === "assistant" ? Option.fromUndefinedOr(idMap.get(msg.info.parentID)) : Option.none()
+        const parentID = msg.info.role === "assistant" ? MutableHashMap.get(idMap, msg.info.parentID) : Option.none()
         const cloned = yield* updateMessage({
           ...msg.info,
           sessionID: session.id,
@@ -736,7 +751,7 @@ const layer: Layer.Layer<
             sessionID: session.id,
           }
           if (p.type === "compaction" && p.tail_start_id) {
-            p.tail_start_id = idMap.get(p.tail_start_id)
+            p.tail_start_id = Option.getOrUndefined(MutableHashMap.get(idMap, p.tail_start_id))
           }
           yield* updatePart(p)
         }
