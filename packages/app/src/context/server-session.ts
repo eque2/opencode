@@ -4,7 +4,6 @@ import type { OpenCodeEvent, SessionApi, SessionMessageInfo } from "@opencode-ai
 import type {
   Event,
   Message,
-  OpencodeClient,
   Part,
   PermissionRequest,
   QuestionRequest,
@@ -39,6 +38,22 @@ import { createV2SessionReducer, type V2SessionReduction } from "./server-sessio
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
+
+// The legacy session calls this module makes. OpencodeClient satisfies it, and so does a stand-in object.
+export type ServerSessionClient = {
+  readonly session: {
+    readonly get: (input: { sessionID: string }) => Promise<{ readonly data?: Session }>
+    readonly messages: (input: { sessionID: string; limit: number; before?: string }) => Promise<{
+      readonly data?: ReadonlyArray<{ readonly info: Message; readonly parts: Part[] }>
+      readonly response: { readonly headers: Pick<Headers, "get"> }
+    }>
+    readonly message: (input: {
+      sessionID: string
+      messageID: string
+    }) => Promise<{ readonly data?: { readonly info: Message; readonly parts: Part[] } }>
+    readonly todo: (input: { sessionID: string }) => Promise<{ readonly data?: Todo[] }>
+  }
+}
 
 class MessageNotFoundError extends Data.TaggedError("App.MessageNotFoundError")<{ readonly message: string }> {}
 
@@ -304,7 +319,7 @@ const textField = (part: Part | undefined, field: string): Option.Option<string>
 }
 
 export function createServerSession(
-  client: OpencodeClient,
+  client: ServerSessionClient,
   sessionApiOrOptions?: SessionApi | ServerSessionOptions,
   messageApi?: MessageApi,
   currentOptions?: ServerSessionOptions,

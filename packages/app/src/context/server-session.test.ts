@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Data, Effect } from "effect"
 import type { retry } from "@opencode-ai/core/util/retry"
-import type { OpenCodeEvent, SessionApi } from "@opencode-ai/client/promise"
-import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
-import { createServerSession } from "./server-session"
+import type { OpenCodeEvent, SessionMessageInfo } from "@opencode-ai/client/promise"
+import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client"
+import { createServerSession, type ServerSessionClient } from "./server-session"
 import type { ServerApi } from "@/utils/server"
 
 type MessageApi = ServerApi["message"]
@@ -82,21 +82,37 @@ const deferredResponse = () => Promise.withResolvers<MessageResponse>()
 const settled = <A>(value: A | Promise<A>): Promise<A> =>
   value instanceof Promise ? value : Effect.runPromise(Effect.succeed(value))
 
+// A server call the test does not expect: it rejects, so an unexpected use fails the test.
+const unexpected = (name: string) => () =>
+  Effect.runPromise(Effect.fail(new TestFailure({ message: `${name} endpoint called` })))
+
+// A client for tests that load through the current message API only.
+const unusedClient: ServerSessionClient = {
+  session: {
+    get: unexpected("get"),
+    messages: unexpected("legacy message"),
+    message: unexpected("message"),
+    todo: unexpected("todo"),
+  },
+}
+
 function messageClient(...responses: Array<MessageResponse | Promise<MessageResponse>>) {
   let index = 0
   const requests: unknown[] = []
   const waiting = new Map<number, () => void>()
-  const client = {
+  const client: ServerSessionClient = {
     session: {
       get: async () => ({ data: session("child", "root") }),
-      messages: (input: unknown) => {
+      messages: (input) => {
         requests.push(input)
         waiting.get(requests.length)?.()
         waiting.delete(requests.length)
         return settled(responses[index++])
       },
+      message: unexpected("message"),
+      todo: unexpected("todo"),
     },
-  } as unknown as OpencodeClient
+  }
   return Object.assign(client, {
     requests,
     requested(count: number) {
@@ -115,21 +131,22 @@ function rootMessageClient(
   const requests: unknown[] = []
   const rootRequests: unknown[] = []
   const rootWaiting = new Map<number, () => void>()
-  const client = {
+  const client: ServerSessionClient = {
     session: {
       get: async () => ({ data: session("child", "root") }),
-      messages: (input: unknown) => {
+      messages: (input) => {
         requests.push(input)
         return settled(pages[pageIndex++])
       },
-      message: (input: unknown) => {
+      message: (input) => {
         rootRequests.push(input)
         rootWaiting.get(rootRequests.length)?.()
         rootWaiting.delete(rootRequests.length)
         return settled(roots[rootIndex++])
       },
+      todo: unexpected("todo"),
     },
-  } as unknown as OpencodeClient
+  }
   return Object.assign(client, {
     requests,
     rootRequests,
@@ -140,8 +157,8 @@ function rootMessageClient(
   })
 }
 
-const retryImmediately: typeof retry = async (task, options = {}) => {
-  const attempts = options.attempts ?? 3
+const retryImmediately: typeof retry = async (task, options) => {
+  const attempts = options?.attempts ?? 3
   for (let attempt = 0; ; attempt++) {
     try {
       return await task()
@@ -154,21 +171,20 @@ const retryImmediately: typeof retry = async (task, options = {}) => {
 function setup(sessions: Record<string, Session>) {
   const get: unknown[] = []
   const messages: unknown[] = []
-  const client = {
+  const client: ServerSessionClient = {
     session: {
-      get: async (input: unknown) => {
+      get: async (input) => {
         get.push(input)
-        const id = (input as { sessionID: string }).sessionID
-        return { data: sessions[id] }
+        return { data: sessions[input.sessionID] }
       },
-      messages: async (input: unknown) => {
+      messages: async (input) => {
         messages.push(input)
         return response()
       },
-      diff: async () => ({ data: [] }),
+      message: unexpected("message"),
       todo: async () => ({ data: [] }),
     },
-  } as unknown as OpencodeClient
+  }
   return { get, messages, store: createServerSession(client) }
 }
 
@@ -184,7 +200,7 @@ describe("server session", () => {
         time: { created: 1 },
       },
     ])
-    const apply = (input: object) => ctx.store.applyV2(input as OpenCodeEvent)
+    const apply = (input: OpenCodeEvent) => ctx.store.applyV2(input)
 
     apply({
       id: "evt_step",
@@ -246,8 +262,8 @@ describe("server session", () => {
 
   test("loads current session content through the current message API", async () => {
     const requests: unknown[] = []
-    const user = { id: "msg_z_user", type: "user", text: "hello", time: { created: 1 } }
-    const assistant = {
+    const user: SessionMessageInfo = { id: "msg_z_user", type: "user", text: "hello", time: { created: 1 } }
+    const assistant: SessionMessageInfo = {
       id: "msg_a_assistant",
       type: "assistant",
       agent: "build",
@@ -255,20 +271,13 @@ describe("server session", () => {
       content: [{ type: "text", text: "hi" }],
       time: { created: 2, completed: 3 },
     }
-    const client = {
-      session: {
-        messages: () => {
-          throw new TestFailure({ message: "legacy message endpoint called" })
-        },
-      },
-    } as unknown as OpencodeClient
-    const messageApi = {
-      list: async (input: unknown) => {
+    const messageApi: MessageApi = {
+      list: async (input) => {
         requests.push(input)
         return { data: [assistant, user], cursor: { previous: null, next: null } }
       },
-    } as unknown as MessageApi
-    const store = createServerSession(client, {} as SessionApi, messageApi)
+    }
+    const store = createServerSession(unusedClient, {}, messageApi)
     store.remember(session("root"))
 
     await store.sync("root")
@@ -298,13 +307,13 @@ describe("server session", () => {
       { data: [assistants[0], user], cursor: { previous: null, next: null } },
     ]
     const requests: unknown[] = []
-    const messageApi = {
-      list: async (input: unknown) => {
+    const messageApi: MessageApi = {
+      list: async (input) => {
         requests.push(input)
         return pages.shift()!
       },
-    } as unknown as MessageApi
-    const store = createServerSession({} as OpencodeClient, {} as SessionApi, messageApi)
+    }
+    const store = createServerSession(unusedClient, {}, messageApi)
     store.remember(session("root"))
 
     await store.sync("root")
@@ -329,12 +338,8 @@ describe("server session", () => {
         { info: assistant, parts: [textPart(assistant.id, { sessionID: "root" })] },
       ]),
     )
-    const messageApi = {
-      list: () => {
-        throw new TestFailure({ message: "current message endpoint called" })
-      },
-    } as unknown as MessageApi
-    const store = createServerSession(client, {} as SessionApi, messageApi, {
+    const messageApi: MessageApi = { list: unexpected("current message") }
+    const store = createServerSession(client, {}, messageApi, {
       protocol: Promise.resolve("v1"),
     })
     store.remember(session("root"))
@@ -554,7 +559,7 @@ describe("server session", () => {
           "older",
         ),
       ],
-      [failed.promise.then((result) => ({ data: result.data[0]! })), singleResponse(user)],
+      [failed.promise.then((result) => ({ data: result.data[0] })), singleResponse(user)],
     )
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child")
@@ -576,7 +581,7 @@ describe("server session", () => {
     const live = { ...assistant, cost: 1 }
     const client = rootMessageClient(
       [response([{ info: assistant, parts: [] }], "older")],
-      [failed.promise.then((result) => ({ data: result.data[0]! })), singleResponse(user)],
+      [failed.promise.then((result) => ({ data: result.data[0] })), singleResponse(user)],
     )
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child")
@@ -596,7 +601,7 @@ describe("server session", () => {
     const live = userMessage("message-4", { time: { created: 4 } })
     const client = rootMessageClient(
       [response([{ info: assistant, parts: [] }], "older")],
-      [failed.promise.then((result) => ({ data: result.data[0]! })), singleResponse(user)],
+      [failed.promise.then((result) => ({ data: result.data[0] })), singleResponse(user)],
     )
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child")
@@ -617,7 +622,7 @@ describe("server session", () => {
     const live = { ...stale, text: "live" }
     const client = rootMessageClient(
       [response([{ info: assistant, parts: [stale] }], "older")],
-      [failed.promise.then((result) => ({ data: result.data[0]! })), singleResponse(user)],
+      [failed.promise.then((result) => ({ data: result.data[0] })), singleResponse(user)],
     )
     const store = createServerSession(client, { retry: retryImmediately })
     const loading = store.sync("child")
