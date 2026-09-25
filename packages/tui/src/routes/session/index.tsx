@@ -2378,11 +2378,13 @@ function Execute(props: ToolProps) {
   const outputPreview = createMemo(() => collapseToolOutput(output(), 4, 4 * Math.max(20, ctx.width - 6)).output)
   const showOutput = createMemo(() => output() && hasRuntimeError())
   const content = createMemo(() => {
-    const lines = ["execute"]
-    for (const call of calls()) {
-      const args = input(call.input ?? {})
-      lines.push(`↳ ${call.tool}${args ? ` ${args}` : ""}${call.status === "error" ? " (failed)" : ""}`)
-    }
+    const lines = [
+      "execute",
+      ...calls().map((call) => {
+        const args = input(call.input ?? {})
+        return `↳ ${call.tool}${args ? ` ${args}` : ""}${call.status === "error" ? " (failed)" : ""}`
+      }),
+    ]
     return lines.join("\n")
   })
 
