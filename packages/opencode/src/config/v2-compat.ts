@@ -13,7 +13,7 @@ export interface Diagnostic {
   readonly message: string
 }
 
-export interface Result {
+export interface Lowered {
   readonly value: unknown
   readonly diagnostics: readonly Diagnostic[]
 }
@@ -88,7 +88,7 @@ const decodeRecord = Schema.decodeUnknownOption(Record, decodeOptions)
 const decodeLspEntry = Schema.decodeUnknownOption(ConfigLSPV1.Entry, decodeOptions)
 const builtinServers = new Set<string>(ConfigLSPV1.builtinServerIds)
 
-export function lower(input: unknown, source = "configuration"): Result {
+export function lower(input: unknown, source = "configuration"): Lowered {
   const parsed = decodeRecord(input)
   if (Option.isNone(parsed)) return { value: input, diagnostics: [] }
 
