@@ -58,7 +58,13 @@ import type {
 } from "@opencode-ai/client/promise"
 import { toggleMcp } from "./global-sync/mcp"
 import { createServerSession, type ServerSession } from "./server-session"
-import { HashMap, MutableHashMap, Option } from "effect"
+import { Data, HashMap, MutableHashMap, Option } from "effect"
+
+/** Raised when the server sync context is created outside a Solid owner, which it needs for its child stores. */
+class ServerSyncOwnerError extends Data.TaggedError("ServerSyncOwnerError")<{ readonly message: string }> {}
+
+/** Raised when the ServerSync context has no server to sync with. The message is the translated text. */
+class NoServerAvailableError extends Data.TaggedError("NoServerAvailableError")<{ readonly message: string }> {}
 
 type GlobalStore = {
   ready: boolean
@@ -204,8 +210,11 @@ export type QueryOptionsApi = ReturnType<typeof makeQueryOptionsApi>
 
 export function createServerSyncContextInner(serverSDK: ServerSDK) {
   const language = useLanguage()
-  const owner = getOwner()
-  if (!owner) throw new Error("ServerSync must be created within owner")
+  // The context is built synchronously while Solid renders, so a missing owner is thrown, not returned as an Effect.
+  const owner = Option.getOrThrowWith(
+    Option.fromNullishOr(getOwner()),
+    () => new ServerSyncOwnerError({ message: "ServerSync must be created within owner" }),
+  )
 
   const sdkCache = MutableHashMap.empty<string, OpencodeClient>()
   const booting = MutableHashMap.empty<string, Promise<void>>()
@@ -742,8 +751,11 @@ export const { use: useServerSync, provider: ServerSyncProvider } = createSimple
     const server = useServer()
 
     return createMemo<ServerSync>(() => {
-      const conn = props.server?.() ?? server.current
-      if (!conn) throw new Error(language.t("error.serverSDK.noServerAvailable"))
+      // The memo must return a ServerSync synchronously, so a missing server is thrown for the error boundary.
+      const conn = Option.getOrThrowWith(
+        Option.fromNullishOr(props.server?.() ?? server.current),
+        () => new NoServerAvailableError({ message: language.t("error.serverSDK.noServerAvailable") }),
+      )
       return global.ensureServerCtx(conn).sync
     })
   },
