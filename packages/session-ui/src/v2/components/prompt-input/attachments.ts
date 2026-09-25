@@ -1,4 +1,4 @@
-import { HashSet } from "effect"
+import { HashMap, HashSet, Option } from "effect"
 import { onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { PromptInputV2Attachment, PromptInputV2Prompt } from "./types"
@@ -228,7 +228,7 @@ async function blobReference(file: File) {
     .join("")
   return { id, url: URL.createObjectURL(file) }
 }
-const imageExtensions = new Map([
+const imageExtensions = HashMap.fromIterable([
   ["gif", "image/gif"],
   ["jpeg", "image/jpeg"],
   ["jpg", "image/jpeg"],
@@ -250,8 +250,10 @@ async function attachmentMime(file: File) {
   if (HashSet.has(imageMimes, type) || type === "application/pdf") return type
   const index = file.name.lastIndexOf(".")
   const suffix = index === -1 ? "" : file.name.slice(index + 1).toLowerCase()
-  const fallback = imageExtensions.get(suffix) ?? (suffix === "pdf" ? "application/pdf" : undefined)
-  if ((!type || type === "application/octet-stream") && fallback) return fallback
+  const fallback = HashMap.get(imageExtensions, suffix).pipe(
+    Option.orElse(() => (suffix === "pdf" ? Option.some("application/pdf") : Option.none())),
+  )
+  if ((!type || type === "application/octet-stream") && Option.isSome(fallback)) return fallback.value
   if (type.startsWith("text/") || HashSet.has(textMimes, type) || type.endsWith("+json") || type.endsWith("+xml")) {
     return "text/plain"
   }
