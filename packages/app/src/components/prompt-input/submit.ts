@@ -115,8 +115,12 @@ const sendFollowup = Effect.fn("PromptSubmit.sendFollowup")(function* (input: Fo
   const proceed = input.before ?? Effect.succeed(true)
 
   const [head, ...tail] = text.split(" ")
-  const cmd = head?.startsWith("/") ? head.slice(1) : undefined
-  if (cmd && input.sync.data.command.find((item) => item.name === cmd)) {
+  const command = Option.fromNullishOr(head).pipe(
+    Option.filter((word) => word.startsWith("/")),
+    Option.map((word) => word.slice(1)),
+    Option.filter((name) => name !== "" && input.sync.data.command.some((item) => item.name === name)),
+  )
+  if (Option.isSome(command)) {
     setBusy()
     return yield* Effect.gen(function* () {
       if (!(yield* proceed)) {
@@ -130,7 +134,7 @@ const sendFollowup = Effect.fn("PromptSubmit.sendFollowup")(function* (input: Fo
         input.api.command({
           sessionID: input.draft.sessionID,
           id: messageID,
-          command: cmd,
+          command: command.value,
           arguments: tail.join(" "),
           agent: input.draft.agent,
           model: {
@@ -219,7 +223,7 @@ const sendFollowup = Effect.fn("PromptSubmit.sendFollowup")(function* (input: Fo
             {
               uri: part.url,
               name: part.filename,
-              mention: text ? { start: text.start, end: text.end, text: text.value } : undefined,
+              ...(text ? { mention: { start: text.start, end: text.end, text: text.value } } : {}),
             },
           ]
         }),
@@ -228,9 +232,9 @@ const sendFollowup = Effect.fn("PromptSubmit.sendFollowup")(function* (input: Fo
             ? [
                 {
                   name: part.name,
-                  mention: part.source
-                    ? { start: part.source.start, end: part.source.end, text: part.source.value }
-                    : undefined,
+                  ...(part.source
+                    ? { mention: { start: part.source.start, end: part.source.end, text: part.source.value } }
+                    : {}),
                 },
               ]
             : [],

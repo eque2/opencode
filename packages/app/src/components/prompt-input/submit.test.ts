@@ -6,6 +6,7 @@ import type { DirectorySDK } from "@/context/sdk"
 
 let createPromptSubmit: typeof import("./submit").createPromptSubmit
 
+type SubmitInput = Parameters<typeof createPromptSubmit>[0]
 type PromptRequest = Parameters<DirectorySDK["api"]["session"]["prompt"]>[0]
 type StoredSession = { id: string; title?: string }
 
@@ -41,7 +42,7 @@ let serverSessionSyncs = 0
 let params: { id?: string } = {}
 let search: { draftId?: string } = {}
 let selected = "/repo/worktree-a"
-let variant: string | undefined
+let variant: Option.Option<string> = Option.none()
 let permissionServer = "server-a"
 let createSessionGate: Option.Option<Deferred.Deferred<void>> = Option.none()
 
@@ -58,21 +59,44 @@ const prompt = {
   cursor: () => 0,
   dirty: () => true,
   model: {
-    current: () => undefined,
-    set: () => undefined,
+    current: () => Option.getOrUndefined(Option.none()),
+    set: () => {},
   },
-  reset: () => undefined,
-  set: () => undefined,
+  reset: () => {},
+  set: () => {},
   context: {
-    add: () => undefined,
-    remove: () => undefined,
-    removeComment: () => undefined,
-    updateComment: () => undefined,
-    replaceComments: () => undefined,
+    add: () => {},
+    remove: () => {},
+    removeComment: () => {},
+    updateComment: () => {},
+    replaceComments: () => {},
     items: () => [],
   },
   capture: () => prompt,
 }
+
+// The test composer has no editor element.
+const editor = Option.none<HTMLDivElement>()
+
+const promptLength = (value: Prompt) =>
+  value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0)
+
+const submitInput = (session: Option.Option<{ id: string }>): SubmitInput => ({
+  prompt,
+  info: () => Option.getOrUndefined(session),
+  imageAttachments: () => [],
+  commentCount: () => 0,
+  autoAccept: () => false,
+  mode: () => "normal",
+  working: () => false,
+  editor: () => Option.getOrUndefined(editor),
+  queueScroll: () => {},
+  promptLength,
+  addToHistory: () => {},
+  resetHistoryNavigation: () => {},
+  setMode: () => {},
+  setPopover: () => {},
+})
 
 const clientFor = (directory: string) => {
   createdClients = [...createdClients, directory]
@@ -105,7 +129,6 @@ const clientFor = (directory: string) => {
             Effect.sync(() => {
               sentPrompts = [...sentPrompts, directory]
               promptInputs = [...promptInputs, input]
-              return { data: undefined }
             }),
           ),
         command: (input: unknown) =>
@@ -122,10 +145,6 @@ const clientFor = (directory: string) => {
           ),
       },
     },
-    session: {
-      command: () => Effect.runPromise(Effect.succeed({ data: undefined })),
-      abort: () => Effect.runPromise(Effect.succeed({ data: undefined })),
-    },
     worktree: {
       create: () => Effect.runPromise(Effect.succeed({ data: { directory: `${directory}/new` } })),
     },
@@ -138,10 +157,10 @@ beforeAll(() =>
       const rootClient = clientFor("/repo/main")
 
       mock.module("@solidjs/router", () => ({
-        useNavigate: () => () => undefined,
+        useNavigate: () => () => {},
         useParams: () => params,
         useLocation: () => ({}),
-        useSearchParams: () => [search, () => undefined],
+        useSearchParams: () => [search, () => {}],
       }))
 
       mock.module("@opencode-ai/sdk/v2/client", () => ({
@@ -164,7 +183,7 @@ beforeAll(() =>
         useLocal: () => ({
           model: {
             current: () => ({ id: "model", provider: { id: "provider" } }),
-            variant: { current: () => variant },
+            variant: { current: () => Option.getOrUndefined(variant) },
           },
           agent: {
             current: () => ({ name: "agent" }),
@@ -206,7 +225,7 @@ beforeAll(() =>
       mock.module("@/context/layout", () => ({
         useLayout: () => ({
           handoff: {
-            setTabs: () => undefined,
+            setTabs: () => {},
           },
         }),
       }))
@@ -245,18 +264,18 @@ beforeAll(() =>
                     !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
                 ]
               },
-              remove: () => undefined,
+              remove: () => {},
             },
           },
-          set: () => undefined,
+          set: () => {},
         }),
       }))
 
       mock.module("@/context/server-sync", () => ({
         useServerSync: () => () => ({
           session: {
-            remember: () => undefined,
-            set: () => undefined,
+            remember: () => {},
+            set: () => {},
             sync: () =>
               Effect.runPromise(
                 Effect.sync(() => {
@@ -319,7 +338,7 @@ beforeEach(() => {
   sentShell = []
   syncedDirectories = []
   selected = "/repo/worktree-a"
-  variant = undefined
+  variant = Option.none()
   permissionServer = "server-a"
   createSessionGate = Option.none()
   serverSessionSyncs = 0
@@ -331,23 +350,11 @@ describe("prompt submit worktree selection", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const submit = createPromptSubmit({
-          prompt,
-          info: () => undefined,
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
+          ...submitInput(Option.none()),
           mode: () => "shell",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
           newSessionWorktree: () => selected,
-          onNewSessionWorktreeReset: () => undefined,
-          onSubmit: () => undefined,
+          onNewSessionWorktreeReset: () => {},
+          onSubmit: () => {},
         })
 
         const event = new Event("submit")
@@ -361,12 +368,12 @@ describe("prompt submit worktree selection", () => {
         expect(sessionCreateInputs).toEqual([
           {
             agent: "agent",
-            model: { id: "model", providerID: "provider", variant: undefined },
+            model: { id: "model", providerID: "provider" },
             location: { directory: "/repo/worktree-a" },
           },
           {
             agent: "agent",
-            model: { id: "model", providerID: "provider", variant: undefined },
+            model: { id: "model", providerID: "provider" },
             location: { directory: "/repo/worktree-b" },
           },
         ])
@@ -398,23 +405,12 @@ describe("prompt submit worktree selection", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const submit = createPromptSubmit({
-          prompt,
-          info: () => undefined,
-          imageAttachments: () => [],
-          commentCount: () => 0,
+          ...submitInput(Option.none()),
           autoAccept: () => true,
           mode: () => "shell",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
           newSessionWorktree: () => selected,
-          onNewSessionWorktreeReset: () => undefined,
-          onSubmit: () => undefined,
+          onNewSessionWorktreeReset: () => {},
+          onSubmit: () => {},
         })
 
         const event = new Event("submit")
@@ -433,23 +429,12 @@ describe("prompt submit worktree selection", () => {
         const gate = yield* Deferred.make<void>()
         createSessionGate = Option.some(gate)
         const submit = createPromptSubmit({
-          prompt,
-          info: () => undefined,
-          imageAttachments: () => [],
-          commentCount: () => 0,
+          ...submitInput(Option.none()),
           autoAccept: () => true,
           mode: () => "shell",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
           newSessionWorktree: () => selected,
-          onNewSessionWorktreeReset: () => undefined,
-          onSubmit: () => undefined,
+          onNewSessionWorktreeReset: () => {},
+          onSubmit: () => {},
         })
 
         const result = submit.handleSubmit(new Event("submit"))
@@ -468,23 +453,10 @@ describe("prompt submit worktree selection", () => {
       Effect.gen(function* () {
         search = { draftId: "draft-1" }
         const submit = createPromptSubmit({
-          prompt,
-          info: () => undefined,
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
-          mode: () => "normal",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
+          ...submitInput(Option.none()),
           newSessionWorktree: () => selected,
-          onNewSessionWorktreeReset: () => undefined,
-          onSubmit: () => undefined,
+          onNewSessionWorktreeReset: () => {},
+          onSubmit: () => {},
         })
 
         yield* Effect.promise(() => submit.handleSubmit(new Event("submit")))
@@ -497,24 +469,11 @@ describe("prompt submit worktree selection", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         params = { id: "session-1" }
-        variant = "high"
+        variant = Option.some("high")
 
         const submit = createPromptSubmit({
-          prompt,
-          info: () => ({ id: "session-1" }),
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
-          mode: () => "normal",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
-          onSubmit: () => undefined,
+          ...submitInput(Option.some({ id: "session-1" })),
+          onSubmit: () => {},
         })
 
         const event = new Event("submit")
@@ -545,26 +504,11 @@ describe("prompt submit worktree selection", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         params = { id: "session-1" }
-        variant = "high"
+        variant = Option.some("high")
         commands = [...commands, { name: "review" }]
         promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
 
-        const submit = createPromptSubmit({
-          prompt,
-          info: () => ({ id: "session-1" }),
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
-          mode: () => "normal",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
-        })
+        const submit = createPromptSubmit(submitInput(Option.some({ id: "session-1" })))
 
         yield* Effect.promise(() => submit.handleSubmit(new Event("submit")))
 
@@ -592,20 +536,7 @@ describe("prompt submit worktree selection", () => {
           variant: { current: () => "draft-variant" },
         }
         const submit = createPromptSubmit({
-          prompt,
-          info: () => ({ id: "session-1" }),
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
-          mode: () => "normal",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
+          ...submitInput(Option.some({ id: "session-1" })),
           model,
         })
 
@@ -623,23 +554,10 @@ describe("prompt submit worktree selection", () => {
     Effect.runPromise(
       Effect.gen(function* () {
         const submit = createPromptSubmit({
-          prompt,
-          info: () => undefined,
-          imageAttachments: () => [],
-          commentCount: () => 0,
-          autoAccept: () => false,
-          mode: () => "normal",
-          working: () => false,
-          editor: () => undefined,
-          queueScroll: () => undefined,
-          promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
-          addToHistory: () => undefined,
-          resetHistoryNavigation: () => undefined,
-          setMode: () => undefined,
-          setPopover: () => undefined,
+          ...submitInput(Option.none()),
           newSessionWorktree: () => selected,
-          onNewSessionWorktreeReset: () => undefined,
-          onSubmit: () => undefined,
+          onNewSessionWorktreeReset: () => {},
+          onSubmit: () => {},
         })
 
         const event = new Event("submit")
