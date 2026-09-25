@@ -55,7 +55,8 @@ function stabilizeContextKey(
   MutableHashSet.add(claimed, key)
   if (row.group.key === existing.row.group.key) return row
   return new TimelineRow.AssistantPart({
-    ...row,
+    userMessageID: row.userMessageID,
     group: { ...row.group, key: existing.row.group.key },
+    previousAssistantPart: row.previousAssistantPart,
   })
 }
