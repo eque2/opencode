@@ -50,12 +50,14 @@ export function LegacyHome() {
     const conn = server.current
     if (!conn) return
 
-    const resolve = (result: string | string[] | null) => {
-      if (Array.isArray(result)) {
-        result.forEach((directory) => openProject(conn, directory))
+    const resolve = (result: Option.Option<string | string[]>) => {
+      if (Option.isNone(result)) return
+      const picked = result.value
+      if (Array.isArray(picked)) {
+        picked.forEach((directory) => openProject(conn, directory))
         return
       }
-      if (result) openProject(conn, result)
+      if (picked) openProject(conn, picked)
     }
 
     pickDirectory({

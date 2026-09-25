@@ -124,7 +124,8 @@ export function createPromptProjectControls() {
       server: conn,
       title,
       onSelect: (result) => {
-        const directory = Array.isArray(result) ? result[0] : result
+        if (Option.isNone(result)) return
+        const directory = Array.isArray(result.value) ? result.value[0] : result.value
         if (directory) selectProject(directory, serverKey)
       },
     })

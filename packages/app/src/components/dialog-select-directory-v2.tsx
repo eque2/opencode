@@ -46,7 +46,7 @@ const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
 interface DialogSelectDirectoryV2Props {
   title?: string
   multiple?: boolean
-  onSelect: (result: string | string[] | null) => void
+  onSelect: (result: string | string[]) => void
   server: ServerConnection.Any
   mode?: "directory" | "file"
   start?: string

@@ -89,9 +89,11 @@ export function homeProjectNavigation(active: ServerConnection.Key, server: Serv
   return { server, href }
 }
 
-export function homeProjectDirectories(result: string | string[] | null) {
-  if (!result) return []
-  return Array.isArray(result) ? result : [result]
+export function homeProjectDirectories(result: Option.Option<string | string[]>): string[] {
+  if (Option.isNone(result)) return []
+  const picked = result.value
+  if (Array.isArray(picked)) return picked
+  return picked ? [picked] : []
 }
 
 export function homeSessionServerStatus(

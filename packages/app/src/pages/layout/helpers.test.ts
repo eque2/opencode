@@ -325,10 +325,10 @@ describe("layout workspace helpers", () => {
   })
 
   test("preserves picker order when adding multiple projects", () => {
-    expect(homeProjectDirectories(["/first", "/second"])).toEqual(["/first", "/second"])
-    expect(homeProjectDirectories("/only")).toEqual(["/only"])
-    // eslint-disable-next-line effect/no-null-use-option -- Platform.openDirectoryPickerDialog (desktop openDirectoryPicker IPC) resolves null when the user cancels; this checks that input
-    expect(homeProjectDirectories(null)).toEqual([])
+    expect(homeProjectDirectories(Option.some(["/first", "/second"]))).toEqual(["/first", "/second"])
+    expect(homeProjectDirectories(Option.some("/only"))).toEqual(["/only"])
+    expect(homeProjectDirectories(Option.some(""))).toEqual([])
+    expect(homeProjectDirectories(Option.none())).toEqual([])
   })
 
   test("hides status derived from an inactive server", () => {

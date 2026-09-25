@@ -15,7 +15,7 @@ import { Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 interface DialogSelectDirectoryProps {
   title?: string
   multiple?: boolean
-  onSelect: (result: string | string[] | null) => void
+  onSelect: (result: string | string[]) => void
   server: ServerConnection.Any
 }
 

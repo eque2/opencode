@@ -1477,14 +1477,16 @@ export default function LegacyLayout(props: ParentProps) {
   function chooseProject() {
     const conn = server.current
     if (!conn) return
-    function resolve(result: string | string[] | null) {
-      if (Array.isArray(result)) {
-        for (const directory of result) {
+    function resolve(result: Option.Option<string | string[]>) {
+      if (Option.isNone(result)) return
+      const picked = result.value
+      if (Array.isArray(picked)) {
+        for (const directory of picked) {
           openProject(directory, false)
         }
-        navigateToProject(result[0])
-      } else if (result) {
-        openProject(result)
+        navigateToProject(picked[0])
+      } else if (picked) {
+        openProject(picked)
       }
     }
 
