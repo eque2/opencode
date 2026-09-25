@@ -13,7 +13,7 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
-import { Array as Arr, HashMap, HashSet, Option } from "effect"
+import { Array as Arr, HashMap, HashSet, MutableHashSet, Option } from "effect"
 
 export type SessionTab = {
   type: "session"
@@ -74,7 +74,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
     const location = useLocation()
     const memory = createTabMemory<PromptSession>(getOwner())
 
-    const closing = new Set<string>()
+    const closing = MutableHashSet.empty<string>()
     let recentWrite = 0
     let recentValue: string | undefined
 
@@ -121,11 +121,11 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
 
     createEffect(() => {
       if (!ready() || !recentReady()) return
-      const servers = new Set(server.list.map(ServerConnection.key))
-      const next = store.filter((tab) => servers.has(tab.server))
+      const servers = HashSet.fromIterable(server.list.map(ServerConnection.key))
+      const next = store.filter((tab) => HashSet.has(servers, tab.server))
       if (next.length !== store.length) {
         for (const tab of store) {
-          if (!servers.has(tab.server)) {
+          if (!HashSet.has(servers, tab.server)) {
             const key = tabKey(tab)
             memory.remove(key)
             removeInfo(key)
@@ -134,16 +134,16 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         setStore(() => next)
       }
       if (recent.key && !next.some((tab) => tabKey(tab) === recent.key)) setRecentKey(undefined)
-      const keys = new Set(next.map(tabKey))
+      const keys = HashSet.fromIterable(next.map(tabKey))
       for (const key of Object.keys(info)) {
-        if (!keys.has(key)) removeInfo(key)
+        if (!HashSet.has(keys, key)) removeInfo(key)
       }
     })
 
     createEffect(() => {
       if (!closedReady()) return
-      const servers = new Set(server.list.map(ServerConnection.key))
-      const next = closed.filter((entry) => servers.has(entry.tab.server))
+      const servers = HashSet.fromIterable(server.list.map(ServerConnection.key))
+      const next = closed.filter((entry) => HashSet.has(servers, entry.tab.server))
       if (next.length !== closed.length) setClosed(() => next)
     })
 
@@ -159,7 +159,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       const key = tabKey(tab)
       const draftID = tab.type === "draft" ? tab.draftID : undefined
       const nextTab = nextTabAfterClose(store, index, recentKey() === key && location.pathname !== "/")
-      closing.add(key)
+      MutableHashSet.add(closing, key)
       void startTransition(() => {
         setStore((tabs) => Arr.remove(tabs, index))
         if (nextTab === null) {
@@ -167,7 +167,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           navigate("/")
         }
         if (nextTab) navigateTab(nextTab)
-      }).finally(() => closing.delete(key))
+      }).finally(() => MutableHashSet.remove(closing, key))
       memory.remove(key)
       removeInfo(key)
       if (draftID) removeDraftPersisted(draftID)

@@ -1,3 +1,4 @@
+import { HashSet } from "effect"
 import type { SessionTab, Tab } from "./tabs"
 
 export type ClosedTab = {
@@ -26,8 +27,8 @@ export function takeClosedTab(stack: ClosedTab[], tabs: Tab[]): { entry?: Closed
 }
 
 export function removeClosedTabs(stack: ClosedTab[], server: SessionTab["server"], sessionIDs: string[]) {
-  const removed = new Set(sessionIDs)
-  return stack.filter((entry) => entry.tab.server !== server || !removed.has(entry.tab.sessionId))
+  const removed = HashSet.fromIterable(sessionIDs)
+  return stack.filter((entry) => entry.tab.server !== server || !HashSet.has(removed, entry.tab.sessionId))
 }
 
 export function nextTabAfterClose(tabs: Tab[], index: number, active: boolean) {
