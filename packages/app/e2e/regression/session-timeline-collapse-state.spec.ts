@@ -299,6 +299,7 @@ async function readToolState(page: Page) {
 async function installDiffProbe(page: Page) {
   await page.addInitScript(() => {
     let shadowRootCount = 0
+    // oxlint-disable-next-line unbound-method -- the Element.prototype.attachShadow wrapper below keeps the native DOM method detached and calls it with call(this, init)
     const attachShadow = Element.prototype.attachShadow
     Element.prototype.attachShadow = function (init) {
       shadowRootCount += 1

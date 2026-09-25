@@ -2,6 +2,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 
 GlobalRegistrator.register()
 
+// oxlint-disable-next-line unbound-method -- the HTMLCanvasElement.prototype.getContext mock below keeps happy-dom's method detached and calls it with call(this, ...) for other context types
 const originalGetContext = HTMLCanvasElement.prototype.getContext
 // @ts-expect-error - we're overriding with a simplified mock
 HTMLCanvasElement.prototype.getContext = function (contextType: string, _options?: unknown) {

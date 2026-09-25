@@ -122,6 +122,7 @@ export async function installTimelineStreamProbe(
         start: () => {},
       }
       ;(window as Window & { __timelineStreamBenchmark?: TimelineProbeState }).__timelineStreamBenchmark = state
+      // oxlint-disable-next-line unbound-method -- the Element.prototype.scrollTo wrapper below keeps the native DOM method detached and calls it with apply(this, args); cleanup restores it
       const scrollTo = Element.prototype.scrollTo
       const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop")!
       if (profileVisual) {
@@ -138,7 +139,9 @@ export async function installTimelineStreamProbe(
         }
         Object.defineProperty(Element.prototype, "scrollTop", {
           configurable: true,
-          get: scrollTop.get,
+          get() {
+            return scrollTop.get?.call(this)
+          },
           set(value) {
             state.scroll.assignments += 1
             if (Math.abs(this.scrollTop - value) < 1) state.scroll.assignmentNoops += 1
