@@ -258,10 +258,13 @@ export function createDraftPromptSession(draftID: string, initial?: InitialPromp
 
 export type PromptSession = ReturnType<typeof createPromptSession>
 
-export function createPromptReady(session: Accessor<PromptSession>) {
-  return Object.defineProperty(() => session().ready(), "promise", {
-    get: () => session().ready.promise,
-  }) as (() => boolean) & { readonly promise: Promise<unknown> | undefined }
+export function createPromptReady(
+  session: Accessor<PromptSession>,
+): (() => boolean) & { readonly promise: Promise<unknown> | undefined } {
+  // Object.assign gives the accessor its typed `promise` key. The getter then replaces that value, because the
+  // session changes with the route and `promise` must read the current session each time.
+  const ready = Object.assign(() => session().ready(), { promise: session().ready.promise })
+  return Object.defineProperty(ready, "promise", { get: () => session().ready.promise })
 }
 
 export function createPromptState(initial?: InitialPrompt) {
