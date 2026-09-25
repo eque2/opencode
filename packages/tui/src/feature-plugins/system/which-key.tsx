@@ -269,7 +269,7 @@ function WhichKeyPanel(props: {
       0,
       list.findIndex((item) => item.label === currentGroup()?.label),
     )
-    setActiveGroup(list[(index + delta + list.length) % list.length]!.label)
+    setActiveGroup(list[(index + delta + list.length) % list.length].label)
     setOffset(0)
   }
 
