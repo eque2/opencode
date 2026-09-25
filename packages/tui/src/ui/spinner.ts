@@ -205,9 +205,8 @@ function createKnightRiderTrail(options: AdvancedGradientOptions): ColorGenerato
 export function deriveTrailColors(brightColor: ColorInput, steps: number = 6): RGBA[] {
   const baseRgba = brightColor instanceof RGBA ? brightColor : RGBA.fromHex(brightColor)
 
-  const colors: RGBA[] = []
-
-  for (let i = 0; i < steps; i++) {
+  // One color for each step i = 0, 1, ... while i < steps.
+  return Array.from({ length: Math.max(0, Math.ceil(steps)) }, (_, i) => {
     // Alpha-based falloff with optional bloom effect
     let alpha: number
     let brightnessFactor: number
@@ -230,10 +229,8 @@ export function deriveTrailColors(brightColor: ColorInput, steps: number = 6): R
     const g = Math.min(1.0, baseRgba.g * brightnessFactor)
     const b = Math.min(1.0, baseRgba.b * brightnessFactor)
 
-    colors.push(RGBA.fromValues(r, g, b, alpha))
-  }
-
-  return colors
+    return RGBA.fromValues(r, g, b, alpha)
+  })
 }
 
 /**
