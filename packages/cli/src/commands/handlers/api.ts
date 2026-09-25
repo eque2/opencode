@@ -1,10 +1,10 @@
 import { EOL } from "node:os"
-import { Effect, Option } from "effect"
+import { Effect, HashSet, Option } from "effect"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { Daemon } from "../../services/daemon"
 
-const methods = new Set(["delete", "get", "head", "options", "patch", "post", "put"])
+const methods = HashSet.make("delete", "get", "head", "options", "patch", "post", "put")
 
 type Operation = {
   operationId?: string
@@ -45,7 +45,7 @@ export default Runtime.handler(
 export function resolveOperation(spec: OpenApi, operationID: string, params: Record<string, string>) {
   for (const [path, operations] of Object.entries(spec.paths ?? {})) {
     for (const [method, operation] of Object.entries(operations)) {
-      if (!methods.has(method) || operation.operationId !== operationID) continue
+      if (!HashSet.has(methods, method) || operation.operationId !== operationID) continue
       return { method: method.toUpperCase(), path: interpolate(path, params) }
     }
   }
@@ -53,7 +53,7 @@ export function resolveOperation(spec: OpenApi, operationID: string, params: Rec
 }
 
 export function rawRequest(input: readonly string[]) {
-  if (input.length !== 2 || !methods.has(input[0].toLowerCase()) || !input[1].startsWith("/")) return
+  if (input.length !== 2 || !HashSet.has(methods, input[0].toLowerCase()) || !input[1].startsWith("/")) return
   return { method: input[0].toUpperCase(), path: input[1] }
 }
 
@@ -73,13 +73,12 @@ function resolveRequest(
 }
 
 function interpolate(path: string, params: Record<string, string>) {
-  const used = new Set<string>()
+  const used = HashSet.fromIterable(Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]))
   const pathname = path.replaceAll(/\{([^}]+)\}/g, (_, name: string) => {
     const value = params[name]
     if (value === undefined) throw new Error(`Missing path parameter: ${name}`)
-    used.add(name)
     return encodeURIComponent(value)
   })
-  const query = new URLSearchParams(Object.entries(params).filter(([name]) => !used.has(name))).toString()
+  const query = new URLSearchParams(Object.entries(params).filter(([name]) => !HashSet.has(used, name))).toString()
   return query ? `${pathname}?${query}` : pathname
 }
