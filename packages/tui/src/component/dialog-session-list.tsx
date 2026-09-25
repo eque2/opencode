@@ -1,10 +1,10 @@
 import { useDialog } from "../ui/dialog"
-import { DialogSelect } from "../ui/dialog-select"
+import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useRoute } from "../context/route"
 import { useSync } from "../context/sync"
 import { createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import path from "path"
-import { Data, DateTime, Effect, HashMap, HashSet, MutableHashSet, Option, Predicate } from "effect"
+import { Data, DateTime, Effect, Equivalence, HashMap, HashSet, MutableHashSet, Option, Predicate } from "effect"
 import { Locale } from "../util/locale"
 import { useProject } from "../context/project"
 import { useTheme } from "../context/theme"
@@ -31,6 +31,9 @@ class WorkspaceRemoveError extends Data.TaggedError("WorkspaceRemoveError")<{ re
 /** The SDK rejected a session delete request or returned an error response. */
 class SessionDeleteError extends Data.TaggedError("SessionDeleteError")<{ readonly cause: unknown }> {}
 
+/** Session id Options are equal when both are none or both hold the same id. */
+const sameSessionID = Option.makeEquivalence(Equivalence.strictEqual<string>())
+
 /** Waits for a Solid resource refetch, which returns either the value or a Promise of it. */
 function awaitRefetch(pending: unknown) {
   return Predicate.isPromiseLike(pending) ? Effect.asVoid(Effect.promise(() => pending)) : Effect.void
@@ -51,9 +54,12 @@ export function loadDialogSessionList<T>(input: {
   filter: SessionListFilter
   list: (query: ReturnType<typeof createDialogSessionListQuery>) => Promise<{ data?: T[] }>
 }) {
-  return input.list(createDialogSessionListQuery(input)).then(
-    (result) => result.data,
-    () => undefined,
+  return Effect.runPromise(
+    Effect.tryPromise(() => input.list(createDialogSessionListQuery(input))).pipe(
+      Effect.option,
+      // createResource reads an undefined value as "no data", so a failed or empty list crosses as undefined.
+      Effect.map((result) => Option.getOrUndefined(Option.flatMapNullishOr(result, (response) => response.data))),
+    ),
   )
 }
 
@@ -67,7 +73,7 @@ export function DialogSessionList() {
   const event = useEvent()
   const local = useLocal()
   const toast = useToast()
-  const [toDelete, setToDelete] = createSignal<string>()
+  const [toDelete, setToDelete] = createSignal(Option.none<string>(), { equals: sameSessionID })
   const [deleted, setDeleted] = createSignal(HashSet.empty<string>())
   const [search, setSearch] = createDebouncedSignal("", 150)
   const deleteHint = useCommandShortcut("session.delete")
@@ -90,12 +96,16 @@ export function DialogSessionList() {
     },
   )
 
-  const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
+  const currentSessionID = createMemo(
+    () => (route.data.type === "session" ? Option.some(route.data.sessionID) : Option.none<string>()),
+    Option.none<string>(),
+    { equals: sameSessionID },
+  )
   const sessions = createMemo(() => {
     const result = searchResults() ?? browseResults() ?? sync.data.session
     const synced = HashMap.fromIterable(sync.data.session.map((session) => [session.id, session]))
     const ids = MutableHashSet.fromIterable(result.map((session) => session.id))
-    const extra = [currentSessionID(), ...local.session.pinned()].flatMap((id) => {
+    const extra = [...Option.toArray(currentSessionID()), ...local.session.pinned()].flatMap((id) => {
       if (!id || MutableHashSet.has(ids, id)) return []
       const session = HashMap.get(synced, id)
       if (Option.isSome(session)) MutableHashSet.add(ids, id)
@@ -169,8 +179,9 @@ export function DialogSessionList() {
         workspace={workspace?.name ?? session.workspaceID!}
         onDone={list}
         onDelete={() => {
-          const current = currentSessionID()
-          const info = current ? sync.data.session.find((item) => item.id === current) : undefined
+          const info = currentSessionID().pipe(
+            Option.flatMapNullishOr((current) => sync.data.session.find((item) => item.id === current)),
+          )
           return Effect.runPromise(
             Effect.gen(function* () {
               const result = yield* Effect.promise(() =>
@@ -181,7 +192,7 @@ export function DialogSessionList() {
               yield* Effect.promise(() => sync.session.refresh())
               yield* awaitRefetch(refetchBrowse())
               if (search()) yield* awaitRefetch(refetch())
-              if (info?.workspaceID === session.workspaceID) {
+              if (Option.exists(info, (item) => item.workspaceID === session.workspaceID)) {
                 route.navigate({ type: "home" })
               }
               return true
@@ -247,39 +258,40 @@ export function DialogSessionList() {
 
     const searchResult = searchResults()
     const order = searchResult ? orderByRecency(sessions()) : browseOrder()
-    const current = currentSessionID()
-    const displayOrder =
-      current && HashMap.has(sessionMap, current) && !order.includes(current) ? [...order, current] : order
+    const currentOutsideOrder = currentSessionID().pipe(
+      Option.filter((id) => HashMap.has(sessionMap, id) && !order.includes(id)),
+      Option.toArray,
+    )
+    const displayOrder = [...order, ...currentOutsideOrder]
 
     const pinned = local.session.pinned().filter((id) => HashMap.has(sessionMap, id))
     const pinnedSet = HashSet.fromIterable(pinned)
     const slotByID = HashMap.fromIterable(local.session.slots().map((id, i) => [id, i + 1]))
 
-    function buildOption(x: SessionInfo, category: string) {
+    function buildOption(x: SessionInfo, category: string): DialogSelectOption<string> {
       const directory = x.path
         ? x.directory.endsWith(x.path)
-          ? x.directory.slice(0, -x.path.length).replace(/\/$/, "")
-          : undefined
-        : x.directory
-      const footer =
-        directory && directory !== project.data.project.mainDir ? Locale.truncate(path.basename(directory), 20) : ""
+          ? Option.some(x.directory.slice(0, -x.path.length).replace(/\/$/, ""))
+          : Option.none<string>()
+        : Option.some(x.directory)
+      const footer = directory.pipe(
+        Option.filter((dir) => dir !== "" && dir !== project.data.project.mainDir),
+        Option.match({ onNone: () => "", onSome: (dir) => Locale.truncate(path.basename(dir), 20) }),
+      )
 
-      const isDeleting = toDelete() === x.id
+      const isDeleting = Option.contains(toDelete(), x.id)
       const status = sync.data.session_status?.[x.id]
       const isWorking = status?.type === "busy" || status?.type === "retry"
-      const slot = HashMap.get(slotByID, x.id)
       const gutter = isWorking
-        ? () => <Spinner />
-        : Option.isSome(slot)
-          ? () => <text fg={theme.accent}>{slot.value}</text>
-          : undefined
+        ? Option.some(() => <Spinner />)
+        : HashMap.get(slotByID, x.id).pipe(Option.map((slot) => () => <text fg={theme.accent}>{slot}</text>))
       return {
         title: isDeleting ? `Press ${deleteHint()} again to confirm` : x.title,
-        bg: isDeleting ? theme.error : undefined,
+        ...(isDeleting ? { bg: theme.error } : {}),
         value: x.id,
         category,
         footer,
-        gutter,
+        ...Option.match(gutter, { onNone: () => ({}), onSome: (render) => ({ gutter: render }) }),
       }
     }
 
@@ -316,10 +328,10 @@ export function DialogSessionList() {
       options={options()}
       skipFilter={true}
       preserveSelection={true}
-      current={currentSessionID()}
+      current={Option.getOrUndefined(currentSessionID())}
       onFilter={setSearch}
       onMove={() => {
-        setToDelete(undefined)
+        setToDelete(Option.none())
       }}
       onSelect={(option) => {
         route.navigate({
@@ -340,9 +352,12 @@ export function DialogSessionList() {
           command: "session.delete",
           title: "delete",
           onTrigger: (option) => {
-            if (toDelete() === option.value) {
+            if (Option.contains(toDelete(), option.value)) {
               const session = sessions().find((item) => item.id === option.value)
-              const status = session?.workspaceID ? project.workspace.status(session.workspaceID) : undefined
+              const status = Option.fromNullishOr(session?.workspaceID).pipe(
+                Option.filter(Predicate.isTruthy),
+                Option.flatMapNullishOr((workspaceID) => project.workspace.status(workspaceID)),
+              )
 
               Effect.runFork(
                 Effect.gen(function* () {
@@ -358,12 +373,12 @@ export function DialogSessionList() {
                       (result) => new SessionDeleteError({ cause: result.error }),
                     ),
                   )
-                  if (status && status !== "connected") {
+                  if (Option.exists(status, (value) => value !== "connected")) {
                     yield* Effect.promise(() => sync.session.refresh())
                   }
                   yield* awaitRefetch(refetchBrowse())
                   if (search()) yield* awaitRefetch(refetch())
-                  setToDelete(undefined)
+                  setToDelete(Option.none())
                 }).pipe(
                   Effect.catchTag("SessionDeleteError", (error) =>
                     Effect.sync(() => {
@@ -376,7 +391,7 @@ export function DialogSessionList() {
                           message: errorMessage(error.cause),
                         })
                       }
-                      setToDelete(undefined)
+                      setToDelete(Option.none())
                     }),
                   ),
                   Effect.tapDefect((defect) => Effect.logError(defect)),
@@ -384,7 +399,7 @@ export function DialogSessionList() {
               )
               return
             }
-            setToDelete(option.value)
+            setToDelete(Option.some(option.value))
           },
         },
         {

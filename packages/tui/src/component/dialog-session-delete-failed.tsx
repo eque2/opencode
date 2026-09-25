@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { Effect, Predicate } from "effect"
+import { Effect, Option, Predicate } from "effect"
 import { useTheme } from "../context/theme"
 import { useDialog } from "../ui/dialog"
 import { createStore } from "solid-js/store"
@@ -33,6 +33,10 @@ export function DialogSessionDeleteFailed(props: {
       run: props.onRestore,
     },
   ]
+
+  // opentui reads an undefined backgroundColor as its default (transparent), so an inactive option crosses as undefined.
+  const highlight = (id: (typeof options)[number]["id"]) =>
+    id === store.active ? Option.some(theme.primary) : Option.none()
 
   function confirm() {
     const run = options.find((item) => item.id === store.active)?.run
@@ -82,7 +86,7 @@ export function DialogSessionDeleteFailed(props: {
               paddingRight={1}
               paddingTop={1}
               paddingBottom={1}
-              backgroundColor={item.id === store.active ? theme.primary : undefined}
+              backgroundColor={Option.getOrUndefined(highlight(item.id))}
               onMouseUp={() => {
                 setStore("active", item.id)
                 confirm()

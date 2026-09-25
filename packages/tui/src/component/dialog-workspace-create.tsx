@@ -1,5 +1,5 @@
 import type { ExperimentalWorkspaceAdapterListResponse, VcsApplyError, Workspace } from "@opencode-ai/sdk/v2"
-import { Data, Effect, Option } from "effect"
+import { Data, Effect, Equivalence, Option, Predicate } from "effect"
 import { useDialog } from "../ui/dialog"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
 import { useSync } from "../context/sync"
@@ -31,6 +31,9 @@ export type WorkspaceSelection =
     }
 
 type WorkspaceSelectValue = WorkspaceSelection | { type: "existing-list" }
+
+/** Workspace id Options are equal when both are none or both hold the same id. */
+const sameWorkspaceID = Option.makeEquivalence(Equivalence.strictEqual<string>())
 type ExistingWorkspaceSelectValue = { workspace: Workspace }
 
 export function recentConnectedWorkspaces<WorkspaceInfo extends { id: string; timeUsed: number | string }>(input: {
@@ -144,7 +147,7 @@ export function warpWorkspaceSession(input: {
         yield* Effect.tryPromise(() =>
           input.sdk.client.session.promptAsync({
             sessionID: input.sessionID,
-            workspace: input.workspaceID ?? undefined,
+            ...(Predicate.isNotNull(input.workspaceID) ? { workspace: input.workspaceID } : {}),
             noReply: true,
             parts: [
               {
@@ -225,17 +228,21 @@ export function DialogWorkspaceSelect(props: {
   const sync = useSync()
   const sdk = useSDK()
   const toast = useToast()
-  const [adapters, setAdapters] = createSignal<Adapter[] | undefined>(props.adapters)
-  const omittedWorkspaceID = createMemo(() => (route.data.type === "session" ? project.workspace.current() : undefined))
+  const [adapters, setAdapters] = createSignal(Option.fromNullishOr(props.adapters))
+  const omittedWorkspaceID = createMemo(
+    () => (route.data.type === "session" ? Option.fromNullishOr(project.workspace.current()) : Option.none<string>()),
+    Option.none<string>(),
+    { equals: sameWorkspaceID },
+  )
 
   onMount(() => {
     dialog.setSize("medium")
-    if (adapters()) return
+    if (Option.isSome(adapters())) return
     Effect.runFork(
       loadWorkspaceAdapters({ sdk, sync, toast }).pipe(
         Effect.tap((loaded) =>
           Effect.sync(() => {
-            if (Option.isSome(loaded)) setAdapters(loaded.value)
+            if (Option.isSome(loaded)) setAdapters(loaded)
           }),
         ),
       ),
@@ -243,15 +250,15 @@ export function DialogWorkspaceSelect(props: {
   })
 
   const options = createMemo<DialogSelectOption<WorkspaceSelectValue>[]>(() => {
-    const list = adapters()
-    if (!list) return []
+    const loaded = adapters()
+    if (Option.isNone(loaded)) return []
     const { recent, hasMore } = recentConnectedWorkspaces({
       workspaces: project.workspace.list(),
       status: project.workspace.status,
-      omitWorkspaceID: omittedWorkspaceID(),
+      omitWorkspaceID: Option.getOrUndefined(omittedWorkspaceID()),
     })
     return [
-      ...list.map((adapter) => ({
+      ...loaded.value.map((adapter) => ({
         title: adapter.name,
         value: { type: "new" as const, workspaceType: adapter.type, workspaceName: adapter.name },
         description: adapter.description,
@@ -287,7 +294,7 @@ export function DialogWorkspaceSelect(props: {
     ]
   })
 
-  if (!adapters()) return null
+  if (Option.isNone(adapters())) return null
   return (
     <DialogSelect<WorkspaceSelectValue>
       title="Warp"
@@ -318,7 +325,7 @@ export function DialogWorkspaceSelect(props: {
 }
 
 function DialogExistingWorkspaceSelect(props: {
-  omitWorkspaceID?: string
+  omitWorkspaceID: Option.Option<string>
   onSelect: (selection: WorkspaceSelection) => Promise<void> | void
 }) {
   const project = useProject()
@@ -327,7 +334,7 @@ function DialogExistingWorkspaceSelect(props: {
     project.workspace
       .list()
       .filter((workspace) => project.workspace.status(workspace.id) === "connected")
-      .filter((workspace) => workspace.id !== props.omitWorkspaceID)
+      .filter((workspace) => !Option.contains(props.omitWorkspaceID, workspace.id))
       .map((workspace: Workspace) => ({
         title: workspace.name,
         description: `(${workspace.type})`,
