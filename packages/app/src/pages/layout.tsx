@@ -11,7 +11,7 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { HashMap, Option, Schema } from "effect"
+import { HashMap, MutableHashMap, Option, Schema } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -379,16 +379,16 @@ export default function LegacyLayout(props: ParentProps) {
 
   const useSDKNotificationToasts = () =>
     onMount(() => {
-      const toastBySession = new Map<string, number>()
-      const alertedAtBySession = new Map<string, number>()
+      const toastBySession = MutableHashMap.empty<string, number>()
+      const alertedAtBySession = MutableHashMap.empty<string, number>()
       const cooldownMs = 5000
 
       const dismissSessionAlert = (sessionKey: string) => {
-        const toastId = toastBySession.get(sessionKey)
-        if (toastId === undefined) return
-        dismissToast(toastId)
-        toastBySession.delete(sessionKey)
-        alertedAtBySession.delete(sessionKey)
+        const toastId = MutableHashMap.get(toastBySession, sessionKey)
+        if (Option.isNone(toastId)) return
+        dismissToast(toastId.value)
+        MutableHashMap.remove(toastBySession, sessionKey)
+        MutableHashMap.remove(alertedAtBySession, sessionKey)
       }
 
       const unsub = serverSDK().event.listen((e) => {
@@ -442,9 +442,9 @@ export default function LegacyLayout(props: ParentProps) {
         const href = `/${base64Encode(directory)}/session/${props.sessionID}`
 
         const now = Date.now()
-        const lastAlerted = alertedAtBySession.get(sessionKey) ?? 0
+        const lastAlerted = Option.getOrElse(MutableHashMap.get(alertedAtBySession, sessionKey), () => 0)
         if (now - lastAlerted < cooldownMs) return
-        alertedAtBySession.set(sessionKey, now)
+        MutableHashMap.set(alertedAtBySession, sessionKey, now)
 
         if (e.details.type === "permission.asked") {
           if (settings.sounds.permissionsEnabled()) {
@@ -483,7 +483,7 @@ export default function LegacyLayout(props: ParentProps) {
             },
           ],
         })
-        toastBySession.set(sessionKey, toastId)
+        MutableHashMap.set(toastBySession, sessionKey, toastId)
       })
       onCleanup(unsub)
 
@@ -644,16 +644,16 @@ export default function LegacyLayout(props: ParentProps) {
   const prefetchPendingLimit = 10
   const span = 4
   const prefetchToken = { value: 0 }
-  const prefetchQueues = new Map<string, PrefetchQueue>()
+  const prefetchQueues = MutableHashMap.empty<string, PrefetchQueue>()
 
   const PREFETCH_MAX_SESSIONS_PER_DIR = 10
-  const prefetchedByDir = new Map<string, Set<string>>()
+  const prefetchedByDir = MutableHashMap.empty<string, Set<string>>()
 
   const lruFor = (directory: string) => {
-    const existing = prefetchedByDir.get(directory)
-    if (existing) return existing
+    const existing = MutableHashMap.get(prefetchedByDir, directory)
+    if (Option.isSome(existing)) return existing.value
     const created = new Set<string>()
-    prefetchedByDir.set(directory, created)
+    MutableHashMap.set(prefetchedByDir, directory, created)
     return created
   }
 
@@ -669,9 +669,9 @@ export default function LegacyLayout(props: ParentProps) {
 
   createEffect(() => {
     const active = new Set(visibleSessionDirs())
-    for (const directory of prefetchedByDir.keys()) {
+    for (const directory of MutableHashMap.keys(prefetchedByDir)) {
       if (active.has(directory)) continue
-      prefetchedByDir.delete(directory)
+      MutableHashMap.remove(prefetchedByDir, directory)
     }
   })
 
@@ -680,7 +680,7 @@ export default function LegacyLayout(props: ParentProps) {
     serverSDK().url
 
     prefetchToken.value += 1
-    prefetchQueues.clear()
+    MutableHashMap.clear(prefetchQueues)
   })
 
   createEffect(() => {
@@ -689,13 +689,13 @@ export default function LegacyLayout(props: ParentProps) {
       if (visible.has(directory)) continue
       q.pending.length = 0
       q.pendingSet.clear()
-      if (q.running === 0) prefetchQueues.delete(directory)
+      if (q.running === 0) MutableHashMap.remove(prefetchQueues, directory)
     }
   })
 
   const queueFor = (directory: string) => {
-    const existing = prefetchQueues.get(directory)
-    if (existing) return existing
+    const existing = MutableHashMap.get(prefetchQueues, directory)
+    if (Option.isSome(existing)) return existing.value
 
     const created: PrefetchQueue = {
       inflight: new Set(),
@@ -703,7 +703,7 @@ export default function LegacyLayout(props: ParentProps) {
       pendingSet: new Set(),
       running: 0,
     }
-    prefetchQueues.set(directory, created)
+    MutableHashMap.set(prefetchQueues, directory, created)
     return created
   }
 
