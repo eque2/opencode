@@ -1,6 +1,9 @@
+import { Effect } from "effect"
 import { createStore } from "solid-js/store"
-import { onCleanup, Show, type Accessor } from "solid-js"
+import { Show, type Accessor } from "solid-js"
 import { InlineInput } from "@opencode-ai/ui/inline-input"
+import { createFiberSlot } from "@/utils/fiber-slot"
+import { nextFrame } from "@/utils/next-frame"
 
 export function createInlineEditorController() {
   // This controller intentionally supports one active inline editor at a time.
@@ -48,12 +51,8 @@ export function createInlineEditorController() {
     stopPropagation?: boolean
     openOnDblClick?: boolean
   }) => {
-    let frame: number | undefined
-
-    onCleanup(() => {
-      if (frame === undefined) return
-      cancelAnimationFrame(frame)
-    })
+    // The owner's cleanup interrupts the slot, which cancels a pending focus frame.
+    const focusFrame = createFiberSlot()
 
     const isEditing = () => props.editing ?? editorOpen(props.id)
     const stopEvents = () => props.stopPropagation ?? false
@@ -86,12 +85,16 @@ export function createInlineEditorController() {
       >
         <InlineInput
           ref={(el) => {
-            if (frame !== undefined) cancelAnimationFrame(frame)
-            frame = requestAnimationFrame(() => {
-              frame = undefined
-              if (!el.isConnected) return
-              el.focus()
-            })
+            // run() interrupts the pending frame first, so only the newest input takes focus.
+            focusFrame.run(
+              nextFrame.pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    if (el.isConnected) el.focus()
+                  }),
+                ),
+              ),
+            )
           }}
           value={editorValue()}
           class={props.class}
