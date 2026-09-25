@@ -1,7 +1,7 @@
 import { Platform, usePlatform } from "@/context/platform"
 import { makePersisted, type AsyncStorage, type SyncStorage } from "@solid-primitives/storage"
 import { checksum } from "@opencode-ai/core/util/encode"
-import { Array as Arr, Iterable, MutableHashMap, MutableHashSet, Option } from "effect"
+import { Array as Arr, Iterable, MutableHashMap, MutableHashSet, Option, Order, Predicate, Result } from "effect"
 import { createResource, type Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
 import { pathKey } from "@/utils/path-key"
@@ -111,59 +111,61 @@ function quota(error: unknown) {
 
 type Evict = { key: string; size: number }
 
-function evict(storage: Storage, keep: string, value: string) {
-  const total = storage.length
-  const indexes = Array.from({ length: total }, (_, index) => index)
-  const items: Evict[] = []
+const largestFirst = Order.flip(Order.mapInput(Order.Number, (item: Evict) => item.size))
 
-  for (const index of indexes) {
-    const name = storage.key(index)
-    if (!name) continue
-    if (!name.startsWith(LOCAL_PREFIX)) continue
-    if (name === keep) continue
-    const stored = storage.getItem(name)
-    items.push({ key: name, size: stored?.length ?? 0 })
-  }
-
-  items.sort((a, b) => b.size - a.size)
-
-  for (const item of items) {
-    storage.removeItem(item.key)
-    cacheDelete(item.key)
-
-    try {
-      storage.setItem(keep, value)
-      cacheSet(keep, value)
-      return true
-    } catch (error) {
-      if (!quota(error)) throw error
-    }
-  }
-
-  return false
+function evictionCandidates(storage: Storage, keep: string): ReadonlyArray<Evict> {
+  const names = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+  const candidates = names
+    .filter(Predicate.isNotNull)
+    .filter((name) => name.startsWith(LOCAL_PREFIX) && name !== keep)
+    .map((name) => ({ key: name, size: storage.getItem(name)?.length ?? 0 }))
+  return Arr.sort(candidates, largestFirst)
 }
 
-function write(storage: Storage, key: string, value: string) {
-  try {
-    storage.setItem(key, value)
-    cacheSet(key, value)
-    return true
-  } catch (error) {
-    if (!quota(error)) throw error
-  }
+function storeValue(storage: Storage, key: string, value: string) {
+  storage.setItem(key, value)
+  cacheSet(key, value)
+}
 
-  try {
-    storage.removeItem(key)
-    cacheDelete(key)
-    storage.setItem(key, value)
-    cacheSet(key, value)
-    return true
-  } catch (error) {
-    if (!quota(error)) throw error
-  }
+// Success(true): the value is written. Success(false): the storage quota is full. Failure: another storage error.
+function attemptWrite(run: () => void): Result.Result<boolean, unknown> {
+  return Result.try(run).pipe(
+    Result.map(() => true),
+    Result.orElse((error) => (quota(error) ? Result.succeed(false) : Result.fail(error))),
+  )
+}
 
-  const ok = evict(storage, key, value)
-  return ok
+function evict(storage: Storage, keep: string, value: string): Result.Result<boolean, unknown> {
+  return Result.flatMap(
+    Result.try(() => evictionCandidates(storage, keep)),
+    (candidates) => {
+      for (const item of candidates) {
+        const written = Result.try(() => storage.removeItem(item.key)).pipe(
+          Result.flatMap(() => {
+            cacheDelete(item.key)
+            return attemptWrite(() => storeValue(storage, keep, value))
+          }),
+        )
+        if (Result.isFailure(written) || written.success) return written
+      }
+      return Result.succeed(false)
+    },
+  )
+}
+
+function write(storage: Storage, key: string, value: string): Result.Result<boolean, unknown> {
+  return attemptWrite(() => storeValue(storage, key, value)).pipe(
+    Result.flatMap((written) =>
+      written
+        ? Result.succeed(true)
+        : attemptWrite(() => {
+            storage.removeItem(key)
+            cacheDelete(key)
+            storeValue(storage, key, value)
+          }),
+    ),
+    Result.flatMap((written) => (written ? Result.succeed(true) : evict(storage, key, value))),
+  )
 }
 
 function snapshot(value: unknown) {
@@ -383,91 +385,52 @@ function serverWorkspaceTarget(scope: ServerScopeValue, dir: string, key: string
   return { storage: workspaceStorage(pathKey(dir)), legacyStorageNames: legacyWorkspaceStorage(dir), key, legacy }
 }
 
-function localStorageWithPrefix(prefix: string): SyncStorage {
-  const base = `${prefix}:`
-  const scope = `prefix:${prefix}`
-  const item = (key: string) => base + key
+function readLocal(scope: string, key: string): Option.Option<string> {
+  const read = Result.try(() => localStorage.getItem(key))
+  if (Result.isFailure(read)) fallbackSet(scope)
+  return Option.flatMap(Result.getSuccess(read), Option.fromNullOr)
+}
+
+function writeLocal(key: string, value: string): boolean {
+  return Result.try(() => localStorage).pipe(
+    Result.flatMap((storage) => write(storage, key, value)),
+    Result.getOrElse(() => false),
+  )
+}
+
+function localStorageScoped(scope: string, name: (key: string) => string): SyncStorage {
   return {
     getItem: (key) => {
-      const name = item(key)
-      const cached = cacheGet(name)
+      const item = name(key)
+      const cached = cacheGet(item)
       if (fallbackDisabled(scope)) return Option.getOrNull(cached)
 
-      const stored = (() => {
-        try {
-          return localStorage.getItem(name)
-        } catch {
-          fallbackSet(scope)
-          return null
-        }
-      })()
-      if (stored === null) return Option.getOrNull(cached)
-      cacheSet(name, stored)
-      return stored
+      const stored = readLocal(scope, item)
+      if (Option.isNone(stored)) return Option.getOrNull(cached)
+      cacheSet(item, stored.value)
+      return stored.value
     },
     setItem: (key, value) => {
-      const name = item(key)
+      const item = name(key)
       if (fallbackDisabled(scope)) return
-      try {
-        if (write(localStorage, name, value)) return
-      } catch {
-        fallbackSet(scope)
-        return
-      }
+      if (writeLocal(item, value)) return
       fallbackSet(scope)
     },
     removeItem: (key) => {
-      const name = item(key)
-      cacheDelete(name)
+      const item = name(key)
+      cacheDelete(item)
       if (fallbackDisabled(scope)) return
-      try {
-        localStorage.removeItem(name)
-      } catch {
-        fallbackSet(scope)
-      }
+      if (Result.isFailure(Result.try(() => localStorage.removeItem(item)))) fallbackSet(scope)
     },
   }
 }
 
-function localStorageDirect(): SyncStorage {
-  const scope = "direct"
-  return {
-    getItem: (key) => {
-      const cached = cacheGet(key)
-      if (fallbackDisabled(scope)) return Option.getOrNull(cached)
+function localStorageWithPrefix(prefix: string): SyncStorage {
+  return localStorageScoped(`prefix:${prefix}`, (key) => `${prefix}:${key}`)
+}
 
-      const stored = (() => {
-        try {
-          return localStorage.getItem(key)
-        } catch {
-          fallbackSet(scope)
-          return null
-        }
-      })()
-      if (stored === null) return Option.getOrNull(cached)
-      cacheSet(key, stored)
-      return stored
-    },
-    setItem: (key, value) => {
-      if (fallbackDisabled(scope)) return
-      try {
-        if (write(localStorage, key, value)) return
-      } catch {
-        fallbackSet(scope)
-        return
-      }
-      fallbackSet(scope)
-    },
-    removeItem: (key) => {
-      cacheDelete(key)
-      if (fallbackDisabled(scope)) return
-      try {
-        localStorage.removeItem(key)
-      } catch {
-        fallbackSet(scope)
-      }
-    },
-  }
+function localStorageDirect(): SyncStorage {
+  return localStorageScoped("direct", (key) => key)
 }
 
 const DRAFT_PERSISTED_KEYS = ["prompt", "comments", "file-view", "layout"]

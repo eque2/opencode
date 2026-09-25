@@ -6,6 +6,24 @@ type PersistTestingType = typeof import("./persist").PersistTesting
 type PersistType = typeof import("./persist").Persist
 type RemovePersistedType = typeof import("./persist").removePersisted
 
+type StorageOperation = "get" | "set" | "remove"
+
+function storageFailure(key: string, operation: StorageOperation): Option.Option<DOMException> {
+  if (operation === "set" && key.startsWith("opencode.quota")) {
+    return Option.some(new DOMException("quota", "QuotaExceededError"))
+  }
+  if (key.startsWith("opencode.throw")) {
+    return Option.some(new DOMException(`storage ${operation} failed`, "SecurityError"))
+  }
+  return Option.none()
+}
+
+function failStorage(key: string, operation: StorageOperation) {
+  const failure = storageFailure(key, operation)
+  // eslint-disable-next-line effect/no-throw-use-effect -- the DOM Storage API reports quota and access failures only by throwing; this fake reproduces that contract
+  if (Option.isSome(failure)) throw failure.value
+}
+
 class MemoryStorage implements Storage {
   private values = MutableHashMap.empty<string, string>()
   readonly events: string[] = []
@@ -26,22 +44,21 @@ class MemoryStorage implements Storage {
   getItem(key: string) {
     this.calls.get += 1
     this.events.push(`get:${key}`)
-    if (key.startsWith("opencode.throw")) throw new Error("storage get failed")
+    failStorage(key, "get")
     return Option.getOrNull(MutableHashMap.get(this.values, key))
   }
 
   setItem(key: string, value: string) {
     this.calls.set += 1
     this.events.push(`set:${key}`)
-    if (key.startsWith("opencode.quota")) throw new DOMException("quota", "QuotaExceededError")
-    if (key.startsWith("opencode.throw")) throw new Error("storage set failed")
+    failStorage(key, "set")
     MutableHashMap.set(this.values, key, value)
   }
 
   removeItem(key: string) {
     this.calls.remove += 1
     this.events.push(`remove:${key}`)
-    if (key.startsWith("opencode.throw")) throw new Error("storage remove failed")
+    failStorage(key, "remove")
     MutableHashMap.remove(this.values, key)
   }
 }
