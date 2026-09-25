@@ -23,8 +23,8 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
 
   const configured = () => {
     const model = resolveDefaultModel(providers.defaultModel(), sync().data.config.model)
-    if (!model) return
-    if (valid(model)) return model
+    if (model && valid(model)) return model
+    return undefined
   }
 
   const recent = () => models.recent.list().find(valid)
@@ -40,7 +40,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
     const key = [prompt.model.current(), input.agent()?.model, configured(), recent(), fallback()].find(
       (item): item is ModelKey => !!item && valid(item),
     )
-    if (!key) return
+    if (!key) return undefined
     return models.find(key)
   }
   const recentModels = createMemo(() =>
@@ -85,7 +85,7 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
       configured() {
         const item = input.agent()
         const model = current()
-        if (!item || !model) return
+        if (!item || !model) return undefined
         return getConfiguredAgentVariant({
           agent: { model: item.model, variant: item.variant },
           model: { providerID: model.provider.id, modelID: model.id, variants: model.variants },
@@ -102,9 +102,10 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
         })
         if (resolved) return resolved
         const model = current()
-        if (!model) return
+        if (!model) return undefined
         const saved = models.variant.get({ providerID: model.provider.id, modelID: model.id })
         if (saved && this.list().includes(saved)) return saved
+        return undefined
       },
       list() {
         return Object.keys(current()?.variants ?? {})
