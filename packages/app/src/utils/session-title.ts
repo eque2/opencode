@@ -1,3 +1,5 @@
+import { DateTime } from "effect"
+
 const pattern = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 interface Info {
@@ -9,7 +11,10 @@ interface Info {
 }
 
 export function withTimestampedFallback(info: Info) {
-  return info.title ?? `${info.parentID ? "Child" : "New"} session - ${new Date(info.time.created).toISOString()}`
+  return (
+    info.title ??
+    `${info.parentID ? "Child" : "New"} session - ${DateTime.formatIso(DateTime.makeUnsafe(info.time.created))}`
+  )
 }
 
 export function sessionTitle(title?: string) {
