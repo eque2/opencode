@@ -582,7 +582,9 @@ function SessionFileViewV2(props: { tab: string }) {
     origin?: "review" | "file"
   }) => {
     const selection = selectionFromLines(input.selection)
-    const preview = Option.orElse(Option.fromUndefinedOr(input.preview), () => buildPreview(input.file, input.selection))
+    const preview = Option.orElse(Option.fromUndefinedOr(input.preview), () =>
+      buildPreview(input.file, input.selection),
+    )
 
     const saved = comments.add({
       file: input.file,
