@@ -53,43 +53,39 @@ export function isDefaultTitle(title: string) {
 
 type SessionRow = typeof SessionTable.$inferSelect
 
+// NULL columns become absent keys on the Info value.
 export function fromRow(row: SessionRow): Info {
-  const summary = [row.summary_additions, row.summary_deletions, row.summary_files].some(Predicate.isNotNull)
-    ? {
-        additions: row.summary_additions ?? 0,
-        deletions: row.summary_deletions ?? 0,
-        files: row.summary_files ?? 0,
-        diffs: row.summary_diffs ?? undefined,
-      }
-    : undefined
-  const share = row.share_url ? { url: row.share_url } : undefined
-  const revert = row.revert
-    ? {
-        messageID: MessageID.make(row.revert.messageID),
-        partID: row.revert.partID ? PartID.make(row.revert.partID) : undefined,
-        snapshot: row.revert.snapshot,
-        diff: row.revert.diff,
-      }
-    : undefined
+  const hasSummary = [row.summary_additions, row.summary_deletions, row.summary_files].some(Predicate.isNotNull)
   return {
     id: row.id,
     slug: row.slug,
     projectID: row.project_id,
-    workspaceID: row.workspace_id ?? undefined,
+    ...(Predicate.isNotNull(row.workspace_id) ? { workspaceID: row.workspace_id } : {}),
     directory: row.directory,
-    path: row.path ?? undefined,
-    parentID: row.parent_id ?? undefined,
+    ...(Predicate.isNotNull(row.path) ? { path: row.path } : {}),
+    ...(Predicate.isNotNull(row.parent_id) ? { parentID: row.parent_id } : {}),
     title: row.title,
-    agent: row.agent ?? undefined,
-    model: row.model
+    ...(Predicate.isNotNull(row.agent) ? { agent: row.agent } : {}),
+    ...(row.model
       ? {
-          id: ModelV2.ID.make(row.model.id),
-          providerID: ProviderV2.ID.make(row.model.providerID),
-          variant: row.model.variant,
+          model: {
+            id: ModelV2.ID.make(row.model.id),
+            providerID: ProviderV2.ID.make(row.model.providerID),
+            variant: row.model.variant,
+          },
         }
-      : undefined,
+      : {}),
     version: row.version,
-    summary,
+    ...(hasSummary
+      ? {
+          summary: {
+            additions: row.summary_additions ?? 0,
+            deletions: row.summary_deletions ?? 0,
+            files: row.summary_files ?? 0,
+            ...(Predicate.isNotNull(row.summary_diffs) ? { diffs: row.summary_diffs } : {}),
+          },
+        }
+      : {}),
     cost: row.cost,
     tokens: {
       input: row.tokens_input,
@@ -100,15 +96,24 @@ export function fromRow(row: SessionRow): Info {
         write: row.tokens_cache_write,
       },
     },
-    share,
-    metadata: row.metadata ?? undefined,
-    revert,
-    permission: row.permission ? [...row.permission] : undefined,
+    ...(row.share_url ? { share: { url: row.share_url } } : {}),
+    ...(Predicate.isNotNull(row.metadata) ? { metadata: row.metadata } : {}),
+    ...(row.revert
+      ? {
+          revert: {
+            messageID: MessageID.make(row.revert.messageID),
+            ...(row.revert.partID ? { partID: PartID.make(row.revert.partID) } : {}),
+            snapshot: row.revert.snapshot,
+            diff: row.revert.diff,
+          },
+        }
+      : {}),
+    ...(row.permission ? { permission: [...row.permission] } : {}),
     time: {
       created: row.time_created,
       updated: row.time_updated,
-      compacting: row.time_compacting ?? undefined,
-      archived: row.time_archived ?? undefined,
+      ...(Predicate.isNotNull(row.time_compacting) ? { compacting: row.time_compacting } : {}),
+      ...(Predicate.isNotNull(row.time_archived) ? { archived: row.time_archived } : {}),
     },
   }
 }
@@ -524,7 +529,7 @@ const layer: Layer.Layer<
         agent: input.agent,
         model: input.model,
         metadata: input.metadata,
-        permission: input.permission ? [...input.permission] : undefined,
+        ...(input.permission ? { permission: [...input.permission] } : {}),
         cost: 0,
         tokens: EmptyTokens,
         time: {
@@ -587,7 +592,7 @@ const layer: Layer.Layer<
         for (const item of items) {
           projects.set(item.id, {
             id: item.id,
-            name: item.name ?? undefined,
+            ...(Predicate.isNotNull(item.name) ? { name: item.name } : {}),
             worktree: item.worktree,
           })
         }
@@ -712,12 +717,13 @@ const layer: Layer.Layer<
         const newID = MessageID.ascending()
         idMap.set(msg.info.id, newID)
 
-        const parentID = msg.info.role === "assistant" && msg.info.parentID ? idMap.get(msg.info.parentID) : undefined
+        const parentID =
+          msg.info.role === "assistant" ? Option.fromUndefinedOr(idMap.get(msg.info.parentID)) : Option.none()
         const cloned = yield* updateMessage({
           ...msg.info,
           sessionID: session.id,
           id: newID,
-          ...(parentID && { parentID }),
+          ...(Option.isSome(parentID) ? { parentID: parentID.value } : {}),
         })
 
         for (const part of msg.parts) {

@@ -344,14 +344,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             })
           }
           if (part.state.status === "error") {
-            const output = part.state.metadata?.interrupted === true ? part.state.metadata.output : undefined
-            if (typeof output === "string") {
+            const metadata = part.state.metadata
+            if (metadata?.interrupted === true && typeof metadata.output === "string") {
               assistantMessage.parts.push({
                 type: ("tool-" + part.tool) as `tool-${string}`,
                 state: "output-available",
                 toolCallId: part.callID,
                 input: part.state.input,
-                output,
+                output: metadata.output,
                 ...(part.metadata?.providerExecuted ? { providerExecuted: true } : {}),
                 ...(differentModel ? {} : callProviderMetadata(part.metadata)),
               })
@@ -443,15 +443,21 @@ export function toModelMessages(
   return Effect.runPromise(toModelMessagesEffect(input, model, options))
 }
 
+/** One page of messages; `cursor` is present when an older page exists. */
+export interface Page {
+  items: WithParts[]
+  more: boolean
+  cursor?: string
+}
+
 export const page = Effect.fn("MessageV2.page")(function* (input: {
   sessionID: SessionID
   limit: number
   before?: string
 }) {
   const { db } = yield* Database.Service
-  const before = input.before ? cursor.decode(input.before) : undefined
-  const where = before
-    ? and(eq(MessageTable.session_id, input.sessionID), older(before))
+  const where = input.before
+    ? and(eq(MessageTable.session_id, input.sessionID), older(cursor.decode(input.before)))
     : eq(MessageTable.session_id, input.sessionID)
   const rows = yield* db
     .select()
@@ -483,7 +489,7 @@ export const page = Effect.fn("MessageV2.page")(function* (input: {
   return {
     items,
     more,
-    cursor: more && tail ? cursor.encode({ id: tail.id, time: tail.time_created }) : undefined,
+    ...(more && tail ? { cursor: cursor.encode({ id: tail.id, time: tail.time_created }) } : {}),
   }
 })
 
@@ -493,10 +499,8 @@ export function stream(sessionID: SessionID) {
     const result = [] as WithParts[]
     let before: string | undefined
     while (true) {
-      const next = yield* page({ sessionID, limit: size, before }).pipe(
-        Effect.catchIf(NotFoundError.isInstance, () =>
-          Effect.succeed({ items: [] as WithParts[], more: false, cursor: undefined }),
-        ),
+      const next: Page = yield* page({ sessionID, limit: size, before }).pipe(
+        Effect.catchTag("NotFoundError", () => Effect.succeed({ items: [], more: false })),
       )
       if (next.items.length === 0) break
       for (let i = next.items.length - 1; i >= 0; i--) {
