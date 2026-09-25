@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Chunk } from "effect"
 import { createApiForServer, createSdkForServer } from "./server"
 import { createCompatibleApi } from "./server-compat"
 
@@ -6,11 +7,11 @@ function setup(
   protocol: "v1" | "v2" | Promise<"v1" | "v2">,
   responses?: { vcs?: { branch: string; default_branch: string } },
 ) {
-  const requests: Request[] = []
+  let recorded = Chunk.empty<Request>()
   const fetcher = Object.assign(
     async (input: string | URL | Request, init?: RequestInit) => {
       const request = new Request(input, init)
-      requests.push(request)
+      recorded = Chunk.append(recorded, request)
       if (request.method === "PATCH") {
         return Response.json({
           id: "ses_1",
@@ -49,7 +50,7 @@ function setup(
     legacy: (directory) => createSdkForServer({ server, fetch: fetcher, directory, throwOnError: true }),
     directory: "/repo",
   })
-  return { api, requests }
+  return { api, sent: () => Chunk.toReadonlyArray(recorded) }
 }
 
 describe("createCompatibleApi", () => {
@@ -67,7 +68,7 @@ describe("createCompatibleApi", () => {
   */
 
   test("converts current prompts to the V1 prompt contract", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
     await api.session.prompt({
       sessionID: "ses_1",
       id: "msg_1",
@@ -80,6 +81,7 @@ describe("createCompatibleApi", () => {
       ],
     })
 
+    const requests = sent()
     expect(new URL(requests[0].url).pathname).toBe("/session/ses_1/prompt_async")
     const body = await requests[0].json()
     expect(body).toMatchObject({
@@ -111,7 +113,7 @@ describe("createCompatibleApi", () => {
   })
 
   test("preserves original parts for V1 optimistic reconciliation", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
     await api.session.prompt({
       sessionID: "ses_1",
       id: "msg_1",
@@ -123,6 +125,7 @@ describe("createCompatibleApi", () => {
       ],
     })
 
+    const requests = sent()
     expect((await requests[0].json()).parts).toEqual([
       { id: "prt_text", type: "text", text: "look" },
       { id: "prt_image", type: "file", mime: "image/png", url: "data:image/png;base64,AAAA", filename: "image.png" },
@@ -158,9 +161,10 @@ describe("createCompatibleApi", () => {
   */
 
   test("uses the global V1 session search endpoint", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
     await api.session.list({ parentID: null, search: "session", limit: 50 })
 
+    const requests = sent()
     expect(new URL(requests[0].url).pathname).toBe("/experimental/session")
   })
 
@@ -175,9 +179,10 @@ describe("createCompatibleApi", () => {
   */
 
   test("translates current file searches to the V1 dirs parameter", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
     await api.file.find({ location: { directory: "/repo" }, query: "src", type: "file", limit: 20 })
 
+    const requests = sent()
     const url = new URL(requests[0].url)
     expect(url.pathname).toBe("/find/file")
     expect(url.searchParams.get("dirs")).toBe("false")
@@ -185,7 +190,7 @@ describe("createCompatibleApi", () => {
   })
 
   test("routes V1 permission replies through the requested directory", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
     await api.permission.reply({
       sessionID: "ses_1",
       requestID: "permission_1",
@@ -193,12 +198,13 @@ describe("createCompatibleApi", () => {
       location: { directory: "/other" },
     })
 
+    const requests = sent()
     expect(new URL(requests[0].url).pathname).toBe("/session/ses_1/permissions/permission_1")
     expect(new URL(requests[0].url).searchParams.get("directory")).toBe("/other")
   })
 
   test("disposes the V1 instance after connecting a provider", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
 
     await api.integration.connect.key({
       integrationID: "openrouter",
@@ -206,6 +212,7 @@ describe("createCompatibleApi", () => {
       location: { directory: "/repo" },
     })
 
+    const requests = sent()
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
       "/auth/openrouter",
       "/instance/dispose",
@@ -216,7 +223,7 @@ describe("createCompatibleApi", () => {
   })
 
   test("disposes the V1 instance after completing provider OAuth", async () => {
-    const { api, requests } = setup("v1")
+    const { api, sent } = setup("v1")
 
     await api.integration.oauth.complete({
       integrationID: "openrouter",
@@ -225,6 +232,7 @@ describe("createCompatibleApi", () => {
       location: { directory: "/repo" },
     })
 
+    const requests = sent()
     expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
       "/provider/openrouter/oauth/callback",
       "/instance/dispose",
