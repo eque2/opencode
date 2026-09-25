@@ -9,15 +9,15 @@ let createPromptSubmit: typeof import("./submit").createPromptSubmit
 type PromptRequest = Parameters<DirectorySDK["api"]["session"]["prompt"]>[0]
 type StoredSession = { id: string; title?: string }
 
-const createdClients: string[] = []
-const createdSessions: string[] = []
-const sessionCreateInputs: Array<{
+let createdClients: string[] = []
+let createdSessions: string[] = []
+let sessionCreateInputs: Array<{
   agent?: string
   model?: { id: string; providerID: string; variant?: string }
   location?: { directory: string }
 }> = []
-const enabledAutoAccept: Array<{ server: string; sessionID: string; directory: string }> = []
-const optimistic: Array<{
+let enabledAutoAccept: Array<{ server: string; sessionID: string; directory: string }> = []
+let optimistic: Array<{
   directory?: string
   sessionID?: string
   message: {
@@ -26,16 +26,16 @@ const optimistic: Array<{
     variant?: string
   }
 }> = []
-const optimisticSeeded: boolean[] = []
+let optimisticSeeded: boolean[] = []
 const storedSessions: Record<string, StoredSession[]> = {}
-const promoted: Array<{ directory: string; sessionID: string }> = []
-const sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
-const syncedDirectories: string[] = []
-const promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
-const sentPrompts: string[] = []
-const promptInputs: PromptRequest[] = []
-const sentCommands: unknown[] = []
-const commands: Array<{ name: string }> = []
+let promoted: Array<{ directory: string; sessionID: string }> = []
+let sentShell: Array<{ sessionID: string; id?: string; command: string }> = []
+let syncedDirectories: string[] = []
+let promotedDrafts: Array<{ draftID: string; server: string; sessionId: string }> = []
+let sentPrompts: string[] = []
+let promptInputs: PromptRequest[] = []
+let sentCommands: unknown[] = []
+let commands: Array<{ name: string }> = []
 let serverSessionSyncs = 0
 
 let params: { id?: string } = {}
@@ -75,7 +75,7 @@ const prompt = {
 }
 
 const clientFor = (directory: string) => {
-  createdClients.push(directory)
+  createdClients = [...createdClients, directory]
   return {
     api: {
       session: {
@@ -85,8 +85,8 @@ const clientFor = (directory: string) => {
               const gate = createSessionGate
               if (Option.isSome(gate)) yield* Deferred.await(gate.value)
               const location = input.location?.directory ?? directory
-              createdSessions.push(location)
-              sessionCreateInputs.push(input)
+              createdSessions = [...createdSessions, location]
+              sessionCreateInputs = [...sessionCreateInputs, input]
               return {
                 id: `session-${createdSessions.length}`,
                 projectID: "project",
@@ -103,21 +103,21 @@ const clientFor = (directory: string) => {
         prompt: (input: PromptRequest) =>
           Effect.runPromise(
             Effect.sync(() => {
-              sentPrompts.push(directory)
-              promptInputs.push(input)
+              sentPrompts = [...sentPrompts, directory]
+              promptInputs = [...promptInputs, input]
               return { data: undefined }
             }),
           ),
         command: (input: unknown) =>
           Effect.runPromise(
             Effect.sync(() => {
-              sentCommands.push(input)
+              sentCommands = [...sentCommands, input]
             }),
           ),
         shell: (input: { sessionID: string; id?: string; command: string }) =>
           Effect.runPromise(
             Effect.sync(() => {
-              sentShell.push(input)
+              sentShell = [...sentShell, input]
             }),
           ),
       },
@@ -146,7 +146,7 @@ beforeAll(() =>
 
       mock.module("@opencode-ai/sdk/v2/client", () => ({
         createOpencodeClient: (input: { directory: string }) => {
-          createdClients.push(input.directory)
+          createdClients = [...createdClients, input.directory]
           return clientFor(input.directory)
         },
       }))
@@ -171,7 +171,7 @@ beforeAll(() =>
           },
           session: {
             promote(directory: string, sessionID: string) {
-              promoted.push({ directory, sessionID })
+              promoted = [...promoted, { directory, sessionID }]
             },
           },
         }),
@@ -180,7 +180,7 @@ beforeAll(() =>
       mock.module("@/context/permission", () => {
         const state = (server: string) => ({
           enableAutoAccept(sessionID: string, directory: string) {
-            enabledAutoAccept.push({ server, sessionID, directory })
+            enabledAutoAccept = [...enabledAutoAccept, { server, sessionID, directory }]
           },
         })
         return { usePermission: () => ({ currentServerState: () => state(permissionServer) }) }
@@ -194,7 +194,7 @@ beforeAll(() =>
         useTabs: () => ({
           draft: () => ({ server: "project-server" }),
           promoteDraft: (draftID: string, session: { server: string; sessionId: string }) => {
-            promotedDrafts.push({ draftID, ...session })
+            promotedDrafts = [...promotedDrafts, { draftID, ...session }]
           },
         }),
       }))
@@ -237,12 +237,13 @@ beforeAll(() =>
                 sessionID?: string
                 message: { agent: string; model: { providerID: string; modelID: string; variant?: string } }
               }) => {
-                optimistic.push(value)
-                optimisticSeeded.push(
+                optimistic = [...optimistic, value]
+                optimisticSeeded = [
+                  ...optimisticSeeded,
                   !!value.directory &&
                     !!value.sessionID &&
                     !!storedSessions[value.directory]?.find((item) => item.id === value.sessionID)?.title,
-                )
+                ]
               },
               remove: () => undefined,
             },
@@ -264,7 +265,7 @@ beforeAll(() =>
               ),
           },
           child: (directory: string) => {
-            syncedDirectories.push(directory)
+            syncedDirectories = [...syncedDirectories, directory]
             storedSessions[directory] ??= []
             return [
               { session: storedSessions[directory] },
@@ -300,23 +301,23 @@ beforeAll(() =>
 )
 
 beforeEach(() => {
-  createdClients.length = 0
-  createdSessions.length = 0
-  sessionCreateInputs.length = 0
-  enabledAutoAccept.length = 0
-  optimistic.length = 0
-  optimisticSeeded.length = 0
-  promoted.length = 0
-  promotedDrafts.length = 0
-  sentPrompts.length = 0
-  promptInputs.length = 0
-  sentCommands.length = 0
-  commands.length = 0
+  createdClients = []
+  createdSessions = []
+  sessionCreateInputs = []
+  enabledAutoAccept = []
+  optimistic = []
+  optimisticSeeded = []
+  promoted = []
+  promotedDrafts = []
+  sentPrompts = []
+  promptInputs = []
+  sentCommands = []
+  commands = []
   promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
   params = {}
   search = {}
-  sentShell.length = 0
-  syncedDirectories.length = 0
+  sentShell = []
+  syncedDirectories = []
   selected = "/repo/worktree-a"
   variant = undefined
   permissionServer = "server-a"
@@ -545,7 +546,7 @@ describe("prompt submit worktree selection", () => {
       Effect.gen(function* () {
         params = { id: "session-1" }
         variant = "high"
-        commands.push({ name: "review" })
+        commands = [...commands, { name: "review" }]
         promptValue = [{ type: "text", content: "/review staged changes", start: 0, end: 22 }]
 
         const submit = createPromptSubmit({
