@@ -1,6 +1,6 @@
 import { onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Option, Schema, SchemaGetter } from "effect"
+import { MutableHashMap, MutableHashSet, Option, Schema, SchemaGetter } from "effect"
 import { isRecord } from "../util/record"
 import { useTuiPaths } from "./runtime"
 import { createSimpleContext } from "./helper"
@@ -128,7 +128,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
     const port =
       parsedPort && Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort <= 65535 ? parsedPort : undefined
     const zedTerminal = process.env.ZED_TERM === "true" || process.env.TERM_PROGRAM?.toLowerCase() === "zed"
-    const mentionListeners = new Set<(mention: EditorMention) => void>()
+    const mentionListeners = MutableHashSet.empty<(mention: EditorMention) => void>()
     const WebSocketImpl = props.WebSocketImpl ?? WebSocket
     const [store, setStore] = createStore<{
       status: "disabled" | "connecting" | "connected"
@@ -151,7 +151,8 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
     let lastZedSelectionKey: string | undefined
     let directory = paths.cwd
     let preserveSelectionOnReconnect = false
-    const pending = new Map<number, string>()
+    // The method of each request that waits for its response, by request id.
+    const pending = MutableHashMap.empty<number, string>()
 
     const setSelection = (selection: EditorSelection | undefined) => {
       const changed = editorSelectionKey(selection) !== editorSelectionKey(store.selection)
@@ -175,7 +176,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
     const request = (method: string, params: Schema.Json) => {
       requestID += 1
-      pending.set(requestID, method)
+      MutableHashMap.set(pending, requestID, method)
       send({ id: requestID, method, params })
     }
 
@@ -251,19 +252,19 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
         const mention = message.method === "at_mentioned" ? decodeEditorMention(message.params) : Option.none()
         if (Option.isSome(mention)) {
-          mentionListeners.forEach((listener) => listener(mention.value))
+          for (const listener of mentionListeners) listener(mention.value)
           return
         }
 
         if (typeof message.id !== "number") return
 
-        const method = pending.get(message.id)
-        if (!method) return
+        const method = MutableHashMap.get(pending, message.id)
+        if (Option.isNone(method)) return
 
-        pending.delete(message.id)
+        MutableHashMap.remove(pending, message.id)
         if (message.error) return
 
-        const initialize = method === "initialize" ? decodeEditorServerInfo(message.result) : Option.none()
+        const initialize = method.value === "initialize" ? decodeEditorServerInfo(message.result) : Option.none()
         if (Option.isSome(initialize)) {
           setStore("server", initialize.value)
           send({ method: "notifications/initialized" })
@@ -275,7 +276,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
         if (socket !== current) return
 
         socket = undefined
-        pending.clear()
+        MutableHashMap.clear(pending)
         if (closed) return
 
         setStore("status", "connecting")
@@ -305,7 +306,7 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
 
       directory = resolved
       attempt = 0
-      pending.clear()
+      MutableHashMap.clear(pending)
       if (reconnect) clearTimeout(reconnect)
       reconnect = undefined
       if (socket) {
@@ -355,8 +356,10 @@ export const { use: useEditorContext, provider: EditorContextProvider } = create
         return store.selectionSent ? "sent" : "pending"
       },
       onMention(listener: (mention: EditorMention) => void) {
-        mentionListeners.add(listener)
-        return () => mentionListeners.delete(listener)
+        MutableHashSet.add(mentionListeners, listener)
+        return () => {
+          MutableHashSet.remove(mentionListeners, listener)
+        }
       },
       server() {
         return store.server
