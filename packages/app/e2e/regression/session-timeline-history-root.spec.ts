@@ -90,7 +90,7 @@ for (const scenario of scenarios) {
         sequence.push(`message:${request.messageID}`)
       },
       message: (requestedSessionID, messageID) => {
-        if (requestedSessionID !== sessionID) return
+        if (requestedSessionID !== sessionID) return undefined
         return messages.find((item) => item.info.id === messageID)
       },
       pageMessages: (_, limit, before) => {

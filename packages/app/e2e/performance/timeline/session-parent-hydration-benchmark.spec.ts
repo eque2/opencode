@@ -102,7 +102,7 @@ async function trial(page: Page, mode: ParentHydrationBenchmarkMode) {
       if (request.sessionID === fixture.targetID && request.messageID === userID) requests.push({ type: "parent" })
     },
     message: (sessionID, messageID) => {
-      if (sessionID !== fixture.targetID || messageID !== userID) return
+      if (sessionID !== fixture.targetID || messageID !== userID) return undefined
       return user
     },
     pageMessages: (sessionID, limit, before) => {
