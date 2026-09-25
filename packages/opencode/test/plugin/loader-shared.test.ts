@@ -972,8 +972,8 @@ export default {
           })
 
           expect(list).toEqual([
-            FSUtil.resolve(path.join(tmp.extra.mod, "themes", "one.json")),
-            FSUtil.resolve(path.join(tmp.extra.mod, "themes", "two.json")),
+            yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "one.json")),
+            yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "two.json")),
           ])
         }),
     ),
@@ -1001,6 +1001,7 @@ export default {
       },
       (tmp) =>
         Effect.gen(function* () {
+          const fsys = yield* FSUtil.Service
           const install = spyOn(Npm, "add").mockResolvedValue({ directory: tmp.extra.mod, entrypoint: undefined })
           const missing: string[] = []
 
@@ -1037,7 +1038,7 @@ export default {
               {
                 spec: "acme-plugin@1.0.0",
                 target: tmp.extra.mod,
-                themes: [FSUtil.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
+                themes: [yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
               },
             ])
             expect(missing).toHaveLength(0)
@@ -1074,6 +1075,7 @@ export default {
       },
       (tmp) =>
         Effect.gen(function* () {
+          const fsys = yield* FSUtil.Service
           const install = spyOn(Npm, "add").mockResolvedValue({ directory: tmp.extra.mod, entrypoint: undefined })
 
           try {
@@ -1100,7 +1102,7 @@ export default {
             expect(loaded).toEqual([
               {
                 spec: "acme-plugin@1.0.0",
-                themes: [FSUtil.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
+                themes: [yield* fsys.resolve(path.join(tmp.extra.mod, "themes", "night.json"))],
               },
             ])
           } finally {
