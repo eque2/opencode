@@ -1,6 +1,6 @@
-import type { BoxRenderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core"
+import { RGBA, type BoxRenderable, type TextareaRenderable, type ScrollBoxRenderable } from "@opentui/core"
 import { pathToFileURL } from "bun"
-import { Effect, Fiber } from "effect"
+import { Effect, Fiber, Option } from "effect"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { firstBy } from "remeda"
@@ -45,7 +45,12 @@ function extractLineRange(input: string) {
   }
 
   const startLine = Number(lineMatch[1])
-  const endLine = lineMatch[2] && startLine < Number(lineMatch[2]) ? Number(lineMatch[2]) : undefined
+  // An end line counts only when it comes after the start line.
+  const endLine = Option.fromNullishOr(lineMatch[2]).pipe(
+    Option.filter((value) => value !== ""),
+    Option.map((value) => Number(value)),
+    Option.filter((value) => startLine < value),
+  )
 
   return {
     lineRange: {
@@ -190,13 +195,19 @@ export function Autocomplete(props: {
     const extmarkStart = store.index
     const extmarkEnd = extmarkStart + Bun.stringWidth(virtualText)
 
-    const styleId = part.type === "file" ? props.fileStyleId : part.type === "agent" ? props.agentStyleId : undefined
+    // A text part has no style, so its extmark gets no styleId key.
+    const style =
+      part.type === "file"
+        ? { styleId: props.fileStyleId }
+        : part.type === "agent"
+          ? { styleId: props.agentStyleId }
+          : {}
 
     const extmarkId = input.extmarks.create({
       start: extmarkStart,
       end: extmarkEnd,
       virtual: true,
-      styleId,
+      ...style,
       typeId: props.promptPartTypeId(),
     })
 
@@ -243,18 +254,18 @@ export function Autocomplete(props: {
   function createFilePart(
     item: FileSystemEntry,
     filePath: string,
-    lineRange?: { startLine: number; endLine?: number },
+    lineRange?: { startLine: number; endLine: Option.Option<number> },
   ) {
     const urlObj = pathToFileURL(filePath)
     const filename =
       lineRange && item.type !== "directory"
-        ? `${item.path}#${lineRange.startLine}${lineRange.endLine ? `-${lineRange.endLine}` : ""}`
+        ? `${item.path}#${lineRange.startLine}${Option.match(lineRange.endLine, { onNone: () => "", onSome: (end) => `-${end}` })}`
         : item.path
 
     if (lineRange && item.type !== "directory") {
       urlObj.searchParams.set("start", String(lineRange.startLine))
-      if (lineRange.endLine !== undefined) {
-        urlObj.searchParams.set("end", String(lineRange.endLine))
+      if (Option.isSome(lineRange.endLine)) {
+        urlObj.searchParams.set("end", String(lineRange.endLine.value))
       }
     }
 
@@ -304,7 +315,7 @@ export function Autocomplete(props: {
     const item = normalizeMentionPath(input.filePath)
     const lineRange = {
       startLine: input.lineStart,
-      endLine: input.lineEnd > input.lineStart ? input.lineEnd : undefined,
+      endLine: input.lineEnd > input.lineStart ? Option.some(input.lineEnd) : Option.none(),
     }
     const { filename, part } = createFilePart({ path: item, type: "file" }, input.filePath, lineRange)
     const index = store.visible === "@" ? store.index : props.input().cursorOffset
@@ -740,7 +751,7 @@ export function Autocomplete(props: {
             <box
               paddingLeft={1}
               paddingRight={1}
-              backgroundColor={index === store.selected ? theme.primary : undefined}
+              backgroundColor={index === store.selected ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               flexDirection="row"
               onMouseMove={() => {
                 setStore("input", "mouse")

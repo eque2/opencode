@@ -1,4 +1,4 @@
-import { DateTime } from "effect"
+import { DateTime, Option } from "effect"
 import { useDialog } from "../ui/dialog"
 import { DialogSelect } from "../ui/dialog-select"
 import { createMemo, createSignal } from "solid-js"
@@ -32,7 +32,7 @@ export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
   const stash = usePromptStash()
   const { theme } = useTheme()
 
-  const [toDelete, setToDelete] = createSignal<number>()
+  const [toDelete, setToDelete] = createSignal(Option.none<number>())
   const deleteHint = useCommandShortcut("stash.delete")
 
   const options = createMemo(() => {
@@ -40,14 +40,14 @@ export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
     // Show most recent first
     return entries
       .map((entry, index) => {
-        const isDeleting = toDelete() === index
+        const isDeleting = Option.contains(toDelete(), index)
         const lineCount = (entry.input.match(/\n/g)?.length ?? 0) + 1
         return {
           title: isDeleting ? `Press ${deleteHint()} again to confirm` : getStashPreview(entry.input),
-          bg: isDeleting ? theme.error : undefined,
+          ...(isDeleting ? { bg: theme.error } : {}),
           value: index,
           description: getRelativeTime(entry.timestamp),
-          footer: lineCount > 1 ? `~${lineCount} lines` : undefined,
+          ...(lineCount > 1 ? { footer: `~${lineCount} lines` } : {}),
         }
       })
       .toReversed()
@@ -58,7 +58,7 @@ export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
       title="Stash"
       options={options()}
       onMove={() => {
-        setToDelete(undefined)
+        setToDelete(Option.none())
       }}
       onSelect={(option) => {
         const entries = stash.list()
@@ -74,12 +74,12 @@ export function DialogStash(props: { onSelect: (entry: StashEntry) => void }) {
           command: "stash.delete",
           title: "delete",
           onTrigger: (option) => {
-            if (toDelete() === option.value) {
+            if (Option.contains(toDelete(), option.value)) {
               stash.remove(option.value)
-              setToDelete(undefined)
+              setToDelete(Option.none())
               return
             }
-            setToDelete(option.value)
+            setToDelete(Option.some(option.value))
           },
         },
       ]}

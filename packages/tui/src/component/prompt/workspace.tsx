@@ -30,10 +30,10 @@ export function usePromptWorkspace(sessionID?: string) {
   const project = useProject()
   const sync = useSync()
   const toast = useToast()
-  const [selection, setSelection] = createSignal<WorkspaceSelection>()
+  const [selection, setSelection] = createSignal(Option.none<WorkspaceSelection>())
   const [creating, setCreating] = createSignal(false)
   const [creatingDots, setCreatingDots] = createSignal(3)
-  const [notice, setNotice] = createSignal<string>()
+  const [notice, setNotice] = createSignal(Option.none<string>())
 
   // Creates the workspace and selects it. A failure clears the selection, shows a toast and gives Option.none().
   function create(selection: Extract<WorkspaceSelection, { type: "new" }>) {
@@ -54,18 +54,20 @@ export function usePromptWorkspace(sessionID?: string) {
 
       yield* Effect.promise(() => project.workspace.sync())
       const workspace = result.data
-      setSelection({
-        type: "existing",
-        workspaceID: workspace.id,
-        workspaceType: workspace.type,
-        workspaceName: workspace.name,
-      })
+      setSelection(
+        Option.some({
+          type: "existing",
+          workspaceID: workspace.id,
+          workspaceType: workspace.type,
+          workspaceName: workspace.name,
+        }),
+      )
       setCreating(false)
       return Option.some(workspace)
     }).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
-          setSelection(undefined)
+          setSelection(Option.none())
           setCreating(false)
           toast.show({ title: "Creating workspace failed", message: error.message, variant: "error" })
           return Option.none()
@@ -78,7 +80,7 @@ export function usePromptWorkspace(sessionID?: string) {
     return Effect.runPromise(
       Effect.gen(function* () {
         if (!sessionID) {
-          setSelection(selection)
+          setSelection(Option.some(selection))
           dialog.clear()
           // The new workspace is created in the background, as the old `void create(selection)` did.
           if (selection.type === "new") yield* Effect.forkDetach(create(selection).pipe(Effect.tapDefect(logDefect)))
@@ -87,7 +89,7 @@ export function usePromptWorkspace(sessionID?: string) {
         const sourceWorkspaceID = project.workspace.current()
         const copyChanges = yield* Effect.promise(() => confirmWorkspaceFileChanges({ dialog, sdk, sourceWorkspaceID }))
         if (copyChanges === undefined) return
-        setSelection(selection)
+        setSelection(Option.some(selection))
         dialog.clear()
 
         // The local project has no workspace id; the warp API reads null as "detach to the local project".
@@ -126,15 +128,15 @@ export function usePromptWorkspace(sessionID?: string) {
   onCleanup(stopNoticeTimer)
 
   function showNotice(name: string) {
-    setNotice(`Warped to ${name}`)
+    setNotice(Option.some(`Warped to ${name}`))
     stopNoticeTimer()
     noticeTimer = Option.some(
-      Effect.runFork(Effect.sleep("4 seconds").pipe(Effect.andThen(Effect.sync(() => setNotice(undefined))))),
+      Effect.runFork(Effect.sleep("4 seconds").pipe(Effect.andThen(Effect.sync(clearNotice)))),
     )
   }
 
   function clearNotice() {
-    setNotice(undefined)
+    setNotice(Option.none())
   }
 
   function open() {
@@ -158,18 +160,30 @@ export function usePromptWorkspace(sessionID?: string) {
     | { type: "existing"; workspaceType: string; workspaceName: string; status?: WorkspaceStatus }
     | undefined
   >(() => {
-    const selected = selection()
-    if (!selected) return
-    if (selected.type === "none") return
-    if (sessionID && !creating()) return
+    const current = selection()
+    // The prompt reads the label in a Solid <Match when>, so no label crosses to it as undefined.
+    if (Option.isNone(current)) return undefined
+    const selected = current.value
+    if (selected.type === "none") return undefined
+    if (sessionID && !creating()) return undefined
     if (selected.type === "new") return { type: "new", workspaceType: selected.workspaceType }
     return {
       type: "existing",
       workspaceType: selected.workspaceType,
       workspaceName: selected.workspaceName,
-      status: selected.type === "existing" ? "connected" : undefined,
+      status: "connected",
     }
   })
 
-  return { selection, creating, creatingDots, notice, label, open, warp, clearNotice }
+  // The prompt reads selection and notice as plain values, so absence crosses to it as undefined.
+  return {
+    selection: () => Option.getOrUndefined(selection()),
+    creating,
+    creatingDots,
+    notice: () => Option.getOrUndefined(notice()),
+    label,
+    open,
+    warp,
+    clearNotice,
+  }
 }

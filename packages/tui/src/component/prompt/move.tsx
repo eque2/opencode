@@ -44,7 +44,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
   const paths = useTuiPaths()
   const [creating, setCreating] = createSignal(false)
   const [creatingDots, setCreatingDots] = createSignal(3)
-  const [progress, setProgress] = createSignal<string>()
+  const [progress, setProgress] = createSignal(Option.none<string>())
 
   // Copies the project for a new working directory. A failure shows a toast and gives Option.none().
   function create(context: Option.Option<string>) {
@@ -52,7 +52,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
       const projectID = input.projectID()
       if (!projectID) return Option.none<string>()
       setCreating(true)
-      setProgress("Creating copy")
+      setProgress(Option.some("Creating copy"))
       const generated = yield* request(() =>
         sdk.client.experimental.projectCopy.generateName(
           { projectID, context: Option.getOrUndefined(context) },
@@ -82,13 +82,13 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
       // before moving on
       yield* request(() => sdk.client.path.get({ directory }, { throwOnError: true }))
 
-      setProgress("Creating session")
+      setProgress(Option.some("Creating session"))
       return Option.some(directory)
     }).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
           homeDestination?.clear()
-          setProgress(undefined)
+          setProgress(Option.none())
           setCreating(false)
           toast.show({ title: "Creating workspace failed", message: error.message, variant: "error" })
           return Option.none<string>()
@@ -100,24 +100,27 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
   function open() {
     const projectID = input.projectID()
     if (!projectID) return
-    const sessionID = input.sessionID()
-    const session = sessionID ? sync.session.get(sessionID) : undefined
+    const session = Option.fromNullishOr(input.sessionID()).pipe(
+      Option.filter((sessionID) => sessionID !== ""),
+      Option.flatMapNullishOr((sessionID) => sync.session.get(sessionID)),
+    )
     dialog.replace(() => (
       <DialogMoveSession
         projectID={projectID}
         current={
           homeDestination?.destination() ??
-          (session
-            ? {
-                type: "directory",
-                directory: session.directory,
-                subdirectory: !!session.path,
-              }
-            : {
-                type: "directory",
-                directory: project.instance.directory(),
-                subdirectory: project.instance.directory() !== project.instance.path().worktree,
-              })
+          Option.match(session, {
+            onSome: (value): MoveSessionSelection => ({
+              type: "directory",
+              directory: value.directory,
+              subdirectory: !!value.path,
+            }),
+            onNone: (): MoveSessionSelection => ({
+              type: "directory",
+              directory: project.instance.directory(),
+              subdirectory: project.instance.directory() !== project.instance.path().worktree,
+            }),
+          })
         }
         onCurrentChange={(selection) => homeDestination?.setDestination(selection)}
         onSelect={(selection) => {
@@ -165,7 +168,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
       const directory =
         selection.type === "new" ? yield* create(sessionContext(sessionID)) : Option.some(selection.directory)
       if (Option.isNone(directory)) {
-        setProgress(undefined)
+        setProgress(Option.none())
         dialog.clear()
         return
       }
@@ -175,7 +178,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
 
   function moveSession(sessionID: string, directory: string, moveChanges: boolean) {
     return Effect.gen(function* () {
-      setProgress("Moving session")
+      setProgress(Option.some("Moving session"))
       yield* request(() =>
         sdk.client.experimental.controlPlane.moveSession(
           {
@@ -212,7 +215,7 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
       ),
       Effect.ensuring(
         Effect.sync(() => {
-          setProgress(undefined)
+          setProgress(Option.none())
           setCreating(false)
         }),
       ),
@@ -234,12 +237,12 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
   }
 
   function startSubmit() {
-    if (progress()) setProgress("Submitting prompt")
+    if (Option.isSome(progress())) setProgress(Option.some("Submitting prompt"))
   }
 
   function finishSubmit() {
     homeDestination?.clear()
-    setProgress(undefined)
+    setProgress(Option.none())
     setCreating(false)
   }
 
@@ -263,7 +266,8 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
     open,
     pending,
     pendingNew,
-    progress,
+    // The prompt reads the progress text in a Solid <Match when>, so absence crosses to it as undefined.
+    progress: () => Option.getOrUndefined(progress()),
     startSubmit,
   }
 }

@@ -60,6 +60,7 @@ export function DialogSkill(props: DialogSkillProps) {
     }))
   })
 
+  // The error view goes in only on a load error. Without emptyView, DialogSelect shows its own empty text.
   return (
     <DialogSelect
       title="Skills"
@@ -67,16 +68,18 @@ export function DialogSkill(props: DialogSkillProps) {
       options={options()}
       renderFilter={!showError()}
       locked={showError()}
-      emptyView={
-        showError() ? (
-          <box paddingLeft={4} paddingRight={4}>
-            <text fg={theme.error} attributes={TextAttributes.BOLD}>
-              Could not load skills
-            </text>
-            <text fg={theme.textMuted}>{errorMessage(loadError())}</text>
-          </box>
-        ) : undefined
-      }
+      {...(showError()
+        ? {
+            emptyView: (
+              <box paddingLeft={4} paddingRight={4}>
+                <text fg={theme.error} attributes={TextAttributes.BOLD}>
+                  Could not load skills
+                </text>
+                <text fg={theme.textMuted}>{errorMessage(loadError())}</text>
+              </box>
+            ),
+          }
+        : {})}
     />
   )
 }

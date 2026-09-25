@@ -64,10 +64,10 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
   const toast = useToast()
   const paths = useTuiPaths()
   const [working, setWorking] = createSignal(Boolean(props.initialRemoving))
-  const [toDelete, setToDelete] = createSignal<string>()
-  const [removing, setRemoving] = createSignal(props.initialRemoving)
+  const [toDelete, setToDelete] = createSignal(Option.none<string>())
+  const [removing, setRemoving] = createSignal(Option.fromUndefinedOr(props.initialRemoving))
   const [replacementCurrent, setReplacementCurrent] = createSignal<string>()
-  const [loadError, setLoadError] = createSignal<unknown>()
+  const [loadError, setLoadError] = createSignal(Option.none<unknown>())
   const deleteHint = useCommandShortcut("dialog.move_session.delete")
   onMount(() => dialog.setSize("xlarge"))
 
@@ -80,7 +80,8 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
   // A failed current-checkout lookup only affects which row is highlighted, so
   // swallow it and let the directory list render without a current marker.
   const [loadedProject] = createResource(
-    () => (projectContext.project() === props.projectID ? undefined : props.projectID),
+    // A false source tells createResource not to fetch.
+    () => projectContext.project() !== props.projectID && props.projectID,
     (projectID) =>
       Effect.runPromise(
         Effect.option(request(() => sdk.client.project.current({}, { throwOnError: true }))).pipe(
@@ -101,7 +102,7 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
   })
 
   const [directories, { refetch }] = createResource(
-    () => (props.initialRemoving ? undefined : props.projectID),
+    () => !props.initialRemoving && props.projectID,
     (projectID, info): Promise<ProjectDirectory[] | undefined> =>
       Effect.runPromise(
         Effect.gen(function* () {
@@ -112,12 +113,13 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
             ),
           )
           const loaded = yield* request(() => sdk.client.project.directories({ projectID }, { throwOnError: true }))
-          setLoadError(undefined)
+          setLoadError(Option.none())
           return loaded.data ?? []
         }).pipe(
           Effect.catch((error) =>
             Effect.sync(() => {
-              setLoadError(error.cause)
+              // A falsy thrown value counts as no error, as the old Boolean(loadError()) check did.
+              setLoadError(Option.liftPredicate(error.cause, Boolean))
               // An initial load with no data surfaces the inline error view below. A
               // failed refresh intentionally stays quiet and keeps the already-shown
               // list interactive; reopening the dialog retries the load.
@@ -130,7 +132,8 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
   const directoryData = createMemo(() => directories() ?? props.initialDirectories)
   // Show the locked error view only when we have nothing to display. A refresh
   // that fails after the list rendered keeps the list and its actions.
-  const showError = createMemo(() => Boolean(loadError()) && !directoryData())
+  const errorText = createMemo(() => (directoryData() ? Option.none<string>() : Option.map(loadError(), errorMessage)))
+  const showError = createMemo(() => Option.isSome(errorText()))
 
   const currentDirectory = createMemo(
     () => replacementCurrent() ?? (props.current?.type === "directory" ? props.current.directory : currentCheckout()),
@@ -146,11 +149,13 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     )
   })
 
-  const options = createMemo<DialogSelectOption<MoveSessionSelection | undefined>[]>(() => {
+  // A row with Option.none() is a status line that cannot be selected.
+  const options = createMemo<DialogSelectOption<Option.Option<MoveSessionSelection>>[]>(() => {
     if (showError()) return []
     const data = directoryData()
     const current = currentRoot()?.directory
-    if (directories.loading && !data && !current) return [{ title: "Loading project directories…", value: undefined }]
+    if (directories.loading && !data && !current)
+      return [{ title: "Loading project directories…", value: Option.none() }]
     const loaded = data ?? []
     const unsorted: ProjectDirectory[] =
       current && !loaded.some((item) => item.directory === current) ? [{ directory: current }, ...loaded] : loaded
@@ -161,7 +166,7 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
       if (!a.strategy && !b.strategy) return a.directory.length - b.directory.length
       return 0
     })
-    if (roots.length === 0) return [{ title: "No project directories found", value: undefined }]
+    if (roots.length === 0) return [{ title: "No project directories found", value: Option.none() }]
 
     const subdirectories = sync.data.session
       .filter((session) => session.projectID === props.projectID && session.path && ![".", "/"].includes(session.path))
@@ -191,29 +196,34 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     return list.map((item) => {
       const title = abbreviateHome(item.location, paths.home)
       const suffix =
-        item.location === item.root.directory ? undefined : path.sep + path.relative(item.root.directory, item.location)
+        item.location === item.root.directory
+          ? Option.none<string>()
+          : Option.some(path.sep + path.relative(item.root.directory, item.location))
       const visible = Locale.truncateLeft(title, titleWidth)
-      const split = suffix ? Math.max(0, visible.length - suffix.length) : visible.length
-      const deleting = toDelete() === item.location
-      const isRemoving = removing() === item.location
+      const deleting = Option.contains(toDelete(), item.location)
+      const isRemoving = Option.contains(removing(), item.location)
+      const titleView = isRemoving
+        ? Option.some(<span style={{ fg: theme.error }}>Deleting {item.location}</span>)
+        : deleting
+          ? Option.some(<span style={{ fg: theme.text }}>Press {deleteHint()} again to confirm</span>)
+          : Option.map(suffix, (value) => {
+              const split = Math.max(0, visible.length - value.length)
+              return (
+                <>
+                  {visible.slice(0, split)}
+                  <span style={{ fg: theme.textMuted }}>{visible.slice(split)}</span>
+                </>
+              )
+            })
       return {
         title,
-        titleView: isRemoving ? (
-          <span style={{ fg: theme.error }}>Deleting {item.location}</span>
-        ) : deleting ? (
-          <span style={{ fg: theme.text }}>Press {deleteHint()} again to confirm</span>
-        ) : suffix ? (
-          <>
-            {visible.slice(0, split)}
-            <span style={{ fg: theme.textMuted }}>{visible.slice(split)}</span>
-          </>
-        ) : undefined,
-        bg: deleting ? theme.error : undefined,
-        value: {
+        ...Option.match(titleView, { onNone: () => ({}), onSome: (view) => ({ titleView: view }) }),
+        ...(deleting ? { bg: theme.error } : {}),
+        value: Option.some<MoveSessionSelection>({
           type: "directory",
           directory: item.location,
           subdirectory: item.location !== item.root.directory,
-        } as const,
+        }),
         category: item.root.directory === current ? "Current" : "Other",
         titleWidth,
         truncateTitle: "left" as const,
@@ -221,11 +231,11 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     })
   })
 
-  const current = createMemo(() => {
-    if (directories.loading || loadedProject.loading) return
+  const current = createMemo((): Option.Option<MoveSessionSelection> => {
+    if (directories.loading || loadedProject.loading) return Option.none()
     const replacement = replacementCurrent()
-    if (replacement) return { type: "directory", directory: replacement, subdirectory: false } as const
-    return props.current
+    if (replacement) return Option.some({ type: "directory", directory: replacement, subdirectory: false })
+    return Option.fromUndefinedOr(props.current)
   })
 
   function removedCurrent(current: boolean) {
@@ -245,19 +255,20 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
     return true
   }
 
-  function remove(option: DialogSelectOption<MoveSessionSelection | undefined>) {
-    if (!option.value || option.value.type !== "directory" || option.value.subdirectory || removing()) return
+  function remove(option: DialogSelectOption<Option.Option<MoveSessionSelection>>) {
+    if (Option.isNone(option.value) || Option.isSome(removing())) return
+    const selected = option.value.value
+    if (selected.type !== "directory" || selected.subdirectory) return
     const data = directoryData()
-    const selected = option.value
     const root = data?.find((item) => item.directory === selected.directory)
     if (!root?.strategy) return
     const deletingCurrent = selected.directory === currentRoot()?.directory
-    if (toDelete() !== selected.directory) {
-      setToDelete(selected.directory)
+    if (!Option.contains(toDelete(), selected.directory)) {
+      setToDelete(Option.some(selected.directory))
       return
     }
-    setToDelete(undefined)
-    setRemoving(selected.directory)
+    setToDelete(Option.none())
+    setRemoving(Option.some(selected.directory))
     setWorking(true)
     Effect.runFork(removeDirectory(selected.directory, deletingCurrent).pipe(Effect.tapDefect(logDefect)))
   }
@@ -289,12 +300,12 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
         const reload = refetch()
         // refetch gives a Promise while the list reloads. Wait for it, so the spinner stops with the new list.
         if (Predicate.isPromiseLike(reload)) yield* Effect.promise(() => reload)
-        setRemoving(undefined)
+        setRemoving(Option.none())
         setWorking(false)
         removedCurrent(deletingCurrent)
         return
       }
-      setRemoving(undefined)
+      setRemoving(Option.none())
       setWorking(false)
       const error = failure.value
       if (!("data" in error && error.data.forceRequired)) {
@@ -332,7 +343,7 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
         reopen()
         return
       }
-      setRemoving(undefined)
+      setRemoving(Option.none())
       setWorking(false)
       if (removedCurrent(deletingCurrent)) return
       reopen()
@@ -359,22 +370,25 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
         }
         renderFilter={!showError()}
         options={options()}
-        emptyView={
-          showError() ? (
-            <box paddingLeft={4} paddingRight={4}>
-              <text fg={theme.error} attributes={TextAttributes.BOLD}>
-                Could not load project directories
-              </text>
-              <text fg={theme.textMuted}>{errorMessage(loadError())}</text>
-            </box>
-          ) : undefined
-        }
-        locked={showError() || directories.loading || loadedProject.loading || Boolean(removing())}
+        {...Option.match(errorText(), {
+          onNone: () => ({}),
+          onSome: (message) => ({
+            emptyView: (
+              <box paddingLeft={4} paddingRight={4}>
+                <text fg={theme.error} attributes={TextAttributes.BOLD}>
+                  Could not load project directories
+                </text>
+                <text fg={theme.textMuted}>{message}</text>
+              </box>
+            ),
+          }),
+        })}
+        locked={showError() || directories.loading || loadedProject.loading || Option.isSome(removing())}
         current={current()}
         onSelect={(option) => {
-          if (option.value) props.onSelect(option.value)
+          if (Option.isSome(option.value)) props.onSelect(option.value.value)
         }}
-        onMove={() => setToDelete(undefined)}
+        onMove={() => setToDelete(Option.none())}
         actions={
           showError()
             ? []
@@ -388,8 +402,9 @@ export function DialogMoveSession(props: DialogMoveSessionProps) {
                   command: "dialog.move_session.delete",
                   title: "delete",
                   disabled: (option) => {
-                    const value = option?.value
-                    if (!value || value.type !== "directory" || value.subdirectory) return true
+                    if (!option || Option.isNone(option.value)) return true
+                    const value = option.value.value
+                    if (value.type !== "directory" || value.subdirectory) return true
                     return !directoryData()?.find((item) => item.directory === value.directory)?.strategy
                   },
                   onTrigger: remove,

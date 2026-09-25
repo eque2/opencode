@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core"
+import { RGBA, TextAttributes } from "@opentui/core"
 import { createStore } from "solid-js/store"
 import { For } from "solid-js"
 import { useTheme } from "../context/theme"
@@ -54,7 +54,7 @@ export function DialogWorkspaceUnavailable(props: { onRestore?: () => boolean | 
             <box
               paddingLeft={2}
               paddingRight={2}
-              backgroundColor={item === store.active ? theme.primary : undefined}
+              backgroundColor={item === store.active ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               onMouseUp={() => {
                 setStore("active", item)
                 confirm()

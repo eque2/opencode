@@ -1,4 +1,4 @@
-import { TextAttributes } from "@opentui/core"
+import { RGBA, TextAttributes } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import type { VcsFileStatus } from "@opencode-ai/sdk/v2"
 import { Effect, Option } from "effect"
@@ -119,7 +119,7 @@ export function DialogWorkspaceFileChanges(props: {
             <box
               paddingLeft={2}
               paddingRight={2}
-              backgroundColor={item === store.active ? theme.primary : undefined}
+              backgroundColor={item === store.active ? theme.primary : RGBA.fromInts(0, 0, 0, 0)}
               onMouseUp={() => {
                 setStore("active", item)
                 props.onSelect(item)
