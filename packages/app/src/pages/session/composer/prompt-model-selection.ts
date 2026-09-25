@@ -7,7 +7,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useProviders } from "@/hooks/use-providers"
 import { resolveDefaultModel } from "@/hooks/provider-catalog"
-import { HashMap, Option } from "effect"
+import { HashMap, HashSet, Option } from "effect"
 
 export function createPromptModelSelection(input: { agent: () => { model?: ModelKey; variant?: string } | undefined }) {
   const sdk = useSDK()
@@ -15,11 +15,11 @@ export function createPromptModelSelection(input: { agent: () => { model?: Model
   const models = useModels()
   const prompt = usePrompt()
   const providers = useProviders(() => sdk().directory)
-  const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
+  const connected = createMemo(() => HashSet.fromIterable(providers.connected().map((item) => item.id)))
 
   const valid = (model: ModelKey) =>
     Option.exists(HashMap.get(providers.all(), model.providerID), (provider) => !!provider.models[model.modelID]) &&
-    connected().has(model.providerID)
+    HashSet.has(connected(), model.providerID)
 
   const configured = () => {
     const model = resolveDefaultModel(providers.defaultModel(), sync().data.config.model)

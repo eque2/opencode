@@ -19,7 +19,7 @@ import { QueryOptionsApi } from "../server-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { ServerScope } from "@/utils/server-scope"
-import { HashMap, MutableHashMap, Option } from "effect"
+import { HashMap, MutableHashMap, MutableHashSet, Option } from "effect"
 
 const cacheView = <V>(caches: MutableHashMap.MutableHashMap<string, V>) => ({
   get: (key: string) => Option.getOrUndefined(MutableHashMap.get(caches, key)),
@@ -46,11 +46,11 @@ export function createChildStoreManager(input: {
   const iconCache = MutableHashMap.empty<string, IconCache>()
   const lifecycle = new Map<string, DirState>()
   const pins = MutableHashMap.empty<string, number>()
-  const ownerPins = new WeakMap<object, Set<string>>()
+  const ownerPins = new WeakMap<object, MutableHashSet.MutableHashSet<string>>()
   const disposers = MutableHashMap.empty<string, () => void>()
-  const mcpDirectories = new Set<string>()
+  const mcpDirectories = MutableHashSet.empty<string>()
   const mcpToggles = MutableHashMap.empty<string, (enabled: boolean) => void>()
-  const activeDirectories = new Set<string>()
+  const activeDirectories = MutableHashSet.empty<string>()
   const activationToggles = MutableHashMap.empty<string, (enabled: boolean) => void>()
   const pinCount = (key: string) => Option.getOrElse(MutableHashMap.get(pins, key), () => 0)
   const toggle = (
@@ -100,15 +100,15 @@ export function createChildStoreManager(input: {
     if (current === input.owner) return
     const key = current as object
     const set = ownerPins.get(key)
-    if (set?.has(directory)) return
-    if (set) set.add(directory)
-    if (!set) ownerPins.set(key, new Set([directory]))
+    if (set && MutableHashSet.has(set, directory)) return
+    if (set) MutableHashSet.add(set, directory)
+    if (!set) ownerPins.set(key, MutableHashSet.make(directory))
     pin(directory)
     onCleanup(() => {
       const set = ownerPins.get(key)
       if (set) {
-        set.delete(directory)
-        if (set.size === 0) ownerPins.delete(key)
+        MutableHashSet.remove(set, directory)
+        if (MutableHashSet.size(set) === 0) ownerPins.delete(key)
       }
       unpin(directory)
     })
@@ -132,9 +132,9 @@ export function createChildStoreManager(input: {
     MutableHashMap.remove(metaCache, key)
     MutableHashMap.remove(iconCache, key)
     lifecycle.delete(key)
-    mcpDirectories.delete(key)
+    MutableHashSet.remove(mcpDirectories, key)
     MutableHashMap.remove(mcpToggles, key)
-    activeDirectories.delete(key)
+    MutableHashSet.remove(activeDirectories, key)
     MutableHashMap.remove(activationToggles, key)
     const dispose = MutableHashMap.get(disposers, key)
     if (Option.isSome(dispose)) {
@@ -339,8 +339,8 @@ export function createChildStoreManager(input: {
   }
 
   function enableMcp(directory: string, key: DirectoryKey, childStore: [Store<State>, SetStoreFunction<State>]) {
-    if (mcpDirectories.has(key)) return
-    mcpDirectories.add(key)
+    if (MutableHashSet.has(mcpDirectories, key)) return
+    MutableHashSet.add(mcpDirectories, key)
     toggle(mcpToggles, key, true)
     if (childStore[0].status !== "loading") input.onMcp(directory, childStore[1])
   }
@@ -350,14 +350,15 @@ export function createChildStoreManager(input: {
   // TODO(v2): After Home switches to v2.project.list and root-filtered,
   // updated-time v2.session.list, remove any Home-only passive child creation.
   function activate(key: DirectoryKey) {
-    if (activeDirectories.has(key)) return
-    activeDirectories.add(key)
+    if (MutableHashSet.has(activeDirectories, key)) return
+    MutableHashSet.add(activeDirectories, key)
     toggle(activationToggles, key, true)
   }
 
   function disableMcp(directory: string) {
     const key = directoryKey(directory)
-    if (!mcpDirectories.delete(key)) return
+    if (!MutableHashSet.has(mcpDirectories, key)) return
+    MutableHashSet.remove(mcpDirectories, key)
     toggle(mcpToggles, key, false)
   }
 
@@ -400,8 +401,8 @@ export function createChildStoreManager(input: {
     pin,
     unpin,
     pinned,
-    mcp: (directory: string) => mcpDirectories.has(directoryKey(directory)),
-    active: (directory: string) => activeDirectories.has(directoryKey(directory)),
+    mcp: (directory: string) => MutableHashSet.has(mcpDirectories, directoryKey(directory)),
+    active: (directory: string) => MutableHashSet.has(activeDirectories, directoryKey(directory)),
     disableMcp,
     disposeDirectory,
     runEviction,

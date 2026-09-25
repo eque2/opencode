@@ -1,7 +1,7 @@
 import { useServerSync } from "@/context/server-sync"
 import { decode64 } from "@/utils/base64"
 import { useParams } from "@solidjs/router"
-import { Iterable, pipe } from "effect"
+import { HashSet, Iterable, pipe } from "effect"
 import { createEffect, createMemo, type Accessor } from "solid-js"
 import { selectProviderCatalog } from "./provider-catalog"
 
@@ -15,7 +15,7 @@ export const popularProviders = [
   "openrouter",
   "vercel",
 ]
-const popularProviderSet = new Set(popularProviders)
+const popularProviderSet = HashSet.fromIterable(popularProviders)
 
 export function useProviders(directory: Accessor<string | undefined>) {
   const serverSync = useServerSync()
@@ -46,25 +46,26 @@ export function useProviders(directory: Accessor<string | undefined>) {
       pipe(
         providers().all,
         Iterable.map(([, p]) => p),
-        Iterable.filter((p) => popularProviderSet.has(p.id)),
+        Iterable.filter((p) => HashSet.has(popularProviderSet, p.id)),
         (v) => Array.from(v),
       ),
     connected: () => {
-      const connected = new Set(providers().connected)
+      const connected = HashSet.fromIterable(providers().connected)
       return pipe(
         providers().all,
         Iterable.map(([, p]) => p),
-        Iterable.filter((p) => connected.has(p.id)),
+        Iterable.filter((p) => HashSet.has(connected, p.id)),
         (v) => Array.from(v),
       )
     },
     paid: () => {
-      const connected = new Set(providers().connected)
+      const connected = HashSet.fromIterable(providers().connected)
       const paid = [
         ...Iterable.filter(
           providers().all,
           ([id, provider]) =>
-            connected.has(id) && (id !== "opencode" || Object.values(provider.models).some((m) => m.cost?.input)),
+            HashSet.has(connected, id) &&
+            (id !== "opencode" || Object.values(provider.models).some((m) => m.cost?.input)),
         ),
       ]
       return paid
