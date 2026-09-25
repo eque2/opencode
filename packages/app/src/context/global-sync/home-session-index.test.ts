@@ -31,6 +31,16 @@ const session = (input: {
   location: { directory: input.directory ?? "/project" },
 })
 
+const legacySession = (id: string): Session => ({
+  id,
+  slug: id,
+  projectID: "project",
+  directory: "/project",
+  title: id,
+  version: "",
+  time: { created: 1, updated: 1 },
+})
+
 describe("Home V2 session index", () => {
   test("loads the Home index with one global V2 request", () =>
     Effect.runPromise(
@@ -144,7 +154,7 @@ describe("Home V2 session index", () => {
     expect(
       applyHomeSessionEvent(afterCreate, {
         type: "session.deleted",
-        properties: { sessionID: initial[0]!.id, info: initial[0]! },
+        properties: { sessionID: initial[0].id, info: initial[0] },
       }),
     ).toEqual([created])
   })
@@ -175,10 +185,7 @@ describe("Home V2 session index", () => {
   test("removes a session from the loaded Home index", () => {
     const queryClient = new QueryClient()
     const cache = createHomeSessionIndexCache(queryClient, "server")
-    const sessions = [
-      { id: "a", time: { created: 1, updated: 1 } },
-      { id: "b", time: { created: 1, updated: 1 } },
-    ] as Session[]
+    const sessions = [legacySession("a"), legacySession("b")]
     queryClient.setQueryData(cache.indexKey, { sessions, eventSequence: 0 })
 
     cache.remove("a")
@@ -190,10 +197,7 @@ describe("Home V2 session index", () => {
   test("keeps the session out of the Home list when the index is not mounted", () => {
     const queryClient = new QueryClient()
     const cache = createHomeSessionIndexCache(queryClient, "server")
-    const sessions = [
-      { id: "a", time: { created: 1, updated: 1 } },
-      { id: "b", time: { created: 1, updated: 1 } },
-    ] as Session[]
+    const sessions = [legacySession("a"), legacySession("b")]
 
     cache.remove("a")
 
