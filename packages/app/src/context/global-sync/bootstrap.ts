@@ -25,6 +25,7 @@ import type {
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { retry } from "@opencode-ai/core/util/retry"
+import { MutableHashMap, Option } from "effect"
 import { batch } from "solid-js"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type { State, VcsCache } from "./types"
@@ -78,10 +79,10 @@ function errors(list: PromiseSettledResult<unknown>[]) {
   return list.filter((item): item is PromiseRejectedResult => item.status === "rejected").map((item) => item.reason)
 }
 
-const providerRev = new Map<string, number>()
+const providerRev = MutableHashMap.empty<ScopedKey, number>()
 
 export function clearProviderRev(scope: ServerScope, directory: string) {
-  providerRev.delete(ScopedKey.from(scope, directory))
+  MutableHashMap.remove(providerRev, ScopedKey.from(scope, directory))
 }
 
 function runAll(list: Array<() => Promise<unknown>>) {
@@ -346,8 +347,8 @@ export async function bootstrapDirectory(input: {
   if (loading) input.setStore("status", "partial")
 
   const revKey = ScopedKey.from(input.scope, input.directory)
-  const rev = (providerRev.get(revKey) ?? 0) + 1
-  providerRev.set(revKey, rev)
+  const rev = Option.getOrElse(MutableHashMap.get(providerRev, revKey), () => 0) + 1
+  MutableHashMap.set(providerRev, revKey, rev)
   ;(async () => {
     const slow = [
       () => Promise.resolve(input.loadSessions(input.directory)),
