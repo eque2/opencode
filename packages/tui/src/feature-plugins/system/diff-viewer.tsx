@@ -82,6 +82,11 @@ function storedView(value: unknown): DiffView | undefined {
   if (value === "split" || value === "unified") return value
 }
 
+// A stored boolean setting, or the fallback when the key is absent or holds another kind of value.
+function storedFlag(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback
+}
+
 function diffSourceLabel(mode: DiffMode) {
   if (mode === "last-turn") return "last turn"
   if (mode === "branch") return "main branch"
@@ -130,11 +135,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   })
   const files = createMemo(() => diff() ?? [])
   const [focus, setFocus] = createSignal<DiffViewerFocus>("patches")
-  const [fileTreeEnabled, setFileTreeEnabled] = createSignal(
-    props.api.kv.get<boolean>(KV_SHOW_FILE_TREE, true) !== false,
-  )
+  const [fileTreeEnabled, setFileTreeEnabled] = createSignal(storedFlag(props.api.kv.get(KV_SHOW_FILE_TREE), true))
   const showFileTree = createMemo(() => showDiffViewerFileTree(fileTreeEnabled(), files().length))
-  const [singlePatch, setSinglePatch] = createSignal(props.api.kv.get<boolean>(KV_SINGLE_PATCH, false) === true)
+  const [singlePatch, setSinglePatch] = createSignal(storedFlag(props.api.kv.get(KV_SINGLE_PATCH), false))
   const patchPaneWidth = createMemo(() => dimensions().width - (showFileTree() ? 33 : 0) - 4)
   const patchLeftBorder = createMemo<BorderSides[]>(() => (showFileTree() ? ["left"] : []))
   const splitAvailable = createMemo(() => patchPaneWidth() >= MIN_SPLIT_WIDTH)
