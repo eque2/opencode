@@ -21,8 +21,10 @@ import {
   loadCommands,
   loadGlobalConfigQuery,
   loadPathQuery,
+  loadPathQueryFor,
   loadProjectsQuery,
   loadProvidersQuery,
+  loadProvidersQueryFor,
   loadReferencesQuery,
 } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
@@ -201,8 +203,12 @@ function makeQueryOptionsApi(
     projects: () => loadProjectsQuery(scope, serverAPI.project),
     providers: (directory: PathKey | null) =>
       loadProvidersQuery(scope, directory, serverAPI, directory ? sdkFor(directory) : serverSDK(), protocol),
+    /** The server-wide provider catalog, the same query as `providers(null)`. */
+    serverProviders: () => loadProvidersQueryFor(scope, Option.none(), serverAPI, serverSDK(), protocol),
     path: (directory: PathKey | null) =>
       loadPathQuery(scope, directory, directory ? sdkFor(directory) : serverSDK(), protocol),
+    /** The server-wide path, the same query as `path(null)`. */
+    serverPath: () => loadPathQueryFor(scope, Option.none(), serverSDK(), protocol),
     agents: (directory: PathKey) => loadAgentsQuery(scope, directory, serverAPI.agent, sdkFor(directory), protocol),
     references: (directory: PathKey) =>
       loadReferencesQuery(scope, directory, serverAPI.reference, sdkFor(directory), protocol),
@@ -255,7 +261,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
   )
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
-    queries: [queryOptionsApi.globalConfig(), queryOptionsApi.providers(null), queryOptionsApi.path(null)],
+    queries: [queryOptionsApi.globalConfig(), queryOptionsApi.serverProviders(), queryOptionsApi.serverPath()],
   }))
   const activeSessionsQuery = useQuery(() =>
     loadActiveSessionsQuery(serverSDK.scope, {
@@ -667,7 +673,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
       bootstrap.refetch()
       // Invalidate all provider queries so newly configured custom providers
       // appear immediately in the available provider list across all directories.
-      queryClient.invalidateQueries({ queryKey: [serverSDK.scope, null, "providers"] })
+      queryClient.invalidateQueries({ queryKey: queryOptionsApi.serverProviders().queryKey })
       queryClient.invalidateQueries({
         predicate: (query) => query.queryKey[0] === serverSDK.scope && query.queryKey[2] === "providers",
       })
