@@ -13,7 +13,7 @@ import {
 } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { MutableHashMap, Option } from "effect"
+import { Array as Arr, MutableHashMap, MutableHashSet, Option } from "effect"
 import { useNavigate } from "@solidjs/router"
 import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
@@ -159,11 +159,7 @@ function TimelineDiffSummaryRow(props: { diffs: SummaryDiff[] }) {
   const visible = createMemo(() => (showAll() ? props.diffs : props.diffs.slice(0, maxFiles)))
 
   return (
-    <div
-      data-slot="session-turn-diffs"
-      data-component="session-turn-diffs-group"
-      bool:data-show-all={showAll()}
-    >
+    <div data-slot="session-turn-diffs" data-component="session-turn-diffs-group" bool:data-show-all={showAll()}>
       <div data-slot="session-turn-diffs-header">
         <span data-slot="session-turn-diffs-label">
           {language.plural("ui.sessionTurn.diffs.changed", props.diffs.length)}
@@ -288,8 +284,10 @@ export function MessageTimeline(props: {
   const projectedMessages = createMemo(() => {
     const id = sessionID()
     if (!id) return []
-    const visible = new Set(props.userMessages.map((message) => message.id))
-    const boundary = sessionMessages().find((message) => message.role === "user" && !visible.has(message.id))?.id
+    const visible = MutableHashSet.fromIterable(props.userMessages.map((message) => message.id))
+    const boundary = sessionMessages().find(
+      (message) => message.role === "user" && !MutableHashSet.has(visible, message.id),
+    )?.id
     const messages = sync().data.session_message[id] ?? []
     if (!boundary) return messages
     const index = messages.findIndex((message) => message.id === boundary)
@@ -454,7 +452,7 @@ export function MessageTimeline(props: {
       const active = id ? (messageLastRowIndex().get(id) ?? -1) : -1
       const indexes = defaultRangeExtractor({ ...range, overscan: renderOverscan() })
       return filterVirtualIndexes(
-        [...new Set([...resizePinnedIndexes, ...indexes, ...(active < 0 ? [] : [active])])].sort((a, b) => a - b),
+        Arr.dedupeAdjacent([...resizePinnedIndexes, ...indexes, ...(active < 0 ? [] : [active])].sort((a, b) => a - b)),
         range.count,
       )
     },
@@ -853,7 +851,7 @@ export function MessageTimeline(props: {
 
     if (!result) return false
 
-    const removed = new Set<string>([sessionID])
+    const removed = MutableHashSet.make(sessionID)
     const byParent = MutableHashMap.empty<string, string[]>()
     for (const item of sync().data.session) {
       const parentID = item.parentID
@@ -875,8 +873,8 @@ export function MessageTimeline(props: {
       if (Option.isNone(children)) continue
 
       for (const child of children.value) {
-        if (removed.has(child)) continue
-        removed.add(child)
+        if (MutableHashSet.has(removed, child)) continue
+        MutableHashSet.add(removed, child)
         stack.push(child)
       }
     }
@@ -889,7 +887,7 @@ export function MessageTimeline(props: {
 
     sync().set(
       produce((draft) => {
-        draft.session = draft.session.filter((s) => !removed.has(s.id))
+        draft.session = draft.session.filter((s) => !MutableHashSet.has(removed, s.id))
       }),
     )
 
@@ -963,14 +961,11 @@ export function MessageTimeline(props: {
   const turnDurationMs = (userMessageID: string) => {
     const message = messageByID().get(userMessageID)
     if (!message || message.role !== "user") return
-    const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce(
-      (max, item) => {
-        const completed = item.time.completed
-        if (typeof completed !== "number") return max
-        return Option.some(Option.isSome(max) ? Math.max(max.value, completed) : completed)
-      },
-      Option.none<number>(),
-    )
+    const end = (assistantMessagesByParent().get(userMessageID) ?? emptyAssistantMessages).reduce((max, item) => {
+      const completed = item.time.completed
+      if (typeof completed !== "number") return max
+      return Option.some(Option.isSome(max) ? Math.max(max.value, completed) : completed)
+    }, Option.none<number>())
     if (Option.isNone(end)) return
     if (end.value < message.time.created) return
     return end.value - message.time.created
