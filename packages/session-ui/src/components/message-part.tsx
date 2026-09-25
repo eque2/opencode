@@ -858,11 +858,7 @@ function isContextGroupTool(part: PartType): part is ToolPart {
 }
 
 function contextToolDetail(part: ToolPart): string | undefined {
-  const info = getToolInfo(
-    part.tool,
-    part.state.input ?? {},
-    "metadata" in part.state ? part.state.metadata : {},
-  )
+  const info = getToolInfo(part.tool, part.state.input ?? {}, "metadata" in part.state ? part.state.metadata : {})
   if (info.subtitle) return info.subtitle
   if (part.state.status === "error") return part.state.error
   if ((part.state.status === "running" || part.state.status === "completed") && part.state.title)
@@ -1222,9 +1218,7 @@ export function UserMessageDisplay(props: {
   const copied = () => state.copied
   const busy = () => state.busy
 
-  const textPart = createMemo(
-    () => props.parts?.find((p): p is TextPart => p.type === "text" && !p.synthetic),
-  )
+  const textPart = createMemo(() => props.parts?.find((p): p is TextPart => p.type === "text" && !p.synthetic))
 
   const text = createMemo(() => textPart()?.text || "")
 
@@ -1346,11 +1340,7 @@ export function UserMessageDisplay(props: {
         }
       >
         <div data-slot="user-message-body">
-          <div
-            data-slot="user-message-text"
-            dir="auto"
-            bool:data-comments={messageComments().length > 0}
-          >
+          <div data-slot="user-message-text" dir="auto" bool:data-comments={messageComments().length > 0}>
             <HighlightedText text={text()} references={inlineFiles()} agents={agents()} />
             <Show when={messageComments().length > 0}>
               <UserMessageComments comments={messageComments()} bounded />
@@ -1595,9 +1585,7 @@ function ToolPartDisplay(props: PartDisplayProps<ToolPart>) {
   const handleToolOpenChange = (open: boolean) => props.onToolOpenChange?.(open)
   // The tool is controlled only when the caller handles open changes.
   const toolOpenProps = () =>
-    props.onToolOpenChange
-      ? { open: props.toolOpen ?? props.defaultOpen, onOpenChange: handleToolOpenChange }
-      : {}
+    props.onToolOpenChange ? { open: props.toolOpen ?? props.defaultOpen, onOpenChange: handleToolOpenChange } : {}
 
   return (
     <Show when={!hideQuestion()}>
@@ -1695,8 +1683,7 @@ function TextPartDisplay(props: PartDisplayProps<TextPart>) {
   const numfmt = createMemo(() => new Intl.NumberFormat(i18n.locale()))
   const part = () => props.part
   const interrupted = createMemo(
-    () =>
-      props.message.role === "assistant" && props.message.error?.name === "MessageAbortedError",
+    () => props.message.role === "assistant" && props.message.error?.name === "MessageAbortedError",
   )
 
   const model = createMemo(() => {

@@ -12,11 +12,15 @@ describe("readPartText", () => {
   })
 
   test("prefers accum value over part text when accum has a hit", () => {
-    expect(readPartText(Option.some({ part_1: "  from accum  " }), { id: "part_1", text: "from part" })).toBe("from accum")
+    expect(readPartText(Option.some({ part_1: "  from accum  " }), { id: "part_1", text: "from part" })).toBe(
+      "from accum",
+    )
   })
 
   test("falls back to part text when accum misses", () => {
-    expect(readPartText(Option.some({ other_part: "ignored" }), { id: "part_1", text: "  from part  " })).toBe("from part")
+    expect(readPartText(Option.some({ other_part: "ignored" }), { id: "part_1", text: "  from part  " })).toBe(
+      "from part",
+    )
   })
 
   test("returns empty string for whitespace-only text", () => {
