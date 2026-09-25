@@ -1,6 +1,5 @@
-import { Array, Effect, HashSet, Option, Schema, Stream } from "effect"
+import { Array, Effect, FileSystem, HashSet, Option, Schema, Scope, Stream } from "effect"
 import os from "os"
-import { createWriteStream } from "node:fs"
 import * as Tool from "./tool"
 import path from "path"
 import { containsPath, type InstanceContext } from "../project/instance-context"
@@ -500,35 +499,10 @@ export const ShellTool = Tool.define(
       const list: Chunk[] = []
       let used = 0
       let file = ""
-      let sink: ReturnType<typeof createWriteStream> | undefined
+      let sink = Option.none<FileSystem.File>()
       let cut = false
       let expired = false
       let aborted = false
-
-      const closeSink = Effect.fnUntraced(function* () {
-        const stream = sink
-        if (!stream) return
-        sink = undefined
-        if (stream.destroyed || stream.closed) return
-        yield* Effect.promise(
-          () =>
-            new Promise<void>((resolve) => {
-              let settled = false
-              const done = () => {
-                if (settled) return
-                settled = true
-                stream.off("close", done)
-                stream.off("error", done)
-                stream.off("finish", done)
-                resolve()
-              }
-              stream.once("close", done)
-              stream.once("error", done)
-              stream.once("finish", done)
-              stream.end(done)
-            }),
-        ).pipe(Effect.catch(() => Effect.void))
-      })
 
       yield* ctx.metadata({
         metadata: {
@@ -538,7 +512,9 @@ export const ShellTool = Tool.define(
 
       const code: number | null = yield* Effect.scoped(
         Effect.gen(function* () {
-          yield* Effect.addFinalizer(closeSink)
+          // The output file lives in a child scope that is registered before the reader fiber
+          // is forked, so the scope interrupts the reader before it closes the file.
+          const sinkScope = yield* Scope.fork(yield* Scope.Scope)
           const handle = yield* spawner.spawn(cmd(input.shell, input.command, input.cwd, input.env))
 
           yield* Effect.forkScoped(
@@ -555,36 +531,43 @@ export const ShellTool = Tool.define(
 
               last = preview(last + chunk)
 
-              if (file) {
-                sink?.write(chunk)
-              } else {
-                full += chunk
-                if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
-                  return trunc.write(full).pipe(
-                    Effect.andThen((next) =>
-                      Effect.sync(() => {
-                        file = next
-                        cut = true
-                        sink = createWriteStream(next, { flags: "a" })
-                        full = ""
-                      }),
-                    ),
-                    Effect.andThen(
-                      ctx.metadata({
-                        metadata: {
-                          output: last,
-                        },
-                      }),
-                    ),
-                  )
-                }
-              }
-
-              return ctx.metadata({
+              const publish = ctx.metadata({
                 metadata: {
                   output: last,
                 },
               })
+
+              if (file) {
+                if (Option.isNone(sink)) return publish
+                return sink.value.writeAll(Buffer.from(chunk, "utf-8")).pipe(
+                  Effect.catch((error) => Effect.logWarning("shell output file write failed", { file, error })),
+                  Effect.andThen(publish),
+                )
+              }
+              full += chunk
+              if (Buffer.byteLength(full, "utf-8") > limits.maxBytes) {
+                return trunc.write(full).pipe(
+                  Effect.tap((next) =>
+                    fs.open(next, { flag: "a" }).pipe(
+                      Scope.provide(sinkScope),
+                      Effect.map(Option.some),
+                      Effect.catch((error) =>
+                        Effect.logWarning("shell output file open failed", { file: next, error }).pipe(
+                          Effect.as(Option.none<FileSystem.File>()),
+                        ),
+                      ),
+                      Effect.map((opened) => {
+                        file = next
+                        cut = true
+                        sink = opened
+                        full = ""
+                      }),
+                    ),
+                  ),
+                  Effect.andThen(publish),
+                )
+              }
+              return publish
             }),
           )
 
