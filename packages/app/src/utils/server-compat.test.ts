@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Effect, Option } from "effect"
+import { Chunk, Effect } from "effect"
 import { createApiForServer, createSdkForServer } from "./server"
 import { createCompatibleApi } from "./server-compat"
 
 /** A 204 response. The Response constructor takes null for an absent body. */
-const noContent = () => new Response(Option.getOrNull(Option.none<BodyInit>()), { status: 204 })
+const noContent = () =>
+  // eslint-disable-next-line effect/no-null-use-option -- the Fetch Response constructor requires a null body for status 204; any other body throws a TypeError
+  new Response(null, { status: 204 })
 
 function setup(
   protocol: "v1" | "v2" | Promise<"v1" | "v2">,
@@ -200,7 +202,12 @@ describe("createCompatibleApi", () => {
       Effect.gen(function* () {
         const { api, sent } = setup("v1")
         yield* Effect.promise(() =>
-          api.session.list({ parentID: Option.getOrNull(Option.none<string>()), search: "session", limit: 50 }),
+          api.session.list({
+            // eslint-disable-next-line effect/no-null-use-option -- @opencode-ai/client session.list reads parentID null as the root-session filter; no other field selects roots.
+            parentID: null,
+            search: "session",
+            limit: 50,
+          }),
         )
 
         const requests = sent()
