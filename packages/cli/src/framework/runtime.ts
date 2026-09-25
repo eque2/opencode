@@ -10,7 +10,8 @@ export type Input<Value> =
       ? Input
       : never
 
-type RuntimeHandler = (input: unknown) => Effect.Effect<void, unknown, Daemon.Service>
+// Input is contravariant, so `never` is the input type that every typed handler shares.
+type RuntimeHandler = (input: never) => Effect.Effect<void, unknown, Daemon.Service>
 type Loader<Node extends Spec.Any> = () => Promise<{
   default: (input: Input<Node>) => Effect.Effect<void, any, Daemon.Service>
 }>
@@ -45,10 +46,10 @@ export function handlers<const Root extends Spec.Any>(root: Root, handlers: Hand
 
   function add(node: Spec.Any, value: RuntimeHandlers) {
     if (typeof value === "function") {
-      result.push({ spec: node.spec, load: value as () => Promise<{ default: RuntimeHandler }> })
+      result.push({ spec: node.spec, load: value })
       return
     }
-    if (value.$) result.push({ spec: node.spec, load: value.$ as () => Promise<{ default: RuntimeHandler }> })
+    if (value.$) result.push({ spec: node.spec, load: value.$ })
     for (const [name, child] of Object.entries(node.commands)) {
       const subtree = value[name]
       // Handlers<Root> requires every command key, so a missing subtree cannot pass the type check.
@@ -56,7 +57,7 @@ export function handlers<const Root extends Spec.Any>(root: Root, handlers: Hand
     }
   }
 
-  add(root, handlers as RuntimeHandlers)
+  add(root, handlers)
   return result
 }
 
@@ -66,15 +67,14 @@ export function run(commands: Spec.Any, handlers: ReadonlyArray<LazyHandler>, op
 
 function provide(node: Spec.Any, handlers: ReadonlyArray<LazyHandler>): ProvidedCommand {
   const handler = handlers.find((handler) => handler.spec === node.spec)
+  const command: ProvidedCommand = node.spec
   const spec = handler
-    ? node.spec.pipe(
-        Command.withHandler((input) =>
-          Effect.gen(function* () {
-            yield* Effect.flatMap(Effect.promise(handler.load), (module) => module.default(input))
-          }),
-        ),
+    ? Command.withHandler(command, (input) =>
+        Effect.gen(function* () {
+          yield* Effect.flatMap(Effect.promise(handler.load), (module) => module.default(input))
+        }),
       )
-    : node.spec
+    : command
   if (!Object.keys(node.commands).length) return spec
   return spec.pipe(Command.withSubcommands(Object.values(node.commands).map((child) => provide(child, handlers))))
 }
