@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import fs from "fs/promises"
 import path from "path"
 import { spawn } from "../../src/lsp/launch"
@@ -15,7 +16,7 @@ describe("lsp.launch", () => {
     await fs.mkdir(dir, { recursive: true })
     await Bun.write(file, "@echo off\r\nif %~1==--stdio exit /b 0\r\nexit /b 7\r\n")
 
-    const proc = spawn(file, ["--stdio"])
+    const proc = await Effect.runPromise(spawn(file, ["--stdio"]))
 
     expect(await proc.exited).toBe(0)
   })

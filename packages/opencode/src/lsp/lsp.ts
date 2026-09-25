@@ -8,9 +8,22 @@ import * as LSPServer from "./server"
 import { Config } from "@/config/config"
 import { Process } from "@/util/process"
 import { spawn as lspspawn } from "./launch"
-import { Effect, Layer, Context, Schema } from "effect"
+import {
+  Array,
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Schema,
+  Scope,
+} from "effect"
 import { InstanceState } from "@/effect/instance-state"
-import { containsPath } from "@/project/instance-context"
+import { containsPath, type InstanceContext } from "@/project/instance-context"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LspEvent } from "@opencode-ai/schema/lsp-event"
@@ -112,8 +125,11 @@ type LocInput = { file: string; line: number; character: number }
 interface State {
   clients: LSPClient.Info[]
   servers: Record<string, LSPServer.Info>
-  broken: Set<string>
-  spawning: Map<string, Promise<LSPClient.Info | undefined>>
+  broken: MutableHashSet.MutableHashSet<string>
+  // One spawn for each root and server; concurrent callers wait for the same result.
+  spawning: MutableHashMap.MutableHashMap<string, Deferred.Deferred<Option.Option<LSPClient.Info>>>
+  // Spawns run in the instance scope, so a caller that stops waiting does not cancel a spawn.
+  scope: Scope.Scope
 }
 
 export interface Interface {
@@ -135,15 +151,25 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/LSP") {}
 
+const position = (input: LocInput) => ({
+  textDocument: { uri: pathToFileURL(input.file).href },
+  position: { line: input.line, character: input.character },
+})
+
+// One JSON-RPC request to a server. The type argument declares the response shape.
+const request = <A>(client: LSPClient.Info, method: string, params: object) =>
+  Effect.tryPromise(() => client.connection.sendRequest<A>(method, params))
+
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
     const flags = yield* RuntimeFlags.Service
     const events = yield* EventV2Bridge.Service
+    const fsu = yield* FSUtil.Service
 
     const state = yield* InstanceState.make<State>(
-      Effect.fn("LSP.state")(function* (ctx) {
+      Effect.fn("LSP.state")(function* () {
         const cfg = yield* config.get()
 
         const servers: Record<string, LSPServer.Info> = {}
@@ -168,15 +194,13 @@ const layer = Layer.effect(
               servers[name] = {
                 ...existing,
                 id: name,
-                root: existing?.root ?? (async (_file, ctx) => ctx.directory),
+                root: existing?.root ?? ((_file, ctx) => Effect.succeed(Option.some(ctx.directory))),
                 extensions: item.extensions ?? existing?.extensions ?? [],
-                spawn: async (root) => ({
-                  process: lspspawn(item.command[0], item.command.slice(1), {
+                spawn: (root) =>
+                  lspspawn(item.command[0], item.command.slice(1), {
                     cwd: root,
                     env: { ...process.env, ...item.env },
-                  }),
-                  initialization: item.initialization,
-                }),
+                  }).pipe(Effect.map((proc) => Option.some({ process: proc, initialization: item.initialization }))),
               }
             }
           }
@@ -191,13 +215,15 @@ const layer = Layer.effect(
         const s: State = {
           clients: [],
           servers,
-          broken: new Set(),
-          spawning: new Map(),
+          broken: MutableHashSet.empty(),
+          spawning: MutableHashMap.empty(),
+          scope: yield* Scope.Scope,
         }
 
         yield* Effect.addFinalizer(() =>
-          Effect.promise(async () => {
-            await Promise.all(s.clients.map((client) => client.shutdown()))
+          Effect.forEach(s.clients, (client) => Effect.tryPromise(() => client.shutdown()).pipe(Effect.ignore), {
+            concurrency: "unbounded",
+            discard: true,
           }),
         )
 
@@ -205,105 +231,113 @@ const layer = Layer.effect(
       }),
     )
 
-    const getClients = Effect.fnUntraced(function* (file: string) {
-      const ctx = yield* InstanceState.context
-      if (!containsPath(file, ctx)) return [] as LSPClient.Info[]
-      const s = yield* InstanceState.get(state)
-      const clients = yield* Effect.promise(async () => {
-        const extension = path.parse(file).ext || file
-        const result: LSPClient.Info[] = []
-        let updated = 0
+    const rootOf = (server: LSPServer.Info, file: string, ctx: InstanceContext) =>
+      server.root(file, ctx).pipe(Effect.provideService(FSUtil.Service, fsu))
 
-        async function schedule(server: LSPServer.Info, root: string, key: string) {
-          const handle = await server
-            .spawn(root, ctx, flags)
-            .then((value) => {
-              if (!value) s.broken.add(key)
-              return value
-            })
-            .catch(() => {
-              s.broken.add(key)
-              return undefined
-            })
+    const stop = (handle: LSPServer.Handle) => Effect.tryPromise(() => Process.stop(handle.process)).pipe(Effect.ignore)
 
-          if (!handle) return undefined
-          const client = await LSPClient.create({
+    // Starts the server and connects a client. Any failure marks the server broken for this root.
+    const schedule = Effect.fnUntraced(function* (
+      s: State,
+      ctx: InstanceContext,
+      server: LSPServer.Info,
+      root: string,
+      key: string,
+    ) {
+      const handle = yield* server
+        .spawn(root, ctx, flags)
+        .pipe(Effect.provideService(FSUtil.Service, fsu), Effect.catchCause(() => Effect.succeedNone))
+      if (Option.isNone(handle)) {
+        MutableHashSet.add(s.broken, key)
+        return Option.none<LSPClient.Info>()
+      }
+
+      const client = yield* Effect.option(
+        Effect.tryPromise(() =>
+          LSPClient.create({
             serverID: server.id,
-            server: handle,
+            server: handle.value,
             root,
             directory: ctx.directory,
             instance: ctx,
-          }).catch(async () => {
-            s.broken.add(key)
-            await Process.stop(handle.process)
-            return undefined
-          })
+          }),
+        ),
+      )
+      if (Option.isNone(client)) {
+        MutableHashSet.add(s.broken, key)
+        yield* stop(handle.value)
+        return client
+      }
 
-          if (!client) return undefined
+      const existing = s.clients.find((x) => x.root === root && x.serverID === server.id)
+      if (existing) {
+        yield* stop(handle.value)
+        return Option.some(existing)
+      }
 
-          const existing = s.clients.find((x) => x.root === root && x.serverID === server.id)
-          if (existing) {
-            await Process.stop(handle.process)
-            return existing
-          }
-
-          s.clients.push(client)
-          return client
-        }
-
-        for (const server of Object.values(s.servers)) {
-          if (server.extensions.length && !server.extensions.includes(extension)) continue
-
-          const root = await server.root(file, ctx)
-          if (!root) continue
-          if (s.broken.has(root + server.id)) continue
-
-          const match = s.clients.find((x) => x.root === root && x.serverID === server.id)
-          if (match) {
-            result.push(match)
-            continue
-          }
-
-          const inflight = s.spawning.get(root + server.id)
-          if (inflight) {
-            const client = await inflight
-            if (!client) continue
-            result.push(client)
-            continue
-          }
-
-          const task = schedule(server, root, root + server.id)
-          s.spawning.set(root + server.id, task)
-
-          task.finally(() => {
-            if (s.spawning.get(root + server.id) === task) {
-              s.spawning.delete(root + server.id)
-            }
-          })
-
-          const client = await task
-          if (!client) continue
-
-          result.push(client)
-          updated++
-        }
-
-        return { result, updated }
-      })
-      yield* Effect.forEach(Array.from({ length: clients.updated }), () => events.publish(Event.Updated, {}), {
-        discard: true,
-      })
-      return clients.result
+      s.clients.push(client.value)
+      return client
     })
 
-    const run = Effect.fnUntraced(function* <T>(file: string, fn: (client: LSPClient.Info) => Promise<T>) {
-      const clients = yield* getClients(file)
-      return yield* Effect.promise(() => Promise.all(clients.map((x) => fn(x))))
+    // The client of one server for a file, and whether this call created it.
+    const clientFor = Effect.fnUntraced(function* (
+      s: State,
+      ctx: InstanceContext,
+      server: LSPServer.Info,
+      file: string,
+      extension: string,
+    ) {
+      if (server.extensions.length && !server.extensions.includes(extension)) return Option.none()
+
+      const root = yield* rootOf(server, file, ctx)
+      if (Option.isNone(root)) return Option.none()
+      const key = root.value + server.id
+      if (MutableHashSet.has(s.broken, key)) return Option.none()
+
+      const match = s.clients.find((x) => x.root === root.value && x.serverID === server.id)
+      if (match) return Option.some({ client: match, created: false })
+
+      const inflight = MutableHashMap.get(s.spawning, key)
+      if (Option.isSome(inflight)) {
+        const client = yield* Deferred.await(inflight.value)
+        return Option.map(client, (value) => ({ client: value, created: false }))
+      }
+
+      const task = yield* Deferred.make<Option.Option<LSPClient.Info>>()
+      MutableHashMap.set(s.spawning, key, task)
+      yield* schedule(s, ctx, server, root.value, key).pipe(
+        Deferred.into(task),
+        Effect.ensuring(Effect.sync(() => MutableHashMap.remove(s.spawning, key))),
+        Effect.forkIn(s.scope),
+      )
+      const client = yield* Deferred.await(task)
+      return Option.map(client, (value) => ({ client: value, created: true }))
     })
 
-    const runAll = Effect.fnUntraced(function* <T>(fn: (client: LSPClient.Info) => Promise<T>) {
+    const getClients = Effect.fnUntraced(function* (file: string) {
+      const ctx = yield* InstanceState.context
+      if (!containsPath(file, ctx)) return []
       const s = yield* InstanceState.get(state)
-      return yield* Effect.promise(() => Promise.all(s.clients.map((x) => fn(x))))
+      const extension = path.parse(file).ext || file
+      const found = Array.getSomes(
+        yield* Effect.forEach(Object.values(s.servers), (server) => clientFor(s, ctx, server, file, extension)),
+      )
+      yield* Effect.forEach(
+        found.filter((item) => item.created),
+        () => events.publish(Event.Updated, {}),
+        { discard: true },
+      )
+      return found.map((item) => item.client)
+    })
+
+    const run = Effect.fnUntraced(function* <T>(file: string, fn: (client: LSPClient.Info) => Effect.Effect<T>) {
+      const clients = yield* getClients(file)
+      return yield* Effect.forEach(clients, (client) => fn(client), { concurrency: "unbounded" })
+    })
+
+    const runAll = Effect.fnUntraced(function* <T>(fn: (client: LSPClient.Info) => Effect.Effect<T>) {
+      const s = yield* InstanceState.get(state)
+      return yield* Effect.forEach(s.clients, (client) => fn(client), { concurrency: "unbounded" })
     })
 
     const init = Effect.fn("LSP.init")(function* () {
@@ -313,111 +347,95 @@ const layer = Layer.effect(
     const status = Effect.fn("LSP.status")(function* () {
       const ctx = yield* InstanceState.context
       const s = yield* InstanceState.get(state)
-      const result: Status[] = []
-      for (const client of s.clients) {
-        result.push({
+      return s.clients.map(
+        (client): Status => ({
           id: client.serverID,
           name: s.servers[client.serverID].id,
           root: path.relative(ctx.directory, client.root),
           status: "connected",
-        })
-      }
-      return result
+        }),
+      )
     })
 
     const hasClients = Effect.fn("LSP.hasClients")(function* (file: string) {
       const ctx = yield* InstanceState.context
       const s = yield* InstanceState.get(state)
-      return yield* Effect.promise(async () => {
-        const extension = path.parse(file).ext || file
-        for (const server of Object.values(s.servers)) {
-          if (server.extensions.length && !server.extensions.includes(extension)) continue
-          const root = await server.root(file, ctx)
-          if (!root) continue
-          if (s.broken.has(root + server.id)) continue
-          return true
-        }
-        return false
-      })
+      const extension = path.parse(file).ext || file
+      const usable = yield* Effect.findFirst(Object.values(s.servers), (server) =>
+        Effect.gen(function* () {
+          if (server.extensions.length && !server.extensions.includes(extension)) return false
+          const root = yield* rootOf(server, file, ctx)
+          return Option.isSome(root) && !MutableHashSet.has(s.broken, root.value + server.id)
+        }),
+      )
+      return Option.isSome(usable)
     })
 
     const touchFile = Effect.fn("LSP.touchFile")(function* (input: string, diagnostics?: "document" | "full") {
       yield* Effect.logInfo("touching file", { file: input })
       const clients = yield* getClients(input)
-      yield* Effect.promise(() =>
-        Promise.all(
-          clients.map(async (client) => {
-            const after = Date.now()
-            const version = await client.notify.open({ path: input })
+      // A client that cannot open the file or report its diagnostics does not fail the touch.
+      yield* Effect.forEach(
+        clients,
+        (client) =>
+          Effect.gen(function* () {
+            const after = yield* Clock.currentTimeMillis
+            const version = yield* Effect.tryPromise(() => client.notify.open({ path: input }))
             if (!diagnostics) return
-            return client.waitForDiagnostics({
-              path: input,
-              version,
-              mode: diagnostics,
-              after,
-            })
+            yield* Effect.tryPromise(() =>
+              client.waitForDiagnostics({
+                path: input,
+                version,
+                mode: diagnostics,
+                after,
+              }),
+            )
           }),
-        ).catch(() => {}),
-      )
+        { concurrency: "unbounded", discard: true },
+      ).pipe(Effect.ignore)
     })
 
     const diagnostics = Effect.fn("LSP.diagnostics")(function* () {
       const results: Record<string, LSPClient.Diagnostic[]> = {}
-      const all = yield* runAll(async (client) => client.diagnostics)
+      const all = yield* runAll((client) => Effect.sync(() => client.diagnostics))
       for (const result of all) {
         for (const [p, diags] of result.entries()) {
-          const arr = results[p] || []
-          arr.push(...diags)
-          results[p] = arr
+          results[p] = [...(results[p] ?? []), ...diags]
         }
       }
       return results
     })
 
     const hover = Effect.fn("LSP.hover")(function* (input: LocInput) {
+      // A server that fails keeps its place in the response as a null entry.
       return yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/hover", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-          })
-          .catch(() => null),
+        request<unknown>(client, "textDocument/hover", position(input)).pipe(
+          Effect.option,
+          Effect.map(Option.getOrNull),
+        ),
       )
     })
 
     const definition = Effect.fn("LSP.definition")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/definition", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-          })
-          .catch(() => null),
+        request<unknown>(client, "textDocument/definition", position(input)).pipe(Effect.orElseSucceed(() => [])),
       )
       return results.flat().filter(Boolean)
     })
 
     const references = Effect.fn("LSP.references")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/references", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-            context: { includeDeclaration: true },
-          })
-          .catch(() => []),
+        request<unknown>(client, "textDocument/references", {
+          ...position(input),
+          context: { includeDeclaration: true },
+        }).pipe(Effect.orElseSucceed(() => [])),
       )
       return results.flat().filter(Boolean)
     })
 
     const implementation = Effect.fn("LSP.implementation")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/implementation", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-          })
-          .catch(() => null),
+        request<unknown>(client, "textDocument/implementation", position(input)).pipe(Effect.orElseSucceed(() => [])),
       )
       return results.flat().filter(Boolean)
     })
@@ -425,29 +443,28 @@ const layer = Layer.effect(
     const documentSymbol = Effect.fn("LSP.documentSymbol")(function* (uri: string) {
       const file = fileURLToPath(uri)
       const results = yield* run(file, (client) =>
-        client.connection.sendRequest("textDocument/documentSymbol", { textDocument: { uri } }).catch(() => []),
+        request<ReadonlyArray<DocumentSymbol | Symbol> | null>(client, "textDocument/documentSymbol", {
+          textDocument: { uri },
+        }).pipe(Effect.orElseSucceed(() => [])),
       )
-      return (results.flat() as (DocumentSymbol | Symbol)[]).filter(Boolean)
+      return results.flat().filter(Predicate.isNotNullish)
     })
 
     const workspaceSymbol = Effect.fn("LSP.workspaceSymbol")(function* (query: string) {
       const results = yield* runAll((client) =>
-        client.connection
-          .sendRequest<Symbol[]>("workspace/symbol", { query })
-          .then((result) => result.filter((x) => kinds.includes(x.kind)).slice(0, 10))
-          .catch(() => [] as Symbol[]),
+        request<ReadonlyArray<Symbol> | null>(client, "workspace/symbol", { query }).pipe(
+          Effect.map((result) => (result ?? []).filter((x) => kinds.includes(x.kind)).slice(0, 10)),
+          Effect.orElseSucceed((): Symbol[] => []),
+        ),
       )
       return results.flat()
     })
 
     const prepareCallHierarchy = Effect.fn("LSP.prepareCallHierarchy")(function* (input: LocInput) {
       const results = yield* run(input.file, (client) =>
-        client.connection
-          .sendRequest("textDocument/prepareCallHierarchy", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-          })
-          .catch(() => []),
+        request<unknown>(client, "textDocument/prepareCallHierarchy", position(input)).pipe(
+          Effect.orElseSucceed(() => []),
+        ),
       )
       return results.flat().filter(Boolean)
     })
@@ -456,16 +473,15 @@ const layer = Layer.effect(
       input: LocInput,
       direction: "callHierarchy/incomingCalls" | "callHierarchy/outgoingCalls",
     ) {
-      const results = yield* run(input.file, async (client) => {
-        const items = await client.connection
-          .sendRequest<unknown[] | null>("textDocument/prepareCallHierarchy", {
-            textDocument: { uri: pathToFileURL(input.file).href },
-            position: { line: input.line, character: input.character },
-          })
-          .catch(() => [] as unknown[])
-        if (!items?.length) return []
-        return client.connection.sendRequest(direction, { item: items[0] }).catch(() => [])
-      })
+      const results = yield* run(input.file, (client) =>
+        Effect.gen(function* () {
+          const items = yield* request<unknown[] | null>(client, "textDocument/prepareCallHierarchy", position(input)).pipe(
+            Effect.orElseSucceed((): unknown[] => []),
+          )
+          if (!items?.length) return []
+          return yield* request<unknown>(client, direction, { item: items[0] }).pipe(Effect.orElseSucceed(() => []))
+        }),
+      )
       return results.flat().filter(Boolean)
     })
 

@@ -1,7 +1,7 @@
 import { describe, expect, spyOn } from "bun:test"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Option } from "effect"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Config } from "@/config/config"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -32,7 +32,7 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const spy = spyOn(LSPServer.Typescript, "spawn").mockResolvedValue(undefined)
+          const spy = spyOn(LSPServer.Typescript, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.touchFile(path.join(dir, "..", "outside.ts"))
@@ -54,7 +54,7 @@ describe("lsp.spawn", () => {
     LSP.Service.use((lsp) =>
       Effect.gen(function* () {
         const dir = (yield* TestInstance).directory
-        const spy = spyOn(LSPServer.Typescript, "spawn").mockResolvedValue(undefined)
+        const spy = spyOn(LSPServer.Typescript, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
         try {
           yield* lsp.hover({
@@ -76,7 +76,7 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const spy = spyOn(LSPServer.Typescript, "spawn").mockResolvedValue(undefined)
+          const spy = spyOn(LSPServer.Typescript, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.hover({
@@ -130,7 +130,7 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const spy = spyOn(LSPServer.Typescript, "spawn").mockResolvedValue(undefined)
+          const spy = spyOn(LSPServer.Typescript, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.hover({
@@ -159,8 +159,8 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const ty = spyOn(LSPServer.Ty, "spawn").mockResolvedValue(undefined)
-          const pyright = spyOn(LSPServer.Pyright, "spawn").mockResolvedValue(undefined)
+          const ty = spyOn(LSPServer.Ty, "spawn").mockReturnValue(Effect.succeed(Option.none()))
+          const pyright = spyOn(LSPServer.Pyright, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.hover({
@@ -185,8 +185,8 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const ty = spyOn(LSPServer.Ty, "spawn").mockResolvedValue(undefined)
-          const pyright = spyOn(LSPServer.Pyright, "spawn").mockResolvedValue(undefined)
+          const ty = spyOn(LSPServer.Ty, "spawn").mockReturnValue(Effect.succeed(Option.none()))
+          const pyright = spyOn(LSPServer.Pyright, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.hover({
@@ -211,7 +211,7 @@ describe("lsp.spawn", () => {
       LSP.Service.use((lsp) =>
         Effect.gen(function* () {
           const dir = (yield* TestInstance).directory
-          const pyright = spyOn(LSPServer.Pyright, "spawn").mockResolvedValue(undefined)
+          const pyright = spyOn(LSPServer.Pyright, "spawn").mockReturnValue(Effect.succeed(Option.none()))
 
           try {
             yield* lsp.hover({

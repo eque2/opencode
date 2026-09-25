@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { LSP } from "@/lsp/lsp"
 import * as LSPServer from "@/lsp/server"
 import { TestInstance } from "../fixture/fixture"
@@ -13,7 +13,7 @@ describe("LSP service lifecycle", () => {
   let spawnSpy: ReturnType<typeof spyOn>
 
   beforeEach(() => {
-    spawnSpy = spyOn(LSPServer.Typescript, "spawn").mockResolvedValue(undefined)
+    spawnSpy = spyOn(LSPServer.Typescript, "spawn").mockReturnValue(Effect.succeed(Option.none()))
   })
 
   afterEach(() => {
