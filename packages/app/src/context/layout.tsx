@@ -1,3 +1,4 @@
+import { Predicate } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -179,15 +180,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       return { ...value, server: server.key }
     })
 
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === "object" && value !== null && !Array.isArray(value)
-
     const migrate = (value: unknown) => {
-      if (!isRecord(value)) return value
+      if (!Predicate.isObject(value)) return value
 
       const sidebar = value.sidebar
       const migratedSidebar = (() => {
-        if (!isRecord(sidebar)) return sidebar
+        if (!Predicate.isObject(sidebar)) return sidebar
         if (typeof sidebar.workspaces !== "boolean") return sidebar
         return {
           ...sidebar,
@@ -199,7 +197,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       const review = value.review
       const fileTree = value.fileTree
       const migratedFileTree = (() => {
-        if (!isRecord(fileTree)) return fileTree
+        if (!Predicate.isObject(fileTree)) return fileTree
         if (fileTree.tab === "changes" || fileTree.tab === "all") return fileTree
 
         const width = typeof fileTree.width === "number" ? fileTree.width : DEFAULT_FILE_TREE_WIDTH
@@ -212,11 +210,11 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       })()
 
       const migratedReview = (() => {
-        if (!isRecord(review)) return review
+        if (!Predicate.isObject(review)) return review
         if (typeof review.panelOpened === "boolean") return review
 
         const opened =
-          isRecord(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : DEFAULT_REVIEW_PANEL_OPENED
+          Predicate.isObject(fileTree) && typeof fileTree.opened === "boolean" ? fileTree.opened : DEFAULT_REVIEW_PANEL_OPENED
         return {
           ...review,
           panelOpened: opened,
@@ -226,12 +224,12 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       const sessionTabs = migrateLegacySessionStateKeys(value.sessionTabs)
       const sessionView = migrateLegacySessionStateKeys(value.sessionView)
       const migratedSessionTabs = (() => {
-        if (!isRecord(sessionTabs)) return sessionTabs
+        if (!Predicate.isObject(sessionTabs)) return sessionTabs
 
         let changed = false
         const next = Object.fromEntries(
           Object.entries(sessionTabs).map(([key, tabs]) => {
-            if (!isRecord(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
+            if (!Predicate.isObject(tabs) || !Array.isArray(tabs.all)) return [key, tabs]
 
             const current = {
               all: tabs.all.filter((tab): tab is string => typeof tab === "string"),

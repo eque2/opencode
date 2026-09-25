@@ -1,13 +1,11 @@
+import { Predicate } from "effect"
 import { useDragDropContext } from "@thisbeyond/solid-dnd"
 import type { Transformer } from "@thisbeyond/solid-dnd"
 import { createRoot, onCleanup, type JSXElement } from "solid-js"
 
 type DragEvent = { draggable?: { id?: unknown } }
 
-const isDragEvent = (event: unknown): event is DragEvent => {
-  if (typeof event !== "object" || event === null) return false
-  return "draggable" in event
-}
+const isDragEvent = (event: unknown): event is DragEvent => Predicate.isObjectOrArray(event) && "draggable" in event
 
 export const getDraggableId = (event: unknown): string | undefined => {
   if (!isDragEvent(event)) return undefined
@@ -24,7 +22,7 @@ const createTransformer = (id: string, axis: "x" | "y"): Transformer => ({
 
 const createAxisConstraint = (axis: "x" | "y", transformerId: string) => (): JSXElement => {
   const context = useDragDropContext()
-  if (!context) return null
+  if (!context) return undefined
   const [, actions] = context
   const transformer = createTransformer(transformerId, axis)
   const dispose = createRoot((dispose) => {
@@ -41,7 +39,7 @@ const createAxisConstraint = (axis: "x" | "y", transformerId: string) => (): JSX
     return dispose
   })
   onCleanup(dispose)
-  return null
+  return undefined
 }
 
 export const ConstrainDragXAxis = createAxisConstraint("x", "constrain-x-axis")
