@@ -1,97 +1,133 @@
 import { describe, expect, test } from "bun:test"
-import type { Message, Part, PermissionRequest, Project, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
+import type {
+  AssistantMessage,
+  Message,
+  PermissionRequest,
+  Project,
+  QuestionRequest,
+  Session,
+  TextPart,
+} from "@opencode-ai/sdk/v2/client"
+import { HashMap } from "effect"
 import { createStore } from "solid-js/store"
 import type { State } from "./types"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./event-reducer"
 
-const rootSession = (input: { id: string; parentID?: string; archived?: number }) =>
-  ({
-    id: input.id,
-    parentID: input.parentID,
-    time: {
-      created: 1,
-      updated: 1,
-      archived: input.archived,
+const rootSession = (input: { id: string; parentID?: string; archived?: number }): Session => ({
+  id: input.id,
+  slug: input.id,
+  projectID: "project",
+  directory: "/tmp",
+  title: input.id,
+  version: "",
+  parentID: input.parentID,
+  time: {
+    created: 1,
+    updated: 1,
+    archived: input.archived,
+  },
+})
+
+const projectInfo = (id: string): Project => ({
+  id,
+  worktree: "/tmp",
+  time: { created: 1, updated: 1 },
+  sandboxes: [],
+})
+
+const userMessage = (id: string, sessionID: string, created = 1): Message => ({
+  id,
+  sessionID,
+  role: "user",
+  time: { created },
+  agent: "assistant",
+  model: { providerID: "openai", modelID: "gpt" },
+})
+
+const assistantMessage = (id: string, sessionID: string, created = 1): AssistantMessage => ({
+  id,
+  sessionID,
+  role: "assistant",
+  time: { created },
+  parentID: "msg_parent",
+  modelID: "gpt",
+  providerID: "openai",
+  mode: "build",
+  agent: "assistant",
+  path: { cwd: "/tmp", root: "/tmp" },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+})
+
+const textPart = (id: string, sessionID: string, messageID: string): TextPart => ({
+  id,
+  sessionID,
+  messageID,
+  type: "text",
+  text: id,
+})
+
+const permissionRequest = (id: string, sessionID: string, title = id): PermissionRequest => ({
+  id,
+  sessionID,
+  permission: title,
+  patterns: ["*"],
+  metadata: {},
+  always: [],
+})
+
+const questionRequest = (id: string, sessionID: string, title = id): QuestionRequest => ({
+  id,
+  sessionID,
+  questions: [
+    {
+      question: title,
+      header: title,
+      options: [{ label: title, description: title }],
     },
-  }) as Session
+  ],
+})
 
-const userMessage = (id: string, sessionID: string, created = 1) =>
-  ({
-    id,
-    sessionID,
-    role: "user",
-    time: { created },
-    agent: "assistant",
-    model: { providerID: "openai", modelID: "gpt" },
-  }) as Message
-
-const textPart = (id: string, sessionID: string, messageID: string) =>
-  ({
-    id,
-    sessionID,
-    messageID,
-    type: "text",
-    text: id,
-  }) as Part
-
-const permissionRequest = (id: string, sessionID: string, title = id) =>
-  ({
-    id,
-    sessionID,
-    permission: title,
-    patterns: ["*"],
-    metadata: {},
-    always: [],
-  }) as PermissionRequest
-
-const questionRequest = (id: string, sessionID: string, title = id) =>
-  ({
-    id,
-    sessionID,
-    questions: [
-      {
-        question: title,
-        header: title,
-        options: [{ label: title, description: title }],
-      },
-    ],
-  }) as QuestionRequest
-
-const baseState = (input: Partial<State> = {}) =>
-  ({
-    status: "complete",
-    agent: [],
-    command: [],
-    project: "",
-    projectMeta: undefined,
-    icon: undefined,
-    provider: {} as State["provider"],
-    config: {} as State["config"],
-    path: { directory: "/tmp" } as State["path"],
-    session: [],
-    sessionTotal: 0,
-    session_status: {},
-    session_diff: {},
-    todo: {},
-    permission: {},
-    question: {},
-    mcp: {},
-    lsp: [],
-    vcs: undefined,
-    limit: 10,
-    message: {},
-    session_message: {},
-    part: {},
-    part_text_accum_delta: {},
-    ...input,
-  }) as State
+const baseState = (input: Partial<State> = {}): State => ({
+  status: "complete",
+  agent: [],
+  command: [],
+  reference: [],
+  project: "",
+  projectMeta: undefined,
+  icon: undefined,
+  provider_ready: true,
+  provider: { all: HashMap.empty(), connected: [], default: {} },
+  config: {},
+  path: { home: "", state: "", config: "", worktree: "", directory: "/tmp" },
+  session: [],
+  sessionTotal: 0,
+  session_status: {},
+  session_working: () => false,
+  session_diff: {},
+  todo: {},
+  permission: {},
+  question: {},
+  mcp_ready: true,
+  mcp: {},
+  mcp_resource: {},
+  lsp_ready: true,
+  lsp: [],
+  vcs: undefined,
+  limit: 10,
+  message: {},
+  session_message: {},
+  part: {},
+  part_text_accum_delta: {},
+  ...input,
+})
 
 describe("applyGlobalEvent", () => {
   test("upserts project.updated in sorted position", () => {
-    const project = [{ id: "a" }, { id: "c" }] as Project[]
+    const project = [projectInfo("a"), projectInfo("c")]
     let refreshCount = 0
     applyGlobalEvent({
-      event: { type: "project.updated", properties: { id: "b" } },
+      event: { type: "project.updated", properties: projectInfo("b") },
       project,
       refresh: () => {
         refreshCount += 1
@@ -152,7 +188,7 @@ describe("applyDirectoryEvent", () => {
     })
 
     expect(store.part_text_accum_delta.part).toBe("existing appended")
-    expect((store.part.message?.[0] as { text: string }).text).toBe("existing appended")
+    expect(store.part.message?.[0]).toHaveProperty("text", "existing appended")
   })
 
   test("preserves a Home-specific retained session limit", () => {
@@ -389,12 +425,7 @@ describe("applyDirectoryEvent", () => {
     applyDirectoryEvent({
       event: {
         type: "message.updated",
-        properties: {
-          info: {
-            ...userMessage("msg_a", sessionID, 2),
-            role: "assistant",
-          } as Message,
-        },
+        properties: { info: assistantMessage("msg_a", sessionID, 2) },
       },
       store,
       setStore,
@@ -444,7 +475,7 @@ describe("applyDirectoryEvent", () => {
           part: {
             ...textPart("prt_2", sessionID, messageID),
             text: "changed",
-          } as Part,
+          },
         },
       },
       store,
