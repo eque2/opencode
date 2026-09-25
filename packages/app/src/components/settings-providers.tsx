@@ -257,7 +257,7 @@ const SettingsProvidersContent: Component<{ onBack?: () => void }> = (props) => 
                   variant="secondary"
                   icon="plus-small"
                   onClick={() => {
-                    void dialog.show(() => <DialogCustomProvider onBack={dialog.close} />)
+                    void dialog.show(() => <DialogCustomProvider onBack={() => dialog.close()} />)
                   }}
                 >
                   {language.t("common.connect")}
