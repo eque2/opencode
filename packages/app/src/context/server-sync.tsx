@@ -309,14 +309,6 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     setGlobalStore("project", next)
   }
 
-  const setBootStore = ((...input: unknown[]) => {
-    if (input[0] === "project" && Array.isArray(input[1])) {
-      setProjects(input[1] as Project[])
-      return input[1]
-    }
-    return (setGlobalStore as (...args: unknown[]) => unknown)(...input)
-  }) as typeof setGlobalStore
-
   const bootstrap = useQuery(() => ({
     queryKey: [serverSDK.scope, "bootstrap"],
     queryFn: async () => {
@@ -328,21 +320,13 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
         requestFailedTitle: language.t("common.requestFailed"),
         translate: language.t,
         formatMoreCount: (count) => language.t("common.moreCountSuffix", { count }),
-        setGlobalStore: setBootStore,
+        setGlobalStore,
         queryClient,
       })
       bootedAt = Date.now()
       return bootedAt
     },
   }))
-
-  const set = ((...input: unknown[]) => {
-    if (input[0] === "project" && (Array.isArray(input[1]) || typeof input[1] === "function")) {
-      setProjects(input[1] as Project[] | ((draft: Project[]) => Project[]))
-      return input[1]
-    }
-    return (setGlobalStore as (...args: unknown[]) => unknown)(...input)
-  }) as typeof setGlobalStore
 
   const paused = () => untrack(() => globalStore.reload) !== undefined
 
@@ -672,7 +656,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
 
   return {
     data: globalStore,
-    set,
+    set: setGlobalStore,
     get ready() {
       return globalStore.ready
     },
