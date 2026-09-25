@@ -379,9 +379,9 @@ function ModelSelectorPopoverV2View(props: {
         <MenuV2.Content
           ref={(element: HTMLDivElement) => (contentRef = element)}
           class="w-[284px] overflow-hidden rounded-md border-0 bg-v2-background-bg-layer-01 !p-0 shadow-[var(--v2-elevation-floating)] focus:outline-none"
-          onPointerDownOutside={dismiss.preventTriggerRestore}
-          onFocusOutside={dismiss.preventTriggerRestore}
-          onCloseAutoFocus={dismiss.onCloseAutoFocus}
+          onPointerDownOutside={() => dismiss.preventTriggerRestore()}
+          onFocusOutside={() => dismiss.preventTriggerRestore()}
+          onCloseAutoFocus={(event) => dismiss.onCloseAutoFocus(event)}
         >
           <div class="flex flex-col p-0.5">
             <div class="flex h-7 items-center gap-2 rounded-sm pl-3 pr-2.5 text-v2-icon-icon-muted">
