@@ -1,3 +1,4 @@
+import { MutableHashSet } from "effect"
 import { createStore, produce } from "solid-js/store"
 
 export type SessionScroll = {
@@ -16,7 +17,7 @@ type Options = {
 export function createScrollPersistence(opts: Options) {
   const wait = opts.debounceMs ?? 200
   const [cache, setCache] = createStore<Record<string, ScrollMap>>({})
-  const dirty = new Set<string>()
+  const dirty = MutableHashSet.empty<string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
   function clone(input?: ScrollMap) {
@@ -66,7 +67,7 @@ export function createScrollPersistence(opts: Options) {
     if (prev?.x === pos.x && prev?.y === pos.y) return
 
     setCache(sessionKey, tab, { x: pos.x, y: pos.y })
-    dirty.add(sessionKey)
+    MutableHashSet.add(dirty, sessionKey)
     schedule(sessionKey)
   }
 
@@ -75,8 +76,8 @@ export function createScrollPersistence(opts: Options) {
     if (timer) clearTimeout(timer)
     timers.delete(sessionKey)
 
-    if (!dirty.has(sessionKey)) return
-    dirty.delete(sessionKey)
+    if (!MutableHashSet.has(dirty, sessionKey)) return
+    MutableHashSet.remove(dirty, sessionKey)
 
     opts.onFlush(sessionKey, clone(cache[sessionKey]))
   }
@@ -97,7 +98,7 @@ export function createScrollPersistence(opts: Options) {
       const timer = timers.get(key)
       if (timer) clearTimeout(timer)
       timers.delete(key)
-      dirty.delete(key)
+      MutableHashSet.remove(dirty, key)
     }
 
     setCache(

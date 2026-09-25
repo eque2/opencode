@@ -1,4 +1,4 @@
-import { DateTime, Predicate, Random } from "effect"
+import { Array as Arr, DateTime, HashSet, MutableHashSet, Predicate, Random } from "effect"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -115,15 +115,8 @@ const normalizeSessionTab = (path: ReturnType<typeof createPathHelpers> | undefi
   return path.tab(tab)
 }
 
-const normalizeSessionTabList = (path: ReturnType<typeof createPathHelpers> | undefined, all: string[]) => {
-  const seen = new Set<string>()
-  return all.flatMap((tab) => {
-    const value = normalizeSessionTab(path, tab)
-    if (seen.has(value)) return []
-    seen.add(value)
-    return [value]
-  })
-}
+const normalizeSessionTabList = (path: ReturnType<typeof createPathHelpers> | undefined, all: string[]) =>
+  Arr.dedupe(all.map((tab) => normalizeSessionTab(path, tab)))
 
 const normalizeStoredSessionTabs = (key: string, tabs: SessionTabs) => {
   const path = sessionPath(key)
@@ -441,8 +434,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const [colors, setColors] = createStore<Record<string, AvatarColorKey>>({})
     const colorRequested = new Map<string, AvatarColorKey>()
 
-    function pickAvailableColor(used: Set<string>): AvatarColorKey {
-      const available = AVATAR_COLOR_KEYS.filter((c) => !used.has(c))
+    function pickAvailableColor(used: MutableHashSet.MutableHashSet<string>): AvatarColorKey {
+      const available = AVATAR_COLOR_KEYS.filter((c) => !MutableHashSet.has(used, c))
       if (available.length === 0)
         return AVATAR_COLOR_KEYS[Math.floor(random.nextDoubleUnsafe() * AVATAR_COLOR_KEYS.length)]
       return available[Math.floor(random.nextDoubleUnsafe() * available.length)]
@@ -480,7 +473,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       const map = roots()
       if (map.size === 0) return directory
 
-      const visited = new Set<string>()
+      const visited = MutableHashSet.empty<string>()
       const chain = [directory]
 
       while (chain.length) {
@@ -490,8 +483,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const next = map.get(current)
         if (!next) return current
 
-        if (visited.has(next)) return directory
-        visited.add(next)
+        if (MutableHashSet.has(visited, next)) return directory
+        MutableHashSet.add(visited, next)
         chain.push(next)
       }
 
@@ -500,7 +493,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
     createEffect(() => {
       const projects = server.projects.list()
-      const seen = new Set(projects.map((project) => project.worktree))
+      const seen = MutableHashSet.fromIterable(projects.map((project) => project.worktree))
 
       batch(() => {
         for (const project of projects) {
@@ -509,9 +502,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
 
           server.projects.remove(project.worktree)
 
-          if (!seen.has(root)) {
+          if (!MutableHashSet.has(seen, root)) {
             server.projects.open(root)
-            seen.add(root)
+            MutableHashSet.add(seen, root)
           }
 
           if (project.expanded) server.projects.expand(root)
@@ -550,10 +543,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         if (project.icon?.color) colorRequested.delete(project.worktree)
       }
 
-      const used = new Set<string>()
+      const used = MutableHashSet.empty<string>()
       for (const project of projects) {
         const color = project.icon?.color ?? colors[project.worktree]
-        if (color) used.add(color)
+        if (color) MutableHashSet.add(used, color)
       }
 
       for (const project of projects) {
@@ -562,7 +555,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         const existing = colors[worktree]
         const color = existing ?? pickAvailableColor(used)
         if (!existing) {
-          used.add(color)
+          MutableHashSet.add(used, color)
           setColors(worktree, color)
         }
         if (!project.id) continue
@@ -644,10 +637,10 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       projects: {
         list,
         recentlyClosed: createMemo(() => {
-          const known = new Set(serverSync().data.project.map((project) => pathKey(project.worktree)))
+          const known = HashSet.fromIterable(serverSync().data.project.map((project) => pathKey(project.worktree)))
           return server.projects
             .recentlyClosed()
-            .filter((worktree) => known.has(pathKey(worktree)))
+            .filter((worktree) => HashSet.has(known, pathKey(worktree)))
             .slice(0, RECENTLY_CLOSED_DISPLAY_LIMIT)
             .map((worktree) => enrich({ worktree, expanded: false }))
         }),
@@ -942,7 +935,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
             open: createMemo(() => s().reviewOpen ?? []),
             setOpen(open: string[]) {
               const session = key()
-              const next = Array.from(new Set(open))
+              const next = Arr.dedupe(open)
               const current = store.sessionView[session]
               if (!current) {
                 setStore("sessionView", session, {

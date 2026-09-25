@@ -1,3 +1,4 @@
+import { Array as Arr } from "effect"
 import type { Accessor } from "solid-js"
 
 export function ensureSessionKey(key: string, touch: (key: string) => void, seed: (key: string) => void) {
@@ -24,15 +25,13 @@ export function pruneSessionKeys(input: {
 }) {
   if (!input.keep) return []
 
-  const keys = new Set<string>([...input.view, ...input.tabs])
-  if (keys.size <= input.max) return []
+  const keys = Arr.dedupe([...input.view, ...input.tabs])
+  if (keys.length <= input.max) return []
 
   const score = (key: string) => {
     if (key === input.keep) return Number.MAX_SAFE_INTEGER
     return input.used.get(key) ?? 0
   }
 
-  return Array.from(keys)
-    .sort((a, b) => score(b) - score(a))
-    .slice(input.max)
+  return keys.sort((a, b) => score(b) - score(a)).slice(input.max)
 }
