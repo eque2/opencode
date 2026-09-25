@@ -1,5 +1,6 @@
 import type { BoxRenderable, TextareaRenderable, ScrollBoxRenderable } from "@opentui/core"
 import { pathToFileURL } from "bun"
+import { Effect, Fiber } from "effect"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { firstBy } from "remeda"
@@ -113,18 +114,18 @@ export function Autocomplete(props: {
   })
 
   createEffect(() => {
-    if (store.visible) {
-      let lastPos = { x: 0, y: 0, width: 0 }
-      const interval = setInterval(() => {
-        const anchor = props.anchor()
-        if (anchor.x !== lastPos.x || anchor.y !== lastPos.y || anchor.width !== lastPos.width) {
-          lastPos = { x: anchor.x, y: anchor.y, width: anchor.width }
-          setPositionTick((t) => t + 1)
-        }
-      }, 50)
-
-      onCleanup(() => clearInterval(interval))
-    }
+    if (!store.visible) return
+    let lastPos = { x: 0, y: 0, width: 0 }
+    const check = Effect.sync(() => {
+      const anchor = props.anchor()
+      if (anchor.x !== lastPos.x || anchor.y !== lastPos.y || anchor.width !== lastPos.width) {
+        lastPos = { x: anchor.x, y: anchor.y, width: anchor.width }
+        setPositionTick((t) => t + 1)
+      }
+    })
+    // Each check waits first, as the first setInterval tick did.
+    const poll = Effect.runFork(Effect.forever(Effect.delay(check, "50 millis")))
+    onCleanup(() => Effect.runFork(Fiber.interrupt(poll)))
   })
 
   const position = createMemo(() => {

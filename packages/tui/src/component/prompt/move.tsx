@@ -1,3 +1,4 @@
+import { Effect, Fiber } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import path from "path"
 import { useTuiPaths } from "../../context/runtime"
@@ -189,8 +190,11 @@ export function usePromptMove(input: { projectID: () => string | undefined; sess
       setCreatingDots(3)
       return
     }
-    const timer = setInterval(() => setCreatingDots((dots) => (dots % 3) + 1), 1000)
-    onCleanup(() => clearInterval(timer))
+    // Each tick waits first, as the first setInterval tick did.
+    const ticker = Effect.runFork(
+      Effect.forever(Effect.delay(Effect.sync(() => setCreatingDots((dots) => (dots % 3) + 1)), "1 second")),
+    )
+    onCleanup(() => Effect.runFork(Fiber.interrupt(ticker)))
   })
 
   return {

@@ -1,3 +1,4 @@
+import { Effect, Fiber, Option } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { useDialog } from "../../ui/dialog"
 import { useSDK } from "../../context/sdk"
@@ -93,9 +94,20 @@ export function usePromptWorkspace(sessionID?: string) {
     if (warped) showNotice(workspace.name)
   }
 
+  // A new notice restarts the 4 second hide delay; unmount stops it.
+  let noticeTimer: Option.Option<Fiber.Fiber<void>> = Option.none()
+  function stopNoticeTimer() {
+    if (Option.isSome(noticeTimer)) Effect.runFork(Fiber.interrupt(noticeTimer.value))
+    noticeTimer = Option.none()
+  }
+  onCleanup(stopNoticeTimer)
+
   function showNotice(name: string) {
     setNotice(`Warped to ${name}`)
-    setTimeout(() => setNotice(undefined), 4000)
+    stopNoticeTimer()
+    noticeTimer = Option.some(
+      Effect.runFork(Effect.sleep("4 seconds").pipe(Effect.andThen(Effect.sync(() => setNotice(undefined))))),
+    )
   }
 
   function clearNotice() {
@@ -111,8 +123,11 @@ export function usePromptWorkspace(sessionID?: string) {
       setCreatingDots(3)
       return
     }
-    const timer = setInterval(() => setCreatingDots((dots) => (dots % 3) + 1), 1000)
-    onCleanup(() => clearInterval(timer))
+    // Each tick waits first, as the first setInterval tick did.
+    const ticker = Effect.runFork(
+      Effect.forever(Effect.delay(Effect.sync(() => setCreatingDots((dots) => (dots % 3) + 1)), "1 second")),
+    )
+    onCleanup(() => Effect.runFork(Fiber.interrupt(ticker)))
   })
 
   const label = createMemo<
