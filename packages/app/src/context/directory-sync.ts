@@ -42,14 +42,98 @@ export const createDirSyncContext = (
 ) => {
   const current = createMemo(() => serverSync.child(directory, { mcp: true }))
   const absolute = (path: string) => (current()[0].path.directory + "/" + path).replace("//", "/")
-  const data = new Proxy({} as State, {
-    get(_, property: keyof State) {
-      if (property === "session_working") return serverSync.session.data.session_working.bind(serverSync.session.data)
-      if (HashSet.has(sessionFields, property))
-        return serverSync.session.data[property as keyof typeof serverSync.session.data]
-      return current()[0][property]
+  // The session fields live in the server session store; every other field reads the directory store.
+  // Each read goes to the current store, as the old Proxy did.
+  const data: State = {
+    get status() {
+      return current()[0].status
     },
-  })
+    get agent() {
+      return current()[0].agent
+    },
+    get command() {
+      return current()[0].command
+    },
+    get reference() {
+      return current()[0].reference
+    },
+    get project() {
+      return current()[0].project
+    },
+    get projectMeta() {
+      return current()[0].projectMeta
+    },
+    get icon() {
+      return current()[0].icon
+    },
+    get provider_ready() {
+      return current()[0].provider_ready
+    },
+    get provider() {
+      return current()[0].provider
+    },
+    get config() {
+      return current()[0].config
+    },
+    get path() {
+      return current()[0].path
+    },
+    get session() {
+      return current()[0].session
+    },
+    get sessionTotal() {
+      return current()[0].sessionTotal
+    },
+    get session_status() {
+      return serverSync.session.data.session_status
+    },
+    session_working: (id: string) => serverSync.session.data.session_working(id),
+    get session_diff() {
+      return serverSync.session.data.session_diff
+    },
+    get todo() {
+      return serverSync.session.data.todo
+    },
+    get permission() {
+      return serverSync.session.data.permission
+    },
+    get question() {
+      return serverSync.session.data.question
+    },
+    get mcp_ready() {
+      return current()[0].mcp_ready
+    },
+    get mcp() {
+      return current()[0].mcp
+    },
+    get mcp_resource() {
+      return current()[0].mcp_resource
+    },
+    get lsp_ready() {
+      return current()[0].lsp_ready
+    },
+    get lsp() {
+      return current()[0].lsp
+    },
+    get vcs() {
+      return current()[0].vcs
+    },
+    get limit() {
+      return current()[0].limit
+    },
+    get message() {
+      return serverSync.session.data.message
+    },
+    get session_message() {
+      return serverSync.session.data.session_message
+    },
+    get part() {
+      return serverSync.session.data.part
+    },
+    get part_text_accum_delta() {
+      return serverSync.session.data.part_text_accum_delta
+    },
+  }
   const set = ((...input: unknown[]) => {
     if (typeof input[0] === "string" && HashSet.has(sessionFields, input[0])) {
       return (serverSync.session.set as (...args: unknown[]) => unknown)(...input)
