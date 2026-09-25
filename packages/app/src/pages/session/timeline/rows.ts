@@ -2,6 +2,7 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
 import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/message-part"
+import { Predicate } from "effect"
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
 import { uniqueSummaryDiffs } from "./summary-diffs"
 import { compareMessages } from "@/utils/session-message"
@@ -217,13 +218,10 @@ export namespace Timeline {
     }
 
     if (error) {
-      const data = error.data?.message
       rows.push(
         new TimelineRow.Error({
           userMessageID: userMessage.id,
-          text: unwrapErrorMessage(
-            typeof data === "string" ? data : data === undefined || data === null ? "" : String(data),
-          ),
+          text: unwrapErrorMessage(errorDataMessage(error.data)),
         }),
       )
     }
@@ -264,6 +262,18 @@ export namespace Timeline {
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/[*_~]+/g, "")
       .trim()
+  }
+
+  /**
+   * Reads `data.message` of an assistant error as text. MessageOutputLengthError
+   * types its data as unknown, so the message is read through guards.
+   */
+  function errorDataMessage(data: unknown) {
+    const message = Predicate.hasProperty(data, "message") ? data.message : ""
+    if (Predicate.isString(message)) return message
+    if (Predicate.isNumber(message) || Predicate.isBoolean(message) || Predicate.isBigInt(message))
+      return String(message)
+    return ""
   }
 
   function unwrapErrorMessage(message: string) {
