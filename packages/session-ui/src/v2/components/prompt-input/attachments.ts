@@ -1,4 +1,4 @@
-import { Effect, HashMap, HashSet, Option } from "effect"
+import { Effect, HashMap, HashSet, Option, Random } from "effect"
 import { onMount } from "solid-js"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import type { PromptInputV2Attachment, PromptInputV2Prompt } from "./types"
@@ -127,9 +127,10 @@ export function createPromptInputV2Attachments(
         input.duplicate()
         return true
       }
+      const id = globalThis.crypto?.randomUUID?.() ?? (yield* Random.next).toString(16).slice(2)
       const attachment: PromptInputV2Attachment = {
         type: "image",
-        id: globalThis.crypto?.randomUUID?.() ?? Math.random().toString(16).slice(2),
+        id,
         filename: file.name,
         sourcePath,
         mime: mime.value,
