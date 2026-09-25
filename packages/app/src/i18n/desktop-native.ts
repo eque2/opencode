@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 export const DESKTOP_NATIVE_LOCALES = [
   "en",
   "zh",
@@ -198,12 +200,15 @@ export const DESKTOP_NATIVE_LOCALE_TAGS: Record<DesktopNativeLocale, string> = {
 export function detectDesktopNativeLocale(languages: readonly string[]): DesktopNativeLocale {
   for (const language of languages) {
     const source = locale(language)
-    if (!source) continue
-    if (["no", "nb", "nn"].includes(source.language)) return "no"
-    const match = DESKTOP_NATIVE_LOCALES.find((candidate) => {
-      const target = locale(DESKTOP_NATIVE_LOCALE_TAGS[candidate])
-      return target?.language === source.language && target.script === source.script
-    })
+    if (Option.isNone(source)) continue
+    const { language: sourceLanguage, script: sourceScript } = source.value
+    if (["no", "nb", "nn"].includes(sourceLanguage)) return "no"
+    const match = DESKTOP_NATIVE_LOCALES.find((candidate) =>
+      Option.exists(
+        locale(DESKTOP_NATIVE_LOCALE_TAGS[candidate]),
+        (target) => target.language === sourceLanguage && target.script === sourceScript,
+      ),
+    )
     if (match) return match
   }
   return "en"
@@ -213,13 +218,8 @@ export function desktopNativePluralCategories(locale: DesktopNativeLocale) {
   return new Intl.PluralRules(DESKTOP_NATIVE_LOCALE_TAGS[locale]).resolvedOptions().pluralCategories
 }
 
-function locale(value: string) {
-  try {
-    return new Intl.Locale(value).maximize()
-  } catch {
-    return undefined
-  }
-}
+/** The tag with its likely subtags added. None when Intl.Locale rejects the tag. */
+const locale = Option.liftThrowable((value: string) => new Intl.Locale(value).maximize())
 
 export const DESKTOP_NATIVE_ENGLISH = {
   "desktop.menu.app": "OpenCode",
