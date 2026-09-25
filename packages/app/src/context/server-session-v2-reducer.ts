@@ -4,6 +4,7 @@ import { MutableHashMap, Option, Struct } from "effect"
 type Assistant = Extract<SessionMessageInfo, { type: "assistant" }>
 type Compaction = Extract<SessionMessageInfo, { type: "compaction" }>
 type Shell = Extract<SessionMessageInfo, { type: "shell" }>
+type Content = Assistant["content"][number]
 
 export type V2SessionReduction = {
   sessionID: string
@@ -463,20 +464,22 @@ function updateContent<T extends "text" | "reasoning">(
   sessionID: string,
   type: T,
   ordinal: number,
-  apply: (
-    item: Extract<Assistant["content"][number], { type: T }>,
-  ) => Extract<Assistant["content"][number], { type: T }>,
+  apply: (item: Extract<Content, { type: T }>) => Extract<Content, { type: T }>,
 ) {
   return updateAssistant(source, messageID, sessionID, (assistant) => {
     let index = -1
     return {
       ...assistant,
       content: assistant.content.map((item) => {
-        if (item.type !== type || ++index !== ordinal) return item
-        return apply(item as Extract<Assistant["content"][number], { type: T }>)
+        if (!isContentType(item, type) || ++index !== ordinal) return item
+        return apply(item)
       }),
     }
   })
+}
+
+function isContentType<T extends Content["type"]>(item: Content, type: T): item is Extract<Content, { type: T }> {
+  return item.type === type
 }
 
 function updateTool(
