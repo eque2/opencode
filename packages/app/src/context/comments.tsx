@@ -1,5 +1,5 @@
 import { batch, createMemo, createRoot, onCleanup } from "solid-js"
-import { Option } from "effect"
+import { DateTime, Option } from "effect"
 import { createStore, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { useParams } from "@solidjs/router"
@@ -128,7 +128,7 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
   const add = (input: Omit<LineComment, "id" | "time">) => {
     const next: LineComment = {
       id: uuid(),
-      time: Date.now(),
+      time: DateTime.toEpochMillis(DateTime.nowUnsafe()),
       ...input,
       selection: cloneSelection(input.selection),
     }

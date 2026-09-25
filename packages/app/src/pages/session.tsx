@@ -20,7 +20,7 @@ import {
   type ParentProps,
   untrack,
 } from "solid-js"
-import { Effect, Option, Predicate } from "effect"
+import { DateTime, Effect, Option, Predicate } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
@@ -436,7 +436,7 @@ export default function Page() {
 
         const pending = layout.handoff.tabs()
         if (!pending) return
-        if (Date.now() - pending.at > 60_000) {
+        if (DateTime.toEpochMillis(DateTime.nowUnsafe()) - pending.at > 60_000) {
           layout.handoff.clearTabs()
           return
         }
@@ -946,10 +946,11 @@ export default function Page() {
       if (nested && nested !== root) return
     }
 
-    setUi("scrollGesture", Date.now())
+    setUi("scrollGesture", DateTime.toEpochMillis(DateTime.nowUnsafe()))
   }
 
-  const hasScrollGesture = () => Date.now() - ui.scrollGesture < scrollGestureWindowMs
+  const hasScrollGesture = () =>
+    DateTime.toEpochMillis(DateTime.nowUnsafe()) - ui.scrollGesture < scrollGestureWindowMs
 
   createEffect(
     on(

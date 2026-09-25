@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { createRoot } from "solid-js"
-import { Effect, Option } from "effect"
+import { DateTime, Effect, Option } from "effect"
 import type { LineComment } from "./comments"
 
 let createCommentSessionForTest: typeof import("./comments").createCommentSessionForTest
@@ -39,7 +39,7 @@ function line(file: string, id: string, time: number): LineComment {
 describe("comments session indexing", () => {
   test("keeps file list behavior and aggregate chronological order", () => {
     createRoot((dispose) => {
-      const now = Date.now()
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe())
       const comments = createCommentSessionForTest({
         "a.ts": [line("a.ts", "a-late", now + 20_000), line("a.ts", "a-early", now + 1_000)],
         "b.ts": [line("b.ts", "b-mid", now + 10_000)],
