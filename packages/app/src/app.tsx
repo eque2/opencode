@@ -293,19 +293,18 @@ function DesktopCommands() {
   const language = useLanguage()
   const platform = usePlatform()
 
-  command.register("desktop", () => {
-    const commands: CommandOption[] = []
-    if (platform.platform === "desktop" && platform.exportDebugLogs) {
-      commands.push({
+  command.register("desktop", (): CommandOption[] => {
+    if (platform.platform !== "desktop" || !platform.exportDebugLogs) return []
+    return [
+      {
         id: "logs.export",
         title: language.t("command.logs.export"),
         category: language.t("command.category.settings"),
         onSelect: () => {
           void platform.exportDebugLogs?.()
         },
-      })
-    }
-    return commands
+      },
+    ]
   })
 
   return undefined
