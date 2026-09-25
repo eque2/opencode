@@ -132,7 +132,7 @@ describe("checkServerHealth", () => {
         const timeout = Object.getOwnPropertyDescriptor(AbortSignal, "timeout")
         Object.defineProperty(AbortSignal, "timeout", {
           configurable: true,
-          // eslint-disable-next-line effect/no-undefined-use-option -- Object.defineProperty must shadow the platform AbortSignal.timeout with undefined; the test models a runtime without that API, and the static can be inherited, so deleting it does not remove it
+          // eslint-disable-next-line effect/no-undefined-use-option -- (b) the test models a runtime without AbortSignal.timeout, where the static is the JavaScript undefined value; deleting it does not remove an inherited static
           value: undefined,
         })
 
