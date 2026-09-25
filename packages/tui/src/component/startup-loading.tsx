@@ -1,3 +1,4 @@
+import { DateTime } from "effect"
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { useTheme } from "../context/theme"
 import { Spinner } from "./spinner"
@@ -19,7 +20,7 @@ export function StartupLoading(props: { ready: () => boolean }) {
       if (!show()) return
       if (hold) return
 
-      const left = 3000 - (Date.now() - stamp)
+      const left = 3000 - (DateTime.toEpochMillis(DateTime.nowUnsafe()) - stamp)
       if (left <= 0) {
         setShow(false)
         return
@@ -41,7 +42,7 @@ export function StartupLoading(props: { ready: () => boolean }) {
 
     wait = setTimeout(() => {
       wait = undefined
-      stamp = Date.now()
+      stamp = DateTime.toEpochMillis(DateTime.nowUnsafe())
       setShow(true)
     }, 500).unref()
   })
