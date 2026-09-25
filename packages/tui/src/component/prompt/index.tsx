@@ -126,10 +126,11 @@ function hasEditorRangeSelection(selection: EditorSelection["ranges"][number]) {
   )
 }
 
-function getEditorRangeLabel(selection: EditorSelection["ranges"][number]) {
-  if (!hasEditorRangeSelection(selection)) return
-  if (selection.selection.start.line === selection.selection.end.line) return `#${selection.selection.start.line}`
-  return `#${selection.selection.start.line}-${selection.selection.end.line}`
+function getEditorRangeLabel(selection: EditorSelection["ranges"][number]): Option.Option<string> {
+  if (!hasEditorRangeSelection(selection)) return Option.none()
+  if (selection.selection.start.line === selection.selection.end.line)
+    return Option.some(`#${selection.selection.start.line}`)
+  return Option.some(`#${selection.selection.start.line}-${selection.selection.end.line}`)
 }
 
 function formatEditorContext(selection: EditorSelection) {
@@ -139,18 +140,21 @@ function formatEditorContext(selection: EditorSelection) {
 
   const ranges = selected.map((range, index) => {
     const prefix = selected.length > 1 ? `Selection ${index + 1}: ` : ""
-    return `Note: The user selected ${prefix}${getEditorRangeLabel(range)} from "${selection.filePath}". \`\`\`${range.text}\`\`\`\n\n`
+    const label = Option.getOrElse(getEditorRangeLabel(range), () => "")
+    return `Note: The user selected ${prefix}${label} from "${selection.filePath}". \`\`\`${range.text}\`\`\`\n\n`
   })
 
   return `<system-reminder>${ranges.join("\n")} This may or may not be relevant to the current task.</system-reminder>\n`
 }
 
-let stashed: { prompt: PromptInfo; cursor: number } | undefined
+let stashed: Option.Option<{ prompt: PromptInfo; cursor: number }> = Option.none()
 
 export function Prompt(props: PromptProps) {
   let input: TextareaRenderable
   let anchor: BoxRenderable
-  const [inputTarget, setInputTarget] = createSignal<TextareaRenderable | undefined>()
+  const [inputTarget, setInputTarget] = createSignal(Option.none<TextareaRenderable>())
+  // The keymap target accessor takes the renderable or undefined.
+  const keymapTarget = () => Option.getOrUndefined(inputTarget())
 
   const leader = useLeaderActive()
   const local = useLocal()
@@ -184,35 +188,43 @@ export function Prompt(props: PromptProps) {
   const shell = createMemo(() => props.placeholders?.shell ?? [])
   const fileContextEnabled = createMemo(() => kv.get("file_context_enabled", true))
   const [dismissedEditorSelectionKey, setDismissedEditorSelectionKey] = createSignal<string>()
-  const editorContext = createMemo(() => {
-    const selection = fileContextEnabled() ? editor.selection() : undefined
-    if (!selection) return
-    return editorSelectionKey(selection) === dismissedEditorSelectionKey() ? undefined : selection
+  const editorContext = createMemo((): Option.Option<EditorSelection> => {
+    if (!fileContextEnabled()) return Option.none()
+    return Option.filter(
+      Option.fromNullishOr(editor.selection()),
+      (selection) => editorSelectionKey(selection) !== dismissedEditorSelectionKey(),
+    )
   })
-  const editorPath = createMemo(() => editorContext()?.filePath)
-  const editorSelectionLabel = createMemo(() => {
-    const ranges = editorContext()?.ranges
-    if (!ranges) return
-    const first = ranges.find(hasEditorRangeSelection) ?? ranges[0]
-    if (!first) return
-    return [getEditorRangeLabel(first), ranges.length > 1 ? `+${ranges.length - 1}` : undefined]
-      .filter(Boolean)
-      .join(" ")
-  })
-  const editorFileLabel = createMemo(() => {
-    const value = editorPath()
-    if (!value) return
-    const filename = path.basename(value)
-    const file = /^index\.[^./]+$/.test(filename)
-      ? [path.basename(path.dirname(value)), filename].filter(Boolean).join("/")
-      : filename
-    return `${file.split(path.sep).join("/")}${editorSelectionLabel() ?? ""}`
-  })
-  const editorFileLabelDisplay = createMemo(() => {
-    const file = editorFileLabel()
-    if (!file) return
-    return Locale.truncateMiddle(file, Math.max(12, Math.min(48, Math.floor(dimensions().width / 3))))
-  })
+  const editorPath = createMemo(() =>
+    Option.filter(
+      Option.map(editorContext(), (selection) => selection.filePath),
+      (filePath) => filePath !== "",
+    ),
+  )
+  const editorSelectionLabel = createMemo(() =>
+    Option.flatMap(editorContext(), ({ ranges }) =>
+      Option.map(Option.fromNullishOr(ranges.find(hasEditorRangeSelection) ?? ranges[0]), (first) =>
+        [...Option.toArray(getEditorRangeLabel(first)), ...(ranges.length > 1 ? [`+${ranges.length - 1}`] : [])].join(
+          " ",
+        ),
+      ),
+    ),
+  )
+  const editorFileLabel = createMemo(() =>
+    Option.map(editorPath(), (value) => {
+      const filename = path.basename(value)
+      const file = /^index\.[^./]+$/.test(filename)
+        ? [path.basename(path.dirname(value)), filename].filter(Boolean).join("/")
+        : filename
+      return `${file.split(path.sep).join("/")}${Option.getOrElse(editorSelectionLabel(), () => "")}`
+    }),
+  )
+  const editorFileLabelDisplay = createMemo(() =>
+    Option.map(
+      Option.filter(editorFileLabel(), (file) => file !== ""),
+      (file) => Locale.truncateMiddle(file, Math.max(12, Math.min(48, Math.floor(dimensions().width / 3)))),
+    ),
+  )
   const editorContextLabelState = createMemo(() => editor.labelState())
   const [auto, setAuto] = createSignal<AutocompleteRef>()
   const workspace = usePromptWorkspace(props.sessionID)
@@ -233,7 +245,7 @@ export function Prompt(props: PromptProps) {
   }
 
   function dismissEditorContext() {
-    setDismissedEditorSelectionKey(editorSelectionKey(editorContext()))
+    setDismissedEditorSelectionKey(editorSelectionKey(Option.getOrUndefined(editorContext())))
     editor.clearSelection()
   }
   const fileStyleId = syntax().getStyleId("extmark.file")!
@@ -293,24 +305,23 @@ export function Prompt(props: PromptProps) {
     return messages.findLast((m): m is UserMessage => m.role === "user")
   })
 
-  const usage = createMemo(() => {
-    if (!props.sessionID) return
+  const usage = createMemo((): Option.Option<{ context: string; cost: Option.Option<string> }> => {
+    if (!props.sessionID) return Option.none()
     const session = sync.session.get(props.sessionID)
     const msg = sync.data.message[props.sessionID] ?? []
     const last = msg.findLast((item): item is AssistantMessage => item.role === "assistant" && item.tokens.output > 0)
-    if (!last) return
+    if (!last) return Option.none()
 
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
-    if (tokens <= 0) return
+    if (tokens <= 0) return Option.none()
 
-    const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const limit = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]?.limit.context
     const cost = session?.cost ?? 0
-    return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
-    }
+    return Option.some({
+      context: limit ? `${Locale.number(tokens)} (${Math.round((tokens / limit) * 100)}%)` : Locale.number(tokens),
+      cost: cost > 0 ? Option.some(money.format(cost)) : Option.none(),
+    })
   })
 
   const [store, setStore] = createStore<{
@@ -396,7 +407,7 @@ export function Prompt(props: PromptProps) {
         title: "Remove editor context",
         name: "prompt.editor_context.clear",
         category: "Prompt",
-        enabled: Boolean(editorContext()),
+        enabled: Option.isSome(editorContext()),
         run: () => {
           dismissEditorContext()
           dialog.clear()
@@ -486,7 +497,7 @@ export function Prompt(props: PromptProps) {
                   renderer,
                   value,
                   cwd:
-                    (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
+                    (project.instance.path().worktree !== "/" && project.instance.path().worktree) ||
                     project.instance.directory() ||
                     paths.cwd,
                 }),
@@ -659,21 +670,22 @@ export function Prompt(props: PromptProps) {
 
   onMount(() => {
     const saved = stashed
-    stashed = undefined
+    stashed = Option.none()
     if (store.prompt.input) return
-    if (saved && saved.prompt.input) {
-      input.setText(saved.prompt.input)
-      setStore("prompt", saved.prompt)
-      restoreExtmarksFromParts(saved.prompt.parts)
-      input.cursorOffset = saved.cursor
+    if (Option.isSome(saved) && saved.value.prompt.input) {
+      input.setText(saved.value.prompt.input)
+      setStore("prompt", saved.value.prompt)
+      restoreExtmarksFromParts(saved.value.prompt.parts)
+      input.cursorOffset = saved.value.cursor
     }
   })
 
   onCleanup(() => {
     if (store.prompt.input) {
-      stashed = { prompt: unwrap(store.prompt), cursor: input.cursorOffset }
+      stashed = Option.some({ prompt: unwrap(store.prompt), cursor: input.cursorOffset })
     }
-    setInputTarget(undefined)
+    setInputTarget(Option.none())
+    // eslint-disable-next-line effect/no-undefined-use-option -- (b) @opencode-ai/plugin TuiPromptProps.ref is (ref: TuiPromptRef | undefined) => void; unmount must pass undefined
     props.ref?.(undefined)
   })
 
@@ -837,27 +849,27 @@ export function Prompt(props: PromptProps) {
 
   useBindings(() => {
     return {
-      target: inputTarget,
-      enabled: inputTarget() !== undefined && !props.disabled,
+      target: keymapTarget,
+      enabled: Option.isSome(inputTarget()) && !props.disabled,
       bindings: tuiConfig.keybinds.get("prompt.paste"),
     }
   })
 
   useBindings(() => {
     return {
-      target: inputTarget,
-      enabled: inputTarget() !== undefined && !props.disabled && store.prompt.input !== "",
+      target: keymapTarget,
+      enabled: Option.isSome(inputTarget()) && !props.disabled && store.prompt.input !== "",
       bindings: tuiConfig.keybinds.get("prompt.clear"),
     }
   })
 
   useBindings(() => {
     return {
-      target: inputTarget,
+      target: keymapTarget,
       enabled: (() => {
         cursorVersion()
         return (
-          inputTarget() !== undefined &&
+          Option.isSome(inputTarget()) &&
           !props.disabled &&
           store.mode === "normal" &&
           !auto()?.visible &&
@@ -880,18 +892,18 @@ export function Prompt(props: PromptProps) {
 
   useBindings(() => {
     return {
-      target: inputTarget,
-      enabled: inputTarget() !== undefined && store.mode === "shell",
+      target: keymapTarget,
+      enabled: Option.isSome(inputTarget()) && store.mode === "shell",
       bindings: [{ key: "escape", desc: "Exit shell mode", group: "Prompt", cmd: () => setStore("mode", "normal") }],
     }
   })
 
   useBindings(() => {
     return {
-      target: inputTarget,
+      target: keymapTarget,
       enabled: (() => {
         cursorVersion()
-        return inputTarget() !== undefined && store.mode === "shell" && input?.visualCursor.offset === 0
+        return Option.isSome(inputTarget()) && store.mode === "shell" && input?.visualCursor.offset === 0
       })(),
       bindings: [{ key: "backspace", desc: "Exit shell mode", group: "Prompt", cmd: () => setStore("mode", "normal") }],
     }
@@ -899,10 +911,10 @@ export function Prompt(props: PromptProps) {
 
   useBindings(() => {
     return {
-      target: inputTarget,
+      target: keymapTarget,
       enabled: (() => {
         cursorVersion()
-        return inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined
+        return Option.isSome(inputTarget()) && !props.disabled && !auto()?.visible && input !== undefined
       })(),
       commands: [
         {
@@ -931,10 +943,10 @@ export function Prompt(props: PromptProps) {
 
   useBindings(() => {
     return {
-      target: inputTarget,
+      target: keymapTarget,
       enabled: (() => {
         cursorVersion()
-        return inputTarget() !== undefined && !props.disabled && !auto()?.visible && input !== undefined
+        return Option.isSome(inputTarget()) && !props.disabled && !auto()?.visible && input !== undefined
       })(),
       commands: [
         {
@@ -1083,17 +1095,17 @@ export function Prompt(props: PromptProps) {
     const currentMode = store.mode
     const editorSelection = editorContext()
     const editorParts =
-      editorSelection && editor.labelState() === "pending"
+      Option.isSome(editorSelection) && editor.labelState() === "pending"
         ? [
             {
               type: "text" as const,
-              text: formatEditorContext(editorSelection),
+              text: formatEditorContext(editorSelection.value),
               synthetic: true,
               metadata: {
                 kind: "editor_context",
-                source: editorSelection.source ?? "editor",
-                filePath: editorSelection.filePath,
-                ranges: editorSelection.ranges,
+                source: editorSelection.value.source ?? "editor",
+                filePath: editorSelection.value.filePath,
+                ranges: editorSelection.value.ranges,
               },
             },
           ]
@@ -1506,7 +1518,7 @@ export function Prompt(props: PromptProps) {
                 Object.assign(r, {
                   getClipboardText: (text: string) => expandPastedTextPlaceholders(text, store.prompt.parts),
                 })
-                setInputTarget(r)
+                setInputTarget(Option.some(r))
                 if (promptPartTypeId === 0) {
                   promptPartTypeId = input.extmarks.registerType("prompt-part")
                 }
@@ -1748,7 +1760,7 @@ export function Prompt(props: PromptProps) {
           </Switch>
           <Show when={status().type !== "retry"}>
             <box gap={2} flexDirection="row">
-              <Show when={editorContextLabelState() !== "none" ? editorFileLabelDisplay() : undefined}>
+              <Show when={editorContextLabelState() !== "none" && Option.getOrUndefined(editorFileLabelDisplay())}>
                 {(file) => (
                   <text fg={editorContextLabelState() === "pending" ? theme.secondary : theme.textMuted}>{file()}</text>
                 )}
@@ -1756,10 +1768,10 @@ export function Prompt(props: PromptProps) {
               <Switch>
                 <Match when={store.mode === "normal"}>
                   <Switch>
-                    <Match when={usage()}>
+                    <Match when={Option.getOrUndefined(usage())}>
                       {(item) => (
                         <text fg={theme.textMuted} wrapMode="none">
-                          {[item().context, item().cost].filter(Boolean).join(" · ")}
+                          {[item().context, ...Option.toArray(item().cost)].join(" · ")}
                         </text>
                       )}
                     </Match>
