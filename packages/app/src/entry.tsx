@@ -1,7 +1,7 @@
 // @refresh reload
 
 import * as Sentry from "@sentry/solid"
-import { Effect, Option, Result, String as Str } from "effect"
+import { Data, Effect, Option, Result, String as Str } from "effect"
 import { render } from "solid-js/web"
 import { AppBaseProviders, AppInterface } from "@/app"
 import { loadInitialLocale } from "@/context/language"
@@ -14,6 +14,9 @@ import pkg from "../package.json"
 import { ServerConnection } from "./context/server"
 
 const DEFAULT_SERVER_URL_KEY = "opencode.settings.dat:defaultServerUrl"
+
+/** The page has no #root element to mount the app into. */
+class RootNotFoundError extends Data.TaggedError("App.RootNotFoundError")<{ readonly message: string }> {}
 
 const getLocale = () => {
   if (typeof navigator !== "object") return "en" as const
@@ -95,10 +98,13 @@ const openExternal: Platform["openExternal"] = (value) => {
 
 const restart: Platform["restart"] = () => Effect.runPromise(Effect.sync(() => window.location.reload()))
 
-const root = document.getElementById("root")
-if (!(root instanceof HTMLElement) && import.meta.env.DEV) {
-  throw new Error(getRootNotFoundError())
-}
+/** The #root element that index.html provides. None when it is missing or not an HTML element. */
+const root = Option.liftPredicate(
+  document.getElementById("root"),
+  (element): element is HTMLElement => element instanceof HTMLElement,
+)
+// A dev build stops at module load with a readable error when #root is missing.
+if (import.meta.env.DEV) Option.getOrThrowWith(root, () => new RootNotFoundError({ message: getRootNotFoundError() }))
 
 const getCurrentUrl = () => {
   if (location.hostname.includes("opencode.ai")) return "http://localhost:4096"
@@ -150,7 +156,7 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   })
 }
 
-if (root instanceof HTMLElement) {
+if (Option.isSome(root)) {
   void loadInitialLocale().then((locale) => {
     const auth = authFromToken(new URLSearchParams(location.search).get("auth_token"))
     clearAuthToken()
@@ -175,7 +181,7 @@ if (root instanceof HTMLElement) {
           </AppBaseProviders>
         </PlatformProvider>
       ),
-      root,
+      root.value,
     )
   })
 }
