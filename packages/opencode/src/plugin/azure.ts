@@ -1,7 +1,7 @@
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { which } from "@opencode-ai/core/util/which"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Effect, MutableHashMap, Option, Schema } from "effect"
+import { DateTime, Effect, MutableHashMap, Option, Schema } from "effect"
 import { OAUTH_DUMMY_KEY } from "../auth"
 import { Process } from "../util/process"
 
@@ -14,7 +14,11 @@ const AzureCliToken = Schema.Struct({
   expires_on: Schema.optional(Schema.Number),
   expiresOn: Schema.optional(Schema.NonEmptyString),
 }).annotate({ identifier: "AzureCliToken" })
+type AzureCliToken = typeof AzureCliToken.Type
 const decodeAzureCliToken = Schema.decodeUnknownPromise(AzureCliToken)
+// Azure CLI versions that give only expiresOn write a local date-time with no zone. DateFromString
+// parses it with the Date constructor, which reads such a string as local time.
+const decodeExpiresOn = Schema.decodeUnknownOption(Schema.DateFromString)
 type AzureCommand = (args: string[]) => Promise<unknown>
 
 export async function AzureAuthPlugin(): Promise<Hooks> {
@@ -35,9 +39,9 @@ export function createAzureAuthHooks(
     const result = await decodeAzureCliToken(
       await run(["account", "get-access-token", "--scope", scope, "--output", "json"]),
     )
-    const expires = result.expires_on !== undefined ? result.expires_on * 1000 : Date.parse(result.expiresOn ?? "")
-    if (!Number.isFinite(expires)) throw new Error("Azure CLI returned an invalid token expiration")
-    const refreshed = { token: result.accessToken, expires }
+    const expires = expiresAt(result)
+    if (Option.isNone(expires)) throw new Error("Azure CLI returned an invalid token expiration")
+    const refreshed = { token: result.accessToken, expires: expires.value }
     MutableHashMap.set(tokens, scope, refreshed)
     return refreshed.token
   }
@@ -113,6 +117,19 @@ async function runAzure(args: string[]): Promise<unknown> {
   const az = Option.getOrElse(await Effect.runPromise(which("az")), () => "az")
   const result = await Process.run([az, ...args])
   return JSON.parse(result.stdout.toString())
+}
+
+function expiresAt(result: AzureCliToken) {
+  const expires = Option.match(Option.fromNullishOr(result.expires_on), {
+    onSome: (seconds) => Option.some(seconds * 1000),
+    onNone: () =>
+      Option.fromNullishOr(result.expiresOn).pipe(
+        Option.flatMap(decodeExpiresOn),
+        Option.flatMap(DateTime.make),
+        Option.map(DateTime.toEpochMillis),
+      ),
+  })
+  return Option.filter(expires, Number.isFinite)
 }
 
 function scopeForRequest(input: RequestInfo | URL) {
