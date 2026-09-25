@@ -6,7 +6,7 @@ import type { HexColor, ResolvedV2Theme } from "@opencode-ai/ui/theme/types"
 import { isHexColor } from "@opencode-ai/ui/theme/validate"
 import { showToast } from "@/utils/toast"
 import type { FitAddon, Ghostty, Terminal as Term } from "ghostty-web"
-import { Chunk, Predicate, Result, Schema } from "effect"
+import { Chunk, Duration, Effect, Predicate, Result, Schema } from "effect"
 import { type ComponentProps, createEffect, createMemo, onCleanup, onMount, splitProps } from "solid-js"
 import { SerializeAddon } from "@/addons/serialize"
 import { matchKeybind, parseKeybind } from "@/context/command"
@@ -16,6 +16,7 @@ import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 import { terminalFontFamily, useSettings } from "@/context/settings"
 import type { LocalPTY } from "@/context/terminal"
+import { createFiberSlot } from "@/utils/fiber-slot"
 import { disposeIfDisposable, getHoveredLinkText, setOptionIfSupported } from "@/utils/runtime-adapters"
 import { terminalWriter } from "@/utils/terminal-writer"
 import { terminalWebSocketURL } from "@/utils/terminal-websocket-url"
@@ -219,7 +220,8 @@ export const Terminal = (props: TerminalProps) => {
   let fitAddon: FitAddon
   let handleResize: () => void
   let fitFrame: number | undefined
-  let sizeTimer: ReturnType<typeof setTimeout> | undefined
+  const sizeSync = createFiberSlot()
+  let sizeQueued = false
   let pendingSize: { cols: number; rows: number } | undefined
   let lastSize: { cols: number; rows: number } | undefined
   let disposed = false
@@ -231,6 +233,8 @@ export const Terminal = (props: TerminalProps) => {
   let output: ReturnType<typeof terminalWriter> | undefined
   let drop: VoidFunction | undefined
   let reconn: ReturnType<typeof setTimeout> | undefined
+  const textareaFocus = createFiberSlot()
+  const mountFocus = createFiberSlot()
   let tries = 0
 
   const addCleanup = (fn: VoidFunction) => {
@@ -314,8 +318,8 @@ export const Terminal = (props: TerminalProps) => {
     if (disposed) return
     if (lastSize?.cols === cols && lastSize?.rows === rows) {
       pendingSize = undefined
-      if (sizeTimer !== undefined) clearTimeout(sizeTimer)
-      sizeTimer = undefined
+      sizeQueued = false
+      sizeSync.interrupt()
       return
     }
 
@@ -327,17 +331,25 @@ export const Terminal = (props: TerminalProps) => {
       return
     }
 
-    if (sizeTimer !== undefined) return
-    sizeTimer = setTimeout(() => {
-      sizeTimer = undefined
-      const next = pendingSize
-      if (!next) return
-      pendingSize = undefined
-      if (disposed) return
-      if (lastSize?.cols === next.cols && lastSize?.rows === next.rows) return
-      lastSize = next
-      void pushSize(next.cols, next.rows)
-    }, 100)
+    // One sync waits at a time; later sizes only replace pendingSize until it runs.
+    if (sizeQueued) return
+    sizeQueued = true
+    sizeSync.run(
+      Effect.sleep(Duration.millis(100)).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            sizeQueued = false
+            const next = pendingSize
+            if (!next) return
+            pendingSize = undefined
+            if (disposed) return
+            if (lastSize?.cols === next.cols && lastSize?.rows === next.rows) return
+            lastSize = next
+            void pushSize(next.cols, next.rows)
+          }),
+        ),
+      ),
+    )
   }
 
   createEffect(() => {
@@ -369,7 +381,8 @@ export const Terminal = (props: TerminalProps) => {
     if (!t) return
     t.focus()
     t.textarea?.focus()
-    setTimeout(() => t.textarea?.focus(), 0)
+    // A zero sleep yields to the next task, as setTimeout(0) did.
+    textareaFocus.run(Effect.sleep(Duration.zero).pipe(Effect.andThen(Effect.sync(() => t.textarea?.focus()))))
   }
   const handlePointerDown = () => {
     const activeElement = document.activeElement
@@ -480,8 +493,8 @@ export const Terminal = (props: TerminalProps) => {
           if (active instanceof HTMLElement && active.isConnected) active.focus()
         }
         restoreFocus()
-        const timer = setTimeout(restoreFocus, 0)
-        addCleanup(() => clearTimeout(timer))
+        mountFocus.run(Effect.sleep(Duration.zero).pipe(Effect.andThen(Effect.sync(restoreFocus))))
+        addCleanup(() => mountFocus.interrupt())
       }
 
       if (typeof document !== "undefined" && document.fonts) {
@@ -729,7 +742,7 @@ export const Terminal = (props: TerminalProps) => {
   onCleanup(() => {
     disposed = true
     if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
-    if (sizeTimer !== undefined) clearTimeout(sizeTimer)
+    sizeSync.interrupt()
     if (reconn !== undefined) clearTimeout(reconn)
     drop?.()
     if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) ws.close(1000)
