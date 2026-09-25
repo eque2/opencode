@@ -81,7 +81,9 @@ describe("focusTerminalById", () => {
 
   test("falls back to terminal element focus", () => {
     document.body.innerHTML = `<div id="terminal-wrapper-two"><div data-component="terminal" tabindex="0"></div></div>`
-    const terminal = document.querySelector('[data-component="terminal"]') as HTMLElement
+    const terminal = document.querySelector('[data-component="terminal"]')
+    expect(terminal).toBeInstanceOf(HTMLElement)
+    if (!(terminal instanceof HTMLElement)) return
     let pointerDown = false
     terminal.addEventListener("pointerdown", () => {
       pointerDown = true

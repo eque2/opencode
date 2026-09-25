@@ -1,8 +1,8 @@
-import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { Option } from "effect"
+import { Equivalence, Option } from "effect"
 import type { FileSearchControl, FileSearchHandle } from "@opencode-ai/session-ui/file"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { cloneSelectedLineRange, previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
@@ -23,11 +23,13 @@ import { usePrompt } from "@/context/prompt"
 import { useSettings } from "@/context/settings"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { createSessionTabs } from "@/pages/session/helpers"
+import { createSessionTabs, readSelectedLineRange } from "@/pages/session/helpers"
 
 type SessionFileViewProps = {
   tab: string
 }
+
+const sameSelectedLines = Option.makeEquivalence(Equivalence.strictEqual<SelectedLineRange>())
 
 const selectionSide = (range: SelectedLineRange) => range.endSide ?? range.side ?? "additions"
 
@@ -176,7 +178,7 @@ function createScrollSync(input: { tab: () => string; view: ReturnType<typeof us
     })
   }
 
-  const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
+  const handleScroll: JSX.EventHandler<HTMLDivElement, Event> = (event) => {
     if (code().length === 0) sync()
 
     save({
@@ -253,12 +255,16 @@ function SessionFileViewV1(props: { tab: string }) {
   })
   const contents = createMemo(() => state()?.content?.content ?? "")
   const cacheKey = createMemo(() => sampledChecksum(contents()))
-  const selectedLines = createMemo<SelectedLineRange | null>(() => {
-    const p = path()
-    if (!p) return null
-    if (file.ready()) return (file.selectedLines(p) as SelectedLineRange | undefined) ?? null
-    return (getSessionHandoff(sessionKey())?.files[p] as SelectedLineRange | undefined) ?? null
-  })
+  const selectedLines = createMemo(
+    (): Option.Option<SelectedLineRange> => {
+      const p = path()
+      if (!p) return Option.none()
+      if (file.ready()) return readSelectedLineRange(file.selectedLines(p))
+      return Option.fromNullishOr(getSessionHandoff(sessionKey())?.files[p])
+    },
+    Option.none(),
+    { equals: sameSelectedLines },
+  )
   const scrollSync = createScrollSync({
     tab: () => props.tab,
     view,
@@ -342,7 +348,7 @@ function SessionFileViewV1(props: { tab: string }) {
     file.setSelectedLines(p, range ? cloneSelectedLineRange(range) : null)
   }
 
-  const activeSelection = () => note.selected ?? selectedLines()
+  const activeSelection = () => note.selected ?? Option.getOrNull(selectedLines())
 
   const commentsUi = createLineCommentController({
     comments: fileComments,
@@ -494,7 +500,7 @@ function SessionFileViewV1(props: { tab: string }) {
 
   const content = () => (
     <div class="mt-3 relative h-full min-h-0">
-      <ScrollView class="h-full" viewportRef={scrollSync.setViewport} onScroll={scrollSync.handleScroll as any}>
+      <ScrollView class="h-full" viewportRef={scrollSync.setViewport} onScroll={scrollSync.handleScroll}>
         <Switch>
           <Match when={state()?.loaded}>{renderFile(contents())}</Match>
           <Match when={state()?.loading}>
@@ -538,12 +544,16 @@ function SessionFileViewV2(props: { tab: string }) {
   })
   const contents = createMemo(() => state()?.content?.content ?? "")
   const cacheKey = createMemo(() => sampledChecksum(contents()))
-  const selectedLines = createMemo<SelectedLineRange | null>(() => {
-    const p = path()
-    if (!p) return null
-    if (file.ready()) return (file.selectedLines(p) as SelectedLineRange | undefined) ?? null
-    return (getSessionHandoff(sessionKey())?.files[p] as SelectedLineRange | undefined) ?? null
-  })
+  const selectedLines = createMemo(
+    (): Option.Option<SelectedLineRange> => {
+      const p = path()
+      if (!p) return Option.none()
+      if (file.ready()) return readSelectedLineRange(file.selectedLines(p))
+      return Option.fromNullishOr(getSessionHandoff(sessionKey())?.files[p])
+    },
+    Option.none(),
+    { equals: sameSelectedLines },
+  )
   const scrollSync = createScrollSync({
     tab: () => props.tab,
     view,
@@ -627,7 +637,7 @@ function SessionFileViewV2(props: { tab: string }) {
     file.setSelectedLines(p, range ? cloneSelectedLineRange(range) : null)
   }
 
-  const activeSelection = () => note.selected ?? selectedLines()
+  const activeSelection = () => note.selected ?? Option.getOrNull(selectedLines())
 
   const commentsUi = createLineCommentControllerV2({
     comments: fileComments,
@@ -785,7 +795,7 @@ function SessionFileViewV2(props: { tab: string }) {
 
   const content = () => (
     <div class="mt-3 relative h-full min-h-0">
-      <ScrollView class="h-full" viewportRef={scrollSync.setViewport} onScroll={scrollSync.handleScroll as any}>
+      <ScrollView class="h-full" viewportRef={scrollSync.setViewport} onScroll={scrollSync.handleScroll}>
         <Switch>
           <Match when={state()?.loaded}>{renderFile(contents())}</Match>
           <Match when={state()?.loading}>

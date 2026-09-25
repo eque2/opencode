@@ -1,8 +1,9 @@
 import { useNavigate } from "@solidjs/router"
+import { Option } from "effect"
 import { useCommand, type CommandOption } from "@/context/command"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { previewSelectedLines } from "@opencode-ai/session-ui/pierre/selection-bridge"
-import { useFile, selectionFromLines, type FileSelection, type SelectedLineRange } from "@/context/file"
+import { useFile, selectionFromLines, type FileSelection } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { usePermission } from "@/context/permission"
@@ -14,7 +15,7 @@ import { useTerminal } from "@/context/terminal"
 import { showToast } from "@/utils/toast"
 import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
 import { findLast } from "@opencode-ai/core/util/array"
-import { createSessionTabs } from "@/pages/session/helpers"
+import { createSessionTabs, readSelectedLineRange } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { Message, Part, UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -280,8 +281,8 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     const path = file.pathFromTab(tab)
     if (!path) return
 
-    const range = file.selectedLines(path) as SelectedLineRange | null | undefined
-    if (!range) {
+    const range = readSelectedLineRange(file.selectedLines(path))
+    if (Option.isNone(range)) {
       showToast({
         title: language.t("toast.context.noLineSelection.title"),
         description: language.t("toast.context.noLineSelection.description"),
@@ -289,7 +290,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
       return
     }
 
-    addSelectionToContext(path, selectionFromLines(range))
+    addSelectionToContext(path, selectionFromLines(range.value))
   }
 
   const openTerminal = () => {

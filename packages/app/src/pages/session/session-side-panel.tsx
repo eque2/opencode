@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
+import { Option } from "effect"
 import { DragDropProvider as DndKitProvider, PointerSensor } from "@dnd-kit/solid"
 import { isSortable } from "@dnd-kit/solid/sortable"
 import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
@@ -50,6 +51,7 @@ import {
   createOpenSessionFileTab,
   createSessionTabs,
   getTabReorderIndex,
+  readSelectedLineRange,
   shouldShowFileTree,
   type Sizing,
 } from "@/pages/session/helpers"
@@ -276,11 +278,7 @@ export function SessionSidePanel(props: {
           const path = file.pathFromTab(tab)
           if (!path) return acc
 
-          const selected = file.selectedLines(path)
-          acc[path] =
-            selected && typeof selected === "object" && "start" in selected && "end" in selected
-              ? (selected as SelectedLineRange)
-              : null
+          acc[path] = Option.getOrNull(readSelectedLineRange(file.selectedLines(path)))
 
           return acc
         }, {}),

@@ -1,8 +1,10 @@
 import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
+import { Option, Schema } from "effect"
 import { same } from "@/utils/same"
 import { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
+import type { SelectedLineRange } from "@/context/file"
 
 export { SESSION_OPEN_FILE_TAB } from "@/context/layout-tabs"
 
@@ -21,6 +23,28 @@ type TabsInput = {
   hasReview?: Accessor<boolean>
   fileBrowser?: Accessor<boolean>
 }
+
+const SelectionSide = Schema.Literals(["additions", "deletions"])
+
+const SelectedLineRangeSchema = Schema.Struct({
+  start: Schema.Number,
+  end: Schema.Number,
+  side: Schema.optional(SelectionSide),
+  endSide: Schema.optional(SelectionSide),
+}).annotate({
+  identifier: "SessionHelpers.SelectedLineRange",
+})
+
+const isSelectedLineRange = Schema.is(SelectedLineRangeSchema)
+
+/**
+ * Reads a selected line range from a file view value.
+ *
+ * The file context returns stored selections as `unknown`. This returns None
+ * when the value is absent or is not a line range.
+ */
+export const readSelectedLineRange = (value: unknown): Option.Option<SelectedLineRange> =>
+  isSelectedLineRange(value) ? Option.some(value) : Option.none()
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
 
