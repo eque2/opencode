@@ -13,7 +13,12 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { showToast } from "@/utils/toast"
-import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
+import {
+  downloadSessionExport,
+  fetchSessionExport,
+  sessionExportFailureCause,
+  sessionExportFilename,
+} from "@/utils/session-export"
 import { createSessionTabs, readSelectedLineRange } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
@@ -257,14 +262,10 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
   const exportSession = Effect.gen(function* () {
     const sessionID = params.id
     if (!sessionID) return
-    const data = yield* Effect.tryPromise({
-      try: () =>
-        fetchSessionExport({
-          sessionID,
-          client: sdk().client,
-        }),
-      catch: (cause) => new SessionExportError({ cause }),
-    })
+    const data = yield* fetchSessionExport({
+      sessionID,
+      client: sdk().client,
+    }).pipe(Effect.mapError((error) => new SessionExportError({ cause: sessionExportFailureCause(error) })))
     yield* Effect.try({
       try: () => {
         const filename = sessionExportFilename(data.info)

@@ -13,7 +13,12 @@ import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
-import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
+import {
+  downloadSessionExport,
+  fetchSessionExport,
+  sessionExportFailureCause,
+  sessionExportFilename,
+} from "@/utils/session-export"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
@@ -249,14 +254,10 @@ export function SessionContextTab() {
 
   const exportSessionProgram = (sessionID: string) =>
     Effect.gen(function* () {
-      const data = yield* Effect.tryPromise({
-        try: () =>
-          fetchSessionExport({
-            sessionID,
-            client: sdk().client,
-          }),
-        catch: (cause) => new SessionExportError({ cause }),
-      })
+      const data = yield* fetchSessionExport({
+        sessionID,
+        client: sdk().client,
+      }).pipe(Effect.mapError((error) => new SessionExportError({ cause: sessionExportFailureCause(error) })))
       yield* Effect.try({
         try: () => {
           const filename = sessionExportFilename(data.info)

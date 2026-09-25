@@ -54,7 +54,12 @@ import type {
   UserMessage,
 } from "@opencode-ai/sdk/v2"
 import { showToast } from "@/utils/toast"
-import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
+import {
+  downloadSessionExport,
+  fetchSessionExport,
+  sessionExportFailureCause,
+  sessionExportFilename,
+} from "@/utils/session-export"
 import { getDirectory, getFilename } from "@opencode-ai/core/util/path"
 import { Popover as KobaltePopover } from "@kobalte/core/popover"
 import { normalize } from "@opencode-ai/session-ui/session-diff"
@@ -830,12 +835,11 @@ export function MessageTimeline(props: {
 
   const exportSession = (sessionID: string) =>
     runDetached(
-      timelineAction(() =>
-        fetchSessionExport({
-          sessionID,
-          client: sdk().client,
-        }),
-      ).pipe(
+      fetchSessionExport({
+        sessionID,
+        client: sdk().client,
+      }).pipe(
+        Effect.mapError((error) => new TimelineActionError({ cause: sessionExportFailureCause(error) })),
         Effect.flatMap((data) =>
           Effect.try({
             try: () => {
