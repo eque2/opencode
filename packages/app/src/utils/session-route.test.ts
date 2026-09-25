@@ -1,6 +1,16 @@
 import { describe, expect, test } from "bun:test"
+import { Data, Effect, Option } from "effect"
 import { ServerConnection } from "@/context/server"
-import { legacySessionHref, legacySessionServer, requireServerKey, rootSession, sessionHref } from "./session-route"
+import {
+  legacySessionHref,
+  legacySessionServer,
+  requireServerKey,
+  rootSession,
+  SessionParentCycleError,
+  sessionHref,
+} from "./session-route"
+
+class MissingSessionError extends Data.TaggedError("Test.MissingSessionError")<{ readonly message: string }> {}
 
 describe("session routes", () => {
   test("uses the unique persisted server for a legacy session route", () => {
@@ -44,28 +54,40 @@ describe("session routes", () => {
     )
   })
 
-  test("resolves the root session", async () => {
-    const sessions: Record<string, { id: string; parentID?: string }> = {
-      child: { id: "child", parentID: "parent" },
-      parent: { id: "parent", parentID: "root" },
-      root: { id: "root" },
-    }
+  test("resolves the root session", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const sessions: Record<string, { id: string; parentID?: string }> = {
+          child: { id: "child", parentID: "parent" },
+          parent: { id: "parent", parentID: "root" },
+          root: { id: "root" },
+        }
+        const get = (id: string) =>
+          Option.match(Option.fromNullishOr(sessions[id]), {
+            onNone: () => Effect.fail(new MissingSessionError({ message: `Missing session: ${id}` })),
+            onSome: Effect.succeed,
+          })
 
-    expect(
-      await rootSession(sessions.child, async (id) => {
-        const session = sessions[id]
-        if (!session) throw new Error(`Missing session: ${id}`)
-        return session
+        expect(yield* rootSession(sessions.child, get)).toBe(sessions.root)
       }),
-    ).toBe(sessions.root)
-  })
+    ))
 
-  test("rejects a parent cycle", async () => {
-    const sessions: Record<string, { id: string; parentID?: string }> = {
-      child: { id: "child", parentID: "parent" },
-      parent: { id: "parent", parentID: "child" },
-    }
+  test("rejects a parent cycle", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const sessions: Record<string, { id: string; parentID?: string }> = {
+          child: { id: "child", parentID: "parent" },
+          parent: { id: "parent", parentID: "child" },
+        }
+        const get = (id: string) =>
+          Option.match(Option.fromNullishOr(sessions[id]), {
+            onNone: () => Effect.fail(new MissingSessionError({ message: `Missing session: ${id}` })),
+            onSome: Effect.succeed,
+          })
 
-    expect(rootSession(sessions.child, async (id) => sessions[id]!)).rejects.toThrow("Session parent cycle: child")
-  })
+        const error = yield* Effect.flip(rootSession(sessions.child, get))
+        expect(error).toBeInstanceOf(SessionParentCycleError)
+        expect(error.message).toBe("Session parent cycle: child")
+      }),
+    ))
 })

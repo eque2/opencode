@@ -1,4 +1,4 @@
-import { Array as Arr, Data, DateTime, Effect, HashSet, MutableHashMap, Option, Predicate } from "effect"
+import { Array as Arr, Data, DateTime, Effect, HashSet, MutableHashMap, Option, Predicate, Result } from "effect"
 import { createEffect, createMemo, createRoot, getOwner, onCleanup } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "@opencode-ai/ui/context"
@@ -161,7 +161,9 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       if (draft) return draft.directory
       if (!params.id) return undefined
       if (!global.servers.list().some((conn) => ServerConnection.key(conn) === activeServer())) return undefined
-      return selected().sync.session.lineage.peek(params.id)?.session.directory
+      // A parent cycle throws to the ErrorBoundary, as a thrown lineage read did before.
+      const lineage = Result.getOrThrow(selected().sync.session.lineage.find(params.id))
+      return Option.getOrUndefined(Option.map(lineage, (value) => value.session.directory))
     })
 
     createEffect(() => {
@@ -329,11 +331,13 @@ function createServerPermissionState(input: { sdk: ServerSDK; sync: ServerSync }
     return pending === undefined || pending.some((item) => item.id === permission.id)
   }
 
+  // A parent cycle in the cached lineage fails this check, so the permission stays for a manual reply.
   const shouldAutoRespondResolved = (permission: PermissionRequest, directory?: string) =>
     Effect.gen(function* () {
       const override = sessionAutoAccept(store.autoAccept, sessions(directory), permission, directory)
       if (override !== undefined) return override
-      if (input.sync.session.lineage.peek(permission.sessionID)) return shouldAutoRespond(permission, directory)
+      const cached = yield* Effect.fromResult(input.sync.session.lineage.find(permission.sessionID))
+      if (Option.isSome(cached)) return shouldAutoRespond(permission, directory)
       // A lineage that does not resolve means no auto-reply.
       const resolved = yield* Effect.tryPromise(() => input.sync.session.lineage.resolve(permission.sessionID)).pipe(
         Effect.match({ onFailure: () => false, onSuccess: () => true }),

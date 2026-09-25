@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Chunk, Data, Deferred, Effect, Exit, MutableHashMap, Option } from "effect"
+import { Chunk, Data, Deferred, Effect, Exit, MutableHashMap, Option, Result } from "effect"
 import type { retry } from "@opencode-ai/core/util/retry"
 import type { OpenCodeEvent, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client"
@@ -273,6 +273,7 @@ describe("server session", () => {
 
         expect(result.root.id).toBe("root")
         expect(ctx.get).toEqual([{ sessionID: "child" }, { sessionID: "root" }])
+        expect(ctx.store.lineage.find("child")).toEqual(Result.succeed(Option.some(result)))
         expect(ctx.store.lineage.peek("child")).toEqual(result)
       }),
     ))

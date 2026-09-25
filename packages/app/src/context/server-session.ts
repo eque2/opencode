@@ -25,12 +25,13 @@ import {
   MutableHashSet,
   Option,
   Predicate,
+  Result,
 } from "effect"
 import { batch } from "solid-js"
 import { createStore, produce, reconcile } from "solid-js/store"
 import { message as cleanMessage } from "@/utils/diffs"
 import { sessionNotFoundError } from "@/utils/server-errors"
-import { rootSession } from "@/utils/session-route"
+import { rootSession, SessionParentCycleError } from "@/utils/session-route"
 import { normalizeSessionInfo } from "@/utils/session"
 import { compareMessages, messageKey, normalizeSessionMessages } from "@/utils/session-message"
 import { dropSessionCaches, pickSessionCacheEvictions, SESSION_CACHE_LIMIT } from "./global-sync/session-cache"
@@ -59,14 +60,19 @@ class MessageNotFoundError extends Data.TaggedError("App.MessageNotFoundError")<
 
 class AssistantParentError extends Data.TaggedError("App.AssistantParentError")<{ readonly message: string }> {}
 
-class SessionParentCycleError extends Data.TaggedError("App.SessionParentCycleError")<{ readonly message: string }> {}
-
 // Wraps the value a server call or a Promise helper rejected with, so the public Promise API can reject with it again.
 class ServerSessionRequestError extends Data.TaggedError("App.ServerSessionRequestError")<{
   readonly cause: unknown
 }> {}
 
-type ServerSessionError = ServerSessionRequestError | MessageNotFoundError | AssistantParentError
+type ServerSessionError =
+  | ServerSessionRequestError
+  | MessageNotFoundError
+  | AssistantParentError
+  | SessionParentCycleError
+
+/** A session and the root of its parent chain. */
+export type SessionLineage = { readonly session: Session; readonly root: Session }
 
 const attempt = <A>(evaluate: () => PromiseLike<A>) =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => new ServerSessionRequestError({ cause }) })
@@ -492,20 +498,21 @@ export function createServerSession(
 
   const resolve = (sessionID: string, options?: { force?: boolean }) => run(resolveSession(sessionID, options))
 
-  const peekLineage = (sessionID: string) => {
+  // Reads the lineage from cached session info only. None means that a session of the chain is not cached.
+  const findLineage = (sessionID: string): Result.Result<Option.Option<SessionLineage>, SessionParentCycleError> => {
     const session = data.info[sessionID]
-    if (!session) return undefined
+    if (!session) return Result.succeed(Option.none())
     const visited = MutableHashSet.make(session.id)
     let root = session
     while (root.parentID) {
       if (MutableHashSet.has(visited, root.parentID))
-        throw new SessionParentCycleError({ message: `Session parent cycle: ${root.parentID}` })
+        return Result.fail(new SessionParentCycleError({ message: `Session parent cycle: ${root.parentID}` }))
       MutableHashSet.add(visited, root.parentID)
       const parent = data.info[root.parentID]
-      if (!parent) return undefined
+      if (!parent) return Result.succeed(Option.none())
       root = parent
     }
-    return { session, root }
+    return Result.succeed(Option.some({ session, root }))
   }
 
   const clearOptimistic = (sessionID: string, messageID?: string) => {
@@ -1531,12 +1538,15 @@ export function createServerSession(
     remember,
     resolve,
     lineage: {
-      peek: peekLineage,
+      find: findLineage,
+      // The sync form for a Solid memo. A parent cycle throws SessionParentCycleError to the ErrorBoundary.
+      peek: (sessionID: string): SessionLineage | undefined =>
+        Option.getOrUndefined(Result.getOrThrow(findLineage(sessionID))),
       resolve: (sessionID: string) =>
         run(
           Effect.gen(function* () {
             const session = yield* resolveSession(sessionID)
-            const root = yield* attempt(() => rootSession(session, resolve))
+            const root = yield* rootSession(session, (parentID) => resolveSession(parentID))
             return { session, root }
           }),
         ),

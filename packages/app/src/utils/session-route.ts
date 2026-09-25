@@ -1,4 +1,5 @@
 import { base64Encode } from "@opencode-ai/core/util/encode"
+import { Data, Effect, MutableHashSet, Option } from "effect"
 import { ServerConnection } from "@/context/server"
 import { decode64 } from "@/utils/base64"
 
@@ -10,9 +11,22 @@ export function legacySessionHref(directory: string, sessionID: string) {
   return `/${base64Encode(directory)}/session/${sessionID}`
 }
 
+/** A server route segment that is not the canonical base64 form of a server key. */
+export class InvalidServerRouteError extends Data.TaggedError("App.InvalidServerRouteError")<{
+  readonly message: string
+}> {}
+
+/** A session whose parent chain returns to a session already seen. */
+export class SessionParentCycleError extends Data.TaggedError("App.SessionParentCycleError")<{
+  readonly message: string
+}> {}
+
+// Route params are read inside Solid ErrorBoundaries, so an invalid segment throws synchronously.
 export function requireServerKey(segment: string | undefined) {
-  const key = decode64(segment)
-  if (!key || base64Encode(key) !== segment) throw new Error("Invalid server route")
+  const key = Option.getOrThrowWith(
+    Option.filter(Option.fromNullishOr(decode64(segment)), (value) => !!value && base64Encode(value) === segment),
+    () => new InvalidServerRouteError({ message: "Invalid server route" }),
+  )
   return ServerConnection.Key.make(key)
 }
 
@@ -27,13 +41,19 @@ export function legacySessionServer(
 
 type SessionParent = { id: string; parentID?: string }
 
-export async function rootSession<T extends SessionParent>(session: T, get: (sessionID: string) => Promise<T>) {
-  const seen = new Set([session.id])
-  let current = session
-  while (current.parentID) {
-    if (seen.has(current.parentID)) throw new Error(`Session parent cycle: ${current.parentID}`)
-    seen.add(current.parentID)
-    current = await get(current.parentID)
-  }
-  return current
-}
+/** Follows the parent chain of `session` to its root. A parent cycle fails with SessionParentCycleError. */
+export const rootSession = <T extends SessionParent, E>(
+  session: T,
+  get: (sessionID: string) => Effect.Effect<T, E>,
+): Effect.Effect<T, E | SessionParentCycleError> =>
+  Effect.gen(function* () {
+    const seen = MutableHashSet.make(session.id)
+    let current = session
+    while (current.parentID) {
+      if (MutableHashSet.has(seen, current.parentID))
+        return yield* new SessionParentCycleError({ message: `Session parent cycle: ${current.parentID}` })
+      MutableHashSet.add(seen, current.parentID)
+      current = yield* get(current.parentID)
+    }
+    return current
+  })

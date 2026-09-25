@@ -1,5 +1,5 @@
 import { createMemo, createResource, onMount, type Accessor } from "solid-js"
-import { Data, Effect } from "effect"
+import { Data, Effect, Option, Result } from "effect"
 import type { ColorScheme } from "@opencode-ai/ui/theme/context"
 import { useTheme } from "@opencode-ai/ui/theme/context"
 import { usePermission } from "@/context/permission"
@@ -29,11 +29,14 @@ class ShellListError extends Data.TaggedError("App.ShellListError")<{ readonly c
 export function createPermissionScopeController(sessionID: Accessor<string | undefined>) {
   const permission = usePermission()
   const serverSync = useServerSync()
-  const directory = createMemo(() => {
-    const id = sessionID()
-    if (!id) return undefined
-    return serverSync().session.lineage.peek(id)?.session.directory
-  })
+  // A parent cycle throws to the ErrorBoundary, as a thrown lineage read did before.
+  const directory = createMemo(() =>
+    Option.getOrUndefined(
+      Option.flatMap(Option.fromNullishOr(sessionID()), (id) =>
+        Option.map(Result.getOrThrow(serverSync().session.lineage.find(id)), (lineage) => lineage.session.directory),
+      ),
+    ),
+  )
 
   return {
     accepting: createMemo(() => {
