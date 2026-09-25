@@ -16,7 +16,7 @@ import {
 } from "solid-js"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
-import { HashSet } from "effect"
+import { DateTime, HashSet } from "effect"
 import { useRoute, useRouteData } from "../../context/route"
 import { useProject } from "../../context/project"
 import { useSync } from "../../context/sync"
@@ -365,13 +365,13 @@ export function Session() {
     if (!keys) return
 
     const seen = kv.get(keys.lastSeenAt)
-    if (typeof seen === "number" && Date.now() - seen < GO_UPSELL_WINDOW) return
+    if (typeof seen === "number" && DateTime.toEpochMillis(DateTime.nowUnsafe()) - seen < GO_UPSELL_WINDOW) return
 
     if (kv.get(keys.dontShow)) return
 
     void DialogRetryAction.show(dialog, evt.properties.status.action).then((dontShowAgain) => {
       if (dontShowAgain) kv.set(keys.dontShow, true)
-      kv.set(keys.lastSeenAt, Date.now())
+      kv.set(keys.lastSeenAt, DateTime.toEpochMillis(DateTime.nowUnsafe()))
     })
   })
 
