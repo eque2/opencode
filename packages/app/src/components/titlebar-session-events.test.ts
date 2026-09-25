@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import type { ServerConnection } from "@/context/server"
+import { ServerConnection } from "@/context/server"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "./titlebar-session-events"
 
-const remote = "remote" as ServerConnection.Key
+const remote = ServerConnection.Key.make("remote")
 
 describe("titlebar session events", () => {
   test("reads valid removed session tab details", () => {

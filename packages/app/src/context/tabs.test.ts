@@ -4,9 +4,9 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import type { SessionTab, Tab } from "./tabs"
 import { migrateTabs } from "./tab-migration"
-import type { ServerConnection } from "./server"
+import { ServerConnection } from "./server"
 
-const server = "local\nhttp://localhost:4096" as ServerConnection.Key
+const server = ServerConnection.Key.make("local\nhttp://localhost:4096")
 
 function sessionTab(sessionId: string): SessionTab {
   return { type: "session", server, sessionId }
