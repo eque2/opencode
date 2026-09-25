@@ -94,7 +94,7 @@ export default function LegacyLayout(props: ParentProps) {
       workspaceOrder: {} as Record<string, string[]>,
       workspaceName: {} as Record<string, string>,
       workspaceBranchName: {} as Record<string, Record<string, string>>,
-      workspaceExpanded: {} as Record<string, boolean>,
+      workspaceExpanded: {} as Partial<Record<string, boolean>>,
       gettingStartedDismissed: false,
     }),
   )
