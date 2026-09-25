@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type {
-  AgentListOutput,
-  ModelDefaultOutput,
-  ModelInfo,
-  ModelListOutput,
-  ProviderListOutput,
-} from "@opencode-ai/client/promise"
+import type { AgentListOutput, ModelInfo, ProviderListOutput } from "@opencode-ai/client/promise"
 import { HashMap, Option } from "effect"
 import { directoryKey, normalizeAgentList, normalizePermissionRequest, normalizeProviderList } from "./utils"
 
@@ -69,37 +63,36 @@ describe("normalizePermissionRequest", () => {
 
 describe("normalizeProviderList", () => {
   test("groups current models into the app provider catalog", () => {
+    const gpt5: ModelInfo = {
+      id: "gpt-5",
+      modelID: "gpt-5",
+      providerID: "openai",
+      name: "GPT-5",
+      capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+      variants: [{ id: "high" }],
+      time: { released: 1 },
+      cost: [{ input: 1, output: 2, cache: { read: 0.1, write: 0.2 } }],
+      status: "active",
+      enabled: true,
+      limit: { context: 128_000, output: 8_192 },
+    }
+    const gptOld: ModelInfo = {
+      id: "gpt-old",
+      modelID: "gpt-old",
+      providerID: "openai",
+      name: "GPT Old",
+      capabilities: { tools: false, input: ["text"], output: ["text"] },
+      variants: [],
+      time: { released: 0 },
+      cost: [],
+      status: "deprecated",
+      enabled: true,
+      limit: { context: 1, output: 1 },
+    }
     const result = normalizeProviderList(
       [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }] as ProviderListOutput["data"],
-      [
-        {
-          id: "gpt-5",
-          modelID: "gpt-5",
-          providerID: "openai",
-          name: "GPT-5",
-          capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
-          variants: [{ id: "high" }],
-          time: { released: 1 },
-          cost: [{ input: 1, output: 2, cache: { read: 0.1, write: 0.2 } }],
-          status: "active",
-          enabled: true,
-          limit: { context: 128_000, output: 8_192 },
-        },
-        {
-          id: "gpt-old",
-          modelID: "gpt-old",
-          providerID: "openai",
-          name: "GPT Old",
-          capabilities: { tools: false, input: ["text"], output: ["text"] },
-          variants: [],
-          time: { released: 0 },
-          cost: [],
-          status: "deprecated",
-          enabled: true,
-          limit: { context: 1, output: 1 },
-        },
-      ] as ModelListOutput["data"],
-      { id: "gpt-5", providerID: "openai" } as ModelDefaultOutput["data"],
+      [gpt5, gptOld],
+      gpt5,
     )
 
     expect(result.connected).toEqual(["openai"])

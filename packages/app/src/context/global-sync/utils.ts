@@ -20,9 +20,12 @@ export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/p
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
+const isAppAgentList = (input: AgentListOutput["data"] | Agent[]): input is Agent[] =>
+  input.every((agent) => !("request" in agent))
+
 export function normalizeAgentList(input: AgentListOutput["data"] | Agent[]): Agent[] {
-  if (input.every((agent) => !("request" in agent))) return input as Agent[]
-  return (input as AgentListOutput["data"]).map((agent) => {
+  if (isAppAgentList(input)) return input
+  return input.map((agent) => {
     const { temperature, topP } = agent.request.settings
     return {
       name: agent.id,
