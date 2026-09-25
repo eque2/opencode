@@ -13,6 +13,7 @@ import { createEffect, createMemo, onMount, createSignal, onCleanup, on, Show, S
 import { registerOpencodeSpinner } from "../register-spinner"
 import path from "path"
 import { fileURLToPath } from "url"
+import { Result } from "effect"
 import { useLocal } from "../../context/local"
 import { tint, useTheme } from "../../context/theme"
 import { EmptyBorder, SplitBorder } from "../../ui/border"
@@ -77,9 +78,9 @@ export type PromptProps = {
 function pastedFilepath(value: string, platform: string) {
   const raw = value.replace(/^['"]+|['"]+$/g, "")
   if (raw.startsWith("file://")) {
-    try {
-      return fileURLToPath(raw)
-    } catch {}
+    // A malformed file URL falls through to the raw text.
+    const converted = Result.try(() => fileURLToPath(raw))
+    if (Result.isSuccess(converted)) return converted.success
   }
   if (platform === "win32") return raw
   return raw.replace(/\\(.)/g, "$1")
