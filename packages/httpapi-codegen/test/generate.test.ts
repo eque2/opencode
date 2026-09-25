@@ -66,6 +66,37 @@ describe("HttpApiCodegen.generate", () => {
     expect(types).toContain("export type SessionEventsOutput = EventWire")
   })
 
+  test("allows Promise errors to use an authoritative imported wire type", () => {
+    class Denied extends Schema.TaggedError<Denied>()("Denied", { message: Schema.String }, { httpApiStatus: 403 }) {}
+    class Gone extends Schema.TaggedError<Gone>()("Gone", { message: Schema.String }, { httpApiStatus: 410 }) {}
+    class Busy extends Schema.TaggedError<Busy>()("Busy", { message: Schema.String }, { httpApiStatus: 503 }) {}
+    const output = emitPromise(
+      compileContract(
+        api(HttpApiEndpoint.get("get", "/session", { success: Schema.String, error: [Denied, Gone, Busy] })),
+      ),
+      {
+        errorTypes: {
+          Denied: { name: "typeof Errors.Denied.Encoded", import: 'import type * as Errors from "./errors"' },
+          Gone: { name: "typeof Errors.Gone.Encoded", import: 'import type * as Errors from "./errors"' },
+          Unused: { name: "typeof Other.Unused.Encoded", import: 'import type * as Other from "./other"' },
+        },
+      },
+    )
+    const types = output.files.find((file) => file.path === "types.ts")?.content
+
+    expect(types?.split('import type * as Errors from "./errors"').length).toBe(2)
+    expect(types).not.toContain('import type * as Other from "./other"')
+    expect(types).toContain("export type Denied = typeof Errors.Denied.Encoded")
+    expect(types).toContain("export type Gone = typeof Errors.Gone.Encoded")
+    expect(types).toContain(
+      'export const isDenied = (value: unknown): value is Denied => isNonNullObject(value) && "_tag" in value && value["_tag"] === "Denied"',
+    )
+    expect(types).toContain('export type Busy = { readonly "_tag": "Busy"; readonly "message": string }')
+    expect(types).toContain(
+      'export const isBusy = (value: unknown): value is Busy => isNonNullObject(value) && "_tag" in value && value["_tag"] === "Busy"',
+    )
+  })
+
   test("emits an Effect client against an imported authoritative API", () => {
     const output = emitEffectImported(
       compileContract(

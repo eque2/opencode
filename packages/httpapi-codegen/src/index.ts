@@ -97,6 +97,8 @@ type CompileOptions = {
 
 type PromiseOptions = {
   readonly outputTypes?: Readonly<Record<string, { readonly name: string; readonly import: string }>>
+  // Keyed by the declared error identifier; the emitted `is<Identifier>` guard does not change.
+  readonly errorTypes?: Readonly<Record<string, { readonly name: string; readonly import: string }>>
 }
 
 type ReflectedEndpoint = {
@@ -327,7 +329,7 @@ function emitPromiseResult(
     return {
       operations: operations(groups),
       files: [
-        { path: "types.ts", content: yield* renderPromiseTypes(groups, options?.outputTypes) },
+        { path: "types.ts", content: yield* renderPromiseTypes(groups, options) },
         {
           path: "client-error.ts",
           content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  readonly reason: ClientErrorReason\n\n  constructor(reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n    this.reason = reason\n  }\n}\n`,
@@ -523,8 +525,9 @@ function renderImportedProjection(
 
 function renderPromiseTypes(
   groups: ReadonlyArray<Group>,
-  outputTypes?: Readonly<Record<string, { readonly name: string; readonly import: string }>>,
+  options: PromiseOptions | undefined,
 ): Result.Result<string, GenerationError> {
+  const outputTypes = options?.outputTypes
   const types = MutableHashMap.empty<SchemaAST.AST, string>()
   const typeOf = (schema: Schema.Top, decoded = false): Result.Result<string, GenerationError> => {
     const projected = decoded ? Schema.toType(schema) : Schema.toEncoded(schema)
@@ -542,13 +545,17 @@ function renderPromiseTypes(
       ),
     ),
   )
+  const errorOverride = (identifier: string) => Option.fromNullishOr(options?.errorTypes?.[identifier])
   return Result.gen(function* () {
     const errorTypes = yield* forEachResult(MutableHashMap.values(errors), (error) =>
       Result.gen(function* () {
+        const guard = `export const is${error.identifier} = (value: unknown): value is ${error.identifier} => isNonNullObject(value) && ${encodeJsonString(error.key)} in value && value[${encodeJsonString(error.key)}] === ${encodeJsonString(error.tag)}`
+        const override = errorOverride(error.identifier)
+        if (Option.isSome(override)) return `export type ${error.identifier} = ${override.value.name}\n${guard}`
         const fields = (yield* forEachResult(error.fields, ([name, schema, optional]) =>
           Result.map(typeOf(schema), (type) => `readonly ${encodeJsonString(name)}${optional ? "?" : ""}: ${type}`),
         )).join("; ")
-        return `export type ${error.identifier} = { readonly ${encodeJsonString(error.key)}: ${encodeJsonString(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => isNonNullObject(value) && ${encodeJsonString(error.key)} in value && value[${encodeJsonString(error.key)}] === ${encodeJsonString(error.tag)}`
+        return `export type ${error.identifier} = { readonly ${encodeJsonString(error.key)}: ${encodeJsonString(error.tag)}; ${fields} }\n${guard}`
       }),
     )
     const operationTypes = yield* forEachResult(groups, (group) =>
@@ -591,7 +598,14 @@ function renderPromiseTypes(
     const json = operations.includes("JsonValue")
       ? "export type JsonValue = null | boolean | number | string | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue }"
       : ""
-    const imports = Arr.dedupe(Object.values(outputTypes ?? {}).map((override) => override.import))
+    const imports = Arr.dedupe([
+      ...Object.values(outputTypes ?? {}).map((override) => override.import),
+      ...Arr.getSomes(
+        Array.from(MutableHashMap.values(errors), (error) =>
+          Option.map(errorOverride(error.identifier), (override) => override.import),
+        ),
+      ),
+    ])
     const objectGuard =
       errorTypes.length === 0
         ? ""
