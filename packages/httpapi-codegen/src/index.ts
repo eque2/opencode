@@ -548,7 +548,7 @@ function renderPromiseTypes(
         const fields = (yield* forEachResult(error.fields, ([name, schema, optional]) =>
           Result.map(typeOf(schema), (type) => `readonly ${encodeJsonString(name)}${optional ? "?" : ""}: ${type}`),
         )).join("; ")
-        return `export type ${error.identifier} = { readonly ${encodeJsonString(error.key)}: ${encodeJsonString(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => typeof value === "object" && value !== null && ${encodeJsonString(error.key)} in value && value[${encodeJsonString(error.key)}] === ${encodeJsonString(error.tag)}`
+        return `export type ${error.identifier} = { readonly ${encodeJsonString(error.key)}: ${encodeJsonString(error.tag)}; ${fields} }\nexport const is${error.identifier} = (value: unknown): value is ${error.identifier} => isNonNullObject(value) && ${encodeJsonString(error.key)} in value && value[${encodeJsonString(error.key)}] === ${encodeJsonString(error.tag)}`
       }),
     )
     const operationTypes = yield* forEachResult(groups, (group) =>
@@ -592,7 +592,11 @@ function renderPromiseTypes(
       ? "export type JsonValue = null | boolean | number | string | ReadonlyArray<JsonValue> | { readonly [key: string]: JsonValue }"
       : ""
     const imports = Arr.dedupe(Object.values(outputTypes ?? {}).map((override) => override.import))
-    return [...imports, json, ...errorTypes, operations].filter(Boolean).join("\n\n")
+    const objectGuard =
+      errorTypes.length === 0
+        ? ""
+        : 'const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null'
+    return [...imports, json, objectGuard, ...errorTypes, operations].filter(Boolean).join("\n\n")
   })
 }
 

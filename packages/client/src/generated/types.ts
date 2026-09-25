@@ -8,9 +8,11 @@ export type JsonValue =
   | ReadonlyArray<JsonValue>
   | { readonly [key: string]: JsonValue }
 
+const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null
+
 export type UnauthorizedError = { readonly _tag: "UnauthorizedError"; readonly message: string }
 export const isUnauthorizedError = (value: unknown): value is UnauthorizedError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "UnauthorizedError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnauthorizedError"
 
 export type InvalidRequestError = {
   readonly _tag: "InvalidRequestError"
@@ -19,11 +21,11 @@ export type InvalidRequestError = {
   readonly field?: string | undefined
 }
 export const isInvalidRequestError = (value: unknown): value is InvalidRequestError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "InvalidRequestError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidRequestError"
 
 export type InvalidCursorError = { readonly _tag: "InvalidCursorError"; readonly message: string }
 export const isInvalidCursorError = (value: unknown): value is InvalidCursorError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "InvalidCursorError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "InvalidCursorError"
 
 export type SessionNotFoundError = {
   readonly _tag: "SessionNotFoundError"
@@ -31,7 +33,7 @@ export type SessionNotFoundError = {
   readonly message: string
 }
 export const isSessionNotFoundError = (value: unknown): value is SessionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "SessionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "SessionNotFoundError"
 
 export type ConflictError = {
   readonly _tag: "ConflictError"
@@ -39,7 +41,7 @@ export type ConflictError = {
   readonly resource?: string | undefined
 }
 export const isConflictError = (value: unknown): value is ConflictError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ConflictError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ConflictError"
 
 export type ServiceUnavailableError = {
   readonly _tag: "ServiceUnavailableError"
@@ -47,7 +49,7 @@ export type ServiceUnavailableError = {
   readonly service?: string | undefined
 }
 export const isServiceUnavailableError = (value: unknown): value is ServiceUnavailableError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ServiceUnavailableError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ServiceUnavailableError"
 
 export type MessageNotFoundError = {
   readonly _tag: "MessageNotFoundError"
@@ -56,7 +58,7 @@ export type MessageNotFoundError = {
   readonly message: string
 }
 export const isMessageNotFoundError = (value: unknown): value is MessageNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "MessageNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "MessageNotFoundError"
 
 export type UnknownError = {
   readonly _tag: "UnknownError"
@@ -64,7 +66,7 @@ export type UnknownError = {
   readonly ref?: string | undefined
 }
 export const isUnknownError = (value: unknown): value is UnknownError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "UnknownError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "UnknownError"
 
 export type ProviderNotFoundError = {
   readonly _tag: "ProviderNotFoundError"
@@ -72,7 +74,7 @@ export type ProviderNotFoundError = {
   readonly message: string
 }
 export const isProviderNotFoundError = (value: unknown): value is ProviderNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "ProviderNotFoundError"
 
 export type PermissionNotFoundError = {
   readonly _tag: "PermissionNotFoundError"
@@ -80,11 +82,11 @@ export type PermissionNotFoundError = {
   readonly message: string
 }
 export const isPermissionNotFoundError = (value: unknown): value is PermissionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "PermissionNotFoundError"
 
 export type PtyNotFoundError = { readonly _tag: "PtyNotFoundError"; readonly ptyID: string; readonly message: string }
 export const isPtyNotFoundError = (value: unknown): value is PtyNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "PtyNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "PtyNotFoundError"
 
 export type QuestionNotFoundError = {
   readonly _tag: "QuestionNotFoundError"
@@ -92,14 +94,14 @@ export type QuestionNotFoundError = {
   readonly message: string
 }
 export const isQuestionNotFoundError = (value: unknown): value is QuestionNotFoundError =>
-  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
+  isNonNullObject(value) && "_tag" in value && value["_tag"] === "QuestionNotFoundError"
 
 export type ProjectCopyError = {
   readonly name: "ProjectCopyError"
   readonly data: { readonly message: string; readonly forceRequired?: boolean | undefined }
 }
 export const isProjectCopyError = (value: unknown): value is ProjectCopyError =>
-  typeof value === "object" && value !== null && "name" in value && value["name"] === "ProjectCopyError"
+  isNonNullObject(value) && "name" in value && value["name"] === "ProjectCopyError"
 
 export type HealthGetOutput = { readonly healthy: true }
 
