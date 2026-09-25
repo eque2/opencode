@@ -21,9 +21,10 @@ import { type PreloadFileDiffResult, type PreloadMultiFileDiffResult } from "@pi
 import { createMediaQuery } from "@solid-primitives/media"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { ComponentProps, createEffect, createMemo, createSignal, onCleanup, onMount, Show, splitProps } from "solid-js"
+import { Equivalence, Option } from "effect"
 import { createDefaultOptions, styleVariables } from "../pierre"
 import { markCommentedDiffLines, markCommentedFileLines } from "../pierre/commented-lines"
-import { fixDiffSelection, findDiffSide, type DiffSelectionSide } from "../pierre/diff-selection"
+import { DiffSelectionFix, fixDiffSelection, findDiffSide, type DiffSelectionSide } from "../pierre/diff-selection"
 import { createFileFind } from "../pierre/file-find"
 import {
   applyViewerScheme,
@@ -39,15 +40,19 @@ import {
   findDiffLineNumber,
   findElement,
   findFileLineNumber,
+  parseLineNumber,
   readShadowLineSelection,
 } from "../pierre/file-selection"
 import { createLineNumberSelectionBridge, restoreShadowTextSelection } from "../pierre/selection-bridge"
-import { acquireVirtualizer, virtualMetrics } from "../pierre/virtualizer"
+import { acquireVirtualizer, type VirtualizerLease, virtualMetrics } from "../pierre/virtualizer"
 import { getWorkerPool } from "../pierre/worker"
 import { FileMedia, type FileMediaOptions } from "./file-media"
 import { FileSearchBar } from "./file-search"
 
 const VIRTUALIZE_BYTES = 500_000
+
+// A diff instance keeps its virtualizer, so a change of virtualizer object means a new instance.
+const sameVirtualizer = Option.makeEquivalence(Equivalence.strictEqual<Virtualizer>())
 
 const codeMetrics = {
   ...DEFAULT_VIRTUAL_FILE_METRICS,
@@ -133,9 +138,9 @@ const diffKeys = ["fileDiff", "before", "after", "virtualize", ...sharedKeys] as
 // ---------------------------------------------------------------------------
 
 type MouseHit = {
-  line: number | undefined
+  line: Option.Option<number>
   numberColumn: boolean
-  side?: DiffSelectionSide
+  side: Option.Option<DiffSelectionSide>
 }
 
 type ViewerConfig = {
@@ -148,12 +153,23 @@ type ViewerConfig = {
   lineFromMouseEvent: (event: MouseEvent) => MouseHit
   setSelectedLines: (range: SelectedLineRange | null, preserve?: { root: ShadowRoot; text: Range }) => void
   updateSelection: (preserveTextSelection: boolean) => void
-  buildDragSelection: () => SelectedLineRange | undefined
-  buildClickSelection: () => SelectedLineRange | undefined
+  buildDragSelection: () => Option.Option<SelectedLineRange>
+  buildClickSelection: () => Option.Option<SelectedLineRange>
   onDragStart: (hit: MouseHit) => void
   onDragMove: (hit: MouseHit) => void
   onDragReset: () => void
   markCommented: (root: ShadowRoot, ranges: SelectedLineRange[]) => void
+}
+
+function sameSelection(current: Option.Option<SelectedLineRange>, next: SelectedLineRange) {
+  return Option.exists(
+    current,
+    (range) =>
+      range.start === next.start &&
+      range.end === next.end &&
+      range.side === next.side &&
+      (range.endSide ?? range.side) === (next.endSide ?? next.side),
+  )
 }
 
 function useFileViewer(config: ViewerConfig) {
@@ -162,8 +178,8 @@ function useFileViewer(config: ViewerConfig) {
   let overlay!: HTMLDivElement
   let selectionFrame: number | undefined
   let dragFrame: number | undefined
-  let dragStart: number | undefined
-  let dragEnd: number | undefined
+  let dragStart: Option.Option<number> = Option.none()
+  let dragEnd: Option.Option<number> = Option.none()
   let dragMoved = false
   let lastSelection: SelectedLineRange | null = null
   let pendingSelectionEnd = false
@@ -200,7 +216,7 @@ function useFileViewer(config: ViewerConfig) {
     dragFrame = requestAnimationFrame(() => {
       dragFrame = undefined
       const selected = config.buildDragSelection()
-      if (selected) config.setSelectedLines(selected)
+      if (Option.isSome(selected)) config.setSelectedLines(selected.value)
     })
   }
 
@@ -215,7 +231,7 @@ function useFileViewer(config: ViewerConfig) {
       bridge.begin(true, hit.line)
       return
     }
-    if (hit.line === undefined) return
+    if (Option.isNone(hit.line)) return
 
     bridge.begin(false, hit.line)
     dragStart = hit.line
@@ -229,18 +245,18 @@ function useFileViewer(config: ViewerConfig) {
 
     const hit = config.lineFromMouseEvent(event)
     if (bridge.track(event.buttons, hit.line)) return
-    if (dragStart === undefined) return
+    if (Option.isNone(dragStart)) return
 
     if ((event.buttons & 1) === 0) {
-      dragStart = undefined
-      dragEnd = undefined
+      dragStart = Option.none()
+      dragEnd = Option.none()
       dragMoved = false
       config.onDragReset()
       bridge.finish()
       return
     }
 
-    if (hit.line === undefined) return
+    if (Option.isNone(hit.line)) return
     dragEnd = hit.line
     dragMoved = true
     config.onDragMove(hit)
@@ -250,23 +266,21 @@ function useFileViewer(config: ViewerConfig) {
   const handleMouseUp = () => {
     if (!config.enableLineSelection()) return
     if (bridge.finish() === "numbers") return
-    if (dragStart === undefined) return
+    if (Option.isNone(dragStart)) return
 
     if (!dragMoved) {
       pendingSelectionEnd = false
       const selected = config.buildClickSelection()
-      const next =
-        selected &&
-        lastSelection?.start === selected.start &&
-        lastSelection.end === selected.end &&
-        lastSelection.side === selected.side &&
-        (lastSelection.endSide ?? lastSelection.side) === (selected.endSide ?? selected.side)
-          ? null
-          : selected
-      if (next !== undefined) config.setSelectedLines(next)
-      config.onLineSelectionEnd(next === undefined ? lastSelection : next)
-      dragStart = undefined
-      dragEnd = undefined
+      if (Option.isNone(selected)) {
+        config.onLineSelectionEnd(lastSelection)
+      } else {
+        // A click on the line that is already selected clears the selection.
+        const next = sameSelection(Option.fromNullOr(lastSelection), selected.value) ? null : selected.value
+        config.setSelectedLines(next)
+        config.onLineSelectionEnd(next)
+      }
+      dragStart = Option.none()
+      dragEnd = Option.none()
       dragMoved = false
       config.onDragReset()
       return
@@ -276,15 +290,15 @@ function useFileViewer(config: ViewerConfig) {
     scheduleDragUpdate()
     scheduleSelectionUpdate()
 
-    dragStart = undefined
-    dragEnd = undefined
+    dragStart = Option.none()
+    dragEnd = Option.none()
     dragMoved = false
     config.onDragReset()
   }
 
   const handleSelectionChange = () => {
     if (!config.enableLineSelection()) return
-    if (dragStart === undefined) return
+    if (Option.isNone(dragStart)) return
     const selection = window.getSelection()
     if (!selection || selection.isCollapsed) return
     scheduleSelectionUpdate()
@@ -299,8 +313,9 @@ function useFileViewer(config: ViewerConfig) {
   createEffect(() => {
     rendered()
     const ranges = config.commentedLines()
-    const root = getRoot()
-    if (!root) return
+    const found = getRoot()
+    if (Option.isNone(found)) return
+    const root = found.value
     if (ranges.length === 0) {
       config.markCommented(root, ranges)
       return
@@ -346,8 +361,8 @@ function useFileViewer(config: ViewerConfig) {
 
     selectionFrame = undefined
     dragFrame = undefined
-    dragStart = undefined
-    dragEnd = undefined
+    dragStart = Option.none()
+    dragEnd = Option.none()
     dragMoved = false
     bridge.reset()
     lastSelection = null
@@ -417,7 +432,7 @@ type AnnotationTarget<A> = {
 }
 
 type VirtualStrategy = {
-  get: () => Virtualizer | undefined
+  get: () => Option.Option<Virtualizer>
   cleanup: () => void
 }
 
@@ -450,16 +465,17 @@ function useSearchHandle(opts: {
 
 function createLineCallbacks(opts: {
   viewer: Viewer
-  normalize?: (range: SelectedLineRange | null) => SelectedLineRange | null | undefined
+  normalize?: (range: Option.Option<SelectedLineRange>) => DiffSelectionFix
   onLineSelected?: (range: SelectedLineRange | null) => void
   onLineSelectionEnd?: (range: SelectedLineRange | null) => void
   onLineNumberSelectionEnd?: (selection: SelectedLineRange | null) => void
 }) {
   const select = (range: SelectedLineRange | null) => {
     if (!opts.normalize) return range
-    const next = opts.normalize(range)
-    if (next !== undefined) return next
-    return range
+    const fixed = opts.normalize(Option.fromNullOr(range))
+    // A pending fix means the rows are not rendered yet, so the range stays as pierre reported it.
+    if (fixed._tag === "Pending") return range
+    return Option.getOrNull(fixed.range)
   }
 
   return {
@@ -545,8 +561,9 @@ function renderViewer<I extends RenderTarget>(opts: {
 }
 
 function preserve(viewer: Viewer) {
-  const root = scrollParent(viewer.wrapper)
-  if (!root) return () => {}
+  const parent = scrollParent(viewer.wrapper)
+  if (Option.isNone(parent)) return () => {}
+  const root = parent.value
 
   const high = viewer.container.getBoundingClientRect().height
   if (!high) return () => {}
@@ -567,43 +584,46 @@ function preserve(viewer: Viewer) {
   }
 }
 
-function scrollParent(el: HTMLElement): HTMLElement | undefined {
+function scrollParent(el: HTMLElement): Option.Option<HTMLElement> {
   let parent = el.parentElement
   while (parent) {
     const style = getComputedStyle(parent)
-    if (style.overflowY === "auto" || style.overflowY === "scroll") return parent
+    if (style.overflowY === "auto" || style.overflowY === "scroll") return Option.some(parent)
     parent = parent.parentElement
   }
+  return Option.none()
 }
 
 function createLocalVirtualStrategy(host: () => HTMLDivElement | undefined, enabled: () => boolean): VirtualStrategy {
-  let virtualizer: Virtualizer | undefined
-  let root: Document | HTMLElement | undefined
+  let virtualizer: Option.Option<Virtualizer> = Option.none()
+  let root: Option.Option<Document | HTMLElement> = Option.none()
 
   const release = () => {
-    virtualizer?.cleanUp()
-    virtualizer = undefined
-    root = undefined
+    if (Option.isSome(virtualizer)) virtualizer.value.cleanUp()
+    virtualizer = Option.none()
+    root = Option.none()
   }
 
   return {
     get: () => {
       if (!enabled()) {
         release()
-        return
+        return Option.none()
       }
-      if (typeof document === "undefined") return
+      if (typeof document === "undefined") return Option.none()
 
       const wrapper = host()
-      if (!wrapper) return
+      if (!wrapper) return Option.none()
 
-      const next = scrollParent(wrapper) ?? document
-      if (virtualizer && root === next) return virtualizer
+      const next = Option.getOrElse(scrollParent(wrapper), (): Document | HTMLElement => document)
+      if (Option.isSome(virtualizer) && Option.exists(root, (current) => current === next)) return virtualizer
 
       release()
-      virtualizer = new Virtualizer()
-      root = next
-      virtualizer.setup(next, next instanceof Document ? undefined : wrapper)
+      const created = new Virtualizer()
+      if (next instanceof Document) created.setup(next)
+      else created.setup(next, wrapper)
+      virtualizer = Option.some(created)
+      root = Option.some(next)
       return virtualizer
     },
     cleanup: release,
@@ -611,58 +631,53 @@ function createLocalVirtualStrategy(host: () => HTMLDivElement | undefined, enab
 }
 
 function createSharedVirtualStrategy(host: () => HTMLDivElement | undefined, enabled: () => boolean): VirtualStrategy {
-  let shared: NonNullable<ReturnType<typeof acquireVirtualizer>> | undefined
+  let shared: Option.Option<VirtualizerLease> = Option.none()
 
   const release = () => {
-    shared?.release()
-    shared = undefined
+    if (Option.isSome(shared)) shared.value.release()
+    shared = Option.none()
   }
 
   return {
     get: () => {
       if (!enabled()) {
         release()
-        return
+        return Option.none()
       }
-      if (shared) return shared.virtualizer
+      if (Option.isSome(shared)) return Option.some(shared.value.virtualizer)
 
       const container = host()
-      if (!container) return
+      if (!container) return Option.none()
 
-      const result = acquireVirtualizer(container)
-      if (!result) return
-      shared = result
-      return result.virtualizer
+      shared = acquireVirtualizer(container)
+      return Option.map(shared, (lease) => lease.virtualizer)
     },
     cleanup: release,
   }
 }
 
-function parseLine(node: HTMLElement) {
-  if (!node.dataset.line) return
-  const value = parseInt(node.dataset.line, 10)
-  if (Number.isNaN(value)) return
-  return value
+function parseLine(node: HTMLElement): Option.Option<number> {
+  return parseLineNumber(node.dataset.line)
 }
 
 function mouseHit(
   event: MouseEvent,
-  line: (node: HTMLElement) => number | undefined,
-  side?: (node: HTMLElement) => DiffSelectionSide | undefined,
+  line: (node: HTMLElement) => Option.Option<number>,
+  side?: (node: HTMLElement) => Option.Option<DiffSelectionSide>,
 ): MouseHit {
   const path = event.composedPath()
   let numberColumn = false
-  let value: number | undefined
-  let branch: DiffSelectionSide | undefined
+  let value: Option.Option<number> = Option.none()
+  let branch: Option.Option<DiffSelectionSide> = Option.none()
 
   for (const item of path) {
     if (!(item instanceof HTMLElement)) continue
 
     numberColumn = numberColumn || item.dataset.columnNumber != null
-    if (value === undefined) value = line(item)
-    if (branch === undefined && side) branch = side(item)
+    if (Option.isNone(value)) value = line(item)
+    if (Option.isNone(branch) && side) branch = side(item)
 
-    if (numberColumn && value !== undefined && (side == null || branch !== undefined)) break
+    if (numberColumn && Option.isSome(value) && (side == null || Option.isSome(branch))) break
   }
 
   return {
@@ -672,18 +687,16 @@ function mouseHit(
   }
 }
 
-function diffMouseSide(node: HTMLElement) {
+function diffMouseSide(node: HTMLElement): Option.Option<DiffSelectionSide> {
   const type = node.dataset.lineType
-  if (type === "change-deletion") return "deletions" satisfies DiffSelectionSide
-  if (type === "change-addition" || type === "change-additions") return "additions" satisfies DiffSelectionSide
-  if (node.dataset.code == null) return
-  return node.hasAttribute("data-deletions") ? "deletions" : "additions"
+  if (type === "change-deletion") return Option.some("deletions")
+  if (type === "change-addition" || type === "change-additions") return Option.some("additions")
+  if (node.dataset.code === undefined) return Option.none()
+  return Option.some(node.hasAttribute("data-deletions") ? "deletions" : "additions")
 }
 
-function diffSelectionSide(node: Node | null) {
-  const el = findElement(node)
-  if (!el) return
-  return findDiffSide(el)
+function diffSelectionSide(node: Node | null): Option.Option<DiffSelectionSide> {
+  return Option.map(findElement(node), findDiffSide)
 }
 
 // ---------------------------------------------------------------------------
@@ -787,8 +800,9 @@ function TextViewer<T>(props: TextFileProps<T>) {
       return true
     }
 
-    const root = viewer.getRoot()
-    if (!root) return false
+    const found = viewer.getRoot()
+    if (Option.isNone(found)) return false
+    const root = found.value
 
     const total = lineCount()
     if (root.querySelectorAll("[data-line]").length < total) return false
@@ -831,28 +845,27 @@ function TextViewer<T>(props: TextFileProps<T>) {
     setSelectedLines,
     updateSelection: (preserveTextSelection) => {
       const root = viewer.getRoot()
-      if (!root) return
+      if (Option.isNone(root)) return
 
       const selected = readShadowLineSelection({
-        root,
+        root: root.value,
         lineForNode: findFileLineNumber,
         sideForNode: findCodeSelectionSide,
         preserveTextSelection,
       })
-      if (!selected) return
+      if (Option.isNone(selected)) return
 
-      setSelectedLines(selected.range)
-      if (!preserveTextSelection || !selected.text) return
-      restoreShadowTextSelection(root, selected.text)
+      setSelectedLines(selected.value.range)
+      const text = selected.value.text
+      if (!preserveTextSelection || Option.isNone(text)) return
+      restoreShadowTextSelection(root.value, text.value)
     },
-    buildDragSelection: () => {
-      if (viewer.dragStart === undefined || viewer.dragEnd === undefined) return
-      return { start: Math.min(viewer.dragStart, viewer.dragEnd), end: Math.max(viewer.dragStart, viewer.dragEnd) }
-    },
-    buildClickSelection: () => {
-      if (viewer.dragStart === undefined) return
-      return { start: viewer.dragStart, end: viewer.dragStart }
-    },
+    buildDragSelection: () =>
+      Option.zipWith(viewer.dragStart, viewer.dragEnd, (start, end) => ({
+        start: Math.min(start, end),
+        end: Math.max(start, end),
+      })),
+    buildClickSelection: () => Option.map(viewer.dragStart, (line) => ({ start: line, end: line })),
     onDragStart: () => {},
     onDragMove: () => {},
     onDragReset: () => {},
@@ -914,9 +927,10 @@ function TextViewer<T>(props: TextFileProps<T>) {
       current: instance,
       reset: instance !== undefined,
       create: () =>
-        virtualizer
-          ? new VirtualizedFile<T>(opts, virtualizer, codeMetrics, workerPool)
-          : new PierreFile<T>(opts, workerPool),
+        Option.match(virtualizer, {
+          onNone: (): PierreFile<T> | VirtualizedFile<T> => new PierreFile<T>(opts, workerPool),
+          onSome: (value) => new VirtualizedFile<T>(opts, value, codeMetrics, workerPool),
+        }),
       assign: (value) => {
         instance = value
       },
@@ -955,14 +969,14 @@ function TextViewer<T>(props: TextFileProps<T>) {
 
 function DiffViewer<T>(props: DiffFileProps<T>) {
   let instance: FileDiff<T> | undefined
-  let instanceVirtualizer: Virtualizer | undefined
+  let instanceVirtualizer: Option.Option<Virtualizer> = Option.none()
   let instanceWorkerPool: ReturnType<typeof getWorkerPool>
   let instanceVirtualHunkSeparators: FileDiffOptions<T>["hunkSeparators"] | undefined
   let instanceFileDiff: FileDiffMetadata | undefined
   let instanceBefore: FileContents | undefined
   let instanceAfter: FileContents | undefined
-  let dragSide: DiffSelectionSide | undefined
-  let dragEndSide: DiffSelectionSide | undefined
+  let dragSide: Option.Option<DiffSelectionSide> = Option.none()
+  let dragEndSide: Option.Option<DiffSelectionSide> = Option.none()
   let viewer!: Viewer
 
   const [local, others] = splitProps(props, diffKeys)
@@ -975,14 +989,15 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
     const active = instance
     if (!active) return
 
-    const fixed = fixDiffSelection(viewer.getRoot(), range)
-    if (fixed === undefined) {
+    const fixed = fixDiffSelection(viewer.getRoot(), Option.fromNullOr(range))
+    if (fixed._tag === "Pending") {
       viewer.lastSelection = range
       return
     }
 
-    viewer.lastSelection = fixed
-    active.setSelectedLines(fixed)
+    const next = Option.getOrNull(fixed.range)
+    viewer.lastSelection = next
+    active.setSelectedLines(next)
     restoreShadowTextSelection(preserve?.root, preserve?.text)
   }
 
@@ -991,36 +1006,38 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
     setSelectedLines,
     updateSelection: (preserveTextSelection) => {
       const root = viewer.getRoot()
-      if (!root) return
+      if (Option.isNone(root)) return
 
       const selected = readShadowLineSelection({
-        root,
+        root: root.value,
         lineForNode: findDiffLineNumber,
         sideForNode: diffSelectionSide,
         preserveTextSelection,
       })
-      if (!selected) return
+      if (Option.isNone(selected)) return
 
-      if (selected.text) {
-        setSelectedLines(selected.range, { root, text: selected.text })
+      const text = selected.value.text
+      if (Option.isSome(text)) {
+        setSelectedLines(selected.value.range, { root: root.value, text: text.value })
         return
       }
 
-      setSelectedLines(selected.range)
+      setSelectedLines(selected.value.range)
     },
-    buildDragSelection: () => {
-      if (viewer.dragStart === undefined || viewer.dragEnd === undefined) return
-      const selected: SelectedLineRange = { start: viewer.dragStart, end: viewer.dragEnd }
-      if (dragSide) selected.side = dragSide
-      if (dragEndSide && dragSide && dragEndSide !== dragSide) selected.endSide = dragEndSide
-      return selected
-    },
-    buildClickSelection: () => {
-      if (viewer.dragStart === undefined) return
-      const selected: SelectedLineRange = { start: viewer.dragStart, end: viewer.dragStart }
-      if (dragSide) selected.side = dragSide
-      return selected
-    },
+    buildDragSelection: () =>
+      Option.zipWith(viewer.dragStart, viewer.dragEnd, (start, end) => {
+        const selected: SelectedLineRange = { start, end }
+        if (Option.isSome(dragSide)) selected.side = dragSide.value
+        if (Option.isSome(dragEndSide) && Option.isSome(dragSide) && dragEndSide.value !== dragSide.value)
+          selected.endSide = dragEndSide.value
+        return selected
+      }),
+    buildClickSelection: () =>
+      Option.map(viewer.dragStart, (line) => {
+        const selected: SelectedLineRange = { start: line, end: line }
+        if (Option.isSome(dragSide)) selected.side = dragSide.value
+        return selected
+      }),
     onDragStart: (hit) => {
       dragSide = hit.side
       dragEndSide = hit.side
@@ -1029,8 +1046,8 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
       dragEndSide = hit.side
     },
     onDragReset: () => {
-      dragSide = undefined
-      dragEndSide = undefined
+      dragSide = Option.none()
+      dragEndSide = Option.none()
     },
     markCommented: markCommentedDiffLines,
   }
@@ -1144,9 +1161,9 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
     // Plain timeline diffs can retain the instance as content streams; virtualized viewers reset only when that is unsafe.
     const reset =
       instance !== undefined &&
-      (instanceVirtualizer !== virtualizer ||
+      (!sameVirtualizer(instanceVirtualizer, virtualizer) ||
         instanceWorkerPool !== workerPool ||
-        (virtualizer !== undefined && (instanceVirtualHunkSeparators !== opts.hunkSeparators || targetChanged)))
+        (Option.isSome(virtualizer) && (instanceVirtualHunkSeparators !== opts.hunkSeparators || targetChanged)))
     const forceRender = !reset && instance !== undefined && !areOptionsEqual(instance.options, opts)
 
     renderViewer({
@@ -1154,15 +1171,16 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
       current: instance,
       reset,
       create: () =>
-        virtualizer
-          ? new VirtualizedFileDiff<T>(opts, virtualizer, virtualMetrics, workerPool)
-          : new FileDiff<T>(opts, workerPool),
+        Option.match(virtualizer, {
+          onNone: () => new FileDiff<T>(opts, workerPool),
+          onSome: (value) => new VirtualizedFileDiff<T>(opts, value, virtualMetrics, workerPool),
+        }),
       update: (value) => value.setOptions(opts),
       assign: (value) => {
         instance = value
         instanceVirtualizer = virtualizer
         instanceWorkerPool = workerPool
-        instanceVirtualHunkSeparators = virtualizer ? opts.hunkSeparators : undefined
+        instanceVirtualHunkSeparators = Option.isSome(virtualizer) ? opts.hunkSeparators : undefined
         instanceFileDiff = local.fileDiff
         instanceBefore = before
         instanceAfter = after
@@ -1203,15 +1221,15 @@ function DiffViewer<T>(props: DiffFileProps<T>) {
   onCleanup(() => {
     instance?.cleanUp()
     instance = undefined
-    instanceVirtualizer = undefined
+    instanceVirtualizer = Option.none()
     instanceWorkerPool = undefined
     instanceVirtualHunkSeparators = undefined
     instanceFileDiff = undefined
     instanceBefore = undefined
     instanceAfter = undefined
     virtuals.cleanup()
-    dragSide = undefined
-    dragEndSide = undefined
+    dragSide = Option.none()
+    dragEndSide = Option.none()
   })
 
   return <ViewerShell mode="diff" viewer={viewer} class={local.class} classList={local.classList} />

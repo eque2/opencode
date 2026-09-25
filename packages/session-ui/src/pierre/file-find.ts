@@ -25,12 +25,12 @@ function isEditable(node: unknown): boolean {
   return /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(node.tagName)
 }
 
-function hostForNode(node: unknown) {
-  if (!(node instanceof Node)) return
-  for (const host of hosts) {
+function hostForNode(node: unknown): Option.Option<FindHost> {
+  if (!(node instanceof Node)) return Option.none()
+  return Arr.findFirst(hosts, (host) => {
     const el = host.element()
-    if (el && el.isConnected && el.contains(node)) return host
-  }
+    return !!el && el.isConnected && el.contains(node)
+  })
 }
 
 function installShortcuts() {
@@ -67,12 +67,16 @@ function installShortcuts() {
         return
       }
 
-      const host = hostForNode(document.activeElement) ?? hostForNode(event.target) ?? target ?? hosts[0]
-      if (!host) return
+      const host = hostForNode(document.activeElement).pipe(
+        Option.orElse(() => hostForNode(event.target)),
+        Option.orElse(() => Option.fromUndefinedOr(target)),
+        Option.orElse(() => Arr.head(hosts)),
+      )
+      if (Option.isNone(host)) return
 
       event.preventDefault()
       event.stopPropagation()
-      host.open()
+      host.value.open()
     },
     { capture: true },
   )
@@ -95,13 +99,14 @@ function supportsHighlights() {
   return typeof Highlight === "function" && Option.isSome(highlightRegistry())
 }
 
-function scrollParent(el: HTMLElement): HTMLElement | undefined {
+function scrollParent(el: HTMLElement): Option.Option<HTMLElement> {
   let parent = el.parentElement
   while (parent) {
     const style = getComputedStyle(parent)
-    if (style.overflowY === "auto" || style.overflowY === "scroll") return parent
+    if (style.overflowY === "auto" || style.overflowY === "scroll") return Option.some(parent)
     parent = parent.parentElement
   }
+  return Option.none()
 }
 
 function* textNodes(root: HTMLElement): Generator<Text> {
@@ -125,7 +130,7 @@ function* matchOffsets(hay: string, needle: string, step: number): Generator<num
 type CreateFileFindOptions = {
   wrapper: () => HTMLElement | undefined
   overlay: () => HTMLDivElement | undefined
-  getRoot: () => ShadowRoot | undefined
+  getRoot: () => Option.Option<ShadowRoot>
 }
 
 export function createFileFind(opts: CreateFileFindOptions) {
@@ -215,13 +220,13 @@ export function createFileFind(opts: CreateFileFindOptions) {
 
   const syncOverlayScroll = () => {
     if (mode !== "overlay") return
-    const root = opts.getRoot()
-
-    const next = root
-      ? Array.from(root.querySelectorAll("[data-code]")).filter(
+    const next = Option.match(opts.getRoot(), {
+      onNone: (): HTMLElement[] => [],
+      onSome: (root) =>
+        Array.from(root.querySelectorAll("[data-code]")).filter(
           (node): node is HTMLElement => node instanceof HTMLElement,
-        )
-      : []
+        ),
+    })
     const current = overlayScroll()
     if (next.length === current.length && next.every((el, i) => el === current[i])) return
 
@@ -243,7 +248,7 @@ export function createFileFind(opts: CreateFileFindOptions) {
     const wrapper = opts.wrapper()
     if (!wrapper) return
 
-    const root = scrollParent(wrapper) ?? wrapper
+    const root = Option.getOrElse(scrollParent(wrapper), () => wrapper)
     const rect = root.getBoundingClientRect()
     const title = parseFloat(getComputedStyle(root).getPropertyValue("--session-title-height"))
     const header = Number.isNaN(title) ? 0 : title
@@ -328,11 +333,11 @@ export function createFileFind(opts: CreateFileFindOptions) {
     }
 
     const root = opts.getRoot()
-    if (!root) return
+    if (Option.isNone(root)) return
 
     mode = supportsHighlights() ? "highlights" : "overlay"
 
-    const ranges = scan(root, value)
+    const ranges = scan(root.value, value)
     const total = ranges.length
     const desired = args?.reset ? 0 : index()
     const currentIndex = total ? Math.min(desired, total - 1) : 0
@@ -444,7 +449,7 @@ export function createFileFind(opts: CreateFileFindOptions) {
 
     const wrapper = opts.wrapper()
     if (!wrapper) return
-    const root = scrollParent(wrapper) ?? wrapper
+    const root = Option.getOrElse(scrollParent(wrapper), () => wrapper)
     createResizeObserver(root, update)
   })
 

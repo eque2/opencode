@@ -1,3 +1,5 @@
+import { Option } from "effect"
+
 type ReadyWatcher = {
   observer?: MutationObserver
   token: number
@@ -12,31 +14,30 @@ export function clearReadyWatcher(state: ReadyWatcher) {
   state.observer = undefined
 }
 
-export function getViewerHost(container: HTMLElement | undefined) {
-  if (!container) return
+export function getViewerHost(container: HTMLElement | undefined): Option.Option<HTMLElement> {
+  if (!container) return Option.none()
   const host = container.querySelector("diffs-container")
-  if (!(host instanceof HTMLElement)) return
-  return host
+  return host instanceof HTMLElement ? Option.some(host) : Option.none()
 }
 
-export function getViewerRoot(container: HTMLElement | undefined) {
-  return getViewerHost(container)?.shadowRoot ?? undefined
+export function getViewerRoot(container: HTMLElement | undefined): Option.Option<ShadowRoot> {
+  return Option.flatMap(getViewerHost(container), (host) => Option.fromNullOr(host.shadowRoot))
 }
 
-export function applyViewerScheme(host: HTMLElement | undefined) {
-  if (!host) return
+export function applyViewerScheme(host: Option.Option<HTMLElement>) {
+  if (Option.isNone(host)) return
   if (typeof document === "undefined") return
 
   const scheme = document.documentElement.dataset.colorScheme
   if (scheme === "dark" || scheme === "light") {
-    host.dataset.colorScheme = scheme
+    host.value.dataset.colorScheme = scheme
     return
   }
 
-  host.removeAttribute("data-color-scheme")
+  host.value.removeAttribute("data-color-scheme")
 }
 
-export function observeViewerScheme(getHost: () => HTMLElement | undefined) {
+export function observeViewerScheme(getHost: () => Option.Option<HTMLElement>) {
   if (typeof document === "undefined") return () => {}
 
   applyViewerScheme(getHost())
@@ -51,7 +52,7 @@ export function observeViewerScheme(getHost: () => HTMLElement | undefined) {
 export function notifyShadowReady(opts: {
   state: ReadyWatcher
   container: HTMLElement
-  getRoot: () => ShadowRoot | undefined
+  getRoot: () => Option.Option<ShadowRoot>
   isReady: (root: ShadowRoot) => boolean
   onReady: () => void
   settleFrames?: number
@@ -95,20 +96,20 @@ export function notifyShadowReady(opts: {
   }
 
   const root = opts.getRoot()
-  if (!root) {
+  if (Option.isNone(root)) {
     if (typeof MutationObserver === "undefined") return
 
     opts.state.observer = new MutationObserver(() => {
       if (token !== opts.state.token) return
 
       const next = opts.getRoot()
-      if (!next) return
+      if (Option.isNone(next)) return
 
-      observeRoot(next)
+      observeRoot(next.value)
     })
     opts.state.observer.observe(opts.container, { childList: true, subtree: true })
     return
   }
 
-  observeRoot(root)
+  observeRoot(root.value)
 }

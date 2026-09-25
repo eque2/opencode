@@ -19,7 +19,7 @@ export function previewSelectedLines(source: string, range: LineSpan) {
   const start = Math.max(1, Math.min(range.start, range.end))
   const end = Math.max(range.start, range.end)
   const lines = source.split("\n").slice(start - 1, end)
-  if (lines.length === 0) return
+  if (lines.length === 0) return undefined
   return lines.slice(0, 2).join("\n")
 }
 
@@ -95,18 +95,18 @@ export function restoreShadowTextSelection(root: ShadowRoot | undefined, range: 
 
 export function createLineNumberSelectionBridge() {
   let mode: PointerMode = "none"
-  let line: number | undefined
+  let line: Option.Option<number> = Option.none()
   let moved = false
   let pending = false
 
   const clear = () => {
     mode = "none"
-    line = undefined
+    line = Option.none()
     moved = false
   }
 
   return {
-    begin(numberColumn: boolean, next: number | undefined) {
+    begin(numberColumn: boolean, next: Option.Option<number>) {
       if (!numberColumn) {
         mode = "text"
         return
@@ -116,7 +116,7 @@ export function createLineNumberSelectionBridge() {
       line = next
       moved = false
     },
-    track(buttons: number, next: number | undefined) {
+    track(buttons: number, next: Option.Option<number>) {
       if (mode !== "numbers") return false
 
       if ((buttons & 1) === 0) {
@@ -124,7 +124,7 @@ export function createLineNumberSelectionBridge() {
         return true
       }
 
-      if (next !== undefined && line !== undefined && next !== line) moved = true
+      if (Option.isSome(next) && Option.isSome(line) && next.value !== line.value) moved = true
       return true
     },
     finish() {
