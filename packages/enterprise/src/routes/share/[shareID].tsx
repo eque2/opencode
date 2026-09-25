@@ -13,7 +13,6 @@ import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
 import { iife } from "@opencode-ai/core/util/iife"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { NamedError } from "@opencode-ai/core/util/error"
-import { DateTime } from "luxon"
 import { createStore } from "solid-js/store"
 import NotFound from "../[...404]"
 import { Tabs } from "@opencode-ai/ui/tabs"
@@ -23,7 +22,7 @@ import { clientOnly } from "@solidjs/start"
 import { Meta, Title } from "@solidjs/meta"
 import { Base64 } from "js-base64"
 import { getRequestEvent } from "solid-js/web"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 
 const ClientOnlyWorkerPoolProvider = clientOnly(() =>
   import("@opencode-ai/session-ui/pierre/worker").then((m) => ({
@@ -122,6 +121,20 @@ const getData = query((shareID: string) => {
     }),
   )
 }, "getShareData")
+
+const pad = (value: number) => value.toString().padStart(2, "0")
+
+// The same text as luxon toFormat("dd MMM yyyy, HH:mm"): local time zone, en-US month names.
+function formatCreated(millis: number) {
+  return Option.match(DateTime.makeZoned(millis, { timeZone: DateTime.zoneMakeLocal() }), {
+    onNone: () => "Invalid DateTime",
+    onSome: (created) => {
+      const parts = DateTime.toParts(created)
+      const month = DateTime.format(created, { month: "short", locale: "en-US" })
+      return `${pad(parts.day)} ${month} ${parts.year.toString().padStart(4, "0")}, ${pad(parts.hour)}:${pad(parts.minute)}`
+    },
+  })
+}
 
 // The error view for a share that cannot render, from the ErrorBoundary or a missing session.
 function ShareError(props: { error: unknown }) {
@@ -252,7 +265,7 @@ export default function () {
                                     <div class="text-12-regular text-text-base">{model()?.name ?? modelID()}</div>
                                   </div>
                                   <div class="text-12-regular text-text-weaker">
-                                    {DateTime.fromMillis(info().time.created).toFormat("dd MMM yyyy, HH:mm")}
+                                    {formatCreated(info().time.created)}
                                   </div>
                                 </div>
                               </div>
