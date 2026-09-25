@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Result } from "effect"
+import { Option, Result } from "effect"
 import { rawRequest, resolveOperation } from "./api"
 
 describe("api request resolution", () => {
@@ -34,7 +34,7 @@ describe("api request resolution", () => {
   })
 
   test("resolves curl-like method and path input", () => {
-    expect(rawRequest(["post", "/api/foo"])).toEqual({ method: "POST", path: "/api/foo" })
-    expect(rawRequest(["v2.session.list"])).toBeUndefined()
+    expect(rawRequest(["post", "/api/foo"])).toEqual(Option.some({ method: "POST", path: "/api/foo" }))
+    expect(rawRequest(["v2.session.list"])).toEqual(Option.none())
   })
 })

@@ -61,10 +61,8 @@ export default Runtime.handler(
     const request = yield* resolveRequest(transport, input.request, params)
     const headers = new Headers(transport.headers)
     for (const header of input.header) {
-      const index = header.indexOf(":")
-      if (index < 1)
-        return yield* Effect.fail(new InvalidHeaderError({ message: `Invalid header, expected name:value: ${header}` }))
-      headers.set(header.slice(0, index).trim(), header.slice(index + 1).trim())
+      const [name, value] = yield* Effect.fromResult(parseHeader(header))
+      headers.set(name, value)
     }
     const body = Option.getOrUndefined(input.data)
     if (body !== undefined && !headers.has("content-type")) headers.set("content-type", "application/json")
@@ -95,9 +93,17 @@ export function resolveOperation(
   return Result.fail(new OperationNotFoundError({ message: `Operation not found: ${operationID}` }))
 }
 
-export function rawRequest(input: readonly string[]) {
-  if (input.length !== 2 || !HashSet.has(methods, input[0].toLowerCase()) || !input[1].startsWith("/")) return
-  return { method: input[0].toUpperCase(), path: input[1] }
+function parseHeader(header: string): Result.Result<readonly [name: string, value: string], InvalidHeaderError> {
+  const index = header.indexOf(":")
+  if (index < 1)
+    return Result.fail(new InvalidHeaderError({ message: `Invalid header, expected name:value: ${header}` }))
+  return Result.succeed([header.slice(0, index).trim(), header.slice(index + 1).trim()])
+}
+
+export function rawRequest(input: readonly string[]): Option.Option<{ method: string; path: string }> {
+  if (input.length !== 2 || !HashSet.has(methods, input[0].toLowerCase()) || !input[1].startsWith("/"))
+    return Option.none()
+  return Option.some({ method: input[0].toUpperCase(), path: input[1] })
 }
 
 const resolveRequest = Effect.fnUntraced(function* (
@@ -106,7 +112,7 @@ const resolveRequest = Effect.fnUntraced(function* (
   params: Record<string, string>,
 ) {
   const raw = rawRequest(input)
-  if (raw) return raw
+  if (Option.isSome(raw)) return raw.value
   if (input.length !== 1)
     return yield* Effect.fail(
       new RequestShapeError({ message: "Expected an operation name or an HTTP method and path" }),
