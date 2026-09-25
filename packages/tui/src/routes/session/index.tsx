@@ -82,6 +82,7 @@ import { getRevertDiffFiles } from "../../util/revert-diff"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useOpencodeKeymap } from "../../keymap"
 import { usePathFormatter } from "../../context/path-format"
 import { LocationProvider } from "../../context/location"
+import { MissingProviderError } from "../../context/errors"
 
 addDefaultParsers(parsers.parsers)
 
@@ -189,7 +190,10 @@ const context = createContext<{
 
 function use() {
   const ctx = useContext(context)
-  if (!ctx) throw new Error("useContext must be used within a Session component")
+  if (!ctx) {
+    // eslint-disable-next-line effect/no-throw-use-effect -- (a) Solid useContext hook contract is synchronous: return the value or throw outside the provider
+    throw new MissingProviderError({ message: "useContext must be used within a Session component" })
+  }
   return ctx
 }
 
