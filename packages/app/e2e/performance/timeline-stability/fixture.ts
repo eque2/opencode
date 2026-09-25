@@ -88,7 +88,7 @@ export async function setupTimeline(
   page: Page,
   input: {
     messages?: TimelineMessage[]
-    settings?: Record<string, boolean>
+    settings?: Partial<Record<string, boolean>>
     sessions?: Session[]
     cpuRate?: number
     viewport?: { width: number; height: number }
