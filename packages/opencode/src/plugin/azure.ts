@@ -61,7 +61,7 @@ export function createAzureAuthHooks(
         return {
           apiKey: OAUTH_DUMMY_KEY,
           async fetch(input: RequestInfo | URL, init?: RequestInit) {
-            const headers = new Headers(input instanceof Request ? input.headers : undefined)
+            const headers = input instanceof Request ? new Headers(input.headers) : new Headers()
             new Headers(init?.headers).forEach((value, key) => headers.set(key, value))
             headers.delete("api-key")
             headers.delete("x-api-key")
