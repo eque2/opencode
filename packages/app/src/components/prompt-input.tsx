@@ -1,4 +1,4 @@
-import { HashMap, HashSet, Option } from "effect"
+import { DateTime, HashMap, HashSet, Option } from "effect"
 import { useFilteredList } from "@opencode-ai/ui/hooks"
 import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { createEffect, on, Component, Show, onCleanup, createMemo, createSignal, createResource } from "solid-js"
@@ -333,7 +333,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           path: item.path,
           selection: { ...nextSelection.value },
           comment,
-          time: Option.match(saved, { onNone: () => Date.now(), onSome: (entry) => entry.time }),
+          time: Option.match(saved, {
+            onNone: () => DateTime.toEpochMillis(DateTime.nowUnsafe()),
+            onSome: (entry) => entry.time,
+          }),
           origin: item.commentOrigin,
           preview: item.preview,
         } satisfies PromptHistoryComment,
