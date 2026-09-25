@@ -1,3 +1,4 @@
+import type { Config, Session, Todo } from "@opencode-ai/sdk/v2"
 import { createStore } from "solid-js/store"
 
 const provider = {
@@ -17,10 +18,17 @@ const provider = {
   default: { anthropic: "claude-3-7-sonnet" },
 }
 
-const [store, setStore] = createStore({
-  todo: {} as Record<string, any[]>,
+type MockChildStore = {
+  todo: Record<string, Todo[]>
+  provider: typeof provider
+  session: Session[]
+  config: Pick<Config, "permission">
+}
+
+const [store, setStore] = createStore<MockChildStore>({
+  todo: {},
   provider,
-  session: [] as any[],
+  session: [],
   config: { permission: {} },
 })
 
@@ -34,7 +42,7 @@ export function useServerSync() {
       return [store, setStore] as const
     },
     todo: {
-      set(sessionID: string, todos: any[]) {
+      set(sessionID: string, todos: Todo[]) {
         setStore("todo", sessionID, todos)
       },
     },
