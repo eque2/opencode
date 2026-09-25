@@ -22,7 +22,7 @@ export type LineComment = {
 
 type CommentFocus = { file: string; id: string }
 type CommentFocusKey = "focus" | "active"
-type CommentFocusUpdate = CommentFocus | null | ((value: CommentFocus | null) => CommentFocus | null)
+type CommentFocusUpdate = CommentFocus | null | ((value: Option.Option<CommentFocus>) => Option.Option<CommentFocus>)
 
 const sameFocus = Option.makeEquivalence((a: CommentFocus, b: CommentFocus) => a.file === b.file && a.id === b.id)
 
@@ -104,11 +104,10 @@ function createCommentSessionState(store: Store<CommentStore>, setStore: SetStor
 
   const clearRef = (key: CommentFocusKey) => updateRef(key, () => Option.none())
 
-  // The nullable API is kept for the prompt input and file tab readers.
+  // The nullable value form is kept for the prompt input and file tab callers.
+  // The updater form reads and returns the stored Option.
   const setRef = (key: CommentFocusKey, value: CommentFocusUpdate) =>
-    updateRef(key, (current) =>
-      Option.fromNullishOr(typeof value === "function" ? value(Option.getOrNull(current)) : value),
-    )
+    updateRef(key, (current) => (typeof value === "function" ? value(current) : Option.fromNullOr(value)))
 
   const setFocus = (value: CommentFocusUpdate) => setRef("focus", value)
 

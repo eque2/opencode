@@ -44,7 +44,7 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
   const height = createMemo(() => layout.terminal.height())
   const close = () => view().terminal.close()
   let root: HTMLDivElement | undefined
-  let tabList: HTMLDivElement | undefined
+  let tabList = Option.none<HTMLDivElement>()
 
   onCleanup(() => terminal.cancelFocus())
 
@@ -243,13 +243,13 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
             ]}
             modifiers={[
               RestrictToHorizontalAxis,
-              RestrictToElement.configure({ element: () => Option.getOrNull(Option.fromNullishOr(tabList)) }),
+              RestrictToElement.configure({ element: () => Option.getOrNull(tabList) }),
             ]}
             plugins={(defaults) => [
               ...defaults.filter((plugin) => plugin !== Accessibility),
               AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
-              // dnd-kit turns the drop animation off only for null.
-              Feedback.configure({ dropAnimation: Option.getOrNull(Option.none()) }),
+              // eslint-disable-next-line effect/no-null-use-option -- @dnd-kit/dom FeedbackOptions.dropAnimation documents null as the value that disables the drop animation; undefined means the default animation
+              Feedback.configure({ dropAnimation: null }),
             ]}
             onDragEnd={(event) => {
               const source = event.operation.source
@@ -267,7 +267,9 @@ export function TerminalPanelV2(props: { stacked?: boolean } = {}) {
                 class={newLayout() ? "!h-[52px] !flex-none" : "!h-auto !flex-none"}
               >
                 <Tabs.List
-                  ref={tabList}
+                  ref={(el: HTMLDivElement) => {
+                    tabList = Option.some(el)
+                  }}
                   {...(newLayout() ? {} : { class: "h-10 border-b border-border-weaker-base" })}
                   onPointerDown={(event: PointerEvent & { currentTarget: HTMLDivElement }) => {
                     const active = document.activeElement

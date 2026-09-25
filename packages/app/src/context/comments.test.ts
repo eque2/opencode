@@ -141,14 +141,14 @@ describe("comments session indexing", () => {
 
       comments.setFocus({ file: "a.ts", id: "a1" })
       comments.setFocus((current) => {
-        expect(current).toEqual({ file: "a.ts", id: "a1" })
-        return { file: "b.ts", id: "b1" }
+        expect(current).toEqual(Option.some({ file: "a.ts", id: "a1" }))
+        return Option.some({ file: "b.ts", id: "b1" })
       })
 
       comments.setActive({ file: "c.ts", id: "c1" })
       comments.setActive((current) => {
-        expect(current).toEqual({ file: "c.ts", id: "c1" })
-        return Option.getOrNull(Option.none())
+        expect(current).toEqual(Option.some({ file: "c.ts", id: "c1" }))
+        return Option.none()
       })
 
       expect(comments.focus()).toEqual({ file: "b.ts", id: "b1" })
