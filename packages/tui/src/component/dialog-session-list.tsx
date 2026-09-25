@@ -4,7 +4,7 @@ import { useRoute } from "../context/route"
 import { useSync } from "../context/sync"
 import { createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import path from "path"
-import { HashMap, HashSet, MutableHashSet, Option } from "effect"
+import { DateTime, HashMap, HashSet, MutableHashSet, Option } from "effect"
 import { Locale } from "../util/locale"
 import { useProject } from "../context/project"
 import { useTheme } from "../context/theme"
@@ -209,7 +209,8 @@ export function DialogSessionList() {
   })
 
   const options = createMemo(() => {
-    const today = new Date().toDateString()
+    // toDateString is the category label format; DateTime.toDate crosses to it.
+    const today = DateTime.toDate(DateTime.nowUnsafe()).toDateString()
     const sessionMap = HashMap.fromIterable(
       sessions()
         .filter((x) => x.parentID === undefined)
@@ -259,7 +260,7 @@ export function DialogSessionList() {
       .flatMap((id) =>
         HashMap.get(sessionMap, id).pipe(
           Option.map((x) => {
-            const label = new Date(x.time.updated).toDateString()
+            const label = DateTime.toDate(DateTime.makeUnsafe(x.time.updated)).toDateString()
             return buildOption(x, label === today ? "Today" : label)
           }),
           Option.toArray,
