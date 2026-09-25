@@ -70,8 +70,12 @@ export function createHomeProjectsController(home: HomeController) {
       },
       canDefault: serverManagement.canDefault,
       defaultKey: serverManagement.defaultKey,
-      setDefault: (conn: ServerConnection.Any | undefined) =>
-        serverManagement.setDefault(conn ? ServerConnection.key(conn) : null),
+      /** Makes a server the default one, or clears the default server with none. */
+      setDefault: (conn: Option.Option<ServerConnection.Any>) =>
+        Option.match(conn, {
+          onNone: () => serverManagement.clearDefault(),
+          onSome: (server) => serverManagement.setDefault(ServerConnection.key(server)),
+        }),
       remove: (conn: ServerConnection.Any) => serverManagement.handleRemove(ServerConnection.key(conn)),
       edit: (conn: ServerConnection.Http) => dialog.show(() => <DialogServerV2 mode="edit" server={conn} />),
       focus: home.selection.focusServer,

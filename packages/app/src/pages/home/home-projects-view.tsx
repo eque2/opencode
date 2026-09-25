@@ -1,3 +1,4 @@
+import { Option } from "effect"
 import { type Accessor, createMemo, For, type JSX, onCleanup, Show, splitProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
@@ -46,7 +47,7 @@ export type HomeProjectsViewProps = {
   onFocusServer: (server: ServerConnection.Any) => void
   onToggleCollapsed: (server: ServerConnection.Any) => void
   onEditServer: (server: ServerConnection.Http) => void
-  onSetDefaultServer: (server: ServerConnection.Any | undefined) => void
+  onSetDefaultServer: (server: Option.Option<ServerConnection.Any>) => void
   onRemoveServer: (server: ServerConnection.Any) => void
   onMoveProject: (server: ServerConnection.Any, worktree: string, index: number) => void
   onSelectProject: (server: ServerConnection.Any, directory: string) => void
@@ -278,8 +279,8 @@ function HomeServerRow(props: {
           canDefault={props.canDefaultServer()}
           isDefault={props.defaultServerKey() === ServerConnection.key(props.server)}
           onEdit={props.onEditServer}
-          onSetDefault={() => props.onSetDefaultServer(props.server)}
-          onRemoveDefault={() => props.onSetDefaultServer(undefined)}
+          onSetDefault={() => props.onSetDefaultServer(Option.some(props.server))}
+          onRemoveDefault={() => props.onSetDefaultServer(Option.none())}
           onRemove={() => props.onRemoveServer(props.server)}
           open={props.contextMenuOpen(contextMenuID())}
           onOpenChange={(open) => props.onSetContextMenuOpen(contextMenuID(), open)}
@@ -330,6 +331,7 @@ function HomeProjectList(props: HomeProjectListProps) {
       plugins={(defaults) => [
         ...defaults.filter((plugin) => plugin !== AutoScroller && plugin !== Feedback),
         AutoScroller.configure({ acceleration: 8, threshold: { x: 0, y: 0.05 } }),
+        // eslint-disable-next-line effect/no-null-use-option -- @dnd-kit/dom FeedbackOptions.dropAnimation documents null as the value that disables the drop animation; undefined means the default animation
         Feedback.configure({ dropAnimation: null }),
       ]}
       onDragEnd={(event) => {
