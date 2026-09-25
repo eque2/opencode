@@ -1,7 +1,7 @@
 import { Component, For, Show, createMemo, lazy, onCleanup, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
 import { makeEventListener } from "@solid-primitives/event-listener"
-import { Option } from "effect"
+import { HashMap, MutableHashMap, Option } from "effect"
 import { Button } from "@opencode-ai/ui/button"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -30,6 +30,9 @@ type KeybindMeta = {
 }
 
 type KeybindMap = Record<string, string | undefined>
+type KeybindList = MutableHashMap.MutableHashMap<string, KeybindMeta>
+type GroupedIds = HashMap.HashMap<KeybindGroup, string[]>
+type UsedKeybinds = MutableHashMap.MutableHashMap<string, { id: string; title: string }[]>
 type CommandContext = ReturnType<typeof useCommand>
 type LanguageContext = ReturnType<typeof useLanguage>
 type SettingsContext = ReturnType<typeof useSettings>
@@ -125,55 +128,68 @@ function keybinds(value: unknown): KeybindMap {
 }
 
 function listFor(command: Pick<CommandContext, "catalog" | "options">, map: KeybindMap, palette: string) {
-  const out = new Map<string, KeybindMeta>()
-  out.set(PALETTE_ID, { title: palette, group: "General" })
+  const out: KeybindList = MutableHashMap.empty()
+  MutableHashMap.set(out, PALETTE_ID, { title: palette, group: "General" })
 
   for (const opt of command.catalog) {
     if (opt.id.startsWith("suggested.")) continue
     if (opt.hidden) continue
-    out.set(opt.id, { title: opt.title, group: groupFor(opt.id) })
+    MutableHashMap.set(out, opt.id, { title: opt.title, group: groupFor(opt.id) })
   }
 
   for (const opt of command.options) {
     if (opt.id.startsWith("suggested.")) continue
     if (opt.hidden) continue
-    out.set(opt.id, { title: opt.title, group: groupFor(opt.id) })
+    MutableHashMap.set(out, opt.id, { title: opt.title, group: groupFor(opt.id) })
   }
 
   for (const [id, value] of Object.entries(map)) {
     if (typeof value !== "string") continue
-    if (out.has(id)) continue
-    out.set(id, { title: id, group: groupFor(id) })
+    if (MutableHashMap.has(out, id)) continue
+    MutableHashMap.set(out, id, { title: id, group: groupFor(id) })
   }
 
   return out
 }
 
-function groupedFor(list: Map<string, KeybindMeta>) {
-  const entries = Array.from(list)
-  const out = new Map<KeybindGroup, string[]>()
-  for (const group of GROUPS)
-    out.set(
-      group,
-      entries
-        .filter(([, item]) => item.group === group)
-        .map(([id]) => id)
-        .sort((a, b) => (list.get(a)?.title ?? "").localeCompare(list.get(b)?.title ?? "")),
-    )
+function titleIn(list: KeybindList, id: string) {
+  return Option.match(MutableHashMap.get(list, id), { onNone: () => "", onSome: (meta) => meta.title })
+}
 
-  return out
+function idsIn(grouped: GroupedIds, group: KeybindGroup) {
+  return Option.getOrElse(HashMap.get(grouped, group), () => [])
+}
+
+function usedBy(used: UsedKeybinds, signature: string) {
+  return Option.getOrElse(MutableHashMap.get(used, signature), () => [])
+}
+
+function groupedFor(list: KeybindList): GroupedIds {
+  const entries = Array.from(list)
+  return HashMap.fromIterable(
+    GROUPS.map(
+      (group) =>
+        [
+          group,
+          entries
+            .filter(([, item]) => item.group === group)
+            .map(([id]) => id)
+            .sort((a, b) => titleIn(list, a).localeCompare(titleIn(list, b))),
+        ] as const,
+    ),
+  )
 }
 
 function filteredFor(
   query: string,
-  list: Map<string, KeybindMeta>,
-  grouped: Map<KeybindGroup, string[]>,
+  list: KeybindList,
+  grouped: GroupedIds,
   keybind: (id: string) => string,
-) {
+): GroupedIds {
   const value = query.toLowerCase().trim()
   if (!value) return grouped
 
-  const items = Array.from(list.entries()).map(([id, meta]) => ({
+  const items = Array.from(list).map(([id, meta]) => ({
     id,
     title: meta.title,
     group: meta.group,
@@ -185,21 +201,19 @@ function filteredFor(
     threshold: -10000,
   })
 
-  const out = new Map<KeybindGroup, string[]>()
-  for (const group of GROUPS)
-    out.set(
-      group,
-      results.filter((result) => result.obj.group === group).map((result) => result.obj.id),
-    )
-
-  return out
+  return HashMap.fromIterable(
+    GROUPS.map(
+      (group) =>
+        [group, results.filter((result) => result.obj.group === group).map((result) => result.obj.id)] as const,
+    ),
+  )
 }
 
 function useKeyCapture(input: {
   active: () => string | null
   stop: () => void
   set: (id: string, keybind: string) => void
-  used: () => Map<string, { id: string; title: string }[]>
+  used: () => UsedKeybinds
   language: ReturnType<typeof useLanguage>
 }) {
   onMount(() => {
@@ -232,20 +246,20 @@ function useKeyCapture(input: {
       if (Option.isNone(recorded)) return
       const next = recorded.value
 
-      const conflicts = new Map<string, string>()
+      const conflicts = MutableHashMap.empty<string, string>()
       for (const sig of signatures(next)) {
-        for (const item of input.used().get(sig) ?? []) {
+        for (const item of usedBy(input.used(), sig)) {
           if (item.id === id) continue
-          conflicts.set(item.id, item.title)
+          MutableHashMap.set(conflicts, item.id, item.title)
         }
       }
 
-      if (conflicts.size > 0) {
+      if (MutableHashMap.size(conflicts) > 0) {
         showToast({
           title: input.language.t("settings.shortcuts.conflict.title"),
           description: input.language.t("settings.shortcuts.conflict.description", {
             keybind: formatKeybind(next, input.language.t),
-            titles: [...conflicts.values()].join(", "),
+            titles: Array.from(MutableHashMap.values(conflicts)).join(", "),
           }),
         })
         return
@@ -278,7 +292,7 @@ export function createKeybindSettingsController(
     return listFor(input.command, overrides(), language.t("command.palette"))
   })
   const grouped = createMemo(() => groupedFor(list()))
-  const title = (id: string) => list().get(id)?.title ?? ""
+  const title = (id: string) => titleIn(list(), id)
   const effective = (id: string) => {
     if (id === PALETTE_ID) return input.settings.keybinds.get(id) ?? DEFAULT_PALETTE_KEYBIND
 
@@ -290,11 +304,11 @@ export function createKeybindSettingsController(
     return input.command.catalog.find((item) => item.id === id)?.keybind
   }
   const used = createMemo(() => {
-    const value = new Map<string, { id: string; title: string }[]>()
+    const value: UsedKeybinds = MutableHashMap.empty()
 
-    for (const id of list().keys()) {
+    for (const id of MutableHashMap.keys(list())) {
       for (const signature of signatures(effective(id))) {
-        value.set(signature, [...(value.get(signature) ?? []), { id, title: title(id) }])
+        MutableHashMap.set(value, signature, [...usedBy(value, signature), { id, title: title(id) }])
       }
     }
 
@@ -345,20 +359,20 @@ export function createKeybindSettingsController(
     if (Option.isNone(recorded)) return
     const next = recorded.value
 
-    const conflicts = new Map<string, string>()
+    const conflicts = MutableHashMap.empty<string, string>()
     for (const signature of signatures(next)) {
-      for (const item of used().get(signature) ?? []) {
+      for (const item of usedBy(used(), signature)) {
         if (item.id === id) continue
-        conflicts.set(item.id, item.title)
+        MutableHashMap.set(conflicts, item.id, item.title)
       }
     }
 
-    if (conflicts.size > 0) {
+    if (MutableHashMap.size(conflicts) > 0) {
       notify({
         title: language.t("settings.shortcuts.conflict.title"),
         description: language.t("settings.shortcuts.conflict.description", {
           keybind: formatKeybind(next, language.t),
-          titles: [...conflicts.values()].join(", "),
+          titles: Array.from(MutableHashMap.values(conflicts)).join(", "),
         }),
       })
       return
@@ -378,8 +392,12 @@ export function createKeybindSettingsController(
   return {
     catalog: {
       groups: GROUPS,
-      filtered: (query: string) =>
-        filteredFor(query, list(), grouped(), (id) => formatKeybind(effective(id) ?? "", language.t)),
+      // The matching ids of each group, in GROUPS order. It stays a Map with `get`, because
+      // test-browser/settings-keybinds.test.ts reads the result that way.
+      filtered: (query: string) => {
+        const filtered = filteredFor(query, list(), grouped(), (id) => formatKeybind(effective(id) ?? "", language.t))
+        return new Map(GROUPS.map((group) => [group, idsIn(filtered, group)] as const))
+      },
       title,
       keybind: (id: string) => formatKeybind(effective(id) ?? "", language.t),
     },
@@ -568,7 +586,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
     return listFor(command, map(), language.t("command.palette"))
   })
 
-  const title = (id: string) => list().get(id)?.title ?? ""
+  const title = (id: string) => titleIn(list(), id)
 
   const grouped = createMemo(() => groupedFor(list()))
 
@@ -578,17 +596,17 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
 
   const hasResults = createMemo(() => {
     for (const group of GROUPS) {
-      const ids = filtered().get(group) ?? []
+      const ids = idsIn(filtered(), group)
       if (ids.length > 0) return true
     }
     return false
   })
 
   const used = createMemo(() => {
-    const map = new Map<string, { id: string; title: string }[]>()
+    const map: UsedKeybinds = MutableHashMap.empty()
 
     const add = (key: string, value: { id: string; title: string }) => {
-      map.set(key, [...(map.get(key) ?? []), value])
+      MutableHashMap.set(map, key, [...usedBy(map, key), value])
     }
 
     const palette = settings.keybinds.get(PALETTE_ID) ?? DEFAULT_PALETTE_KEYBIND
@@ -607,7 +625,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
       return meta?.keybind
     }
 
-    for (const id of list().keys()) {
+    for (const id of MutableHashMap.keys(list())) {
       if (id === PALETTE_ID) continue
       for (const sig of signatures(valueFor(id))) {
         add(sig, { id, title: title(id) })
@@ -671,7 +689,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
     >
       <For each={GROUPS}>
         {(group) => (
-          <Show when={(filtered().get(group) ?? []).length > 0}>
+          <Show when={idsIn(filtered(), group).length > 0}>
             <div
               classList={{
                 "settings-v2-section": props.v2,
@@ -687,7 +705,7 @@ export const SettingsKeybinds: Component<{ v2?: boolean }> = (props) => {
                 {language.t(groupKey[group])}
               </h3>
               <List>
-                <For each={filtered().get(group) ?? []}>
+                <For each={idsIn(filtered(), group)}>
                   {(id) => (
                     <div class="flex items-center justify-between gap-4 py-3 border-b border-border-weak-base last:border-none">
                       <span
