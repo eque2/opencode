@@ -249,7 +249,7 @@ describe("TUI inline tool wrapping", () => {
         { type: "add", relativePath: "a.ts", filePath: "a.ts", patch: "diff", deletions: 0 },
       ]),
     ).toEqual([
-      { type: "add", relativePath: "a.ts", filePath: "a.ts", patch: "diff", deletions: 0, movePath: undefined },
+      { type: "add", relativePath: "a.ts", filePath: "a.ts", patch: "diff", deletions: 0, movePath: Option.none() },
     ])
     expect(parseTodos([null, { status: "pending" }, { status: "pending", content: "Safe" }])).toEqual([
       { status: "pending", content: "Safe" },

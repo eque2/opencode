@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { createMemo } from "solid-js"
 import { useSync } from "../../context/sync"
 import { DialogSelect } from "../../ui/dialog-select"
@@ -98,23 +98,23 @@ export function DialogMessage(props: {
                     messageID: props.messageID,
                   }),
                 )
-                const msg = message()
-                const prompt = msg
-                  ? sync.data.part[msg.id].reduce(
-                      (agg, part) => {
-                        if (part.type === "text") {
-                          if (!part.synthetic) agg.input += part.text
-                        }
-                        if (part.type === "file") agg.parts.push(part)
-                        return agg
-                      },
-                      { input: "", parts: [] as PromptInfo["parts"] },
-                    )
-                  : undefined
+                // The forked session's prompt is seeded from the message, when the message is still loaded.
+                const prompt = Option.map(Option.fromUndefinedOr(message()), (msg) =>
+                  sync.data.part[msg.id].reduce(
+                    (agg, part) => {
+                      if (part.type === "text") {
+                        if (!part.synthetic) agg.input += part.text
+                      }
+                      if (part.type === "file") agg.parts.push(part)
+                      return agg
+                    },
+                    { input: "", parts: [] as PromptInfo["parts"] },
+                  ),
+                )
                 route.navigate({
                   sessionID: result.data!.id,
                   type: "session",
-                  prompt,
+                  ...Option.match(prompt, { onNone: () => ({}), onSome: (value) => ({ prompt: value }) }),
                 })
                 dialog.clear()
               }),

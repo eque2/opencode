@@ -38,6 +38,10 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
     active: "filename" as "filename" | "thinking" | "toolDetails" | "assistantMetadata" | "openWithoutSaving",
   })
 
+  // The active option row is highlighted. The box prop reads undefined as "no background".
+  const rowBackground = (row: typeof store.active) =>
+    store.active === row ? Option.some(theme.backgroundElement) : Option.none()
+
   useBindings(() => ({
     bindings: [
       {
@@ -139,7 +143,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "thinking" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("thinking"))}
           onMouseUp={() => setStore("active", "thinking")}
         >
           <text fg={store.active === "thinking" ? theme.primary : theme.textMuted}>
@@ -151,7 +155,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "toolDetails" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("toolDetails"))}
           onMouseUp={() => setStore("active", "toolDetails")}
         >
           <text fg={store.active === "toolDetails" ? theme.primary : theme.textMuted}>
@@ -163,7 +167,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "assistantMetadata" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("assistantMetadata"))}
           onMouseUp={() => setStore("active", "assistantMetadata")}
         >
           <text fg={store.active === "assistantMetadata" ? theme.primary : theme.textMuted}>
@@ -175,7 +179,7 @@ export function DialogExportOptions(props: DialogExportOptionsProps) {
           flexDirection="row"
           gap={2}
           paddingLeft={1}
-          backgroundColor={store.active === "openWithoutSaving" ? theme.backgroundElement : undefined}
+          backgroundColor={Option.getOrUndefined(rowBackground("openWithoutSaving"))}
           onMouseUp={() => setStore("active", "openWithoutSaving")}
         >
           <text fg={store.active === "openWithoutSaving" ? theme.primary : theme.textMuted}>

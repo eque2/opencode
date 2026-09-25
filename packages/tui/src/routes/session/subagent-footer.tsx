@@ -41,7 +41,7 @@ export function SubagentFooter() {
     if (tokens <= 0) return undefined
 
     const model = sync.data.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
-    const pct = model?.limit.context ? `${Math.round((tokens / model.limit.context) * 100)}%` : undefined
+    const limit = model?.limit.context
     const cost = session()?.cost ?? 0
 
     const money = new Intl.NumberFormat("en-US", {
@@ -50,8 +50,8 @@ export function SubagentFooter() {
     })
 
     return {
-      context: pct ? `${Locale.number(tokens)} (${pct})` : Locale.number(tokens),
-      cost: cost > 0 ? money.format(cost) : undefined,
+      context: limit ? `${Locale.number(tokens)} (${Math.round((tokens / limit) * 100)}%)` : Locale.number(tokens),
+      cost: cost > 0 ? Option.some(money.format(cost)) : Option.none(),
     }
   })
 
@@ -89,7 +89,7 @@ export function SubagentFooter() {
             <Show when={usage()}>
               {(item) => (
                 <text fg={theme.textMuted} wrapMode="none">
-                  {[item().context, item().cost].filter(Boolean).join(" · ")}
+                  {[item().context, ...Option.toArray(item().cost)].filter(Boolean).join(" · ")}
                 </text>
               )}
             </Show>

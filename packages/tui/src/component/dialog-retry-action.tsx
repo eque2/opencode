@@ -1,7 +1,7 @@
 import { RGBA, TextAttributes } from "@opentui/core"
 import open from "open"
 import { createSignal, Show } from "solid-js"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { selectedForeground, useTheme } from "../context/theme"
 import { useDialog, type DialogContext } from "../ui/dialog"
 import { Link } from "../ui/link"
@@ -42,7 +42,8 @@ export function DialogRetryAction(props: DialogRetryActionProps) {
   const { theme } = useTheme()
   const fg = selectedForeground(theme)
   const showGoTreatment = () => props.link === GO_URL
-  const textBg = () => (showGoTreatment() ? panelOverlay(theme.backgroundPanel) : undefined)
+  // Text over the Go pulse gets a translucent panel background; other text has none.
+  const textBg = () => (showGoTreatment() ? Option.some(panelOverlay(theme.backgroundPanel)) : Option.none())
   const [selected, setSelected] = createSignal<"dismiss" | "action">("action")
 
   useBindings(() => ({
@@ -86,22 +87,22 @@ export function DialogRetryAction(props: DialogRetryActionProps) {
       </Show>
       <box zIndex={1} paddingLeft={PAD_X} paddingRight={PAD_X} paddingBottom={1} gap={1}>
         <box flexDirection="row" justifyContent="space-between">
-          <text attributes={TextAttributes.BOLD} fg={theme.text} bg={textBg()}>
+          <text attributes={TextAttributes.BOLD} fg={theme.text} bg={Option.getOrUndefined(textBg())}>
             {props.title}
           </text>
-          <text fg={theme.textMuted} bg={textBg()} onMouseUp={() => dialog.clear()}>
+          <text fg={theme.textMuted} bg={Option.getOrUndefined(textBg())} onMouseUp={() => dialog.clear()}>
             esc
           </text>
         </box>
         <box gap={0}>
-          <text fg={theme.textMuted} bg={textBg()}>
+          <text fg={theme.textMuted} bg={Option.getOrUndefined(textBg())}>
             {props.message}
           </text>
         </box>
         {props.link ? (
           showGoTreatment() ? (
             <box alignItems="center" justifyContent="flex-end" height={7} paddingBottom={1}>
-              <Link href={props.link} fg={theme.primary} bg={textBg()} wrapMode="none" />
+              <Link href={props.link} fg={theme.primary} bg={Option.getOrUndefined(textBg())} wrapMode="none" />
             </box>
           ) : (
             <box width="100%" flexDirection="row" justifyContent="center" paddingBottom={1}>
@@ -121,8 +122,8 @@ export function DialogRetryAction(props: DialogRetryActionProps) {
           >
             <text
               fg={selected() === "dismiss" ? fg : theme.textMuted}
-              bg={selected() === "dismiss" ? undefined : textBg()}
-              attributes={selected() === "dismiss" ? TextAttributes.BOLD : undefined}
+              bg={Option.getOrUndefined(Option.filter(textBg(), () => selected() !== "dismiss"))}
+              attributes={selected() === "dismiss" ? TextAttributes.BOLD : TextAttributes.NONE}
             >
               don't show again
             </text>
@@ -136,8 +137,8 @@ export function DialogRetryAction(props: DialogRetryActionProps) {
           >
             <text
               fg={selected() === "action" ? fg : theme.text}
-              bg={selected() === "action" ? undefined : textBg()}
-              attributes={selected() === "action" ? TextAttributes.BOLD : undefined}
+              bg={Option.getOrUndefined(Option.filter(textBg(), () => selected() !== "action"))}
+              attributes={selected() === "action" ? TextAttributes.BOLD : TextAttributes.NONE}
             >
               {props.label}
             </text>

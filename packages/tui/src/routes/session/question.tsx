@@ -23,6 +23,8 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
   const single = createMemo(() => questions().length === 1 && questions()[0]?.multiple !== true)
   const tabs = createMemo(() => (single() ? 1 : questions().length + 1)) // questions + confirm tab (no confirm for single select)
   const [tabHover, setTabHover] = createSignal(Option.none<number | "confirm">())
+  // An option row's highlight. The box prop reads undefined as "no background", so it crosses as undefined.
+  const rowHighlight = (active: boolean) => (active ? Option.some(theme.backgroundElement) : Option.none())
   const [store, setStore] = createStore({
     tab: 0,
     answers: [] as QuestionAnswer[],
@@ -380,12 +382,12 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
                       }}
                     >
                       <box flexDirection="row">
-                        <box backgroundColor={active() ? theme.backgroundElement : undefined} paddingRight={1}>
+                        <box backgroundColor={Option.getOrUndefined(rowHighlight(active()))} paddingRight={1}>
                           <text fg={active() ? tint(theme.textMuted, theme.secondary, 0.6) : theme.textMuted}>
                             {`${i() + 1}.`}
                           </text>
                         </box>
-                        <box backgroundColor={active() ? theme.backgroundElement : undefined}>
+                        <box backgroundColor={Option.getOrUndefined(rowHighlight(active()))}>
                           <text fg={active() ? theme.secondary : picked() ? theme.success : theme.text}>
                             {multi() ? `[${picked() ? "✓" : " "}] ${opt.label}` : opt.label}
                           </text>
@@ -412,12 +414,12 @@ export function QuestionPrompt(props: { request: QuestionRequest; directory?: st
                   }}
                 >
                   <box flexDirection="row">
-                    <box backgroundColor={other() ? theme.backgroundElement : undefined} paddingRight={1}>
+                    <box backgroundColor={Option.getOrUndefined(rowHighlight(other()))} paddingRight={1}>
                       <text fg={other() ? tint(theme.textMuted, theme.secondary, 0.6) : theme.textMuted}>
                         {`${options().length + 1}.`}
                       </text>
                     </box>
-                    <box backgroundColor={other() ? theme.backgroundElement : undefined}>
+                    <box backgroundColor={Option.getOrUndefined(rowHighlight(other()))}>
                       <text fg={other() ? theme.secondary : customPicked() ? theme.success : theme.text}>
                         {multi() ? `[${customPicked() ? "✓" : " "}] Type your own answer` : "Type your own answer"}
                       </text>

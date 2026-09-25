@@ -1,4 +1,5 @@
 import { createStore } from "solid-js/store"
+import { Option, Predicate } from "effect"
 import { dirname } from "node:path"
 import { createMemo, For, Match, Show, Switch } from "solid-js"
 import { Portal, useRenderer, useTerminalDimensions, type JSX } from "@opentui/solid"
@@ -181,7 +182,7 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
               reply: "reject",
               requestID: props.request.id,
               directory: props.directory,
-              message: message || undefined,
+              ...(message ? { message } : {}),
               workspace: project.workspace.current(),
             })
           }}
@@ -331,14 +332,16 @@ export function PermissionPrompt(props: { request: PermissionRequest; directory?
 
             if (permission === "external_directory") {
               const meta = props.request.metadata ?? {}
-              const parent = typeof meta["parentDir"] === "string" ? meta["parentDir"] : undefined
-              const filepath = typeof meta["filepath"] === "string" ? meta["filepath"] : undefined
               const pattern = props.request.patterns?.[0]
-              const derived =
-                typeof pattern === "string" ? (pattern.includes("*") ? dirname(pattern) : pattern) : undefined
-
-              const raw = parent ?? filepath ?? derived
-              const dir = pathFormatter.format(raw)
+              // The parent directory, else the file path, else the directory of the first pattern.
+              const raw = Option.firstSomeOf([
+                Option.liftPredicate(meta["parentDir"], Predicate.isString),
+                Option.liftPredicate(meta["filepath"], Predicate.isString),
+                Option.map(Option.liftPredicate(pattern, Predicate.isString), (value) =>
+                  value.includes("*") ? dirname(value) : value,
+                ),
+              ])
+              const dir = pathFormatter.format(Option.getOrUndefined(raw))
               const patterns = (props.request.patterns ?? []).filter((p): p is string => typeof p === "string")
 
               return {

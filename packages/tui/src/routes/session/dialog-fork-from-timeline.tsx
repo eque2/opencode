@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { createMemo, onMount } from "solid-js"
 import { useSync } from "../../context/sync"
 import { DialogSelect, type DialogSelectOption } from "../../ui/dialog-select"
@@ -16,7 +16,11 @@ function runForkRequest(effect: Effect.Effect<void>) {
   Effect.runFork(effect.pipe(Effect.tapDefect((defect) => Effect.logError("Fork session failed", defect))))
 }
 
-export function DialogForkFromTimeline(props: { sessionID: string; onMove: (messageID?: string) => void }) {
+// Each option's value is the message to fork from, or none for the full session.
+export function DialogForkFromTimeline(props: {
+  sessionID: string
+  onMove: (messageID: Option.Option<string>) => void
+}) {
   const sync = useSync()
   const dialog = useDialog()
   const sdk = useSDK()
@@ -26,11 +30,11 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
     dialog.setSize("large")
   })
 
-  const options = createMemo((): DialogSelectOption<string | undefined>[] => {
+  const options = createMemo((): DialogSelectOption<Option.Option<string>>[] => {
     const messages = sync.data.message[props.sessionID] ?? []
     const fullSession = {
       title: "Full session",
-      value: undefined,
+      value: Option.none<string>(),
       onSelect: (dialog: DialogContext) => {
         runForkRequest(
           Effect.gen(function* () {
@@ -43,8 +47,8 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
           }),
         )
       },
-    } satisfies DialogSelectOption<string | undefined>
-    const result = [] as DialogSelectOption<string | undefined>[]
+    } satisfies DialogSelectOption<Option.Option<string>>
+    const result = [] as DialogSelectOption<Option.Option<string>>[]
     for (const message of messages) {
       if (message.role !== "user") continue
       const part = (sync.data.part[message.id] ?? []).find(
@@ -53,7 +57,7 @@ export function DialogForkFromTimeline(props: { sessionID: string; onMove: (mess
       if (!part) continue
       result.push({
         title: part.text.replace(/\n/g, " "),
-        value: message.id,
+        value: Option.some(message.id),
         footer: Locale.time(message.time.created),
         onSelect: (dialog) => {
           runForkRequest(

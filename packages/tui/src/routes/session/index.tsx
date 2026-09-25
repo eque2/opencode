@@ -200,6 +200,12 @@ function use() {
 export function Session() {
   const setEpilogue = useEpilogue()
   const clipboard = useClipboard()
+  // The directory the external editor opens in: the project worktree unless it is the file system
+  // root, then the instance directory, then the TUI working directory.
+  const editorCwd = () => {
+    const worktree = project.instance.path().worktree
+    return (worktree !== "/" && worktree) || project.instance.directory() || paths.cwd
+  }
   // Writes text through the clipboard service. It succeeds with false when the service has no writer.
   const writeClipboard = (text: string) =>
     Effect.suspend(() => {
@@ -224,10 +230,12 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID))
-  const location = createMemo(() => {
-    const current = session()
-    return current ? { directory: current.directory, workspaceID: current.workspaceID } : undefined
-  })
+  const location = createMemo(() =>
+    Option.map(Option.fromUndefinedOr(session()), (current) => ({
+      directory: current.directory,
+      workspaceID: current.workspaceID,
+    })),
+  )
 
   createEffect(() => {
     const title = Locale.truncate(session()?.title ?? "", 50)
@@ -276,7 +284,7 @@ export function Session() {
     const pending = messages().findLastIndex(
       (message, index) => index > completed && message.role === "assistant" && !message.time.completed,
     )
-    return pending === -1 ? undefined : pending
+    return pending === -1 ? Option.none() : Option.some(pending)
   })
 
   const lastAssistant = createMemo(() => {
@@ -360,20 +368,20 @@ export function Session() {
     )
   })
 
-  let lastSwitch: string | undefined = undefined
+  let lastSwitch: Option.Option<string> = Option.none()
   event.on("message.part.updated", (evt) => {
     const part = evt.properties.part
     if (part.type !== "tool") return
     if (part.sessionID !== route.sessionID) return
     if (part.state.status !== "completed") return
-    if (part.id === lastSwitch) return
+    if (Option.contains(lastSwitch, part.id)) return
 
     if (part.tool === "plan_exit") {
       local.agent.set("build")
-      lastSwitch = part.id
+      lastSwitch = Option.some(part.id)
     } else if (part.tool === "plan_enter") {
       local.agent.set("plan")
-      lastSwitch = part.id
+      lastSwitch = Option.some(part.id)
     }
   })
 
@@ -625,9 +633,9 @@ export function Session() {
         dialog.replace(() => (
           <DialogForkFromTimeline
             onMove={(messageID) => {
-              if (!messageID) return
+              if (Option.isNone(messageID)) return
               const child = scroll.getChildren().find((child) => {
-                return child.id === messageID
+                return child.id === messageID.value
               })
               if (child) scroll.scrollBy(child.y - scroll.y - 1)
             }}
@@ -1000,7 +1008,8 @@ export function Session() {
         runSessionAction(
           writeClipboard(text).pipe(
             Effect.matchEffect({
-              onFailure: () => Effect.sync(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" })),
+              onFailure: () =>
+                Effect.sync(() => toast.show({ message: "Failed to copy to clipboard", variant: "error" })),
               onSuccess: (written) =>
                 Effect.sync(() => {
                   if (written) toast.show({ message: "Message copied to clipboard!", variant: "success" })
@@ -1105,10 +1114,7 @@ export function Session() {
                   openEditor({
                     renderer,
                     value: transcript,
-                    cwd:
-                      (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
-                      project.instance.directory() ||
-                      paths.cwd,
+                    cwd: editorCwd(),
                   }),
                 )
                 return
@@ -1125,10 +1131,7 @@ export function Session() {
                 openEditor({
                   renderer,
                   value: transcript,
-                  cwd:
-                    (project.instance.path().worktree === "/" ? undefined : project.instance.path().worktree) ||
-                    project.instance.directory() ||
-                    paths.cwd,
+                  cwd: editorCwd(),
                 }),
               )
               if (result !== undefined) {
@@ -1137,7 +1140,9 @@ export function Session() {
 
               toast.show({ message: `Session exported to ${filename}`, variant: "success" })
             }).pipe(
-              Effect.catch(() => Effect.sync(() => toast.show({ message: "Failed to export session", variant: "error" }))),
+              Effect.catch(() =>
+                Effect.sync(() => toast.show({ message: "Failed to export session", variant: "error" })),
+              ),
             )
             dialog.clear()
           }),
@@ -1213,9 +1218,8 @@ export function Session() {
     sessionCommandList().map((command) => ({
       namespace: "palette",
       name: command.value,
-      desc: "description" in command ? command.description : undefined,
-      slashName: "slash" in command ? command.slash?.name : undefined,
-      slashAliases: "slash" in command ? command.slash?.aliases : undefined,
+      ...("description" in command ? { desc: command.description } : {}),
+      ...("slash" in command ? { slashName: command.slash?.name, slashAliases: command.slash?.aliases } : {}),
       ...command,
     })),
   )
@@ -1281,7 +1285,7 @@ export function Session() {
   createEffect(on(() => route.sessionID, toBottom))
 
   return (
-    <LocationProvider location={location()}>
+    <LocationProvider location={Option.getOrUndefined(location())}>
       <context.Provider
         value={{
           get width() {
@@ -1504,7 +1508,7 @@ function UserMessage(props: {
   parts: Part[]
   onMouseUp: () => void
   index: number
-  pending?: number
+  pending: Option.Option<number>
 }) {
   const ctx = use()
   const local = useLocal()
@@ -1516,7 +1520,7 @@ function UserMessage(props: {
   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
   const { theme } = useTheme()
   const [hover, setHover] = createSignal(false)
-  const queued = createMemo(() => props.pending !== undefined && props.index > props.pending)
+  const queued = createMemo(() => Option.exists(props.pending, (pending) => props.index > pending))
   const color = createMemo(() => local.agent.color(props.message.agent))
   const queuedFg = createMemo(() => selectedForeground(theme, color()))
   const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
@@ -1627,14 +1631,10 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
         {(part, index) => (
           <Switch>
             <Match when={part.type === "text" && part}>
-              {(text) => (
-                <TextPart last={index() === props.parts.length - 1} part={text()} message={props.message} />
-              )}
+              {(text) => <TextPart last={index() === props.parts.length - 1} part={text()} message={props.message} />}
             </Match>
             <Match when={part.type === "tool" && part}>
-              {(tool) => (
-                <ToolPart last={index() === props.parts.length - 1} part={tool()} message={props.message} />
-              )}
+              {(tool) => <ToolPart last={index() === props.parts.length - 1} part={tool()} message={props.message} />}
             </Match>
             <Match when={part.type === "reasoning" && part}>
               {(reasoning) => (
@@ -1758,7 +1758,7 @@ function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: Ass
             open={!inMinimal() || expanded()}
             done={isDone()}
             title={summary().title}
-            duration={isDone() ? Locale.duration(duration()) : undefined}
+            duration={isDone() ? Option.some(Locale.duration(duration())) : Option.none()}
             encrypted={opaque()}
           />
         </box>
@@ -1785,19 +1785,21 @@ function ReasoningHeader(props: {
   open: boolean
   done: boolean
   title: Option.Option<string>
-  duration?: string
+  duration: Option.Option<string>
   encrypted?: boolean
 }) {
   const { theme } = useTheme()
   // An empty summary title shows as no title.
   const title = () => Option.filter(props.title, (value) => value.length > 0)
+  const duration = () => Option.filter(props.duration, (value) => value.length > 0)
   const fg = () =>
     props.open
       ? RGBA.fromValues(theme.warning.r, theme.warning.g, theme.warning.b, theme.thinkingOpacity)
       : theme.warning
   const completed = () => {
-    if (props.encrypted) return `Thought${props.duration ? ` · ${props.duration}` : ""}`
-    const detail = [...Option.toArray(title()), props.duration].filter(Boolean).join(" · ")
+    if (props.encrypted)
+      return `Thought${Option.match(duration(), { onNone: () => "", onSome: (value) => ` · ${value}` })}`
+    const detail = [...Option.toArray(title()), ...Option.toArray(duration())].join(" · ")
     return `${props.toggleable ? (props.open ? "- " : "+ ") : ""}Thought${detail ? `: ${detail}` : ""}`
   }
 
@@ -1861,7 +1863,7 @@ function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMess
       return props.part.state.input ?? {}
     },
     get output() {
-      return props.part.state.status === "completed" ? props.part.state.output : undefined
+      return props.part.state.status === "completed" ? props.part.state.output : ""
     },
     get tool() {
       return props.part.tool
@@ -1928,13 +1930,13 @@ type ToolProps = {
   input: Record<string, unknown>
   metadata: Record<string, unknown>
   tool: string
-  output?: string
+  output: string
   part: ToolPart
 }
 function GenericTool(props: ToolProps) {
   const { theme } = useTheme()
   const ctx = use()
-  const output = createMemo(() => props.output?.trim() ?? "")
+  const output = createMemo(() => props.output.trim())
   const [expanded, setExpanded] = createSignal(false)
   const maxLines = 3
   const maxChars = createMemo(() => maxLines * Math.max(20, ctx.width - 6))
@@ -1956,7 +1958,7 @@ function GenericTool(props: ToolProps) {
       <BlockTool
         title={`# ${props.tool} ${input(props.input)}`}
         part={props.part}
-        onClick={collapsed().overflow ? () => setExpanded((prev) => !prev) : undefined}
+        {...(collapsed().overflow ? { onClick: () => setExpanded((prev) => !prev) } : {})}
       >
         <box gap={1}>
           <text fg={theme.text}>{limited()}</text>
@@ -1995,14 +1997,14 @@ function InlineTool(props: {
     return callID === props.part.callID
   })
 
-  const error = createMemo(() => (props.part.state.status === "error" ? props.part.state.error : undefined))
+  const error = createMemo(() => (props.part.state.status === "error" ? props.part.state.error : ""))
 
   const denied = createMemo(
     () =>
-      error()?.includes("QuestionRejectedError") ||
-      error()?.includes("rejected permission") ||
-      error()?.includes("specified a rule") ||
-      error()?.includes("user dismissed"),
+      error().includes("QuestionRejectedError") ||
+      error().includes("rejected permission") ||
+      error().includes("specified a rule") ||
+      error().includes("user dismissed"),
   )
 
   const failed = createMemo(() => Boolean(error() && !denied()))
@@ -2023,7 +2025,7 @@ function InlineTool(props: {
       color={fg()}
       errorColor={theme.error}
       failed={failed()}
-      denied={Boolean(denied())}
+      denied={denied()}
       error={error()}
       errorExpanded={errorExpanded()}
       complete={props.complete}
@@ -2092,7 +2094,7 @@ export function InlineToolRow(props: {
               <text
                 paddingLeft={3}
                 fg={props.color}
-                attributes={props.denied ? TextAttributes.STRIKETHROUGH : undefined}
+                attributes={props.denied ? TextAttributes.STRIKETHROUGH : TextAttributes.NONE}
               >
                 ~ {props.pending}
               </text>
@@ -2103,14 +2105,14 @@ export function InlineToolRow(props: {
               <text
                 width={INLINE_TOOL_ICON_WIDTH}
                 fg={props.failed ? props.errorColor : (props.iconColor ?? props.color)}
-                attributes={props.denied ? TextAttributes.STRIKETHROUGH : undefined}
+                attributes={props.denied ? TextAttributes.STRIKETHROUGH : TextAttributes.NONE}
               >
                 {props.icon}
               </text>
               <text
                 flexGrow={1}
                 fg={props.failed ? props.errorColor : props.color}
-                attributes={props.denied ? TextAttributes.STRIKETHROUGH : undefined}
+                attributes={props.denied ? TextAttributes.STRIKETHROUGH : TextAttributes.NONE}
               >
                 {props.failed && !props.complete ? (props.failure ?? props.children) : props.children}
               </text>
@@ -2137,7 +2139,7 @@ function BlockTool(props: {
   const { theme } = useTheme()
   const renderer = useRenderer()
   const [hover, setHover] = createSignal(false)
-  const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : undefined))
+  const error = createMemo(() => (props.part?.state.status === "error" ? props.part.state.error : ""))
   return (
     <box
       ref={(el: BoxRenderable) => alwaysSeparate.add(el)}
@@ -2184,7 +2186,7 @@ function Shell(props: ToolProps) {
   const pathFormatter = usePathFormatter()
   const ctx = use()
   const isRunning = createMemo(() => props.part.state.status === "running")
-  const output = createMemo(() => stripAnsi(stringValue(props.metadata.output)?.trim() ?? ""))
+  const output = createMemo(() => stripAnsi(stringText(props.metadata.output).trim()))
   const [expanded, setExpanded] = createSignal(false)
   const maxLines = 10
   const maxChars = createMemo(() => maxLines * Math.max(20, ctx.width - 6))
@@ -2196,7 +2198,7 @@ function Shell(props: ToolProps) {
 
   // The block title names the working directory only when it is not the session directory.
   const title = createMemo(() => {
-    const workdir = stringValue(props.input.workdir)
+    const workdir = stringText(props.input.workdir)
     if (!workdir || workdir === ".") return Option.none()
     const formatted = pathFormatter.format(workdir)
     if (!formatted || formatted === ".") return Option.none()
@@ -2205,15 +2207,15 @@ function Shell(props: ToolProps) {
 
   return (
     <Switch>
-      <Match when={stringValue(props.metadata.output) !== undefined}>
+      <Match when={Option.isSome(stringValue(props.metadata.output))}>
         <BlockTool
           {...Option.match(title(), { onNone: () => ({}), onSome: (value) => ({ title: value }) })}
           part={props.part}
-          onClick={collapsed().overflow ? () => setExpanded((prev) => !prev) : undefined}
+          {...(collapsed().overflow ? { onClick: () => setExpanded((prev) => !prev) } : {})}
         >
           <box gap={1}>
-            <Show when={isRunning()} fallback={<text fg={theme.text}>$ {stringValue(props.input.command)}</text>}>
-              <Spinner color={theme.text}>{stringValue(props.input.command)}</Spinner>
+            <Show when={isRunning()} fallback={<text fg={theme.text}>$ {stringText(props.input.command)}</text>}>
+              <Spinner color={theme.text}>{stringText(props.input.command)}</Spinner>
             </Show>
             <Show when={output()}>
               <text fg={theme.text}>{limited()}</text>
@@ -2225,8 +2227,8 @@ function Shell(props: ToolProps) {
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="$" pending="Writing command…" complete={stringValue(props.input.command)} part={props.part}>
-          {stringValue(props.input.command)}
+        <InlineTool icon="$" pending="Writing command…" complete={stringText(props.input.command)} part={props.part}>
+          {stringText(props.input.command)}
         </InlineTool>
       </Match>
     </Switch>
@@ -2237,28 +2239,28 @@ function Write(props: ToolProps) {
   const { theme, syntax } = useTheme()
   const pathFormatter = usePathFormatter()
   const code = createMemo(() => {
-    return stringValue(props.input.content) ?? ""
+    return stringText(props.input.content)
   })
 
   return (
     <Switch>
       <Match when={props.metadata.diagnostics !== undefined}>
-        <BlockTool title={"# Wrote " + pathFormatter.format(stringValue(props.input.filePath))} part={props.part}>
+        <BlockTool title={"# Wrote " + pathFormatter.format(stringText(props.input.filePath))} part={props.part}>
           <line_number fg={theme.textMuted} minWidth={3} paddingRight={1}>
             <code
               conceal={false}
               fg={theme.text}
-              filetype={filetype(stringValue(props.input.filePath))}
+              filetype={filetype(stringText(props.input.filePath))}
               syntaxStyle={syntax()}
               content={code()}
             />
           </line_number>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringValue(props.input.filePath) ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringText(props.input.filePath)} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing write…" complete={stringValue(props.input.filePath)} part={props.part}>
-          Write {pathFormatter.format(stringValue(props.input.filePath))}
+        <InlineTool icon="←" pending="Preparing write…" complete={stringText(props.input.filePath)} part={props.part}>
+          Write {pathFormatter.format(stringText(props.input.filePath))}
         </InlineTool>
       </Match>
     </Switch>
@@ -2268,11 +2270,11 @@ function Write(props: ToolProps) {
 function Glob(props: ToolProps) {
   const pathFormatter = usePathFormatter()
   return (
-    <InlineTool icon="✱" pending="Finding files…" complete={stringValue(props.input.pattern)} part={props.part}>
-      Glob "{stringValue(props.input.pattern)}"{" "}
-      <Show when={stringValue(props.input.path)}>in {pathFormatter.format(stringValue(props.input.path))} </Show>
-      <Show when={numberValue(props.metadata.count)}>
-        ({numberValue(props.metadata.count)} {numberValue(props.metadata.count) === 1 ? "match" : "matches"})
+    <InlineTool icon="✱" pending="Finding files…" complete={stringText(props.input.pattern)} part={props.part}>
+      Glob "{stringText(props.input.pattern)}"{" "}
+      <Show when={stringText(props.input.path)}>in {pathFormatter.format(stringText(props.input.path))} </Show>
+      <Show when={countValue(props.metadata.count)}>
+        ({countValue(props.metadata.count)} {countValue(props.metadata.count) === 1 ? "match" : "matches"})
       </Show>
     </InlineTool>
   )
@@ -2294,11 +2296,11 @@ function Read(props: ToolProps) {
       <InlineTool
         icon="→"
         pending="Reading file…"
-        complete={stringValue(props.input.filePath)}
+        complete={stringText(props.input.filePath)}
         spinner={isRunning()}
         part={props.part}
       >
-        Read {pathFormatter.format(stringValue(props.input.filePath))} {input(props.input, ["filePath"])}
+        Read {pathFormatter.format(stringText(props.input.filePath))} {input(props.input, ["filePath"])}
       </InlineTool>
       <For each={loaded()}>
         {(filepath) => (
@@ -2316,11 +2318,11 @@ function Read(props: ToolProps) {
 function Grep(props: ToolProps) {
   const pathFormatter = usePathFormatter()
   return (
-    <InlineTool icon="✱" pending="Searching content…" complete={stringValue(props.input.pattern)} part={props.part}>
-      Grep "{stringValue(props.input.pattern)}"{" "}
-      <Show when={stringValue(props.input.path)}>in {pathFormatter.format(stringValue(props.input.path))} </Show>
-      <Show when={numberValue(props.metadata.matches)}>
-        ({numberValue(props.metadata.matches)} {numberValue(props.metadata.matches) === 1 ? "match" : "matches"})
+    <InlineTool icon="✱" pending="Searching content…" complete={stringText(props.input.pattern)} part={props.part}>
+      Grep "{stringText(props.input.pattern)}"{" "}
+      <Show when={stringText(props.input.path)}>in {pathFormatter.format(stringText(props.input.path))} </Show>
+      <Show when={countValue(props.metadata.matches)}>
+        ({countValue(props.metadata.matches)} {countValue(props.metadata.matches) === 1 ? "match" : "matches"})
       </Show>
     </InlineTool>
   )
@@ -2328,17 +2330,17 @@ function Grep(props: ToolProps) {
 
 function WebFetch(props: ToolProps) {
   return (
-    <InlineTool icon="%" pending="Fetching from the web…" complete={stringValue(props.input.url)} part={props.part}>
-      WebFetch {stringValue(props.input.url)}
+    <InlineTool icon="%" pending="Fetching from the web…" complete={stringText(props.input.url)} part={props.part}>
+      WebFetch {stringText(props.input.url)}
     </InlineTool>
   )
 }
 
 function WebSearch(props: ToolProps) {
   return (
-    <InlineTool icon="◈" pending="Searching web…" complete={stringValue(props.input.query)} part={props.part}>
-      {webSearchProviderLabel(props.metadata.provider)} "{stringValue(props.input.query)}"{" "}
-      <Show when={numberValue(props.metadata.numResults)}>({numberValue(props.metadata.numResults)} results)</Show>
+    <InlineTool icon="◈" pending="Searching web…" complete={stringText(props.input.query)} part={props.part}>
+      {webSearchProviderLabel(props.metadata.provider)} "{stringText(props.input.query)}"{" "}
+      <Show when={countValue(props.metadata.numResults)}>({countValue(props.metadata.numResults)} results)</Show>
     </InlineTool>
   )
 }
@@ -2350,12 +2352,12 @@ function Task(props: ToolProps) {
   const dialog = useDialog()
 
   onMount(() => {
-    const sessionID = stringValue(props.metadata.sessionId)
+    const sessionID = stringText(props.metadata.sessionId)
     if (sessionID && !sync.data.message[sessionID]?.length) void sync.session.sync(sessionID)
   })
 
-  const sessionID = createMemo(() => stringValue(props.metadata.sessionId))
-  const messages = createMemo(() => sync.data.message[sessionID() ?? ""] ?? [])
+  const sessionID = createMemo(() => stringText(props.metadata.sessionId))
+  const messages = createMemo(() => sync.data.message[sessionID()] ?? [])
 
   const tools = createMemo(() => {
     return messages().flatMap((msg) =>
@@ -2365,11 +2367,20 @@ function Task(props: ToolProps) {
     )
   })
 
+  // The latest child tool call that has a title to show.
   const current = createMemo(() =>
-    tools().findLast((x) => (x.state.status === "running" || x.state.status === "completed") && x.state.title),
+    Option.fromUndefinedOr(
+      tools()
+        .flatMap((x) =>
+          (x.state.status === "running" || x.state.status === "completed") && x.state.title
+            ? [{ tool: x.tool, title: x.state.title }]
+            : [],
+        )
+        .at(-1),
+    ),
   )
 
-  const status = createMemo(() => sync.data.session_status[sessionID() ?? ""])
+  const status = createMemo(() => sync.data.session_status[sessionID()])
   const isRunning = createMemo(() => {
     const value = status()
     return (
@@ -2390,11 +2401,11 @@ function Task(props: ToolProps) {
   })
 
   const content = createMemo(() => {
-    const description = stringValue(props.input.description)
+    const description = stringText(props.input.description)
     if (!description) return ""
     let content = [
       formatSubagentTitle(
-        Locale.titlecase(stringValue(props.input.subagent_type) ?? "General"),
+        Locale.titlecase(Option.getOrElse(stringValue(props.input.subagent_type), () => "General")),
         description,
         props.metadata.background === true,
       ),
@@ -2404,11 +2415,12 @@ function Task(props: ToolProps) {
     if (isRunning() && Option.isSome(retrying)) {
       content.push(`↳ ${formatSubagentRetry(retrying.value.attempt, Locale.truncate(retrying.value.message, 80))}`)
     } else if (isRunning() && tools().length > 0) {
-      if (current()) {
-        const state = current()!.state
-        const title = state.status === "running" || state.status === "completed" ? state.title : undefined
-        content.push(`↳ ${Locale.titlecase(current()!.tool)} ${title}`)
-      } else content.push(`↳ ${formatSubagentToolcalls(tools().length)}`)
+      content.push(
+        Option.match(current(), {
+          onNone: () => `↳ ${formatSubagentToolcalls(tools().length)}`,
+          onSome: (active) => `↳ ${Locale.titlecase(active.tool)} ${active.title}`,
+        }),
+      )
     }
 
     if (!isRunning() && props.part.state.status === "completed") {
@@ -2424,12 +2436,12 @@ function Task(props: ToolProps) {
       separate={true}
       {...(Option.isSome(retry()) ? { color: theme.error } : {})}
       spinner={isRunning()}
-      complete={stringValue(props.input.description)}
+      complete={stringText(props.input.description)}
       pending="Delegating…"
       part={props.part}
       onClick={() => {
         if (sessionID()) {
-          navigate({ type: "session", sessionID: sessionID()! })
+          navigate({ type: "session", sessionID: sessionID() })
         }
         const status = retry()
         if (Option.isSome(status)) void DialogAlert.show(dialog, "Retry Error", status.value.message)
@@ -2467,10 +2479,10 @@ function executeCalls(value: unknown): ExecuteCall[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((call) => {
     const item = fieldsOf(call)
-    const tool = stringValue(item.tool)
+    const tool = nonEmptyString(item.tool)
     const status = item.status
-    if (!tool || !isExecuteStatus(status)) return []
-    return [{ tool, status, input: fieldsOf(item.input) }]
+    if (Option.isNone(tool) || !isExecuteStatus(status)) return []
+    return [{ tool: tool.value, status, input: fieldsOf(item.input) }]
   })
 }
 
@@ -2480,7 +2492,7 @@ function Execute(props: ToolProps) {
   const { theme } = useTheme()
   const isLoading = createMemo(() => props.part.state.status === "pending" || props.part.state.status === "running")
   const calls = createMemo(() => executeCalls(props.metadata.toolCalls))
-  const output = createMemo(() => stripAnsi(props.output?.trim() ?? ""))
+  const output = createMemo(() => stripAnsi(props.output.trim()))
   const hasRuntimeError = createMemo(() => props.metadata.error === true)
   const outputPreview = createMemo(() => collapseToolOutput(output(), 4, 4 * Math.max(20, ctx.width - 6)).output)
   const showOutput = createMemo(() => output() && hasRuntimeError())
@@ -2499,7 +2511,7 @@ function Execute(props: ToolProps) {
     <>
       <InlineTool
         icon={hasRuntimeError() ? "✗" : props.part.state.status === "completed" ? "✓" : "│"}
-        color={hasRuntimeError() ? theme.error : undefined}
+        {...(hasRuntimeError() ? { color: theme.error } : {})}
         spinner={isLoading()}
         pending="execute"
         complete={true}
@@ -2535,14 +2547,14 @@ function Edit(props: ToolProps) {
     return ctx.width > 120 ? "split" : "unified"
   })
 
-  const ft = createMemo(() => filetype(stringValue(props.input.filePath)))
+  const ft = createMemo(() => filetype(stringText(props.input.filePath)))
 
-  const diffContent = createMemo(() => stringValue(props.metadata.diff) ?? "")
+  const diffContent = createMemo(() => stringText(props.metadata.diff))
 
   return (
     <Switch>
-      <Match when={stringValue(props.metadata.diff) !== undefined}>
-        <BlockTool title={"← Edit " + pathFormatter.format(stringValue(props.input.filePath))} part={props.part}>
+      <Match when={Option.isSome(stringValue(props.metadata.diff))}>
+        <BlockTool title={"← Edit " + pathFormatter.format(stringText(props.input.filePath))} part={props.part}>
           <box paddingLeft={1}>
             <diff
               diff={diffContent()}
@@ -2564,12 +2576,12 @@ function Edit(props: ToolProps) {
               removedLineNumberBg={theme.diffRemovedLineNumberBg}
             />
           </box>
-          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringValue(props.input.filePath) ?? ""} />
+          <Diagnostics diagnostics={props.metadata.diagnostics} filePath={stringText(props.input.filePath)} />
         </BlockTool>
       </Match>
       <Match when={true}>
-        <InlineTool icon="←" pending="Preparing edit…" complete={stringValue(props.input.filePath)} part={props.part}>
-          Edit {pathFormatter.format(stringValue(props.input.filePath))} {input({ replaceAll: props.input.replaceAll })}
+        <InlineTool icon="←" pending="Preparing edit…" complete={stringText(props.input.filePath)} part={props.part}>
+          Edit {pathFormatter.format(stringText(props.input.filePath))} {input({ replaceAll: props.input.replaceAll })}
         </InlineTool>
       </Match>
     </Switch>
@@ -2637,7 +2649,10 @@ function ApplyPatch(props: ToolProps) {
                 }
               >
                 <Diff diff={file.patch} filePath={file.filePath} />
-                <Diagnostics diagnostics={props.metadata.diagnostics} filePath={file.movePath ?? file.filePath} />
+                <Diagnostics
+                  diagnostics={props.metadata.diagnostics}
+                  filePath={Option.getOrElse(file.movePath, () => file.filePath)}
+                />
               </Show>
             </BlockTool>
           )}
@@ -2712,8 +2727,8 @@ function Question(props: ToolProps) {
 
 function Skill(props: ToolProps) {
   return (
-    <InlineTool icon="→" pending="Loading skill…" complete={stringValue(props.input.name)} part={props.part}>
-      Skill "{stringValue(props.input.name)}"
+    <InlineTool icon="→" pending="Loading skill…" complete={stringText(props.input.name)} part={props.part}>
+      Skill "{stringText(props.input.name)}"
     </InlineTool>
   )
 }
@@ -2766,12 +2781,33 @@ function input(input: Record<string, unknown>, omit?: string[]): string {
   return `[${primitives.map(([key, value]) => `${key}=${value}`).join(", ")}]`
 }
 
-function stringValue(value: unknown) {
-  return typeof value === "string" ? value : undefined
+// Tool input and metadata fields are unknown wire values. A field is a string only when it holds one.
+function stringValue(value: unknown): Option.Option<string> {
+  return Option.liftPredicate(value, Predicate.isString)
 }
 
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
+// A string field that must not be empty to count as present.
+function nonEmptyString(value: unknown): Option.Option<string> {
+  return Option.filter(stringValue(value), (text) => text.length > 0)
+}
+
+// The display text of a string field. A missing or non-string field shows as empty text, which the
+// JSX children, the path formatter and filetype() treat as no value.
+function stringText(value: unknown): string {
+  return Option.getOrElse(stringValue(value), () => "")
+}
+
+// A field is a number only when it holds a finite one.
+function numberValue(value: unknown): Option.Option<number> {
+  return Option.liftPredicate(
+    value,
+    (input: unknown): input is number => Predicate.isNumber(input) && Number.isFinite(input),
+  )
+}
+
+// The display count of a number field. A missing field counts as zero, which the count badges hide.
+function countValue(value: unknown): number {
+  return Option.getOrElse(numberValue(value), () => 0)
 }
 
 const toolDisplays: HashSet.HashSet<string> = HashSet.make(
@@ -2811,13 +2847,17 @@ export function parseApplyPatchFiles(value: unknown) {
     const record = recordValue(item)
     if (Option.isNone(record)) return []
     const file = record.value
-    const type = stringValue(file.type)
-    const relativePath = stringValue(file.relativePath)
-    const filePath = stringValue(file.filePath)
-    const patch = stringValue(file.patch)
-    const deletions = numberValue(file.deletions)
-    if (!type || !relativePath || !filePath || patch === undefined || deletions === undefined) return []
-    return [{ type, relativePath, filePath, patch, deletions, movePath: stringValue(file.movePath) }]
+    const fields = Option.all({
+      type: nonEmptyString(file.type),
+      relativePath: nonEmptyString(file.relativePath),
+      filePath: nonEmptyString(file.filePath),
+      patch: stringValue(file.patch),
+      deletions: numberValue(file.deletions),
+    })
+    return Option.match(fields, {
+      onNone: () => [],
+      onSome: (parsed) => [{ ...parsed, movePath: stringValue(file.movePath) }],
+    })
   })
 }
 
@@ -2825,17 +2865,20 @@ export function parseTodos(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
     const todo = fieldsOf(item)
-    const status = stringValue(todo.status)
-    const content = stringValue(todo.content)
-    return status && content ? [{ status, content }] : []
+    return Option.match(Option.all({ status: nonEmptyString(todo.status), content: nonEmptyString(todo.content) }), {
+      onNone: () => [],
+      onSome: (parsed) => [parsed],
+    })
   })
 }
 
 export function parseQuestions(value: unknown) {
   if (!Array.isArray(value)) return []
   return value.flatMap((item) => {
-    const question = stringValue(fieldsOf(item).question)
-    return question ? [{ question }] : []
+    return Option.match(nonEmptyString(fieldsOf(item).question), {
+      onNone: () => [],
+      onSome: (question) => [{ question }],
+    })
   })
 }
 
@@ -2855,12 +2898,17 @@ export function parseDiagnostics(value: unknown, filePath: string) {
   return diagnostics
     .flatMap((item) => {
       const diagnostic = fieldsOf(item)
+      if (diagnostic.severity !== 1) return []
       const start = fieldsOf(fieldsOf(diagnostic.range).start)
-      const line = numberValue(start.line)
-      const character = numberValue(start.character)
-      const message = stringValue(diagnostic.message)
-      if (diagnostic.severity !== 1 || line === undefined || character === undefined || !message) return []
-      return [{ range: { start: { line, character } }, message }]
+      const fields = Option.all({
+        line: numberValue(start.line),
+        character: numberValue(start.character),
+        message: nonEmptyString(diagnostic.message),
+      })
+      return Option.match(fields, {
+        onNone: () => [],
+        onSome: ({ line, character, message }) => [{ range: { start: { line, character } }, message }],
+      })
     })
     .slice(0, 3)
 }
