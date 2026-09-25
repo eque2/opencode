@@ -26,7 +26,7 @@ import { TextReveal } from "@opencode-ai/ui/text-reveal"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { normalize } from "./session-diff"
-import { Option, Predicate, Schema } from "effect"
+import { HashSet, MutableHashSet, Option, Predicate, Schema } from "effect"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -95,11 +95,11 @@ function summaryDiff(value: SnapshotFileDiff): value is SummaryDiff {
   return typeof value.file === "string"
 }
 
-const hidden = new Set(["todowrite"])
+const hidden = HashSet.make("todowrite")
 
 function partState(part: PartType, showReasoningSummaries: boolean) {
   if (part.type === "tool") {
-    if (hidden.has(part.tool)) return
+    if (HashSet.has(hidden, part.tool)) return
     if (part.tool === "question" && (part.state.status === "pending" || part.state.status === "running")) return
     return "visible" as const
   }
@@ -241,12 +241,12 @@ export function SessionTurn(
     const files = message()?.summary?.diffs
     if (!files?.length) return emptyDiffs
 
-    const seen = new Set<string>()
+    const seen = MutableHashSet.empty<string>()
     return files
       .reduceRight<SummaryDiff[]>((result, diff) => {
         if (!summaryDiff(diff)) return result
-        if (seen.has(diff.file)) return result
-        seen.add(diff.file)
+        if (MutableHashSet.has(seen, diff.file)) return result
+        MutableHashSet.add(seen, diff.file)
         result.push(diff)
         return result
       }, [])
