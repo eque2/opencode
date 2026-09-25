@@ -120,6 +120,7 @@ describe("file watcher invalidation", () => {
   })
 
   test("ignores invalid or git watcher updates", () => {
+    let loads = Chunk.empty<string>()
     let refresh = Chunk.empty<string>()
 
     invalidateFromWatcher(
@@ -133,8 +134,8 @@ describe("file watcher invalidation", () => {
       {
         normalize: (input) => input,
         hasFile: () => true,
-        loadFile: () => {
-          throw new Error("should not load")
+        loadFile: (path) => {
+          loads = Chunk.append(loads, path)
         },
         node: () => Option.none(),
         isDirLoaded: () => true,
@@ -161,6 +162,7 @@ describe("file watcher invalidation", () => {
       },
     )
 
+    expect(Chunk.toReadonlyArray(loads)).toEqual([])
     expect(Chunk.toReadonlyArray(refresh)).toEqual([])
   })
 })
