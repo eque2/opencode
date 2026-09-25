@@ -11,7 +11,7 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { HashMap } from "effect"
+import { HashMap, Option, Schema } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -82,6 +82,11 @@ import {
 } from "./layout/sidebar-workspace"
 import { ProjectDragOverlay, SortableProject, type ProjectSidebarContext } from "./layout/sidebar-project"
 import { SidebarContent } from "./layout/sidebar-shell"
+
+const DeepLinkDetail = Schema.Struct({ urls: Schema.mutable(Schema.Array(Schema.String)) }).annotate({
+  identifier: "Layout.DeepLinkDetail",
+})
+const decodeDeepLinkDetail = Schema.decodeUnknownOption(DeepLinkDetail)
 
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
@@ -1271,8 +1276,11 @@ export default function LegacyLayout(props: ParentProps) {
 
   onMount(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ urls: string[] }>).detail
-      const urls = detail?.urls ?? []
+      if (!(event instanceof CustomEvent)) return
+      const urls = Option.match(decodeDeepLinkDetail(event.detail), {
+        onNone: () => [],
+        onSome: (detail) => detail.urls,
+      })
       if (urls.length === 0) return
       handleDeepLinks(urls)
     }
