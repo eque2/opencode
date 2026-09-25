@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionNotFoundError } from "@opencode-ai/sdk/v2/client"
+import { Schema } from "effect"
 import type { ConfigInvalidError, ProviderModelNotFoundError } from "./server-errors"
 import { formatServerError, isSessionNotFoundError, parseReadableConfigInvalidError } from "./server-errors"
 
@@ -31,6 +32,30 @@ function useLanguageMock() {
 }
 
 const language = useLanguageMock()
+
+/**
+ * The server's SessionNotFoundError and ProviderNotFoundError, as declared in
+ * packages/protocol/src/errors.ts. The app does not depend on that package, so
+ * the test declares the same tagged classes and encodes them to the JSON body
+ * that the SDK hands to the app.
+ */
+class ServerSessionNotFound extends Schema.TaggedError<ServerSessionNotFound>()("SessionNotFoundError", {
+  sessionID: Schema.String,
+  message: Schema.String,
+}) {}
+
+class ServerProviderNotFound extends Schema.TaggedError<ServerProviderNotFound>()("ProviderNotFoundError", {
+  providerID: Schema.String,
+  message: Schema.String,
+}) {}
+
+const sessionNotFoundBody = (sessionID: string) =>
+  Schema.encodeSync(ServerSessionNotFound)(
+    new ServerSessionNotFound({ sessionID, message: "Session not found" }),
+  ) satisfies SessionNotFoundError
+
+const providerNotFoundBody = (providerID: string) =>
+  Schema.encodeSync(ServerProviderNotFound)(new ServerProviderNotFound({ providerID, message: "Provider not found" }))
 
 describe("parseReadableConfigInvalidError", () => {
   test("formats issues with file path", () => {
@@ -146,27 +171,19 @@ describe("formatServerError", () => {
 
 describe("isSessionNotFoundError", () => {
   test("matches an SDK-wrapped error for the requested session", () => {
-    const body = {
-      _tag: "SessionNotFoundError",
-      sessionID: "ses_missing",
-      message: "Session not found",
-    } satisfies SessionNotFoundError
+    const body = sessionNotFoundBody("ses_missing")
 
     expect(isSessionNotFoundError(new Error(body.message, { cause: { body, status: 404 } }), body.sessionID)).toBe(true)
   })
 
   test("rejects errors for other sessions and other 404 responses", () => {
-    const body = {
-      _tag: "SessionNotFoundError",
-      sessionID: "ses_parent",
-      message: "Session not found",
-    } satisfies SessionNotFoundError
+    const body = sessionNotFoundBody("ses_parent")
 
     expect(isSessionNotFoundError(new Error(body.message, { cause: { body, status: 404 } }), "ses_tab")).toBe(false)
     expect(
       isSessionNotFoundError(
         new Error("Provider not found", {
-          cause: { body: { _tag: "ProviderNotFoundError", providerID: "missing" }, status: 404 },
+          cause: { body: providerNotFoundBody("missing"), status: 404 },
         }),
         "ses_tab",
       ),
