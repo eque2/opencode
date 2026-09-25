@@ -110,7 +110,7 @@ export function fromRow(row: SessionRow): Info {
       },
     },
     ...(row.share_url ? { share: { url: row.share_url } } : {}),
-    ...(Predicate.isNotNull(row.metadata) ? { metadata: row.metadata } : {}),
+    ...(isMetadata(row.metadata) ? { metadata: row.metadata } : {}),
     ...(row.revert
       ? {
           revert: {
@@ -234,7 +234,9 @@ const Model = Schema.Struct({
   variant: optional(Schema.String),
 })
 
-export const Metadata = Schema.Record(Schema.String, Schema.Any)
+export const Metadata = Schema.Record(Schema.String, Schema.MutableJson)
+// The metadata column holds parsed JSON; the check also rejects a NULL column.
+const isMetadata = Schema.is(Metadata)
 
 export const Info = Schema.Struct({
   id: SessionID,
