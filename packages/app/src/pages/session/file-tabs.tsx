@@ -251,7 +251,7 @@ function SessionFileViewV1(props: { tab: string }) {
   const path = createMemo(() => file.pathFromTab(props.tab))
   const state = createMemo(() => {
     const p = path()
-    if (!p) return
+    if (!p) return undefined
     return file.get(p)
   })
   const contents = createMemo(() => state()?.content?.content ?? "")
@@ -541,7 +541,7 @@ function SessionFileViewV2(props: { tab: string }) {
   const path = createMemo(() => file.pathFromTab(props.tab))
   const state = createMemo(() => {
     const p = path()
-    if (!p) return
+    if (!p) return undefined
     return file.get(p)
   })
   const contents = createMemo(() => state()?.content?.content ?? "")

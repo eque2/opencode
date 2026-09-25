@@ -99,14 +99,14 @@ export const createSessionTabs = (input: TabsInput) => {
   })
   const activeFileTab = createMemo(() => {
     const active = activeTab()
-    if (!openedTabs().includes(active)) return
+    if (!openedTabs().includes(active)) return undefined
     return active
   })
   const closableTab = createMemo(() => {
     const active = activeTab()
     if (active === "context") return active
     if (active === SESSION_OPEN_FILE_TAB && openFileOpen()) return active
-    if (!openedTabs().includes(active)) return
+    if (!openedTabs().includes(active)) return undefined
     return active
   })
 

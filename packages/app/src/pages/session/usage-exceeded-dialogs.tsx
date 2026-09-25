@@ -26,9 +26,9 @@ type GoUpsellKey =
 type GoUpsellState = { [K in GoUpsellKey]?: number | null }
 
 function goUpsellKeys(status: SessionStatus) {
-  if (status.type !== "retry" || !status.action) return
+  if (status.type !== "retry" || !status.action) return undefined
   const { action } = status
-  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+  if (!GO_UPSELL_PROVIDERS.has(action.provider)) return undefined
   if (action.reason === "free_tier_limit") {
     return {
       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
@@ -41,6 +41,7 @@ function goUpsellKeys(status: SessionStatus) {
       dontShow: GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW,
     } as const
   }
+  return undefined
 }
 
 export function useUsageExceededDialogs() {

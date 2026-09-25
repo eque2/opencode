@@ -74,7 +74,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
 
   const info = () => {
     const id = params.id
-    if (!id) return
+    if (!id) return undefined
     return sync().session.get(id)
   }
   const hasReview = () => !!params.id
