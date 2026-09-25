@@ -1,6 +1,6 @@
 import { createResource, createMemo, createSignal } from "solid-js"
 import { TextAttributes } from "@opentui/core"
-import { Result } from "effect"
+import { Data, Effect, Result } from "effect"
 import { DialogSelect } from "../ui/dialog-select"
 import { useSDK } from "../context/sdk"
 import { useDialog } from "../ui/dialog"
@@ -10,6 +10,9 @@ import { errorMessage } from "../util/error"
 import type { ExperimentalConsoleListOrgsResponse } from "@opencode-ai/sdk/v2"
 
 type OrgOption = ExperimentalConsoleListOrgsResponse["orgs"][number]
+
+/** The org list request failed. */
+class LoadError extends Data.TaggedError("DialogConsoleOrg.LoadError")<{ readonly cause: unknown }> {}
 
 // A URL that does not parse is shown as it is.
 const accountHost = (url: string) => Result.try(() => new URL(url).host).pipe(Result.getOrElse(() => url))
@@ -26,15 +29,22 @@ export function DialogConsoleOrg() {
   const [loadError, setLoadError] = createSignal<unknown>()
 
   const [orgs] = createResource(() =>
-    sdk.client.experimental.console
-      .listOrgs({}, { throwOnError: true })
-      .then((result) => result.data?.orgs ?? [])
-      // Catch so the rejected resource never reaches the memos below: reading
-      // orgs() in an errored state re-throws and tears down the dialog.
-      .catch((error) => {
-        setLoadError(error)
-        return undefined
-      }),
+    Effect.runPromise(
+      Effect.tryPromise({
+        try: () => sdk.client.experimental.console.listOrgs({}, { throwOnError: true }),
+        catch: (cause) => new LoadError({ cause }),
+      }).pipe(
+        Effect.map((result) => result.data?.orgs ?? []),
+        // Catch so the rejected resource never reaches the memos below: reading
+        // orgs() in an errored state re-throws and tears down the dialog.
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            setLoadError(error.cause)
+            return undefined
+          }),
+        ),
+      ),
+    ),
   )
 
   const showError = createMemo(() => Boolean(loadError()))

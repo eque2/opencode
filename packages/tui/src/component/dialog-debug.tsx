@@ -1,5 +1,5 @@
 import { TextAttributes } from "@opentui/core"
-import { DateTime, Effect } from "effect"
+import { Data, DateTime, Effect } from "effect"
 import { createMemo, createSignal, For } from "solid-js"
 import { InstallationChannel, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { useTheme } from "../context/theme"
@@ -10,6 +10,9 @@ import { useClipboard } from "../context/clipboard"
 import { useToast } from "../ui/toast"
 import { useBindings } from "../keymap"
 import { describeOS, describeTerminal } from "../util/system"
+
+/** The clipboard rejected the debug info. */
+class CopyError extends Data.TaggedError("DialogDebug.CopyError")<{ readonly cause: unknown }> {}
 
 export function DialogDebug() {
   const { theme } = useTheme()
@@ -41,13 +44,19 @@ export function DialogDebug() {
     const text = entries()
       .map((entry) => `${entry.label}: ${entry.value}`)
       .join("\n")
-    void clipboard
-      .write?.(text)
-      .then(() => {
-        setCopied(true)
-        toast.show({ message: "Debug info copied to clipboard", variant: "info" })
-      })
-      .catch(toast.error)
+    const written = clipboard.write?.(text)
+    if (!written) return
+    Effect.runFork(
+      Effect.tryPromise({ try: () => written, catch: (cause) => new CopyError({ cause }) }).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            setCopied(true)
+            toast.show({ message: "Debug info copied to clipboard", variant: "info" })
+          }),
+        ),
+        Effect.catch((error) => Effect.sync(() => toast.error(error.cause))),
+      ),
+    )
   }
 
   useBindings(() => ({

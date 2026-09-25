@@ -15,7 +15,7 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
-import { Schema } from "effect"
+import { Data, Effect, Schema } from "effect"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -29,6 +29,9 @@ const PROVIDER_PRIORITY: Record<string, number> = {
 const CUSTOM_PROVIDER_OPTION_VALUE = "__opencode_custom_provider__"
 // The toast shows an SDK error body as JSON text, whatever shape the server sent.
 const errorJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
+
+/** The clipboard rejected the provider code. */
+class CopyError extends Data.TaggedError("DialogProvider.CopyError")<{ readonly cause: unknown }> {}
 const CUSTOM_PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 
 type ProviderOptionBase = {
@@ -253,10 +256,14 @@ function AutoMethod(props: AutoMethodProps) {
         cmd: () => {
           const code =
             props.authorization.instructions.match(/[A-Z0-9]{4}-[A-Z0-9]{4,5}/)?.[0] ?? props.authorization.url
-          clipboard
-            .write?.(code)
-            .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
-            .catch(toast.error)
+          const written = clipboard.write?.(code)
+          if (!written) return
+          Effect.runFork(
+            Effect.tryPromise({ try: () => written, catch: (cause) => new CopyError({ cause }) }).pipe(
+              Effect.andThen(Effect.sync(() => toast.show({ message: "Copied to clipboard", variant: "info" }))),
+              Effect.catch((error) => Effect.sync(() => toast.error(error.cause))),
+            ),
+          )
         },
       },
     ],
