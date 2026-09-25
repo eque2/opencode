@@ -11,7 +11,7 @@ import {
   untrack,
   type Accessor,
 } from "solid-js"
-import { HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
+import { Data, Effect, HashMap, HashSet, MutableHashMap, MutableHashSet, Option, Schema } from "effect"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { useNavigate, useParams } from "@solidjs/router"
 import { useLayout, LocalProject } from "@/context/layout"
@@ -87,6 +87,21 @@ const DeepLinkDetail = Schema.Struct({ urls: Schema.mutable(Schema.Array(Schema.
   identifier: "Layout.DeepLinkDetail",
 })
 const decodeDeepLinkDetail = Schema.decodeUnknownOption(DeepLinkDetail)
+
+/** A server request of the layout that rejected. `cause` is the original rejection. */
+class LayoutRequestError extends Data.TaggedError("App.LayoutRequestError")<{ readonly cause: unknown }> {}
+
+/** Runs one server request as an Effect. A rejection fails with LayoutRequestError. */
+const layoutRequest = <A,>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new LayoutRequestError({ cause }) })
+
+/**
+ * Runs a layout action in the background. A failure or defect goes to the
+ * Effect logger, as an unhandled rejection went to the console before.
+ */
+const runDetached = <A, E>(effect: Effect.Effect<A, E>) => {
+  Effect.runFork(effect.pipe(Effect.tapCause((cause) => Effect.logError(cause))))
+}
 
 export default function LegacyLayout(props: ParentProps) {
   const serverSDK = useServerSDK()
@@ -541,23 +556,34 @@ export default function LegacyLayout(props: ParentProps) {
     return projects.find((p) => p.worktree === root)
   })
 
-  const [autoselecting] = createResource(async () => {
-    await ready.promise
-    await layout.ready.promise
-    if (!untrack(() => state.autoselect)) return
+  // `await` on a missing ready promise still resumed after the setup; yieldNow keeps that order.
+  const waitFor = (promise: Promise<unknown> | undefined) =>
+    Option.match(Option.fromNullishOr(promise), {
+      onNone: () => Effect.yieldNow,
+      onSome: (pending) => Effect.asVoid(Effect.promise(() => pending)),
+    })
 
-    const list = layout.projects.list()
-    const last = server.projects.last()
+  const [autoselecting] = createResource(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* waitFor(ready.promise)
+        yield* waitFor(layout.ready.promise)
+        if (!untrack(() => state.autoselect)) return
 
-    if (list.length === 0) {
-      if (!last) return
-      await openProject(last, true)
-    } else {
-      const next = list.find((project) => project.worktree === last) ?? list[0]
-      if (!next) return
-      await openProject(next.worktree, true)
-    }
-  })
+        const list = layout.projects.list()
+        const last = server.projects.last()
+
+        if (list.length === 0) {
+          if (!last) return
+          yield* openProjectEffect(last)
+          return
+        }
+        const next = list.find((project) => project.worktree === last) ?? list[0]
+        if (!next) return
+        yield* openProjectEffect(next.worktree)
+      }),
+    ),
+  )
 
   const workspaceName = (directory: string, projectId?: string, branch?: string) => {
     const key = pathKey(directory)
@@ -707,13 +733,11 @@ export default function LegacyLayout(props: ParentProps) {
     return created
   }
 
-  async function prefetchMessages(directory: string, sessionID: string, token: number) {
-    await serverSync()
-      .session.prefetch(sessionID, prefetchChunk)
-      .catch(() => {})
+  const prefetchMessages = Effect.fnUntraced(function* (directory: string, sessionID: string, token: number) {
+    yield* layoutRequest(() => serverSync().session.prefetch(sessionID, prefetchChunk)).pipe(Effect.ignore)
     if (prefetchToken.value !== token) return
     for (const stale of markPrefetched(directory, sessionID)) serverSync().session.evict(stale)
-  }
+  })
 
   const pumpPrefetch = (directory: string) => {
     const q = queueFor(directory)
@@ -728,11 +752,17 @@ export default function LegacyLayout(props: ParentProps) {
 
     const token = prefetchToken.value
 
-    void prefetchMessages(directory, sessionID, token).finally(() => {
-      q.running -= 1
-      MutableHashSet.remove(q.inflight, sessionID)
-      pumpPrefetch(directory)
-    })
+    runDetached(
+      prefetchMessages(directory, sessionID, token).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            q.running -= 1
+            MutableHashSet.remove(q.inflight, sessionID)
+            pumpPrefetch(directory)
+          }),
+        ),
+      ),
+    )
   }
 
   const prefetchSession = (session: Session, priority: "high" | "low" = "low") => {
@@ -837,7 +867,7 @@ export default function LegacyLayout(props: ParentProps) {
 
     // warm up child store to prevent flicker
     serverSync().child(target.worktree)
-    void openProject(target.worktree)
+    openProject(target.worktree)
   }
 
   function navigateToProjectIndex(index: number) {
@@ -846,7 +876,7 @@ export default function LegacyLayout(props: ParentProps) {
     if (!target) return
 
     serverSync().child(target.worktree)
-    void openProject(target.worktree)
+    openProject(target.worktree)
   }
 
   function navigateSessionByUnseen(offset: number) {
@@ -873,32 +903,38 @@ export default function LegacyLayout(props: ParentProps) {
     }
   }
 
-  async function archiveSession(session: Session) {
-    if ((await serverSDK().protocol) !== "v1") return
-    const [store, setStore] = serverSync().child(session.directory)
-    const sessions = store.session ?? []
-    const index = sessions.findIndex((s) => s.id === session.id)
-    const nextSession = sessions[index + 1] ?? sessions[index - 1]
+  // The sidebar contract returns a Promise; it rejects with the original update error.
+  const archiveSession = (session: Session): Promise<void> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        if ((yield* Effect.promise(() => serverSDK().protocol)) !== "v1") return
+        const [store, setStore] = serverSync().child(session.directory)
+        const sessions = store.session ?? []
+        const index = sessions.findIndex((s) => s.id === session.id)
+        const nextSession = sessions[index + 1] ?? sessions[index - 1]
 
-    await serverSDK().client.session.update({
-      sessionID: session.id,
-      directory: session.directory,
-      time: { archived: Date.now() },
-    })
-    setStore(
-      produce((draft) => {
-        const match = Binary.search(draft.session, session.id, (s) => s.id)
-        if (match.found) draft.session.splice(match.index, 1)
+        yield* Effect.promise(() =>
+          serverSDK().client.session.update({
+            sessionID: session.id,
+            directory: session.directory,
+            time: { archived: Date.now() },
+          }),
+        )
+        setStore(
+          produce((draft) => {
+            const match = Binary.search(draft.session, session.id, (s) => s.id)
+            if (match.found) draft.session.splice(match.index, 1)
+          }),
+        )
+        if (session.id === params.id) {
+          if (nextSession) {
+            navigate(`/${params.dir}/session/${nextSession.id}`)
+          } else {
+            navigate(`/${params.dir}/session`)
+          }
+        }
       }),
     )
-    if (session.id === params.id) {
-      if (nextSession) {
-        navigate(`/${params.dir}/session/${nextSession.id}`)
-      } else {
-        navigate(`/${params.dir}/session`)
-      }
-    }
-  }
 
   command.register("layout", () => {
     const commands: CommandOption[] = [
@@ -986,7 +1022,7 @@ export default function LegacyLayout(props: ParentProps) {
         onSelect: () => {
           const project = currentProject()
           if (!project) return
-          return createWorkspace(project)
+          runDetached(createWorkspace(project))
         },
       },
       {
@@ -1168,8 +1204,7 @@ export default function LegacyLayout(props: ParentProps) {
     return root
   }
 
-  async function navigateToProject(directory: string | undefined) {
-    if (!directory) return
+  const navigateToProjectEffect = Effect.fn("Layout.navigateToProject")(function* (directory: string) {
     const root = projectRoot(directory)
     server.projects.touch(root)
     const project = layout.projects.list().find((item) => item.worktree === root)
@@ -1180,19 +1215,26 @@ export default function LegacyLayout(props: ParentProps) {
       if (!value) return false
       return dirs.some((item) => pathKey(item) === pathKey(value))
     }
-    const refreshDirs = async (target?: string) => {
+    const refreshDirs = Effect.fnUntraced(function* (target: string) {
       if (!target || target === root || canOpen(target)) return canOpen(target)
-      const listed = await Promise.resolve(
-        project?.id ?? serverSDK().api.project.current({ location: { directory: root } }),
+      const projectID: Effect.Effect<string, LayoutRequestError> = Option.match(Option.fromNullishOr(project?.id), {
+        onSome: (id) => Effect.succeed(id),
+        onNone: () =>
+          layoutRequest(() => serverSDK().api.project.current({ location: { directory: root } })).pipe(
+            Effect.map((value) => value.id),
+          ),
+      })
+      const listed = yield* projectID.pipe(
+        Effect.flatMap((id) =>
+          layoutRequest(() => serverSDK().api.project.directories({ projectID: id, location: { directory: root } })),
+        ),
+        Effect.map((items) => items.map((item) => item.directory).filter((item) => pathKey(item) !== pathKey(root))),
+        Effect.orElseSucceed((): string[] => []),
       )
-        .then((value) => (typeof value === "string" ? value : value.id))
-        .then((projectID) => serverSDK().api.project.directories({ projectID, location: { directory: root } }))
-        .then((items) => items.map((item) => item.directory).filter((item) => pathKey(item) !== pathKey(root)))
-        .catch(() => [] as string[])
       dirs = effectiveWorkspaceOrder(root, [root, ...listed], store.workspaceOrder[root])
       return canOpen(target)
-    }
-    const openSession = async (target: { directory: string; id: string }) => {
+    })
+    const openSession = Effect.fnUntraced(function* (target: { directory: string; id: string }) {
       if (!canOpen(target.directory)) return false
       const sync = serverSync().ensureDirSyncContext(target.directory)
       if (sync.session.get(target.id)) {
@@ -1200,21 +1242,25 @@ export default function LegacyLayout(props: ParentProps) {
         navigateWithSidebarReset(`/${base64Encode(target.directory)}/session/${target.id}`)
         return true
       }
-      const resolved = await sync.session
-        .sync(target.id)
-        .then(() => sync.session.get(target.id))
-        .catch(() => undefined)
-      if (!resolved?.directory) return false
-      if (!canOpen(resolved.directory)) return false
-      setStore("lastProjectSession", root, { directory: resolved.directory, id: resolved.id, at: Date.now() })
-      navigateWithSidebarReset(`/${base64Encode(resolved.directory)}/session/${resolved.id}`)
+      const resolved = yield* layoutRequest(() => sync.session.sync(target.id)).pipe(
+        Effect.map(() => Option.fromNullishOr(sync.session.get(target.id))),
+        Effect.orElseSucceed(() => Option.none()),
+      )
+      const session = Option.filter(resolved, (item) => !!item.directory && canOpen(item.directory))
+      if (Option.isNone(session)) return false
+      setStore("lastProjectSession", root, {
+        directory: session.value.directory,
+        id: session.value.id,
+        at: Date.now(),
+      })
+      navigateWithSidebarReset(`/${base64Encode(session.value.directory)}/session/${session.value.id}`)
       return true
-    }
+    })
 
     const projectSession = store.lastProjectSession[root]
     if (projectSession?.id) {
-      await refreshDirs(projectSession.directory)
-      const opened = await openSession(projectSession)
+      yield* refreshDirs(projectSession.directory)
+      const opened = yield* openSession(projectSession)
       if (opened) return
       clearLastProjectSession(root)
     }
@@ -1223,28 +1269,36 @@ export default function LegacyLayout(props: ParentProps) {
       dirs.map((item) => serverSync().child(item, { bootstrap: false })[0]),
       Date.now(),
     )
-    if (latest && (await openSession(latest))) {
+    if (latest && (yield* openSession(latest))) {
       return
     }
 
-    const fetched = latestRootSession(
-      await Promise.all(
-        dirs.map(async (item) => ({
-          path: { directory: item },
-          session: await listAllSessions(serverSDK().api.session, {
+    const listed = yield* Effect.forEach(
+      dirs,
+      (item) =>
+        layoutRequest(() =>
+          listAllSessions(serverSDK().api.session, {
             directory: item,
             parentID: null,
             order: "desc",
-          }).catch(() => []),
-        })),
-      ),
-      Date.now(),
+          }),
+        ).pipe(
+          Effect.orElseSucceed(() => []),
+          Effect.map((session) => ({ path: { directory: item }, session })),
+        ),
+      { concurrency: "unbounded" },
     )
-    if (fetched && (await openSession(fetched))) {
+    const fetched = latestRootSession(listed, Date.now())
+    if (fetched && (yield* openSession(fetched))) {
       return
     }
 
     navigateWithSidebarReset(`/${base64Encode(root)}/session`)
+  })
+
+  function navigateToProject(directory: string | undefined) {
+    if (!directory) return
+    runDetached(navigateToProjectEffect(directory))
   }
 
   function navigateToSession(session: Session | undefined) {
@@ -1252,20 +1306,23 @@ export default function LegacyLayout(props: ParentProps) {
     navigateWithSidebarReset(`/${base64Encode(session.directory)}/session/${session.id}`)
   }
 
+  const openProjectEffect = (directory: string) =>
+    Effect.sync(() => layout.projects.open(directory)).pipe(Effect.andThen(navigateToProjectEffect(directory)))
+
   function openProject(directory: string, navigate = true) {
     layout.projects.open(directory)
-    if (navigate) return navigateToProject(directory)
+    if (navigate) navigateToProject(directory)
   }
 
   const handleDeepLinks = (urls: string[]) => {
     if (!server.isLocal()) return
 
     for (const directory of collectOpenProjectDeepLinks(urls)) {
-      void openProject(directory)
+      openProject(directory)
     }
 
     for (const link of collectNewSessionDeepLinks(urls)) {
-      void openProject(link.directory, false)
+      openProject(link.directory, false)
       const slug = base64Encode(link.directory)
       if (link.prompt) {
         setSessionHandoff(SessionStateKey.from(server.scope(), SessionRouteKey.fromLegacy(slug)), {
@@ -1292,21 +1349,27 @@ export default function LegacyLayout(props: ParentProps) {
     makeEventListener(window, deepLinkEvent, handler as EventListener)
   })
 
-  async function renameProject(project: LocalProject, next: string) {
+  function renameProject(project: LocalProject, next: string) {
     const current = displayName(project)
     if (next === current) return
     const name = next === getFilename(project.worktree) ? "" : next
 
     if (project.id && project.id !== "global") {
+      const projectID = project.id
       const sdk = serverSDK()
-      if ((await sdk.protocol) !== "v1") return
-      const result = await sdk.client.project
-        .update({ projectID: project.id, directory: project.worktree, name })
-        .then((response) => response.data)
-      if (!result) return
-      // const result = await serverSDK().api.project.update({ projectID: project.id, name })
-      serverSync().set("project", (items) =>
-        items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
+      runDetached(
+        Effect.gen(function* () {
+          if ((yield* Effect.promise(() => sdk.protocol)) !== "v1") return
+          const response = yield* layoutRequest(() =>
+            sdk.client.project.update({ projectID, directory: project.worktree, name }),
+          )
+          const result = response.data
+          if (!result) return
+          // const result = await serverSDK().api.project.update({ projectID: project.id, name })
+          serverSync().set("project", (items) =>
+            items.map((item) => (item.id === result.id ? normalizeProjectInfo(result) : item)),
+          )
+        }),
       )
       return
     }
@@ -1343,7 +1406,7 @@ export default function LegacyLayout(props: ParentProps) {
     navigateWithSidebarReset(`/${base64Encode(next.worktree)}/session`)
     layout.projects.close(directory)
     queueMicrotask(() => {
-      void navigateToProject(next.worktree)
+      navigateToProject(next.worktree)
     })
   }
 
@@ -1371,11 +1434,11 @@ export default function LegacyLayout(props: ParentProps) {
     function resolve(result: string | string[] | null) {
       if (Array.isArray(result)) {
         for (const directory of result) {
-          void openProject(directory, false)
+          openProject(directory, false)
         }
-        void navigateToProject(result[0])
+        navigateToProject(result[0])
       } else if (result) {
-        void openProject(result)
+        openProject(result)
       }
     }
 
@@ -1387,7 +1450,11 @@ export default function LegacyLayout(props: ParentProps) {
     })
   }
 
-  const deleteWorkspace = async (root: string, directory: string, leaveDeletedWorkspace = false) => {
+  const deleteWorkspace = Effect.fn("Layout.deleteWorkspace")(function* (
+    root: string,
+    directory: string,
+    leaveDeletedWorkspace = false,
+  ) {
     if (directory === root) return
 
     const current = currentDir()
@@ -1400,16 +1467,20 @@ export default function LegacyLayout(props: ParentProps) {
 
     setBusy(directory, true)
 
-    const result = await serverSDK()
-      .client.worktree.remove({ directory: root, worktreeRemoveInput: { directory } })
-      .then((x) => x.data)
-      .catch((err) => {
-        showToast({
-          title: language.t("workspace.delete.failed.title"),
-          description: errorMessage(err, language.t("common.requestFailed")),
-        })
-        return false
-      })
+    const result = yield* layoutRequest(() =>
+      serverSDK().client.worktree.remove({ directory: root, worktreeRemoveInput: { directory } }),
+    ).pipe(
+      Effect.map((x) => x.data),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          showToast({
+            title: language.t("workspace.delete.failed.title"),
+            description: errorMessage(error.cause, language.t("common.requestFailed")),
+          })
+          return false
+        }),
+      ),
+    )
 
     setBusy(directory, false)
 
@@ -1445,9 +1516,9 @@ export default function LegacyLayout(props: ParentProps) {
     if (params.dir && projectRoot(nextCurrent) === root && !valid) {
       navigateWithSidebarReset(`/${base64Encode(root)}/session`)
     }
-  }
+  })
 
-  const resetWorkspace = async (root: string, directory: string) => {
+  const resetWorkspace = Effect.fn("Layout.resetWorkspace")(function* (root: string, directory: string) {
     if (directory === root) return
     setBusy(directory, true)
 
@@ -1458,7 +1529,9 @@ export default function LegacyLayout(props: ParentProps) {
     })
     const dismiss = () => dismissToast(progress)
 
-    const sessions = await listAllSessions(serverSDK().api.session, { directory, order: "desc" }).catch(() => [])
+    const sessions = yield* layoutRequest(() =>
+      listAllSessions(serverSDK().api.session, { directory, order: "desc" }),
+    ).pipe(Effect.orElseSucceed(() => []))
 
     clearWorkspaceTerminals(
       directory,
@@ -1466,20 +1539,22 @@ export default function LegacyLayout(props: ParentProps) {
       platform,
       serverSDK().scope,
     )
-    await serverSDK()
-      .client.instance.dispose({ directory })
-      .catch(() => undefined)
+    yield* layoutRequest(() => serverSDK().client.instance.dispose({ directory })).pipe(Effect.ignore)
 
-    const result = await serverSDK()
-      .client.worktree.reset({ directory: root, worktreeResetInput: { directory } })
-      .then((x) => x.data)
-      .catch((err) => {
-        showToast({
-          title: language.t("workspace.reset.failed.title"),
-          description: errorMessage(err, language.t("common.requestFailed")),
-        })
-        return false
-      })
+    const result = yield* layoutRequest(() =>
+      serverSDK().client.worktree.reset({ directory: root, worktreeResetInput: { directory } }),
+    ).pipe(
+      Effect.map((x) => x.data),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          showToast({
+            title: language.t("workspace.reset.failed.title"),
+            description: errorMessage(error.cause, language.t("common.requestFailed")),
+          })
+          return false
+        }),
+      ),
+    )
 
     if (!result) {
       setBusy(directory, false)
@@ -1487,19 +1562,18 @@ export default function LegacyLayout(props: ParentProps) {
       return
     }
 
-    if ((await serverSDK().protocol) === "v1")
-      await Promise.all(
-        sessions
-          .filter((session) => session.time.archived === undefined)
-          .map((session) =>
-            serverSDK()
-              .client.session.update({
-                sessionID: session.id,
-                directory: session.directory,
-                time: { archived: Date.now() },
-              })
-              .catch(() => undefined),
-          ),
+    if ((yield* Effect.promise(() => serverSDK().protocol)) === "v1")
+      yield* Effect.forEach(
+        sessions.filter((session) => session.time.archived === undefined),
+        (session) =>
+          layoutRequest(() =>
+            serverSDK().client.session.update({
+              sessionID: session.id,
+              directory: session.directory,
+              time: { archived: Date.now() },
+            }),
+          ).pipe(Effect.ignore),
+        { concurrency: "unbounded", discard: true },
       )
 
     setBusy(directory, false)
@@ -1523,7 +1597,7 @@ export default function LegacyLayout(props: ParentProps) {
         },
       ],
     })
-  }
+  })
 
   function DialogDeleteWorkspace(props: { root: string; directory: string }) {
     const name = createMemo(() => getFilename(props.directory))
@@ -1533,16 +1607,20 @@ export default function LegacyLayout(props: ParentProps) {
     })
 
     onMount(() => {
-      serverSDK()
-        .api.vcs.status({ location: { directory: props.directory } })
-        .then((result) => {
-          const files = result.data
-          const dirty = files.length > 0
-          setData({ status: "ready", dirty })
-        })
-        .catch(() => {
-          setData({ status: "error", dirty: false })
-        })
+      runDetached(
+        layoutRequest(() => serverSDK().api.vcs.status({ location: { directory: props.directory } })).pipe(
+          Effect.match({
+            onSuccess: (result) => {
+              const files = result.data
+              const dirty = files.length > 0
+              setData({ status: "ready", dirty })
+            },
+            onFailure: () => {
+              setData({ status: "error", dirty: false })
+            },
+          }),
+        ),
+      )
     })
 
     const handleDelete = () => {
@@ -1551,7 +1629,7 @@ export default function LegacyLayout(props: ParentProps) {
         navigateWithSidebarReset(`/${base64Encode(props.root)}/session`)
       }
       dialog.close()
-      void deleteWorkspace(props.root, props.directory, leaveDeletedWorkspace)
+      runDetached(deleteWorkspace(props.root, props.directory, leaveDeletedWorkspace))
     }
 
     const description = () => {
@@ -1591,32 +1669,36 @@ export default function LegacyLayout(props: ParentProps) {
       sessions: [] as Session[],
     })
 
-    const refresh = async () => {
-      const sessions = await listAllSessions(serverSDK().api.session, {
-        directory: props.directory,
-        order: "desc",
-      }).catch(() => [])
+    const refresh = Effect.gen(function* () {
+      const sessions = yield* layoutRequest(() =>
+        listAllSessions(serverSDK().api.session, {
+          directory: props.directory,
+          order: "desc",
+        }),
+      ).pipe(Effect.orElseSucceed(() => []))
       const active = sessions.filter((session) => session.time.archived === undefined)
       setState({ sessions: active })
-    }
+    })
 
     onMount(() => {
-      serverSDK()
-        .api.vcs.status({ location: { directory: props.directory } })
-        .then((result) => {
-          const files = result.data
-          const dirty = files.length > 0
-          setState({ status: "ready", dirty })
-          void refresh()
-        })
-        .catch(() => {
-          setState({ status: "error", dirty: false })
-        })
+      runDetached(
+        layoutRequest(() => serverSDK().api.vcs.status({ location: { directory: props.directory } })).pipe(
+          Effect.matchEffect({
+            onSuccess: (result) =>
+              Effect.sync(() => {
+                const files = result.data
+                const dirty = files.length > 0
+                setState({ status: "ready", dirty })
+              }).pipe(Effect.andThen(refresh)),
+            onFailure: () => Effect.sync(() => setState({ status: "error", dirty: false })),
+          }),
+        ),
+      )
     })
 
     const handleReset = () => {
       dialog.close()
-      void resetWorkspace(props.root, props.directory)
+      runDetached(resetWorkspace(props.root, props.directory))
     }
 
     const archivedCount = () => state.sessions.length
@@ -1825,20 +1907,25 @@ export default function LegacyLayout(props: ParentProps) {
     setStore("activeWorkspace", undefined)
   }
 
-  const createWorkspace = async (project: LocalProject) => {
+  const createWorkspace = Effect.fn("Layout.createWorkspace")(function* (project: LocalProject) {
     clearSidebarHoverState()
-    const created = await serverSDK()
-      .client.worktree.create({ directory: project.worktree })
-      .then((x) => x.data)
-      .catch((err) => {
-        showToast({
-          title: language.t("workspace.create.failed.title"),
-          description: errorMessage(err, language.t("common.requestFailed")),
-        })
-        return undefined
-      })
+    const response = yield* layoutRequest(() =>
+      serverSDK().client.worktree.create({ directory: project.worktree }),
+    ).pipe(
+      Effect.map((x) => Option.fromNullishOr(x.data)),
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          showToast({
+            title: language.t("workspace.create.failed.title"),
+            description: errorMessage(error.cause, language.t("common.requestFailed")),
+          })
+          return Option.none()
+        }),
+      ),
+    )
 
-    if (!created?.directory) return
+    if (Option.isNone(response) || !response.value.directory) return
+    const created = response.value
 
     setWorkspaceName(created.directory, created.branch ?? getFilename(created.directory), project.id, created.branch)
 
@@ -1863,7 +1950,7 @@ export default function LegacyLayout(props: ParentProps) {
 
     serverSync().child(created.directory)
     navigateWithSidebarReset(`/${base64Encode(created.directory)}/session`)
-  }
+  })
 
   const workspaceSidebarCtx: WorkspaceSidebarContext = {
     currentDir,
@@ -2013,7 +2100,7 @@ export default function LegacyLayout(props: ParentProps) {
                       id={`project:${projectId()}`}
                       value={projectName}
                       onSave={(next) => {
-                        void renameProject(project, next)
+                        renameProject(project, next)
                       }}
                       class="text-14-medium text-text-strong truncate"
                       displayClass="text-14-medium text-text-strong truncate"
@@ -2139,7 +2226,7 @@ export default function LegacyLayout(props: ParentProps) {
                         icon="plus-small"
                         class="w-full"
                         onClick={() => {
-                          void createWorkspace(project)
+                          runDetached(createWorkspace(project))
                         }}
                       >
                         {language.t("workspace.new")}
