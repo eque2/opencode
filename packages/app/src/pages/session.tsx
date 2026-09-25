@@ -59,7 +59,7 @@ import { ServerConnection, serverName, useServer } from "@/context/server"
 import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTabs } from "@/context/tabs"
-import { TerminalProvider, useTerminal } from "@/context/terminal"
+import { TerminalProvider } from "@/context/terminal"
 import { PromptInput } from "@/components/prompt-input"
 import { PromptInputV2Composer, usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useSettingsCommand } from "@/components/settings-dialog"
@@ -376,7 +376,6 @@ export default function Page() {
   const prompt = usePrompt()
   const comments = useComments()
   const command = useCommand()
-  const terminal = useTerminal()
   const [searchParams, setSearchParams] = useSearchParams<{ prompt?: string }>()
   const location = useLocation()
   const navigate = useNavigate()
@@ -569,7 +568,6 @@ export default function Page() {
   const historyLoading = timeline.history.loading
   const historyMore = timeline.history.more
   const lastUserMessage = timeline.lastUserMessage
-  const messages = timeline.messages
   const messagesReady = timeline.ready
   const sessionSync = timeline.resource
   const userMessages = timeline.userMessages
@@ -1771,8 +1769,6 @@ export default function Page() {
       description: formatServerError(err, language.t),
     })
   }
-
-  const merge = (next: NonNullable<ReturnType<typeof info>>, target = sync()) => target.session.remember(next)
 
   const roll = (
     sessionID: string,
