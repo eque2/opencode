@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Data, Option } from "effect"
 import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../prompt/history"
@@ -56,7 +56,23 @@ function initialRoute(value: unknown): Option.Option<Route> {
 
 export type RouteContext = ReturnType<typeof useRoute>
 
-export function useRouteData<T extends Route["type"]>(type: T) {
+export function useRouteData<T extends Route["type"]>(type: T): Extract<Route, { type: T }> {
   const route = useRoute()
-  return route.data as Extract<Route, { type: typeof type }>
+  // The Match that mounts each route view checks the type first, so a mismatch is a defect.
+  return Option.liftPredicate(
+    route.data,
+    (data: Route): data is Extract<Route, { type: T }> => data.type === type,
+  ).pipe(
+    Option.getOrThrowWith(
+      () =>
+        new RouteMismatchError({
+          message: `useRouteData("${type}") needs a ${type} route, but the route is ${route.data.type}`,
+        }),
+    ),
+  )
 }
+
+/** Raised when a route view reads its route data while another route type is active. */
+class RouteMismatchError extends Data.TaggedError("RouteMismatchError")<{
+  readonly message: string
+}> {}
