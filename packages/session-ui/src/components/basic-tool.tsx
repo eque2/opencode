@@ -5,7 +5,7 @@ import { createStore } from "solid-js/store"
 import { Collapsible } from "@opencode-ai/ui/collapsible"
 import type { IconProps } from "@opencode-ai/ui/icon"
 import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
-import { Chunk, Option, Predicate } from "effect"
+import { Chunk, HashSet, Option, Predicate } from "effect"
 
 export type TriggerTitle = {
   title: string
@@ -325,11 +325,12 @@ function label(input: Record<string, unknown> | undefined) {
   return keys.map((key) => input?.[key]).find((value): value is string => typeof value === "string" && value.length > 0)
 }
 
+const argSkipKeys = HashSet.make("description", "query", "url", "filePath", "path", "pattern", "name")
+
 function args(input: Record<string, unknown> | undefined) {
   if (!input) return []
-  const skip = new Set(["description", "query", "url", "filePath", "path", "pattern", "name"])
   return Object.entries(input)
-    .filter(([key]) => !skip.has(key))
+    .filter(([key]) => !HashSet.has(argSkipKeys, key))
     .flatMap(([key, value]) => {
       if (typeof value === "string") return [`${key}=${value}`]
       if (typeof value === "number") return [`${key}=${value}`]
