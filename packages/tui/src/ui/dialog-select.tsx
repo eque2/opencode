@@ -7,7 +7,7 @@ import {
   type Renderable,
 } from "@opentui/core"
 import type { Binding } from "@opentui/keymap"
-import { Effect, Fiber, Option } from "effect"
+import { Effect, Equivalence, Fiber, Option } from "effect"
 import { useTheme, selectedForeground } from "../context/theme"
 import { entries, filter, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
@@ -78,6 +78,9 @@ export type DialogSelectRef<T> = {
   moveTo(value: T): void
 }
 
+/** Action index Options are equal when both are none or both hold the same index. */
+const sameActionIndex = Option.makeEquivalence(Equivalence.strictEqual<number>())
+
 export function DialogSelect<T>(props: DialogSelectProps<T>) {
   type Action = NonNullable<DialogSelectProps<T>["actions"]>[number]
   type FooterHint = NonNullable<DialogSelectProps<T>["footerHints"]>[number]
@@ -93,8 +96,11 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     filter: "",
     input: "keyboard" as "keyboard" | "mouse",
   })
-  const [focusedAction, setFocusedAction] = createSignal<number>()
-  const actionFocused = createMemo(() => focusedAction() !== undefined)
+  // The index of the focused footer action, if any. An equal index does not notify, as `===` did.
+  const [focusedAction, setFocusedAction] = createSignal(Option.none<number>(), {
+    equals: sameActionIndex,
+  })
+  const actionFocused = createMemo(() => Option.isSome(focusedAction()))
   let selection: { value: T; category?: string } | undefined
   let resetSelection = false
   let visibilityGeneration = 0
@@ -155,8 +161,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   )
 
   createEffect(() => {
-    const index = focusedAction()
-    if (index !== undefined && index >= actionItems().length) setFocusedAction(undefined)
+    if (Option.exists(focusedAction(), (index) => index >= actionItems().length)) setFocusedAction(Option.none())
   })
 
   const filtered = createMemo(() => {
@@ -186,7 +191,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   createEffect(() => {
     filtered()
     setStore("input", "keyboard")
-    setFocusedAction(undefined)
+    setFocusedAction(Option.none())
   })
 
   const flatten = createMemo(() => props.flat && store.filter.length > 0)
@@ -323,7 +328,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   }
 
   function moveTo(next: number, center = false, preserve = true) {
-    setFocusedAction(undefined)
+    setFocusedAction(Option.none())
     setStore("selected", next)
     const option = selected()
     if (option) {
@@ -371,8 +376,8 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (props.locked) return
     setStore("input", "keyboard")
     const index = focusedAction()
-    if (index !== undefined) {
-      triggerAction(actionItems()[index])
+    if (Option.isSome(index)) {
+      triggerAction(actionItems()[index.value])
       return
     }
     const option = selected()
@@ -385,11 +390,15 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (props.locked) return
     const total = actionItems().length
     if (total === 0) return
-    setFocusedAction((index) => {
-      if (index === undefined) return direction === 1 ? 0 : total - 1
-      const next = index + direction
-      return next < 0 || next >= total ? undefined : next
-    })
+    setFocusedAction((focused) =>
+      Option.match(focused, {
+        onNone: () => Option.some(direction === 1 ? 0 : total - 1),
+        onSome: (index) => {
+          const next = index + direction
+          return next < 0 || next >= total ? Option.none() : Option.some(next)
+        },
+      }),
+    )
   }
 
   useBindings(() => {
@@ -546,7 +555,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
   function isActionFocused(item: VisibleAction) {
     if (props.locked) return false
     if (!isActionItem(item)) return false
-    return actionItems().indexOf(item) === focusedAction()
+    return Option.contains(focusedAction(), actionItems().indexOf(item))
   }
 
   function FooterAction(action: { item: VisibleAction }) {
@@ -571,7 +580,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
       >
         <text
           fg={disabled() ? theme.textMuted : active() ? fg : theme.text}
-          attributes={active() ? TextAttributes.BOLD : undefined}
+          attributes={active() ? TextAttributes.BOLD : TextAttributes.NONE}
         >
           {item.title}
         </text>
@@ -678,7 +687,7 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                           onMouseMove={() => {
                             if (props.locked) return
                             setStore("input", "mouse")
-                            setFocusedAction(undefined)
+                            setFocusedAction(Option.none())
                           }}
                           onMouseUp={() => {
                             if (props.locked) return
@@ -723,7 +732,10 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
                               footer={flatten() ? (option.category ?? option.footer) : option.footer}
                               titleWidth={option.titleWidth}
                               truncateTitle={option.truncateTitle}
-                              description={option.description !== category ? option.description : undefined}
+                              description={Option.fromNullishOr(option.description).pipe(
+                                Option.filter((description) => description !== category),
+                                Option.getOrUndefined,
+                              )}
                               active={active()}
                               current={current()}
                               muted={actionFocused()}
@@ -801,7 +813,7 @@ function OptionRow(props: {
       <text
         flexGrow={1}
         fg={text()}
-        attributes={props.active && !props.muted ? TextAttributes.BOLD : undefined}
+        attributes={props.active && !props.muted ? TextAttributes.BOLD : TextAttributes.NONE}
         overflow="hidden"
         wrapMode="none"
         paddingLeft={3}

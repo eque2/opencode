@@ -1,3 +1,4 @@
+import { Option, Predicate } from "effect"
 import { isRecord } from "./record"
 
 type ConfigIssue = { message: string; path: string[] }
@@ -10,10 +11,10 @@ export function cliErrorMessage(input: unknown): string | undefined {
 
   if (tagged(input, "CliError")) {
     if (typeof input.exitCode === "number") process.exitCode = input.exitCode
-    return field(input, "message") ?? ""
+    return text(input, "message")
   }
   if (tagged(input, "AccountServiceError") || tagged(input, "AccountTransportError")) {
-    return field(input, "message") ?? ""
+    return text(input, "message")
   }
 
   const model = configData(input, "ProviderModelNotFoundError")
@@ -22,7 +23,7 @@ export function cliErrorMessage(input: unknown): string | undefined {
       ? model.suggestions.filter((item): item is string => typeof item === "string")
       : []
     return [
-      `Model not found: ${field(model, "providerID")}/${field(model, "modelID")}`,
+      `Model not found: ${shown(field(model, "providerID"))}/${shown(field(model, "modelID"))}`,
       ...(suggestions.length ? ["Did you mean: " + suggestions.join(", ")] : []),
       "Try: `opencode models` to list available models",
       "Or check your config (opencode.json) provider/model names",
@@ -31,37 +32,37 @@ export function cliErrorMessage(input: unknown): string | undefined {
 
   const provider = configData(input, "ProviderInitError")
   if (provider)
-    return `Failed to initialize provider "${field(provider, "providerID")}". Check credentials and configuration.`
+    return `Failed to initialize provider "${shown(field(provider, "providerID"))}". Check credentials and configuration.`
 
   const json = configData(input, "ConfigJsonError")
   if (json) {
-    const message = field(json, "message")
-    return `Config file at ${field(json, "path")} is not valid JSON(C)` + (message ? `: ${message}` : "")
+    return `Config file at ${shown(field(json, "path"))} is not valid JSON(C)` + suffix(": ", field(json, "message"))
   }
 
   const directory = configData(input, "ConfigDirectoryTypoError")
   if (directory) {
-    return `Directory "${field(directory, "dir")}" in ${field(directory, "path")} is not valid. Rename the directory to "${field(directory, "suggestion")}" or remove it. This is a common typo.`
+    return `Directory "${shown(field(directory, "dir"))}" in ${shown(field(directory, "path"))} is not valid. Rename the directory to "${shown(field(directory, "suggestion"))}" or remove it. This is a common typo.`
   }
 
   const frontmatter = configData(input, "ConfigFrontmatterError")
-  if (frontmatter) return field(frontmatter, "message") ?? ""
+  if (frontmatter) return text(frontmatter, "message")
 
   const remoteAuth = configData(input, "ConfigRemoteAuthError")
   if (remoteAuth) {
-    const url = field(remoteAuth, "url")
-    const remote = field(remoteAuth, "remote")
+    const url = nonEmpty(field(remoteAuth, "url"))
     return [
-      `Failed to load remote config${remote ? ` from ${remote}` : ""}: the server returned a login page instead of JSON.`,
+      `Failed to load remote config${suffix(" from ", field(remoteAuth, "remote"))}: the server returned a login page instead of JSON.`,
       "Authentication is missing or has expired (the endpoint is likely behind an SSO or identity-aware proxy).",
-      ...(url ? [`Run \`opencode auth login ${url}\` to re-authenticate.`] : []),
+      ...Option.match(url, {
+        onNone: () => [],
+        onSome: (value) => [`Run \`opencode auth login ${value}\` to re-authenticate.`],
+      }),
     ].join("\n")
   }
 
   const invalid = configData(input, "ConfigInvalidError")
   if (invalid) {
-    const path = field(invalid, "path")
-    const message = field(invalid, "message")
+    const path = nonEmpty(field(invalid, "path")).pipe(Option.filter((value) => value !== "config"))
     const issues = Array.isArray(invalid.issues)
       ? invalid.issues.filter((issue): issue is ConfigIssue => {
           return (
@@ -73,15 +74,15 @@ export function cliErrorMessage(input: unknown): string | undefined {
         })
       : []
     return [
-      `Configuration is invalid${path && path !== "config" ? ` at ${path}` : ""}` + (message ? `: ${message}` : ""),
+      `Configuration is invalid${suffix(" at ", path)}` + suffix(": ", field(invalid, "message")),
       ...issues.map((issue) => "↳ " + issue.message + " " + issue.path.join(".")),
     ].join("\n")
   }
 
   if (tagged(input, "UICancelledError") || named(input, "UICancelledError")) return ""
   if (isRecord(input) && named(input, "MCPFailed")) {
-    const name = isRecord(input.data) ? field(input.data, "name") : undefined
-    return `MCP server "${name}" failed. Note, opencode does not support MCP authentication yet.`
+    const name = Option.liftPredicate(input.data, isRecord).pipe(Option.flatMap((data) => field(data, "name")))
+    return `MCP server "${shown(name)}" failed. Note, opencode does not support MCP authentication yet.`
   }
   return undefined
 }
@@ -101,8 +102,28 @@ function configData(input: unknown, tag: string) {
   return undefined
 }
 
-function field(input: Record<string, unknown>, key: string) {
-  return typeof input[key] === "string" ? input[key] : undefined
+function field(input: Record<string, unknown>, key: string): Option.Option<string> {
+  return Option.liftPredicate(input[key], Predicate.isString)
+}
+
+/** The string field, or "" when it is absent. */
+function text(input: Record<string, unknown>, key: string) {
+  return Option.getOrElse(field(input, key), () => "")
+}
+
+/** The value, or the text "undefined" that the message templates printed for an absent field. */
+function shown(value: Option.Option<string>) {
+  return Option.getOrElse(value, () => "undefined")
+}
+
+/** The value when it is present and not empty. */
+function nonEmpty(value: Option.Option<string>) {
+  return Option.filter(value, (text) => text.length > 0)
+}
+
+/** The prefix and value when the value is present and not empty, or "". */
+function suffix(prefix: string, value: Option.Option<string>) {
+  return Option.match(nonEmpty(value), { onNone: () => "", onSome: (text) => prefix + text })
 }
 
 export function errorFormat(error: unknown): string {
@@ -161,7 +182,7 @@ export function errorData(error: unknown) {
       type: error.name,
       message: errorMessage(error),
       stack: error.stack,
-      cause: error.cause === undefined ? undefined : errorFormat(error.cause),
+      ...(error.cause === undefined ? {} : { cause: errorFormat(error.cause) }),
       formatted: errorFormat(error),
     }
   }

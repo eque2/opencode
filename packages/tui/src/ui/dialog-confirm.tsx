@@ -73,7 +73,7 @@ export function DialogConfirm(props: DialogConfirmProps) {
             <box
               paddingLeft={1}
               paddingRight={1}
-              backgroundColor={key === store.active ? theme.primary : undefined}
+              backgroundColor={key === store.active ? theme.primary : "transparent"}
               onMouseUp={() => {
                 if (key === "confirm") props.onConfirm?.()
                 if (key === "cancel") props.onCancel?.()
