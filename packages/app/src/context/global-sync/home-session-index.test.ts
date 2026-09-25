@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { QueryClient } from "@tanstack/solid-query"
 import type { Session, SessionV2Info } from "@opencode-ai/sdk/v2/client"
+import { Effect } from "effect"
 import {
   applyHomeSessionEvent,
   appendHomeSessionEvent,
@@ -31,48 +32,65 @@ const session = (input: {
 })
 
 describe("Home V2 session index", () => {
-  test("loads the Home index with one global V2 request", async () => {
-    const calls: unknown[] = []
-    const result = await loadHomeSessionIndex(async (input) => {
-      calls.push(input)
-      return { data: { data: [session({ id: "root" })], cursor: {} } }
-    })
+  test("loads the Home index with one global V2 request", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const result = yield* Effect.promise(() =>
+          loadHomeSessionIndex((input) =>
+            Effect.runPromise(
+              Effect.sync(() => {
+                calls.push(input)
+                return { data: { data: [session({ id: "root" })], cursor: {} } }
+              }),
+            ),
+          ),
+        )
 
-    expect(result.sessions).toHaveLength(1)
-    expect(calls).toEqual([{ limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }])
-  })
+        expect(result.sessions).toHaveLength(1)
+        expect(calls).toEqual([{ limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }])
+      }),
+    ))
 
-  test("loads subsequent pages until the session index is complete", async () => {
-    const calls: unknown[] = []
-    const controller = new AbortController()
-    const result = await loadHomeSessionIndex(
-      async (input, options) => {
-        calls.push({ input, signal: options.signal })
-        if (!("cursor" in input)) {
-          return {
-            data: {
-              data: Array.from({ length: HOME_V2_SESSION_PAGE_LIMIT }, (_, index) =>
-                session({ id: `page-1-${index}` }),
+  test("loads subsequent pages until the session index is complete", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const calls: unknown[] = []
+        const controller = new AbortController()
+        const result = yield* Effect.promise(() =>
+          loadHomeSessionIndex(
+            (input, options) =>
+              Effect.runPromise(
+                Effect.sync(() => {
+                  calls.push({ input, signal: options.signal })
+                  if (!("cursor" in input)) {
+                    return {
+                      data: {
+                        data: Array.from({ length: HOME_V2_SESSION_PAGE_LIMIT }, (_, index) =>
+                          session({ id: `page-1-${index}` }),
+                        ),
+                        cursor: { next: "next-page" },
+                      },
+                    }
+                  }
+                  return { data: { data: [session({ id: "page-2" })], cursor: {} } }
+                }),
               ),
-              cursor: { next: "next-page" },
-            },
-          }
-        }
-        return { data: { data: [session({ id: "page-2" })], cursor: {} } }
-      },
-      0,
-      controller.signal,
-    )
+            0,
+            controller.signal,
+          ),
+        )
 
-    expect(result.sessions).toHaveLength(HOME_V2_SESSION_PAGE_LIMIT + 1)
-    expect(calls).toEqual([
-      { input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }, signal: controller.signal },
-      {
-        input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc", cursor: "next-page" },
-        signal: controller.signal,
-      },
-    ])
-  })
+        expect(result.sessions).toHaveLength(HOME_V2_SESSION_PAGE_LIMIT + 1)
+        expect(calls).toEqual([
+          { input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc" }, signal: controller.signal },
+          {
+            input: { limit: HOME_V2_SESSION_PAGE_LIMIT, order: "desc", cursor: "next-page" },
+            signal: controller.signal,
+          },
+        ])
+      }),
+    ))
 
   test("maps visible roots to Home session summaries", () => {
     const activeNull = {

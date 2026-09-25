@@ -1,5 +1,6 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
+import { Effect } from "effect"
 import { trimSessions } from "./session-trim"
 import { pathKey } from "@/utils/path-key"
 
@@ -23,32 +24,39 @@ export const homeSessionEventsKey = (server: string) => ["home", "session-events
 
 type HomeSessionPage = { data?: V2SessionListResponse }
 
-export async function loadHomeSessionIndex(
+export function loadHomeSessionIndex(
   list: (
     input: { limit: number; order: "desc"; cursor?: string },
     options: { signal?: AbortSignal },
   ) => Promise<HomeSessionPage>,
   eventSequence = 0,
   signal?: AbortSignal,
-) {
-  const data: SessionV2Info[] = []
-  let cursor: string | undefined
+): Promise<HomeSessionIndex> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const data: SessionV2Info[] = []
+      let cursor: string | undefined
 
-  for (;;) {
-    const response = await list(
-      {
-        limit: HOME_V2_SESSION_PAGE_LIMIT,
-        order: "desc",
-        ...(cursor ? { cursor } : {}),
-      },
-      { signal },
-    )
-    const page = response.data!
-    data.push(...page.data)
-    if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
-      return { sessions: parseHomeSessionIndex(data), eventSequence }
-    cursor = page.cursor.next
-  }
+      for (;;) {
+        // Effect.promise keeps a rejected page request as the rejection of the returned promise.
+        const response = yield* Effect.promise(() =>
+          list(
+            {
+              limit: HOME_V2_SESSION_PAGE_LIMIT,
+              order: "desc",
+              ...(cursor ? { cursor } : {}),
+            },
+            { signal },
+          ),
+        )
+        const page = response.data!
+        data.push(...page.data)
+        if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
+          return { sessions: parseHomeSessionIndex(data), eventSequence }
+        cursor = page.cursor.next
+      }
+    }),
+  )
 }
 
 export function appendHomeSessionEvent(current: HomeSessionEvents | undefined, event: HomeSessionEvent) {
