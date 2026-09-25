@@ -1,4 +1,5 @@
 import type { TuiPluginApi, TuiSlotContext, TuiSlotMap, TuiSlotProps } from "@opencode-ai/plugin/tui"
+import type { SlotRegistry } from "@opentui/core"
 import { createSlot, createSolidSlotRegistry, type JSX, type SolidPlugin } from "@opentui/solid"
 import { Effect } from "effect"
 import { createSignal } from "solid-js"
@@ -35,7 +36,7 @@ export function createSlots() {
   return {
     Slot,
     setup(api: HostPluginApi): HostSlots {
-      const registry = createSolidSlotRegistry<RuntimeSlotMap, TuiSlotContext>(
+      const registry: SlotRegistry<JSX.Element, RuntimeSlotMap, TuiSlotContext> = createSolidSlotRegistry(
         api.renderer,
         { theme: api.theme },
         {
@@ -53,7 +54,7 @@ export function createSlots() {
         },
       )
       const slot = createSlot<RuntimeSlotMap, TuiSlotContext>(registry)
-      setView(() => (props: TuiSlotProps<string>) => slot(props))
+      setView(() => (props: TuiSlotProps) => slot(props))
 
       return {
         register(plugin: HostSlotPlugin) {
