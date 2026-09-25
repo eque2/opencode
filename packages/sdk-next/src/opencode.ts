@@ -5,6 +5,7 @@ import { PermissionSaved } from "@opencode-ai/core/permission/saved"
 import { ApplicationTools } from "@opencode-ai/core/tool/application-tools"
 import { createEmbeddedRoutes } from "@opencode-ai/server/routes"
 import { Context, Effect, Layer, Scope } from "effect"
+import { constVoid } from "effect/Function"
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http"
 
 export const create = Effect.fn("OpenCode.create")(function* () {
@@ -30,7 +31,7 @@ export const create = Effect.fn("OpenCode.create")(function* () {
     (web) => Effect.promise(web.dispose),
   )
   const fetch = Object.assign((input: RequestInfo | URL, init?: RequestInit) => web.handler(new Request(input, init)), {
-    preconnect: () => undefined,
+    preconnect: constVoid,
   }) satisfies typeof globalThis.fetch
   const client = yield* OpenCode.make({ baseUrl: "http://opencode.local" }).pipe(
     Effect.provide(FetchHttpClient.layer),
