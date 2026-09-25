@@ -13,7 +13,7 @@ import { createTabMemory } from "./tab-memory"
 import { nextTabAfterClose, pushClosedTab, removeClosedTabs, takeClosedTab, type ClosedTab } from "./closed-tabs"
 import { createDraftPromptSession, type PromptModel, type PromptSession } from "./prompt-state"
 import { migrateTabs } from "./tab-migration"
-import { Array as Arr, HashMap } from "effect"
+import { Array as Arr, HashMap, HashSet, Option } from "effect"
 
 export type SessionTab = {
   type: "session"
@@ -161,11 +161,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
       const nextTab = nextTabAfterClose(store, index, recentKey() === key && location.pathname !== "/")
       closing.add(key)
       void startTransition(() => {
-        setStore(
-          produce((tabs) => {
-            tabs.splice(index, 1)
-          }),
-        )
+        setStore((tabs) => Arr.remove(tabs, index))
         if (nextTab === null) {
           setRecentKey(undefined)
           navigate("/")
@@ -183,12 +179,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         const existing = store.find((item) => tabKey(item) === tabKey(next))
         if (existing) return existing
         void startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              if (tabs.some((item) => tabKey(item) === tabKey(next))) return
-              tabs.push(next)
-            }),
-          )
+          setStore((tabs) => (tabs.some((item) => tabKey(item) === tabKey(next)) ? tabs : [...tabs, next]))
         })
         return next
       },
@@ -209,11 +200,7 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         const tab = { type: "draft" as const, draftID, ...draft }
         memory.ensure(tabKey(tab), "prompt", () => createDraftPromptSession(draftID, { prompt, model }))
         await startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              tabs.push(tab)
-            }),
-          )
+          setStore((tabs) => [...tabs, tab])
           navigate(draftHref(draftID))
         })
         return tab
@@ -266,11 +253,11 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
         if (!entry) return
         const index = Math.min(entry.index, store.length)
         void startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              if (tabs.some((item) => tabKey(item) === tabKey(entry.tab))) return
-              tabs.splice(index, 0, entry.tab)
-            }),
+          // Insert at `index`, or append when fewer tabs are open by then.
+          setStore((tabs) =>
+            tabs.some((item) => tabKey(item) === tabKey(entry.tab))
+              ? tabs
+              : [...tabs.slice(0, index), entry.tab, ...tabs.slice(index)],
           )
           navigateTab(entry.tab)
         })
@@ -302,44 +289,35 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
           )
           .map(tabKey)
         void startTransition(() => {
-          setStore(
-            produce((tabs) => {
-              const sessionIDs = new Set(input.sessionIDs)
-              const currentHref =
-                targetServer === server.key && params.dir && params.id
-                  ? tabHref({
-                      type: "session",
-                      server: targetServer,
-                      sessionId: params.id,
-                    })
-                  : undefined
-              const currentIndex = currentHref
-                ? tabs.findIndex(
-                    (tab) => tab.type === "session" && tab.server === targetServer && tabHref(tab) === currentHref,
-                  )
-                : -1
-              const currentTab = tabs[currentIndex]
-              const removedCurrent =
-                currentTab?.type === "session" &&
-                currentTab.server === targetServer &&
-                sessionIDs.has(currentTab.sessionId)
-
-              for (let i = tabs.length - 1; i >= 0; i--) {
-                const tab = tabs[i]
-                if (!tab || tab.type !== "session") continue
-                if (tab.server !== targetServer) continue
-                if (!sessionIDs.has(tab.sessionId)) continue
-                tabs.splice(i, 1)
-              }
-
-              if (!removedCurrent) return
-              const nextTab =
-                tabs.slice(currentIndex).find((tab) => tab.type === "session") ??
-                tabs.slice(0, currentIndex).findLast((tab) => tab.type === "session")
-              if (nextTab) navigateTab(nextTab)
-              else navigate("/")
-            }),
+          const sessionIDs = HashSet.fromIterable(input.sessionIDs)
+          const isRemoved = (tab: Tab) =>
+            tab.type === "session" && tab.server === targetServer && HashSet.has(sessionIDs, tab.sessionId)
+          const currentHref =
+            targetServer === server.key && params.dir && params.id
+              ? Option.some(tabHref({ type: "session", server: targetServer, sessionId: params.id }))
+              : Option.none<string>()
+          // The position of the open session's tab, when this removal closes it.
+          const removedIndex = currentHref.pipe(
+            Option.flatMap((href) =>
+              Arr.findFirstIndex(
+                store,
+                (tab) => tab.type === "session" && tab.server === targetServer && tabHref(tab) === href,
+              ),
+            ),
+            Option.filter((index) => Option.exists(Arr.get(store, index), isRemoved)),
           )
+          const next = store.filter((tab) => !isRemoved(tab))
+          setStore(() => next)
+          if (Option.isSome(removedIndex)) {
+            // Move to the nearest session tab at or after the closed position, else before it.
+            const index = removedIndex.value
+            const nextTab = Option.orElse(
+              Arr.findFirst(next.slice(index), (tab) => tab.type === "session"),
+              () => Arr.findLast(next.slice(0, index), (tab) => tab.type === "session"),
+            )
+            if (Option.isSome(nextTab)) navigateTab(nextTab.value)
+            else navigate("/")
+          }
           if (recent.key && removed.includes(recent.key)) setRecentKey(undefined)
         })
         for (const key of removed) memory.remove(key)
