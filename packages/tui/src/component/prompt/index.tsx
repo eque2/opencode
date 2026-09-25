@@ -511,25 +511,25 @@ export function Prompt(props: PromptProps) {
               // Filter out parts whose virtual text was deleted
               // this handles a case where the user edits the text in the editor
               // such that the virtual text moves around or is deleted
-              const updatedNonTextParts = nonTextParts
-                .map((part) => {
-                  let virtualText = ""
-                  if (part.type === "file" && part.source?.text) {
-                    virtualText = part.source.text.value
-                  } else if (part.type === "agent" && part.source) {
-                    virtualText = part.source.value
-                  }
+              const updatedNonTextParts = nonTextParts.flatMap((part) => {
+                let virtualText = ""
+                if (part.type === "file" && part.source?.text) {
+                  virtualText = part.source.text.value
+                } else if (part.type === "agent" && part.source) {
+                  virtualText = part.source.value
+                }
 
-                  if (!virtualText) return part
+                if (!virtualText) return [part]
 
-                  const newStart = normalized.indexOf(virtualText)
-                  // if the virtual text is deleted, remove the part
-                  if (newStart === -1) return null
+                const newStart = normalized.indexOf(virtualText)
+                // if the virtual text is deleted, remove the part
+                if (newStart === -1) return []
 
-                  const newEnd = newStart + virtualText.length
+                const newEnd = newStart + virtualText.length
 
-                  if (part.type === "file" && part.source?.text) {
-                    return {
+                if (part.type === "file" && part.source?.text) {
+                  return [
+                    {
                       ...part,
                       source: {
                         ...part.source,
@@ -539,23 +539,25 @@ export function Prompt(props: PromptProps) {
                           end: newEnd,
                         },
                       },
-                    }
-                  }
+                    },
+                  ]
+                }
 
-                  if (part.type === "agent" && part.source) {
-                    return {
+                if (part.type === "agent" && part.source) {
+                  return [
+                    {
                       ...part,
                       source: {
                         ...part.source,
                         start: newStart,
                         end: newEnd,
                       },
-                    }
-                  }
+                    },
+                  ]
+                }
 
-                  return part
-                })
-                .filter((part) => part !== null)
+                return [part]
+              })
 
               setStore("prompt", {
                 input: normalized,
