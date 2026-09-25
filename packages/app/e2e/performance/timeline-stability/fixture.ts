@@ -71,6 +71,7 @@ type ToolOptions<State extends ToolStatus> = State extends "pending"
 
 const decodeOptions = { errors: "all", onExcessProperty: "error" } as const
 const decodeMessage = Schema.decodeUnknownSync(SessionV1.WithParts)
+const decodeAssistantError = Schema.decodeUnknownSync(SessionV1.Assistant.fields.error)
 const decodePart = Schema.decodeUnknownSync(SessionV1.Part)
 const decodeStatus = Schema.decodeUnknownSync(SessionStatusEvent.Info)
 const timelineEventSchema = Schema.Union([
@@ -381,11 +382,13 @@ export function assistantMessage(
     id?: string
     parentID?: string
     completed?: boolean
-    error?: AssistantMessage["error"]
+    /** Unvalidated error payload; the fixture decodes it with the SessionV1 assistant error schema. */
+    error?: unknown
     created?: number
   } = {},
 ): Extract<TimelineMessage, { info: { role: "assistant" } }> {
   const id = input.id ?? assistantID
+  const error = decodeAssistantError(input.error, decodeOptions)
   const message = {
     info: {
       id,
@@ -404,7 +407,7 @@ export function assistantMessage(
       cost: 0.01,
       tokens: { input: 100, output: 200, reasoning: 0, cache: { read: 0, write: 0 } },
       variant: "max",
-      ...(input.error ? { error: input.error } : {}),
+      ...(error ? { error } : {}),
     },
     parts: parts.map((part) => ({ ...part, sessionID, messageID: id })),
   } satisfies Extract<TimelineMessage, { info: { role: "assistant" } }>

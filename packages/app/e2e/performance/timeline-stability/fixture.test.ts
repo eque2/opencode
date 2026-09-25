@@ -17,7 +17,7 @@ describe("timeline fixture validation", () => {
   test("rejects malformed SDK values at runtime", () => {
     expect(() =>
       assistantMessage([], {
-        error: { name: "APIError", data: { message: "failed" } } as never,
+        error: { name: "APIError", data: { message: "failed" } },
       }),
     ).toThrow()
     expect(() =>
