@@ -2,16 +2,36 @@ import { describe, expect, test } from "bun:test"
 import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import { trimSessions } from "./session-trim"
 
-const session = (input: { id: string; parentID?: string; created: number; updated?: number; archived?: number }) =>
-  ({
-    id: input.id,
-    parentID: input.parentID,
-    time: {
-      created: input.created,
-      updated: input.updated,
-      archived: input.archived,
-    },
-  }) as Session
+// A session with no `updated` time reads as last updated when it was created, as sessionUpdatedAt does.
+const session = (input: {
+  id: string
+  parentID?: string
+  created: number
+  updated?: number
+  archived?: number
+}): Session => ({
+  id: input.id,
+  slug: input.id,
+  projectID: "project",
+  directory: "/project",
+  title: input.id,
+  version: "",
+  ...(input.parentID ? { parentID: input.parentID } : {}),
+  time: {
+    created: input.created,
+    updated: input.updated ?? input.created,
+    ...(input.archived === undefined ? {} : { archived: input.archived }),
+  },
+})
+
+const permission = (id: string, sessionID: string): PermissionRequest => ({
+  id,
+  sessionID,
+  permission: "read",
+  patterns: [],
+  metadata: {},
+  always: [],
+})
 
 describe("trimSessions", () => {
   test("keeps base roots and recent roots beyond the limit", () => {
@@ -43,7 +63,7 @@ describe("trimSessions", () => {
     const result = trimSessions(list, {
       limit: 2,
       permission: {
-        "child-kept-by-permission": [{ id: "perm-1" } as PermissionRequest],
+        "child-kept-by-permission": [permission("perm-1", "child-kept-by-permission")],
       },
       now,
     })
