@@ -25,7 +25,7 @@ import type {
 import { showToast } from "@/utils/toast"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { retry } from "@opencode-ai/core/util/retry"
-import { MutableHashMap, Option } from "effect"
+import { Array as Arr, MutableHashMap, Option } from "effect"
 import { batch } from "solid-js"
 import { produce, reconcile, type SetStoreFunction, type Store } from "solid-js/store"
 import type { State, VcsCache } from "./types"
@@ -150,14 +150,11 @@ export async function bootstrapGlobal(input: {
   await runAll(slow)
 }
 
-function groupBySession<T extends { id: string; sessionID: string }>(input: T[]) {
-  return input.reduce<Record<string, T[]>>((acc, item) => {
-    if (!item?.id || !item.sessionID) return acc
-    const list = acc[item.sessionID]
-    if (list) list.push(item)
-    if (!list) acc[item.sessionID] = [item]
-    return acc
-  }, {})
+function groupBySession<T extends { id: string; sessionID: string }>(input: ReadonlyArray<T>) {
+  return Arr.groupBy(
+    input.filter((item) => !!item?.id && !!item.sessionID),
+    (item) => item.sessionID,
+  )
 }
 
 function projectID(directory: string, projects: Project[]) {
