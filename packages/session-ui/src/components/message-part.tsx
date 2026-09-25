@@ -28,7 +28,7 @@ import {
   ToolPart,
   UserMessage,
 } from "@opencode-ai/sdk/v2"
-import { Array, HashMap, Option, Predicate } from "effect"
+import { Array, HashMap, HashSet, Option, Predicate } from "effect"
 import { useData } from "../context"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -574,14 +574,9 @@ export function getToolInfo(
 
 function urls(text: string | undefined) {
   if (!text) return []
-  const seen = new Set<string>()
-  return [...text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)]
-    .map((item) => item[0].replace(/[),.;:!?]+$/g, ""))
-    .filter((item) => {
-      if (seen.has(item)) return false
-      seen.add(item)
-      return true
-    })
+  return Array.dedupe(
+    [...text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)].map((item) => item[0].replace(/[),.;:!?]+$/g, "")),
+  )
 }
 
 function sessionLink(id: string | undefined, href?: (id: string) => string | undefined) {
@@ -605,8 +600,8 @@ function taskSession(
     .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0))[0]?.id
 }
 
-const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
-const HIDDEN_TOOLS = new Set(["todowrite"])
+const CONTEXT_GROUP_TOOLS = HashSet.make("read", "glob", "grep", "list")
+const HIDDEN_TOOLS = HashSet.make("todowrite")
 
 function list<T>(value: T[] | undefined | null, fallback: T[]) {
   if (Array.isArray(value)) return value
@@ -711,7 +706,7 @@ function index<T extends { id: string }>(items: readonly T[]) {
 
 export function renderable(part: PartType, showReasoningSummaries = true) {
   if (part.type === "tool") {
-    if (HIDDEN_TOOLS.has(part.tool)) return false
+    if (HashSet.has(HIDDEN_TOOLS, part.tool)) return false
     if (part.tool === "question") return part.state.status !== "pending" && part.state.status !== "running"
     return true
   }
@@ -828,7 +823,7 @@ export function AssistantParts(props: {
 }
 
 function isContextGroupTool(part: PartType): part is ToolPart {
-  return part.type === "tool" && CONTEXT_GROUP_TOOLS.has(part.tool)
+  return part.type === "tool" && HashSet.has(CONTEXT_GROUP_TOOLS, part.tool)
 }
 
 function contextToolDetail(part: ToolPart): string | undefined {
