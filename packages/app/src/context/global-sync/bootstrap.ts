@@ -14,9 +14,11 @@ import type {
   CommandInfo,
   CommandListInput,
   CommandListOutput,
+  ModelApi,
   ProjectCurrentInput,
   ProjectCurrentOutput,
   ProjectListOutput,
+  ProviderApi,
   ReferenceListInput,
   ReferenceListOutput,
   SessionApi,
@@ -147,7 +149,7 @@ type PermissionApi = ServerApi["permission"]
 type QuestionApi = ServerApi["question"]
 type VcsApi = ServerApi["vcs"]
 
-export const loadProjectsQuery = (scope: ServerScope, api: ProjectApi) =>
+export const loadProjectsQuery = (scope: ServerScope, api: Pick<ProjectApi, "list">) =>
   queryOptions({
     queryKey: [scope, "project"],
     queryFn: () =>
@@ -239,6 +241,12 @@ function warmSessions(input: {
   )
 }
 
+/** The catalog calls that the provider query makes. */
+type ProviderCatalogApi = {
+  readonly provider: Pick<ProviderApi, "list">
+  readonly model: Pick<ModelApi, "list" | "default">
+}
+
 /**
  * Builds the provider catalog query for one directory, or for the whole server when `directory` is none.
  * The query key keeps `null` in the directory slot for the server-wide catalog, which server-sync invalidates.
@@ -246,7 +254,7 @@ function warmSessions(input: {
 export const loadProvidersQueryFor = (
   scope: ServerScope,
   directory: Option.Option<string>,
-  sdk: CatalogApi,
+  sdk: ProviderCatalogApi,
   legacy?: OpencodeClient,
   protocol?: Promise<ServerProtocol>,
 ) =>
@@ -286,7 +294,7 @@ export const loadProvidersQueryFor = (
 export const loadProvidersQuery = (
   scope: ServerScope,
   directory: string | null,
-  sdk: CatalogApi,
+  sdk: ProviderCatalogApi,
   legacy?: OpencodeClient,
   protocol?: Promise<ServerProtocol>,
 ) => loadProvidersQueryFor(scope, Option.fromNullishOr(directory), sdk, legacy, protocol)
@@ -446,7 +454,7 @@ type BootstrapDirectoryInput = {
   }
   store: Store<State>
   setStore: SetStoreFunction<State>
-  vcsCache: VcsCache
+  vcsCache: Pick<VcsCache, "setStore">
   loadSessions: (directory: string) => Promise<void> | void
   translate: (key: string, vars?: Record<string, string | number>) => string
   global: {

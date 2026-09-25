@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { createStore } from "solid-js/store"
 import { QueryClient } from "@tanstack/solid-query"
-import { HashMap } from "effect"
-import type { Config, OpencodeClient, Project } from "@opencode-ai/sdk/v2/client"
-import type { AgentApi, CatalogApi, CommandApi, ReferenceApi } from "@opencode-ai/client/promise"
+import { Data, Effect, HashMap, Option } from "effect"
+import type { Config } from "@opencode-ai/sdk/v2/client"
 import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import {
   bootstrapDirectory,
@@ -15,29 +14,63 @@ import {
   loadProvidersQuery,
   loadReferencesQuery,
 } from "./bootstrap"
-import type { State, VcsCache } from "./types"
+import type { State } from "./types"
 import { ServerScope } from "@/utils/server-scope"
-import type { ServerApi } from "@/utils/server"
-
-type ProjectApi = ServerApi["project"]
+import { createApiForServer, createSdkForServer } from "@/utils/server"
+import { ServerConnection } from "@/context/server"
 
 const provider = { all: HashMap.empty(), connected: [], default: {} } satisfies NormalizedProviderListResponse
-const api = {
-  agent: { list: async () => ({ location: {}, data: [] }) },
-  provider: { list: async () => ({ location: {}, data: [] }) },
-  model: {
-    list: async () => ({ location: {}, data: [] }),
-    default: async () => ({ location: {}, data: null }),
-  },
-  permission: { request: { list: async () => ({ location: {}, data: [] }) } },
-  project: {
-    list: async () => [],
-    current: async () => ({ id: "project", directory: "/project" }),
-  },
-  question: { request: { list: async () => ({ location: {}, data: [] }) } },
-  reference: { list: async () => ({ location: {}, data: [] }) },
-  vcs: { get: async () => ({ location: {}, data: {} }) },
-} as unknown as ServerApi
+
+/** A request that the fake server has no route for, or that a test forbids. */
+class UnexpectedRequest extends Data.TaggedError("UnexpectedRequest")<{ readonly message: string }> {}
+
+/** Answers one `METHOD /path` request with a JSON body. */
+type Route = () => Effect.Effect<unknown, UnexpectedRequest>
+
+/** Real legacy and current clients whose fetch answers from `routes` and rejects every other request. */
+function serve(routes: Readonly<Record<string, Route>>) {
+  const fetcher = Object.assign(
+    (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init)
+      const key = `${request.method} ${new URL(request.url).pathname}`
+      const route = Option.fromNullishOr(routes[key])
+      const body: Effect.Effect<unknown, UnexpectedRequest> = Option.isSome(route)
+        ? route.value()
+        : Effect.fail(new UnexpectedRequest({ message: `unexpected request ${key}` }))
+      return Effect.runPromise(Effect.map(body, (value) => Response.json(value)))
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  )
+  const server = { url: "http://opencode.test" }
+  return {
+    sdk: createSdkForServer({ server, fetch: fetcher, throwOnError: true }),
+    api: createApiForServer({ server, fetch: fetcher }),
+  }
+}
+
+/** A route that answers with `body`. */
+const reply =
+  (body: unknown): Route =>
+  () =>
+    Effect.succeed(body)
+
+/** A fake API call that resolves with `value`. */
+const resolved = <A>(value: A) => Effect.runPromise(Effect.succeed(value))
+
+/** The location block that every current endpoint returns. */
+const location = (directory: string) => ({ directory, project: { id: "project", directory } })
+
+const currentRoutes = {
+  "GET /api/agent": reply({ location: {}, data: [] }),
+  "GET /api/provider": reply({ location: {}, data: [] }),
+  "GET /api/model": reply({ location: {}, data: [] }),
+  "GET /api/model/default": reply({ location: {}, data: null }),
+  "GET /api/permission/request": reply({ location: {}, data: [] }),
+  "GET /api/project": reply([]),
+  "GET /api/project/current": reply({ id: "project", directory: "/project" }),
+  "GET /api/question/request": reply({ location: {}, data: [] }),
+  "GET /api/reference": reply({ location: {}, data: [] }),
+}
 
 function directoryState() {
   return createStore<State>({
@@ -81,6 +114,35 @@ describe("bootstrapDirectory", () => {
     const legacyConfigReads: string[] = []
     const mcpReads: string[] = []
     const [store, setStore] = directoryState()
+    const { sdk, api } = serve({
+      ...currentRoutes,
+      "GET /agent": reply([{ name: "build", mode: "primary" }]),
+      "GET /config": () =>
+        Effect.sync(() => {
+          legacyConfigReads.push("directory")
+          return {}
+        }),
+      "GET /session/status": reply({}),
+      "GET /vcs": reply({}),
+      "GET /command": () =>
+        Effect.sync(() => {
+          mcpReads.push("command")
+          return []
+        }),
+      "GET /permission": reply([]),
+      "GET /question": reply([]),
+      "GET /mcp": () =>
+        Effect.sync(() => {
+          mcpReads.push("status")
+          return {}
+        }),
+      "GET /experimental/resource": () =>
+        Effect.sync(() => {
+          mcpReads.push("resource")
+          return {}
+        }),
+      "GET /provider": reply({ all: [], connected: [], default: {} }),
+    })
 
     await bootstrapDirectory({
       directory: "/project",
@@ -89,48 +151,14 @@ describe("bootstrapDirectory", () => {
       global: {
         config: {} satisfies Config,
         path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
-        project: [{ id: "project", worktree: "/project" } as Project],
+        project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
         provider,
       },
-      sdk: {
-        app: { agents: async () => ({ data: [{ name: "build", mode: "primary" }] }) },
-        config: {
-          get: async () => {
-            legacyConfigReads.push("directory")
-            return { data: {} }
-          },
-        },
-        session: { status: async () => ({ data: {} }) },
-        vcs: { get: async () => ({ data: undefined }) },
-        command: {
-          list: async () => {
-            mcpReads.push("command")
-            return { data: [] }
-          },
-        },
-        permission: { list: async () => ({ data: [] }) },
-        question: { list: async () => ({ data: [] }) },
-        v2: { reference: { list: async () => ({ data: { data: [] } }) } },
-        mcp: {
-          status: async () => {
-            mcpReads.push("status")
-            return { data: {} }
-          },
-        },
-        experimental: {
-          resource: {
-            list: async () => {
-              mcpReads.push("resource")
-              return { data: {} }
-            },
-          },
-        },
-        provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
-      } as unknown as OpencodeClient,
+      sdk,
       api,
       store,
       setStore,
-      vcsCache: { setStore() {} } as unknown as VcsCache,
+      vcsCache: { setStore() {} },
       loadSessions() {},
       translate: (key) => key,
       queryClient: new QueryClient(),
@@ -148,6 +176,11 @@ describe("bootstrapDirectory", () => {
 
   test("skips legacy config while refreshing a v2 directory", async () => {
     const [store, setStore] = directoryState()
+    const { sdk, api } = serve({
+      ...currentRoutes,
+      "GET /config": () =>
+        Effect.fail(new UnexpectedRequest({ message: "legacy directory config should not be called" })),
+    })
 
     await bootstrapDirectory({
       directory: "/project",
@@ -156,20 +189,14 @@ describe("bootstrapDirectory", () => {
       global: {
         config: {} satisfies Config,
         path: { state: "", config: "", worktree: "/project", directory: "/project", home: "/home" },
-        project: [{ id: "project", worktree: "/project" } as Project],
+        project: [{ id: "project", worktree: "/project", time: { created: 1, updated: 1 }, sandboxes: [] }],
         provider,
       },
-      sdk: {
-        config: {
-          get: async () => {
-            throw new Error("legacy directory config should not be called")
-          },
-        },
-      } as unknown as OpencodeClient,
+      sdk,
       api,
       store,
       setStore,
-      vcsCache: { setStore() {} } as unknown as VcsCache,
+      vcsCache: { setStore() {} },
       loadSessions() {},
       translate: (key) => key,
       queryClient: new QueryClient(),
@@ -186,15 +213,10 @@ describe("bootstrapDirectory", () => {
 
 describe("config queries", () => {
   test("skips legacy global config for v2 servers", async () => {
-    const sdk = {
-      global: {
-        config: {
-          get: async () => {
-            throw new Error("legacy global config should not be called")
-          },
-        },
-      },
-    } as unknown as OpencodeClient
+    const { sdk } = serve({
+      "GET /global/config": () =>
+        Effect.fail(new UnexpectedRequest({ message: "legacy global config should not be called" })),
+    })
 
     const result = await new QueryClient().fetchQuery(
       loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v2")),
@@ -206,16 +228,13 @@ describe("config queries", () => {
   test("loads legacy global config for v1 servers", async () => {
     const calls: string[] = []
     const config = { shell: "zsh" } satisfies Config
-    const sdk = {
-      global: {
-        config: {
-          get: async () => {
-            calls.push("global")
-            return { data: config }
-          },
-        },
-      },
-    } as unknown as OpencodeClient
+    const { sdk } = serve({
+      "GET /global/config": () =>
+        Effect.sync(() => {
+          calls.push("global")
+          return config
+        }),
+    })
 
     const result = await new QueryClient().fetchQuery(
       loadGlobalConfigQuery(ServerScope.local, sdk, Promise.resolve("v1")),
@@ -228,9 +247,8 @@ describe("config queries", () => {
 
 describe("query keys", () => {
   test("partitions identical directories by server scope", () => {
-    const client = {} as Parameters<typeof loadPathQuery>[2]
-    const api = {} as CatalogApi
-    const remote = "https://debian.example" as typeof ServerScope.local
+    const { sdk: client, api } = serve({})
+    const remote = ServerScope.fromServerKey(ServerConnection.Key.make("https://debian.example"))
 
     expect([...loadPathQuery(ServerScope.local, "/repo", client).queryKey]).toEqual(["local", "/repo", "path"])
     expect([...loadPathQuery(remote, "/repo", client).queryKey]).toEqual(["https://debian.example", "/repo", "path"])
@@ -239,24 +257,27 @@ describe("query keys", () => {
 
   test("loads the current provider and model catalog", async () => {
     const calls: unknown[] = []
-    const api = {
+    const api: Parameters<typeof loadProvidersQuery>[2] = {
       provider: {
-        list: async (input: unknown) => {
+        list: (input: unknown) => {
           calls.push(["provider", input])
-          return { location: {}, data: [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }] }
+          return resolved({
+            location: location("/repo"),
+            data: [{ id: "openai", name: "OpenAI", package: "@ai-sdk/openai" }],
+          })
         },
       },
       model: {
-        list: async (input: unknown) => {
+        list: (input: unknown) => {
           calls.push(["model", input])
-          return { location: {}, data: [] }
+          return resolved({ location: location("/repo"), data: [] })
         },
-        default: async (input: unknown) => {
+        default: (input: unknown) => {
           calls.push(["default", input])
-          return { location: {}, data: null }
+          return resolved({ location: location("/repo"), data: null })
         },
       },
-    } as unknown as CatalogApi
+    }
 
     const result = await new QueryClient().fetchQuery(loadProvidersQuery(ServerScope.local, "/repo", api))
 
@@ -270,12 +291,12 @@ describe("query keys", () => {
 
   test("loads agents from the current location-scoped endpoint", async () => {
     const calls: unknown[] = []
-    const api = {
-      list: async (input: unknown) => {
+    const api: Parameters<typeof loadAgentsQuery>[2] = {
+      list: (input: unknown) => {
         calls.push(input)
-        return { location: {}, data: [] }
+        return resolved({ location: location("/repo"), data: [] })
       },
-    } as unknown as AgentApi
+    }
 
     const result = await new QueryClient().fetchQuery(loadAgentsQuery(ServerScope.local, "/repo", api))
 
@@ -285,15 +306,15 @@ describe("query keys", () => {
 
   test("loads commands from the current location-scoped endpoint", async () => {
     const calls: unknown[] = []
-    const api = {
-      list: async (input: unknown) => {
+    const api: Parameters<typeof loadCommands>[1] = {
+      list: (input: unknown) => {
         calls.push(input)
-        return {
-          location: {},
+        return resolved({
+          location: location("/repo"),
           data: [{ name: "review", template: "Review files" /* source: "command" as const */ }],
-        }
+        })
       },
-    } as unknown as CommandApi
+    }
 
     const result = await loadCommands("/repo", api)
 
@@ -302,12 +323,13 @@ describe("query keys", () => {
   })
 
   test("loads projects from the current endpoint", async () => {
-    const api = {
-      list: async () => [
-        { id: "b", worktree: "/b", time: { created: 1, updated: 1 }, sandboxes: [] },
-        { id: "a", worktree: "/a", time: { created: 1, updated: 1 }, sandboxes: [] },
-      ],
-    } as unknown as ProjectApi
+    const api: Parameters<typeof loadProjectsQuery>[1] = {
+      list: () =>
+        resolved([
+          { id: "b", worktree: "/b", time: { created: 1, updated: 1 }, sandboxes: [] },
+          { id: "a", worktree: "/a", time: { created: 1, updated: 1 }, sandboxes: [] },
+        ]),
+    }
 
     const result = await new QueryClient().fetchQuery(loadProjectsQuery(ServerScope.local, api))
 
@@ -316,12 +338,15 @@ describe("query keys", () => {
 
   test("loads references from the current location-scoped endpoint", async () => {
     const calls: unknown[] = []
-    const api = {
-      list: async (input: unknown) => {
+    const api: Parameters<typeof loadReferencesQuery>[2] = {
+      list: (input: unknown) => {
         calls.push(input)
-        return { location: {}, data: [{ name: "AGENTS.md", path: "/repo/AGENTS.md", source: "instructions" }] }
+        return resolved({
+          location: location("/repo"),
+          data: [{ name: "AGENTS.md", path: "/repo/AGENTS.md", source: { type: "local", path: "/repo/AGENTS.md" } }],
+        })
       },
-    } as unknown as ReferenceApi
+    }
 
     const result = await new QueryClient().fetchQuery(loadReferencesQuery(ServerScope.local, "/repo", api))
 
