@@ -1,18 +1,23 @@
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test"
+import { Script } from "node:vm"
 import { Effect } from "effect"
 
-/** The source of the theme preload script. */
-let src: string
+const preloadUrl = new URL("../public/oc-theme-preload.js", import.meta.url)
+
+/** The theme preload script. index.html loads it as a classic script before the app mounts. */
+let preload: Script
 
 beforeAll(() =>
   Effect.runPromise(
     Effect.gen(function* () {
-      src = yield* Effect.promise(() => Bun.file(new URL("../public/oc-theme-preload.js", import.meta.url)).text())
+      const src = yield* Effect.promise(() => Bun.file(preloadUrl).text())
+      preload = new Script(src, { filename: preloadUrl.pathname })
     }),
   ),
 )
 
-const run = () => Function(src)()
+/** Runs the preload script in the global scope, as the browser runs a classic script. */
+const run = () => preload.runInThisContext()
 
 beforeEach(() => {
   document.head.innerHTML = ""
