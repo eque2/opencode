@@ -8,7 +8,7 @@ import {
   type DiffRenderable,
   type ScrollBoxRenderable,
 } from "@opentui/core"
-import { Equal, MutableHashMap, Option } from "effect"
+import { Equal, HashSet, MutableHashMap, Option } from "effect"
 import { LANGUAGE_EXTENSIONS } from "../../util/filetype"
 import { useBindings, useCommandShortcut } from "../../keymap"
 import { useTheme } from "../../context/theme"
@@ -153,12 +153,12 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const [viewOverride, setViewOverride] = createSignal(storedView(props.api.kv.get(KV_VIEW)), byValue)
   const view = createMemo(() => (splitAvailable() ? Option.getOrElse(viewOverride(), defaultView) : "unified"))
   const fileTree = createMemo(() => buildFileTree(files()))
-  const [expandedFileNodes, setExpandedFileNodes] = createSignal<ReadonlySet<number>>(new Set())
+  const [expandedFileNodes, setExpandedFileNodes] = createSignal(HashSet.empty<number>())
   const [highlightedFileNode, setHighlightedFileNode] = createSignal<number | undefined>()
   const [lastHighlightedFileNode, setLastHighlightedFileNode] = createSignal<number | undefined>()
   const [activePatchFileIndex, setActivePatchFileIndex] = createSignal<number | undefined>()
   const [selectedFileIndex, setSelectedFileIndex] = createSignal<number | undefined>()
-  const [reviewedFileNames, setReviewedFileNames] = createSignal<ReadonlySet<string>>(new Set())
+  const [reviewedFileNames, setReviewedFileNames] = createSignal(HashSet.empty<string>())
   const patchScrollAcceleration = createMemo(() => getScrollAcceleration(props.api.tuiConfig))
   const fileRows = createMemo(() => flattenFileTree(fileTree(), expandedFileNodes()))
   const patchFileIndexes = createMemo(() => orderedPatchFileIndexes(flattenFileTree(fileTree())))
@@ -187,7 +187,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
     setActivePatchFileIndex(undefined)
     setSelectedFileIndex(undefined)
     setSelectedHunk(undefined)
-    setReviewedFileNames(new Set<string>())
+    setReviewedFileNames(HashSet.empty())
   })
 
   const ensureHighlightedFileNode = () => {
@@ -228,11 +228,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
   const revealFileTreeFile = (fileIndex: number) => {
     const selection = fileTreeFileSelection(fileTree(), fileIndex)
     if (!selection) return
-    setExpandedFileNodes((expanded) => {
-      const next = new Set(expanded)
-      selection.expandedNodes.forEach((node) => next.add(node))
-      return next
-    })
+    setExpandedFileNodes((expanded) => HashSet.union(expanded, HashSet.fromIterable(selection.expandedNodes)))
     setHighlighted(selection.highlightedNode)
   }
 
@@ -428,12 +424,9 @@ function DiffViewer(props: { api: TuiPluginApi }) {
         : (selectedFileIndex() ?? activePatchFileIndex() ?? currentPatchFileIndex())
     const file = fileIndex === undefined ? undefined : files()[fileIndex]?.file
     if (!file) return
-    setReviewedFileNames((reviewed) => {
-      const next = new Set(reviewed)
-      if (next.has(file)) next.delete(file)
-      else next.add(file)
-      return next
-    })
+    setReviewedFileNames((reviewed) =>
+      HashSet.has(reviewed, file) ? HashSet.remove(reviewed, file) : HashSet.add(reviewed, file),
+    )
   }
 
   const commands = [
@@ -525,7 +518,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
       run: focusRunner({
         files() {
           const highlighted = highlightedFileNode()
-          if (highlighted !== undefined && expandedFileNodes().has(highlighted)) {
+          if (highlighted !== undefined && HashSet.has(expandedFileNodes(), highlighted)) {
             setHighlighted(moveFileTreeSelectionToFirstChild(fileRows(), highlighted))
             return
           }
@@ -555,7 +548,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
         files() {
           const highlighted = highlightedFileNode()
           const node = highlighted === undefined ? undefined : fileTree().nodes[highlighted]
-          if (node?.kind !== "directory" || !expandedFileNodes().has(node.id)) {
+          if (node?.kind !== "directory" || !HashSet.has(expandedFileNodes(), node.id)) {
             setHighlighted(moveFileTreeSelectionToParent(fileRows(), highlighted))
             return
           }
@@ -817,7 +810,7 @@ function DiffViewer(props: { api: TuiPluginApi }) {
                   >
                     <For each={visiblePatchFiles()}>
                       {(entry, index) => {
-                        const reviewed = () => reviewedFileNames().has(entry.file.file)
+                        const reviewed = () => HashSet.has(reviewedFileNames(), entry.file.file)
                         return (
                           <box ref={(element: BoxRenderable) => registerPatchNode(entry.fileIndex, element)}>
                             {index() !== 0 ? <Separator axis="x" start={showFileTree() ? "edge" : undefined} /> : null}

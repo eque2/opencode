@@ -3,7 +3,7 @@
 // Each leaf remembers what has been,
 // And waits where careful light aligns.
 
-import { MutableHashMap, Option } from "effect"
+import { Array as Arr, HashSet, MutableHashMap, Option } from "effect"
 
 export type FileTreeItem = {
   readonly file: string
@@ -75,7 +75,7 @@ export function buildFileTree(files: readonly FileTreeItem[]): FileTree {
   return tree
 }
 
-export function flattenFileTree(tree: FileTree, expanded?: ReadonlySet<number>): FileTreeRow[] {
+export function flattenFileTree(tree: FileTree, expanded?: HashSet.HashSet<number>): FileTreeRow[] {
   const rows: FileTreeRow[] = []
   const visit = (id: number, depth: number) => {
     const node = tree.nodes[id]
@@ -99,7 +99,8 @@ export function flattenFileTree(tree: FileTree, expanded?: ReadonlySet<number>):
       name: chain.map((item) => item.name).join("/"),
       fileIndex: node.fileIndex,
     })
-    if (!expanded || expanded.has(node.id)) last.children.forEach((child) => visit(child, depth + 1))
+    if (expanded === undefined || HashSet.has(expanded, node.id))
+      last.children.forEach((child) => visit(child, depth + 1))
   }
   tree.roots.forEach((root) => visit(root, 0))
   return rows
@@ -192,29 +193,27 @@ export function movePatchFileIndex(fileIndexes: readonly number[], current: numb
   return fileIndexes[Math.max(0, Math.min(fileIndexes.length - 1, index + offset))]
 }
 
-export function allExpandedFileTreeDirectories(tree: FileTree) {
-  return new Set(tree.nodes.filter((node) => node.kind === "directory").map((node) => node.id))
+export function allExpandedFileTreeDirectories(tree: FileTree): HashSet.HashSet<number> {
+  return HashSet.fromIterable(tree.nodes.filter((node) => node.kind === "directory").map((node) => node.id))
 }
 
-export function toggleFileTreeDirectory(tree: FileTree, expanded: ReadonlySet<number>, selected: number | undefined) {
+export function toggleFileTreeDirectory(
+  tree: FileTree,
+  expanded: HashSet.HashSet<number>,
+  selected: number | undefined,
+): HashSet.HashSet<number> {
   if (selected === undefined || tree.nodes[selected]?.kind !== "directory") return expanded
-  const next = new Set(expanded)
-  if (next.has(selected)) next.delete(selected)
-  else next.add(selected)
-  return next
+  return HashSet.has(expanded, selected) ? HashSet.remove(expanded, selected) : HashSet.add(expanded, selected)
 }
 
 export function setFileTreeDirectoryExpanded(
   tree: FileTree,
-  expanded: ReadonlySet<number>,
+  expanded: HashSet.HashSet<number>,
   selected: number | undefined,
   value: boolean,
-) {
+): HashSet.HashSet<number> {
   if (selected === undefined || tree.nodes[selected]?.kind !== "directory") return expanded
-  const next = new Set(expanded)
-  if (value) next.add(selected)
-  else next.delete(selected)
-  return next
+  return value ? HashSet.add(expanded, selected) : HashSet.remove(expanded, selected)
 }
 
 function addFileTreeNode(nodes: FileTreeNode[], roots: number[], input: Omit<FileTreeNode, "id" | "children">) {
@@ -225,10 +224,11 @@ function addFileTreeNode(nodes: FileTreeNode[], roots: number[], input: Omit<Fil
   return id
 }
 
-function fileTreeParentDirectories(tree: FileTree, id: number) {
-  const result = new Set<number>()
-  for (let parent = tree.nodes[id]?.parent; parent !== undefined; parent = tree.nodes[parent]?.parent) {
-    result.add(parent)
-  }
-  return result
+// The parent directories of a node, nearest first.
+function fileTreeParentDirectories(tree: FileTree, id: number): number[] {
+  const parentOf = (child: number) =>
+    Option.flatMap(Arr.get(tree.nodes, child), (node) => Option.fromNullishOr(node.parent))
+  return Arr.unfold(parentOf(id), (parent) =>
+    Option.map(parent, (value): readonly [number, Option.Option<number>] => [value, parentOf(value)]),
+  )
 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HashSet } from "effect"
 import {
   allExpandedFileTreeDirectories,
   buildFileTree,
@@ -145,8 +146,8 @@ describe("diff viewer file tree utilities", () => {
     ])
     const packages = tree.nodes.find((node) => node.kind === "directory" && node.name === "packages")!
 
-    expect(flattenFileTree(tree, new Set()).map((row) => row.name)).toEqual(["packages/opencode/src"])
-    expect(flattenFileTree(tree, new Set([packages.id])).map((row) => row.name)).toEqual([
+    expect(flattenFileTree(tree, HashSet.empty()).map((row) => row.name)).toEqual(["packages/opencode/src"])
+    expect(flattenFileTree(tree, HashSet.make(packages.id)).map((row) => row.name)).toEqual([
       "packages/opencode/src",
       "cli",
       "server",
@@ -158,14 +159,14 @@ describe("diff viewer file tree utilities", () => {
     const src = tree.nodes.find((node) => node.kind === "directory" && node.name === "src")!
     const config = tree.nodes.find((node) => node.kind === "directory" && node.name === "config")!
 
-    expect(flattenFileTree(tree, new Set()).map((row) => row.name)).toEqual(["src", "README.md"])
-    expect(flattenFileTree(tree, new Set([src.id])).map((row) => row.name)).toEqual([
+    expect(flattenFileTree(tree, HashSet.empty()).map((row) => row.name)).toEqual(["src", "README.md"])
+    expect(flattenFileTree(tree, HashSet.make(src.id)).map((row) => row.name)).toEqual([
       "src",
       "config",
       "session",
       "README.md",
     ])
-    expect(flattenFileTree(tree, new Set([src.id, config.id])).map((row) => row.name)).toEqual([
+    expect(flattenFileTree(tree, HashSet.make(src.id, config.id)).map((row) => row.name)).toEqual([
       "src",
       "config",
       "tui.ts",
@@ -295,11 +296,11 @@ describe("diff viewer file tree utilities", () => {
     const expanded = allExpandedFileTreeDirectories(tree)
 
     const collapsed = toggleFileTreeDirectory(tree, expanded, src.id)
-    expect(collapsed.has(src.id)).toBe(false)
+    expect(HashSet.has(collapsed, src.id)).toBe(false)
     expect(flattenFileTree(tree, collapsed).map((row) => row.name)).toEqual(["src/config", "README.md"])
 
     const reopened = toggleFileTreeDirectory(tree, collapsed, src.id)
-    expect(reopened.has(src.id)).toBe(true)
+    expect(HashSet.has(reopened, src.id)).toBe(true)
 
     expect(toggleFileTreeDirectory(tree, reopened, readme.id)).toBe(reopened)
     expect(toggleFileTreeDirectory(tree, reopened, undefined)).toBe(reopened)
@@ -312,10 +313,10 @@ describe("diff viewer file tree utilities", () => {
     const expanded = allExpandedFileTreeDirectories(tree)
 
     const collapsed = setFileTreeDirectoryExpanded(tree, expanded, src.id, false)
-    expect(collapsed.has(src.id)).toBe(false)
+    expect(HashSet.has(collapsed, src.id)).toBe(false)
 
     const reopened = setFileTreeDirectoryExpanded(tree, collapsed, src.id, true)
-    expect(reopened.has(src.id)).toBe(true)
+    expect(HashSet.has(reopened, src.id)).toBe(true)
 
     expect(setFileTreeDirectoryExpanded(tree, reopened, readme.id, false)).toBe(reopened)
     expect(setFileTreeDirectoryExpanded(tree, reopened, undefined, false)).toBe(reopened)
