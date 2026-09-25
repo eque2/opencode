@@ -6,6 +6,10 @@ type EventMetadata = {
   workspace: string | undefined
 }
 
+function isEventOfType<T extends Event["type"]>(event: Event, type: T): event is Extract<Event, { type: T }> {
+  return event.type === type
+}
+
 export function useEvent() {
   const sdk = useSDK()
 
@@ -24,8 +28,8 @@ export function useEvent() {
     handler: (event: Extract<Event, { type: T }>, metadata: EventMetadata) => void,
   ) {
     return subscribe((event: Event, metadata: EventMetadata) => {
-      if (event.type !== type) return
-      handler(event as Extract<Event, { type: T }>, metadata)
+      if (!isEventOfType(event, type)) return
+      handler(event, metadata)
     })
   }
 
