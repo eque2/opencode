@@ -1,6 +1,7 @@
 import { createStore, reconcile } from "solid-js/store"
 import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { createSimpleContext } from "@opencode-ai/ui/context"
+import { Option } from "effect"
 import { persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
 
@@ -63,53 +64,64 @@ export const newLayoutDesignsDefault = true
 export const oldInterfaceSunset = new Date(2026, 8, 14)
 const newLayoutDesignsUpgradeCutoff = "1.17.19"
 
-function compareVersions(a: string, b: string) {
-  const parse = (version: string) => {
-    const match = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/i.exec(version.trim())
-    if (!match) return
-    return match.slice(1).map(Number)
-  }
-  const left = parse(a)
-  const right = parse(b)
-  if (!left || !right) return
-  const index = left.findIndex((part, index) => part !== right[index])
-  return index === -1 ? 0 : left[index]! - right[index]!
+function compareVersions(a: string, b: string): Option.Option<number> {
+  const parse = (version: string) =>
+    Option.fromNullishOr(/^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/i.exec(version.trim())).pipe(
+      Option.map((match) => match.slice(1).map(Number)),
+    )
+  return Option.zipWith(parse(a), parse(b), (left, right) => {
+    const index = left.findIndex((part, index) => part !== right[index])
+    return index === -1 ? 0 : left[index] - right[index]
+  })
 }
 
-export function isAppUpgrade(previous: string | undefined, current: string | undefined) {
-  if (!previous || !current) return false
-  const comparison = compareVersions(current, previous)
-  return comparison !== undefined && comparison > 0
+/** An empty version string counts as no recorded version. */
+function recorded(version: Option.Option<string>) {
+  return Option.filter(version, (value) => value !== "")
+}
+
+export function isAppUpgrade(previous: Option.Option<string>, current: Option.Option<string>) {
+  return recorded(previous).pipe(
+    Option.flatMap((before) => recorded(current).pipe(Option.flatMap((after) => compareVersions(after, before)))),
+    Option.exists((comparison) => comparison > 0),
+  )
 }
 
 export function shouldDisplayTabsToast(
-  previous: string | undefined,
-  current: string | undefined,
+  previous: Option.Option<string>,
+  current: Option.Option<string>,
   existingInstall: boolean,
 ) {
-  return isAppUpgrade(previous, current) || (!previous && existingInstall)
+  return isAppUpgrade(previous, current) || (Option.isNone(recorded(previous)) && existingInstall)
 }
 
-export function hasExistingWebState(settings: Promise<string> | string | null, previousVersion: string | undefined) {
-  return settings !== null || previousVersion !== undefined
+export function hasExistingWebState(
+  settings: Option.Option<Promise<string> | string>,
+  previousVersion: Option.Option<string>,
+) {
+  return Option.isSome(settings) || Option.isSome(previousVersion)
 }
 
-export function initialAgentVisibility(initialized: boolean | undefined, existing: boolean, previousVersion?: string) {
-  if (initialized === true) return
-  return existing || previousVersion !== undefined
+/** The first agent picker visibility, or none when an earlier launch already chose it. */
+export function initialAgentVisibility(
+  initialized: Option.Option<boolean>,
+  existing: boolean,
+  previousVersion: Option.Option<string>,
+): Option.Option<boolean> {
+  if (Option.contains(initialized, true)) return Option.none()
+  return Option.some(existing || Option.isSome(previousVersion))
 }
 
-export function shouldEnableNewLayout(previous: string | undefined, current: string | undefined) {
-  if (!current) return false
-  const currentComparison = compareVersions(current, newLayoutDesignsUpgradeCutoff)
-  if (!previous) return currentComparison !== undefined && currentComparison > 0
-  if (!isAppUpgrade(previous, current)) return false
-  const previousComparison = compareVersions(previous, newLayoutDesignsUpgradeCutoff)
+export function shouldEnableNewLayout(previous: Option.Option<string>, current: Option.Option<string>) {
+  const after = recorded(current)
+  if (Option.isNone(after)) return false
+  const currentIsNewer = Option.exists(compareVersions(after.value, newLayoutDesignsUpgradeCutoff), (value) => value > 0)
+  const before = recorded(previous)
+  if (Option.isNone(before)) return currentIsNewer
+  if (!isAppUpgrade(before, after)) return false
   return (
-    previousComparison !== undefined &&
-    currentComparison !== undefined &&
-    previousComparison <= 0 &&
-    currentComparison > 0
+    currentIsNewer &&
+    Option.exists(compareVersions(before.value, newLayoutDesignsUpgradeCutoff), (value) => value <= 0)
   )
 }
 
@@ -126,9 +138,9 @@ export function nextSunsetCheckDelay(sunset: number, now: number) {
   return Math.min(Math.max(0, sunset - now), maximumSunsetTimeout)
 }
 
-export function resolveNewLayoutDesigns(retired: boolean, preference: boolean | undefined, fallback = true) {
+export function resolveNewLayoutDesigns(retired: boolean, preference: Option.Option<boolean>, fallback = true) {
   if (retired) return true
-  return preference ?? fallback
+  return Option.getOrElse(preference, () => fallback)
 }
 
 const monoFallback =
@@ -231,15 +243,18 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
   init: () => {
     const platform = usePlatform()
     const [store, setStore, settingsInit, ready] = persisted("settings.v3", createStore<Settings>(defaultSettings))
-    const [launch, setLaunch, , launchReady] = persisted(
-      "app-version.v1",
-      createStore<{ version?: string }>({ version: undefined }),
-    )
-    const [launchState, setLaunchState] = createStore({
+    const [launch, setLaunch, , launchReady] = persisted("app-version.v1", createStore<{ version?: string }>({}))
+    // `previous` is absent until the launch is classified, and stays absent on a first launch.
+    const [launchState, setLaunchState] = createStore<{
+      classified: boolean
+      migrationApplied: boolean
+      previous?: string
+    }>({
       classified: false,
       migrationApplied: false,
-      previous: undefined as string | undefined,
     })
+    const previousVersion = () => Option.fromNullishOr(launchState.previous)
+    const currentVersion = () => Option.fromNullishOr(platform.version)
     const showFileTree = withFallback(() => store.general?.showFileTree, defaultSettings.general.showFileTree)
     const showSearch = withFallback(() => store.general?.showSearch, defaultSettings.general.showSearch)
     const showStatus = withFallback(() => store.general?.showStatus, defaultSettings.general.showStatus)
@@ -254,7 +269,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
     const newInterfaceNoticeDismissed = withFallback(() => store.general?.newInterfaceNoticeDismissed, false)
     const layoutUpgrade = createMemo(() =>
       launchState.classified && !launchState.migrationApplied
-        ? shouldEnableNewLayout(launchState.previous, platform.version)
+        ? shouldEnableNewLayout(previousVersion(), currentVersion())
         : false,
     )
     const layoutTransition = createMemo(() =>
@@ -266,22 +281,26 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       if (!layoutTransitionClassified()) {
         return resolveNewLayoutDesigns(
           oldInterfaceRetired(),
-          store.general?.newLayoutDesigns,
+          Option.fromNullishOr(store.general?.newLayoutDesigns),
           legacyNewLayoutDesignsDefault,
         )
       }
       return resolveNewLayoutDesigns(
         oldInterfaceRetired(),
-        store.general?.newLayoutDesigns,
+        Option.fromNullishOr(store.general?.newLayoutDesigns),
         layoutTransitionEligible() ? legacyNewLayoutDesignsDefault : newLayoutDesignsDefault,
       )
     })
     const visible = (preference: () => boolean) => createMemo(() => !newLayoutDesigns() || preference())
     const initializeAgentVisibility = (existing: boolean) => {
-      const initial = initialAgentVisibility(store.general?.agentVisibilityInitialized, existing, launchState.previous)
-      if (initial === undefined) return
+      const initial = initialAgentVisibility(
+        Option.fromNullishOr(store.general?.agentVisibilityInitialized),
+        existing,
+        previousVersion(),
+      )
+      if (Option.isNone(initial)) return
       batch(() => {
-        setStore("general", "showCustomAgents", initial)
+        setStore("general", "showCustomAgents", initial.value)
         setStore("general", "agentVisibilityInitialized", true)
       })
     }
@@ -313,7 +332,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
 
     createEffect(() => {
       if (!ready() || !launchState.classified || platform.platform !== "web") return
-      const existing = hasExistingWebState(settingsInit, launchState.previous)
+      const existing = hasExistingWebState(Option.fromNullishOr(settingsInit), previousVersion())
       if (!layoutTransitionClassified()) setStore("general", "layoutTransitionEligible", existing)
       initializeAgentVisibility(existing)
     })
@@ -333,7 +352,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
       setStore(
         "general",
         "shouldDisplayTabsToast",
-        shouldDisplayTabsToast(launchState.previous, platform.version, layoutTransitionEligible()),
+        shouldDisplayTabsToast(previousVersion(), currentVersion(), layoutTransitionEligible()),
       )
     })
 
