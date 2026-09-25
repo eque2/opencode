@@ -17,8 +17,13 @@ afterEach(() => {
   process.env.OPENCODE_EDITOR_SSE_PORT = originalOpencodePort
 })
 
-function nextTick() {
-  return new Promise<void>((resolve) => queueMicrotask(resolve))
+// The provider opens the socket after it reads the lock files, which is asynchronous. The socket is open for
+// the test once the provider has added its message listener.
+async function waitForListeners(socket: FakeWebSocket) {
+  for (let attempt = 0; attempt < 1000 && !socket.listeners.has("message"); attempt += 1) {
+    await Bun.sleep(1)
+  }
+  expect(socket.listeners.has("message")).toBeTrue()
 }
 
 function mountEditorContext(WebSocketImpl?: typeof WebSocket) {
@@ -132,7 +137,7 @@ test("useEditorContext reconnect switches editor server by session directory", a
   const secondSocket = new FakeWebSocket("ws://127.0.0.1:3002")
 
   const mounted = mountEditorContext(createWebSocketImpl(firstSocket, secondSocket))
-  await nextTick()
+  await waitForListeners(firstSocket)
 
   expect(firstSocket.closed).toBeFalse()
   sendSelection(firstSocket, path.join(startupDirectory, "file.ts"))
@@ -141,7 +146,7 @@ test("useEditorContext reconnect switches editor server by session directory", a
   expect(mounted.editor.labelState()).toBe("pending")
 
   mounted.editor.reconnect(sessionDirectory)
-  await nextTick()
+  await waitForListeners(secondSocket)
 
   expect(firstSocket.closed).toBeTrue()
   expect(secondSocket.closed).toBeFalse()
@@ -172,7 +177,7 @@ test("useEditorContext favors configured port over lock files", async () => {
   const socket = new FakeWebSocket("ws://127.0.0.1:4010")
 
   const mounted = mountEditorContext(createWebSocketImpl(socket))
-  await nextTick()
+  await waitForListeners(socket)
 
   expect(socket.closed).toBeFalse()
 
@@ -200,7 +205,7 @@ test("useEditorContext clears selection when reconnecting", async () => {
   const socket = new FakeWebSocket("ws://127.0.0.1:3001")
 
   const mounted = mountEditorContext(createWebSocketImpl(socket))
-  await nextTick()
+  await waitForListeners(socket)
 
   expect(socket.closed).toBeFalse()
   expect(mounted.editor.selection()).toBeUndefined()
@@ -260,7 +265,7 @@ test("useEditorContext preserves selection for the next reconnect when requested
   const socket = new FakeWebSocket("ws://127.0.0.1:3001")
 
   const mounted = mountEditorContext(createWebSocketImpl(socket))
-  await nextTick()
+  await waitForListeners(socket)
 
   sendSelection(socket, path.join(startupDirectory, "file.ts"))
   expect(mounted.editor.selection()).toEqual(expectedSelection(path.join(startupDirectory, "file.ts")))
@@ -289,7 +294,7 @@ test("useEditorContext connects with OPENCODE_EDITOR_SSE_PORT", async () => {
   const socket = new FakeWebSocket("ws://127.0.0.1:4020")
 
   const mounted = mountEditorContext(createWebSocketImpl(socket))
-  await nextTick()
+  await waitForListeners(socket)
 
   expect(socket.closed).toBeFalse()
 
