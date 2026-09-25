@@ -34,7 +34,7 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
       get data() {
         return store
       },
-      navigate(route: Route) {
+      navigate: (route: Route) => {
         setStore(reconcile(route))
       },
     }
