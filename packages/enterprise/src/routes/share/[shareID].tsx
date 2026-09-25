@@ -23,6 +23,7 @@ import { clientOnly } from "@solidjs/start"
 import { Meta, Title } from "@solidjs/meta"
 import { Base64 } from "js-base64"
 import { getRequestEvent } from "solid-js/web"
+import { Effect, Option, Schema } from "effect"
 
 const ClientOnlyWorkerPoolProvider = clientOnly(() =>
   import("@opencode-ai/session-ui/pierre/worker").then((m) => ({
@@ -55,70 +56,81 @@ class SessionDataMissingError extends NamedError {
   }
 }
 
-const getData = query(async (shareID) => {
+class MissingShareIDError extends Schema.TaggedError<MissingShareIDError>()("Enterprise.MissingShareIDError", {}) {
+  override get message() {
+    return "Missing shareID"
+  }
+}
+
+const getData = query((shareID: string) => {
   "use server"
-  const share = await Share.get(shareID)
-  if (!share) throw new SessionDataMissingError({ sessionID: shareID })
-  const data = await Share.data(shareID)
-  const result: {
-    sessionID: string
-    shareID: string
-    session: Session[]
-    session_diff: {
-      [sessionID: string]: SnapshotFileDiff[]
-    }
-    session_status: {
-      [sessionID: string]: SessionStatus
-    }
-    message: {
-      [sessionID: string]: Message[]
-    }
-    part: {
-      [messageID: string]: Part[]
-    }
-    model: {
-      [sessionID: string]: Model[]
-    }
-  } = {
-    sessionID: share.sessionID,
-    shareID,
-    session: [],
-    session_diff: {
-      [share.sessionID]: [],
-    },
-    session_status: {
-      [share.sessionID]: {
-        type: "idle",
-      },
-    },
-    message: {},
-    part: {},
-    model: {},
-  }
-  for (const item of data) {
-    switch (item.type) {
-      case "session":
-        result.session.push(item.data)
-        break
-      case "session_diff":
-        result.session_diff[share.sessionID] = item.data
-        break
-      case "message":
-        result.message[item.data.sessionID] = result.message[item.data.sessionID] ?? []
-        result.message[item.data.sessionID].push(item.data)
-        break
-      case "part":
-        result.part[item.data.messageID] = result.part[item.data.messageID] ?? []
-        result.part[item.data.messageID].push(item.data)
-        break
-      case "model":
-        result.model[share.sessionID] = item.data
-        break
-    }
-  }
-  const match = Binary.search(result.session, share.sessionID, (s) => s.id)
-  if (!match.found) throw new SessionDataMissingError({ sessionID: share.sessionID })
-  return result
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const found = yield* Share.get(shareID)
+      if (Option.isNone(found)) return yield* new SessionDataMissingError({ sessionID: shareID })
+      const share = found.value
+      const data = yield* Share.data(shareID)
+      const result: {
+        sessionID: string
+        shareID: string
+        session: Session[]
+        session_diff: {
+          [sessionID: string]: SnapshotFileDiff[]
+        }
+        session_status: {
+          [sessionID: string]: SessionStatus
+        }
+        message: {
+          [sessionID: string]: Message[]
+        }
+        part: {
+          [messageID: string]: Part[]
+        }
+        model: {
+          [sessionID: string]: Model[]
+        }
+      } = {
+        sessionID: share.sessionID,
+        shareID,
+        session: [],
+        session_diff: {
+          [share.sessionID]: [],
+        },
+        session_status: {
+          [share.sessionID]: {
+            type: "idle",
+          },
+        },
+        message: {},
+        part: {},
+        model: {},
+      }
+      for (const item of data) {
+        switch (item.type) {
+          case "session":
+            result.session.push(item.data)
+            break
+          case "session_diff":
+            result.session_diff[share.sessionID] = item.data
+            break
+          case "message":
+            result.message[item.data.sessionID] = result.message[item.data.sessionID] ?? []
+            result.message[item.data.sessionID].push(item.data)
+            break
+          case "part":
+            result.part[item.data.messageID] = result.part[item.data.messageID] ?? []
+            result.part[item.data.messageID].push(item.data)
+            break
+          case "model":
+            result.model[share.sessionID] = item.data
+            break
+        }
+      }
+      const match = Binary.search(result.session, share.sessionID, (s) => s.id)
+      if (!match.found) return yield* new SessionDataMissingError({ sessionID: share.sessionID })
+      return result
+    }),
+  )
 }, "getShareData")
 
 export default function () {
@@ -128,10 +140,12 @@ export default function () {
   )
 
   const params = useParams()
-  const data = createAsync(async () => {
-    if (!params.shareID) throw new Error("Missing shareID")
-    return getData(params.shareID)
-  })
+  const data = createAsync(() =>
+    Option.match(Option.fromNullishOr(params.shareID), {
+      onNone: () => Effect.runPromise(Effect.fail(new MissingShareIDError())),
+      onSome: getData,
+    }),
+  )
 
   return (
     <ErrorBoundary
