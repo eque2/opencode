@@ -74,16 +74,22 @@ const Cursor = Schema.Struct({
 })
 type Cursor = typeof Cursor.Type
 
-const decodeCursor = Schema.decodeUnknownSync(Cursor)
+const CursorJson = Schema.fromJsonString(Cursor)
+const encodeCursorJson = Schema.encodeSync(CursorJson)
+const decodeCursorJson = Schema.decodeUnknownSync(CursorJson)
 
 export const cursor = {
   encode(input: Cursor) {
-    return Buffer.from(JSON.stringify(input)).toString("base64url")
+    return Buffer.from(encodeCursorJson(input)).toString("base64url")
   },
   decode(input: string) {
-    return decodeCursor(JSON.parse(Buffer.from(input, "base64url").toString("utf8")))
+    return decodeCursorJson(Buffer.from(input, "base64url").toString("utf8"))
   },
 }
+
+// JSON text of an arbitrary thrown value. A value that JSON cannot encode
+// (undefined, a bigint, a cycle) falls back to its String() text.
+const encodeUnknownJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 const info = (row: typeof MessageTable.$inferSelect) =>
   ({
@@ -735,7 +741,10 @@ export function fromError(
     default: {
       // A stream error that cannot be parsed, or whose parser throws, is reported as unknown.
       const parsed = Option.liftThrowable(ProviderError.parseStreamError)(e).pipe(Option.flatMap(Option.fromNullishOr))
-      if (Option.isNone(parsed)) return new NamedError.Unknown({ message: JSON.stringify(e) }, { cause: e }).toObject()
+      if (Option.isNone(parsed)) {
+        const message = Option.getOrElse(encodeUnknownJson(e), () => String(e))
+        return new NamedError.Unknown({ message }, { cause: e }).toObject()
+      }
       const stream = parsed.value
       if (stream.type === "context_overflow") {
         return new ContextOverflowError(
