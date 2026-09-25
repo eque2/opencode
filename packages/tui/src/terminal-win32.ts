@@ -53,7 +53,8 @@ export function win32FlushInputBuffer() {
   k32.value.FlushConsoleInputBuffer(handle)
 }
 
-let unhook: (() => void) | undefined
+// The unhook function of the installed guard, so a second install returns it.
+let unhook: Option.Option<() => void> = Option.none()
 
 /**
  * Keep ENABLE_PROCESSED_INPUT disabled.
@@ -71,7 +72,7 @@ export function win32InstallCtrlCGuard(): (() => void) | undefined {
   if (!process.stdin.isTTY) return undefined
   const loaded = load()
   if (Option.isNone(loaded)) return undefined
-  if (unhook) return unhook
+  if (Option.isSome(unhook)) return unhook.value
 
   const k32 = loaded.value
   const stdin = process.stdin as ReadStream
@@ -104,7 +105,7 @@ export function win32InstallCtrlCGuard(): (() => void) | undefined {
   const poll = Effect.runFork(Effect.schedule(Effect.sync(enforce), Schedule.spaced("100 millis")))
 
   let done = false
-  unhook = () => {
+  const release = () => {
     if (done) return
     done = true
 
@@ -112,10 +113,11 @@ export function win32InstallCtrlCGuard(): (() => void) | undefined {
     restoreRawMode()
 
     k32.SetConsoleMode(handle, initial)
-    unhook = undefined
+    unhook = Option.none()
   }
 
-  return unhook
+  unhook = Option.some(release)
+  return release
 }
 
 /**
