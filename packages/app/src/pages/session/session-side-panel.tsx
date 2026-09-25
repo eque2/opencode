@@ -514,7 +514,7 @@ export function SessionSidePanel(props: {
                       plugins={(defaults) => [
                         ...defaults.filter((plugin) => plugin !== Accessibility),
                         AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
-                        // eslint-disable-next-line effect/no-null-use-option -- @dnd-kit/dom FeedbackOptions.dropAnimation documents null as the value that disables the drop animation; undefined means the default animation
+                        // eslint-disable-next-line effect/no-null-use-option -- (a) @dnd-kit/dom FeedbackOptions.dropAnimation takes null to turn off the drop animation; undefined keeps the default animation
                         Feedback.configure({ dropAnimation: null }),
                       ]}
                       onDragEnd={(event) => {
