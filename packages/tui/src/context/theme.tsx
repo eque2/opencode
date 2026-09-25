@@ -17,9 +17,10 @@ import {
   terminalMode,
   tint,
   upsertTheme,
+  type Theme,
   type ThemeJson,
 } from "../theme"
-import { MutableHashSet } from "effect"
+import { Effect, MutableHashSet, Option, Result } from "effect"
 import { createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { createSimpleContext } from "./helper"
@@ -254,18 +255,31 @@ export const { use: useTheme, provider: ThemeProvider } = createSimpleContext({
       themeRefreshTimeouts.length = 0
     })
 
-    const values = createMemo(() => {
-      const active = store.themes[store.active]
-      if (active) return resolveTheme(active, store.mode)
+    // Resolves a known theme. A theme whose colors do not resolve is logged and skipped, so the next choice applies.
+    const tryResolve = (name: string): Option.Option<Theme> => {
+      const theme = store.themes[name]
+      if (!theme) return Option.none()
+      return Result.match(resolveTheme(theme, store.mode), {
+        onSuccess: Option.some,
+        onFailure: (error) => {
+          Effect.runFork(Effect.logWarning("Theme colors do not resolve", { theme: name, error: error.message }))
+          return Option.none()
+        },
+      })
+    }
 
-      const saved = kv.get("theme")
-      if (typeof saved === "string") {
-        const theme = store.themes[saved]
-        if (theme) return resolveTheme(theme, store.mode)
-      }
-
-      return resolveTheme(store.themes.opencode, store.mode)
-    })
+    // The active theme, else the saved theme, else opencode. The bundled opencode theme always resolves
+    // (theme.test.ts checks every bundled theme), so a failure there is a defect in the bundled asset.
+    const values = createMemo(() =>
+      tryResolve(store.active).pipe(
+        Option.orElse(() => {
+          const saved = kv.get("theme")
+          return typeof saved === "string" ? tryResolve(saved) : Option.none()
+        }),
+        Option.orElse(() => tryResolve("opencode")),
+        Option.getOrElse(() => Result.getOrThrow(resolveTheme(DEFAULT_THEMES.opencode, store.mode))),
+      ),
+    )
 
     createEffect(() => renderer.setBackgroundColor(values().background))
 
