@@ -11,6 +11,7 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
+import { Option } from "effect"
 import { normalize, text, type ViewDiff } from "../../components/session-diff"
 import type {
   SessionReviewComment,
@@ -275,7 +276,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         data-slot="session-review-v2-diff-scroll"
       >
         <Show
-          when={diffCanRender() || mediaKind()}
+          when={diffCanRender() || Option.isSome(mediaKind())}
           fallback={
             <div data-slot="session-review-v2-empty">
               <span class="text-12-regular text-text-weak">{i18n.t("ui.fileMedia.binary.title")}</span>

@@ -152,10 +152,11 @@ function ReviewCommentMenu(props: {
   )
 }
 
-function diffId(file: string): string | undefined {
-  const sum = checksum(file)
-  if (!sum) return
-  return `session-review-diff-${sum}`
+function diffId(file: string): Option.Option<string> {
+  return Option.fromNullishOr(checksum(file)).pipe(
+    Option.filter((sum) => sum.length > 0),
+    Option.map((sum) => `session-review-diff-${sum}`),
+  )
 }
 
 type SessionReviewSelection = {
@@ -403,7 +404,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const tooLarge = createMemo(() => {
                       if (!expanded()) return false
                       if (force()) return false
-                      if (mediaKind()) return false
+                      if (Option.isSome(mediaKind())) return false
                       return changedLines() > MAX_DIFF_CHANGED_LINES
                     })
 
@@ -497,7 +498,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     return (
                       <Accordion.Item
                         value={diffCanRender() ? file : null!}
-                        id={diffId(file)}
+                        id={Option.getOrUndefined(diffId(file))}
                         data-file={file}
                         data-slot="session-review-accordion-item"
                         data-selected={props.focusedFile === file ? "" : undefined}
@@ -544,7 +545,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                                       {i18n.t("ui.sessionReview.change.removed")}
                                     </span>
                                   </Match>
-                                  <Match when={!!mediaKind()}>
+                                  <Match when={Option.isSome(mediaKind())}>
                                     <span data-slot="session-review-change" data-type="modified">
                                       {i18n.t("ui.sessionReview.change.modified")}
                                     </span>

@@ -6,6 +6,7 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
 import { installLineCommentStyles } from "./line-comment-styles"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
+import { Option } from "effect"
 
 installLineCommentStyles()
 
@@ -216,8 +217,9 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     if (!item) return
 
     const textarea = refs.textarea
-    const query = currentMention()
-    if (!textarea || !query) return
+    const found = currentMention()
+    if (!textarea || Option.isNone(found)) return
+    const query = found.value
 
     const value = `${textarea.value.slice(0, query.start)}@${item.path} ${textarea.value.slice(query.end)}`
     const cursor = query.start + item.path.length + 2
@@ -261,32 +263,32 @@ export const LineCommentEditor = (props: LineCommentEditorProps) => {
     mention.clear()
   }
 
-  const currentMention = () => {
+  const currentMention = (): Option.Option<{ query: string; start: number; end: number }> => {
     const textarea = refs.textarea
-    if (!textarea) return
-    if (!split.mention) return
-    if (textarea.selectionStart !== textarea.selectionEnd) return
+    if (!textarea) return Option.none()
+    if (!split.mention) return Option.none()
+    if (textarea.selectionStart !== textarea.selectionEnd) return Option.none()
 
     const end = textarea.selectionStart
     const match = textarea.value.slice(0, end).match(/@(\S*)$/)
-    if (!match) return
+    if (!match) return Option.none()
 
-    return {
+    return Option.some({
       query: match[1] ?? "",
       start: end - match[0].length,
       end,
-    }
+    })
   }
 
   const syncMention = () => {
     const item = currentMention()
-    if (!item) {
+    if (Option.isNone(item)) {
       closeMention()
       return
     }
 
     setOpen(true)
-    mention.onInput(item.query)
+    mention.onInput(item.value.query)
   }
 
   const selectActiveMention = () => {

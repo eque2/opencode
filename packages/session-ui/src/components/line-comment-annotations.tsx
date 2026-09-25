@@ -112,8 +112,8 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
   }
   const nodes = MutableHashMap.empty<string, AnnotationHost>()
 
-  const mount = (meta: LineCommentAnnotationMeta<T>) => {
-    if (typeof document === "undefined") return
+  const mount = (meta: LineCommentAnnotationMeta<T>): Option.Option<AnnotationHost> => {
+    if (typeof document === "undefined") return Option.none()
 
     const host = document.createElement("div")
     host.setAttribute("data-prevent-autofocus", "")
@@ -140,15 +140,17 @@ export function createLineCommentAnnotationRenderer<T, C, D>(props: {
 
     const node: AnnotationHost = { host, dispose, setMeta: setCurrent }
     MutableHashMap.set(nodes, meta.key, node)
-    return node
+    return Option.some(node)
   }
 
-  const render = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotation: A) => {
+  // Pierre's renderAnnotation API takes `HTMLElement | undefined`; undefined
+  // means "no annotation element" (no DOM during SSR).
+  const render = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotation: A): HTMLDivElement | undefined => {
     const meta = annotation.metadata
-    const node = Option.getOrElse(MutableHashMap.get(nodes, meta.key), () => mount(meta))
-    if (!node) return
-    node.setMeta(meta)
-    return node.host
+    const node = Option.orElse(MutableHashMap.get(nodes, meta.key), () => mount(meta))
+    if (Option.isNone(node)) return undefined
+    node.value.setMeta(meta)
+    return node.value.host
   }
 
   const reconcile = <A extends { metadata: LineCommentAnnotationMeta<T> }>(annotations: A[]) => {
@@ -614,23 +616,26 @@ export function createLineCommentGutterRenderer(props: {
   getSelectedRange: Accessor<SelectedLineRange | null>
   onOpenDraft: (range: SelectedLineRange) => void
 }) {
+  // Pierre's renderGutterUtility API takes `HTMLElement | null | undefined`.
   return (getHoveredLine: () => HoverCommentLine | undefined) =>
-    createHoverCommentUtility({
-      label: props.label,
-      getHoveredLine,
-      onSelect: (hovered) => {
-        const current = props.getSelectedRange()
-        if (current && lineInSelectedRange(current, hovered.lineNumber, hovered.side)) {
-          props.onOpenDraft(cloneSelectedLineRange(current))
-          return
-        }
+    Option.getOrUndefined(
+      createHoverCommentUtility({
+        label: props.label,
+        getHoveredLine,
+        onSelect: (hovered) => {
+          const current = props.getSelectedRange()
+          if (current && lineInSelectedRange(current, hovered.lineNumber, hovered.side)) {
+            props.onOpenDraft(cloneSelectedLineRange(current))
+            return
+          }
 
-        const range: SelectedLineRange = {
-          start: hovered.lineNumber,
-          end: hovered.lineNumber,
-        }
-        if (hovered.side) range.side = hovered.side
-        props.onOpenDraft(range)
-      },
-    })
+          const range: SelectedLineRange = {
+            start: hovered.lineNumber,
+            end: hovered.lineNumber,
+          }
+          if (hovered.side) range.side = hovered.side
+          props.onOpenDraft(range)
+        },
+      }),
+    )
 }
