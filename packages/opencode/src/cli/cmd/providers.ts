@@ -377,6 +377,10 @@ export const ProvidersLoginCommand = effectCmd({
       openrouter: 5,
       vercel: 6,
     }
+    const hints: Partial<Record<string, string>> = {
+      opencode: "recommended",
+      openai: "ChatGPT Plus/Pro or API key",
+    }
     const pluginProviders = resolvePluginProviders({
       hooks,
       existingProviders: providers,
@@ -395,10 +399,7 @@ export const ProvidersLoginCommand = effectCmd({
         map((x) => ({
           label: x.name,
           value: x.id,
-          hint: {
-            opencode: "recommended",
-            openai: "ChatGPT Plus/Pro or API key",
-          }[x.id],
+          hint: hints[x.id],
         })),
       ),
       ...pluginProviders.map((x) => ({
