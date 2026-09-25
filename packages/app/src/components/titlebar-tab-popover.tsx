@@ -66,7 +66,7 @@ export function TabPreviewPopover(props: {
             if (theme) el.setAttribute("data-theme", theme)
           }}
           data-component="session-tab-popover"
-          data-instant={instant() || undefined}
+          {...(instant() ? { "data-instant": true } : {})}
         >
           <div data-slot="header">
             <Show when={props.data.projectName}>

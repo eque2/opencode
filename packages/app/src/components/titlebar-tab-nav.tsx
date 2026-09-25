@@ -12,6 +12,7 @@ import { ServerConnection, serverName } from "@/context/server"
 import { displayName, projectForSession } from "@/pages/layout/helpers"
 import { SessionTabAvatar } from "@/pages/layout/session-tab-avatar"
 import type { Session } from "@opencode-ai/sdk/v2"
+import { Equivalence, Option } from "effect"
 import { canOpenTabRename, forwardTabRef } from "./titlebar-tab-gesture"
 import { TabPreviewPopover } from "./titlebar-tab-popover"
 import "./titlebar-tab-nav.css"
@@ -19,12 +20,16 @@ import "./titlebar-tab-nav.css"
 // MouseEvent.button uses 1 for the middle/wheel button.
 const MIDDLE_MOUSE_BUTTON = 1
 
+/** Compares two Options by the identity of their values, as a memo compares plain values. */
+const sameOption = Option.makeEquivalence(Equivalence.strictEqual<unknown>())
+
 export function TabNavItem(props: {
   ref?: Ref<HTMLDivElement>
   href: string
   server: ServerConnection.Key
-  session: () => Session | undefined
-  fallbackTitle?: string
+  session: () => Option.Option<Session>
+  /** The title to show when the session is unknown. */
+  fallbackTitle: Option.Option<string>
   onRename: (title: string) => Promise<void>
   onClose: () => void
   onNavigate: () => void
@@ -41,7 +46,7 @@ export function TabNavItem(props: {
   const [titleOverflowing, setTitleOverflowing] = createSignal(false)
   let tabRoot!: HTMLDivElement
   let titleEl!: HTMLSpanElement
-  let measureFrame: number | undefined
+  let measureFrame = Option.none<number>()
   const rename = createMutation(() => ({ mutationFn: props.onRename }))
 
   const closeTab = (event: MouseEvent) => {
@@ -57,21 +62,24 @@ export function TabNavItem(props: {
   })
   const project = createMemo(() => {
     const session = props.session()
-    if (!session) return undefined
-    return projectForSession(session, serverCtx()?.projects.list() ?? [])
+    if (Option.isNone(session)) return undefined
+    return projectForSession(session.value, serverCtx()?.projects.list() ?? [])
   })
-  const title = createMemo(() => props.session()?.title ?? props.fallbackTitle)
+  const sessionTitle = () => Option.flatMap(props.session(), (session) => Option.fromNullishOr(session.title))
+  const title = createMemo(() => Option.orElse(sessionTitle(), () => props.fallbackTitle), Option.none(), {
+    equals: sameOption,
+  })
 
   const projectName = createMemo(() => {
     const session = props.session()
-    if (!session) return undefined
-    return displayName(project() ?? { worktree: session.directory })
+    if (Option.isNone(session)) return undefined
+    return displayName(project() ?? { worktree: session.value.directory })
   })
   const previewPath = createMemo(() => {
     const session = props.session()
-    if (!session) return undefined
+    if (Option.isNone(session)) return undefined
     const home = serverCtx()?.sync.data.path.home
-    return home ? session.directory.replace(home, "~") : session.directory
+    return home ? session.value.directory.replace(home, "~") : session.value.directory
   })
   // Only label the server when multiple servers are connected.
   const serverLabel = createMemo(() => {
@@ -82,7 +90,8 @@ export function TabNavItem(props: {
   })
 
   const [popoverOpen, setPopoverOpen] = createSignal(false)
-  const previewBlocked = () => !!props.dragging || editing() || menu.open || !!props.pressed || !props.session()
+  const previewBlocked = () =>
+    !!props.dragging || editing() || menu.open || !!props.pressed || Option.isNone(props.session())
 
   const measureTitleOverflow = () => {
     if (!titleEl || editing()) {
@@ -93,11 +102,13 @@ export function TabNavItem(props: {
   }
 
   const scheduleTitleOverflow = () => {
-    if (measureFrame !== undefined) return
-    measureFrame = requestAnimationFrame(() => {
-      measureFrame = undefined
-      measureTitleOverflow()
-    })
+    if (Option.isSome(measureFrame)) return
+    measureFrame = Option.some(
+      requestAnimationFrame(() => {
+        measureFrame = Option.none()
+        measureTitleOverflow()
+      }),
+    )
   }
 
   createEffect(() => {
@@ -109,7 +120,7 @@ export function TabNavItem(props: {
 
   createResizeObserver(() => tabRoot, scheduleTitleOverflow)
   onCleanup(() => {
-    if (measureFrame !== undefined) cancelAnimationFrame(measureFrame)
+    if (Option.isSome(measureFrame)) cancelAnimationFrame(measureFrame.value)
   })
 
   const selectTitle = () => {
@@ -124,7 +135,7 @@ export function TabNavItem(props: {
   const closeRename = (save: boolean) => {
     if (rename.isPending || !editing()) return
 
-    const original = props.session()?.title ?? ""
+    const original = Option.getOrElse(sessionTitle(), () => "")
     const next = (titleEl.textContent ?? "").trim()
 
     titleEl.scrollLeft = 0
@@ -141,8 +152,8 @@ export function TabNavItem(props: {
     if (editing()) return
     if (!titleEl) return
     const value = title()
-    if (value === undefined) return
-    titleEl.textContent = value
+    if (Option.isNone(value)) return
+    titleEl.textContent = value.value
   })
 
   const openRename = (event?: MouseEvent) => {
@@ -150,8 +161,8 @@ export function TabNavItem(props: {
     event?.stopPropagation()
     if (!canOpenTabRename(props.dragging, editing(), rename.isPending)) return
     const session = props.session()
-    if (!session) return
-    titleEl.textContent = session.title
+    if (Option.isNone(session)) return
+    titleEl.textContent = session.value.title
     setEditing(true)
 
     requestAnimationFrame(() => {
@@ -192,7 +203,7 @@ export function TabNavItem(props: {
       classList={{ invisible: props.hidden }}
       data-active={props.active}
       data-dragging={props.dragging}
-      data-state={props.active || props.pressed ? "pressed" : undefined}
+      {...(props.active || props.pressed ? { "data-state": "pressed" } : {})}
       onMouseDown={(event) => {
         if (event.button !== MIDDLE_MOUSE_BUTTON) return
         event.preventDefault()
@@ -235,7 +246,7 @@ export function TabNavItem(props: {
       >
         <span data-slot="project-avatar-slot" class="flex size-4 shrink-0 items-center justify-center">
           <Show
-            when={props.session()}
+            when={Option.getOrUndefined(props.session())}
             keyed
             fallback={
               <span class="block size-4 rounded-[3px] border border-v2-border-border-muted" aria-hidden="true" />
@@ -254,7 +265,7 @@ export function TabNavItem(props: {
         <span
           ref={(el) => {
             titleEl = el
-            titleEl.textContent = title() ?? ""
+            titleEl.textContent = Option.getOrElse(title(), () => "")
           }}
           data-slot="tab-title"
           data-titlebar-tab-title
@@ -263,7 +274,7 @@ export function TabNavItem(props: {
             "overflow-hidden text-clip whitespace-nowrap": !editing(),
             "select-text": editing(),
           }}
-          contenteditable={editing() ? true : undefined}
+          {...(editing() ? { contenteditable: true } : {})}
           onDblClick={openRename}
           onKeyDown={(event) => {
             event.stopPropagation()
@@ -274,7 +285,7 @@ export function TabNavItem(props: {
             }
             if (event.key !== "Escape") return
             event.preventDefault()
-            titleEl.textContent = props.session()?.title ?? ""
+            titleEl.textContent = Option.getOrElse(sessionTitle(), () => "")
             closeRename(false)
           }}
           onBlur={() => closeRename(true)}
@@ -322,7 +333,7 @@ export function TabNavItem(props: {
         }}
         data={{
           projectName: projectName(),
-          title: props.session()?.title,
+          ...Option.match(sessionTitle(), { onNone: () => ({}), onSome: (title) => ({ title }) }),
           path: previewPath(),
           serverName: serverLabel(),
         }}
@@ -336,7 +347,10 @@ export function TabNavItem(props: {
             openRename()
           }}
         >
-          <MenuV2.Item disabled={!props.session() || rename.isPending} onSelect={() => setMenu("rename", true)}>
+          <MenuV2.Item
+            disabled={Option.isNone(props.session()) || rename.isPending}
+            onSelect={() => setMenu("rename", true)}
+          >
             {language.t("common.rename")}
           </MenuV2.Item>
           <MenuV2.Item onSelect={props.onClose}>{language.t("common.closeTab")}</MenuV2.Item>
@@ -371,7 +385,7 @@ export function DraftTabItem(props: {
       data-slot="titlebar-tab-item"
       data-active={props.active}
       data-dragging={props.dragging}
-      data-state={props.active || props.pressed ? "pressed" : undefined}
+      {...(props.active || props.pressed ? { "data-state": "pressed" } : {})}
       class="group relative flex h-7 w-full min-w-0 flex-row items-center gap-1.5 overflow-hidden rounded-[6px] px-1.5 [container-type:inline-size] whitespace-nowrap"
       classList={{ invisible: props.hidden }}
       onMouseDown={(event) => {

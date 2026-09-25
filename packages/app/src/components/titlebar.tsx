@@ -452,7 +452,7 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   onOverflowChange={setTabsAreOverflowing}
                   onNavigate={(tab, el) => {
                     tabs.select(tab)
-                    el?.scrollIntoView({ behavior: "instant" })
+                    if (Option.isSome(el)) el.value.scrollIntoView({ behavior: "instant" })
                   }}
                   onClose={(tab) => {
                     const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
