@@ -233,7 +233,9 @@ describe.concurrent("core.share", () => {
     ]
 
     await Effect.runPromise(Storage.remove(["share_snapshot", share.id]))
-    await Effect.runPromise(Storage.write(Schema.Array(Share.Data), ["share_event", share.id, Identifier.descending()], data))
+    await Effect.runPromise(
+      Storage.write(Schema.Array(Share.Data), ["share_event", share.id, Identifier.descending()], data),
+    )
 
     const result = await Effect.runPromise(Share.data(share.id))
     const snapshot = await Effect.runPromise(Storage.read(Share.Snapshot, ["share_snapshot", share.id]))
