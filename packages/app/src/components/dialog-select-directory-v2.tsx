@@ -347,9 +347,9 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
             aria-autocomplete="list"
             aria-expanded={suggestionsOpen()}
             aria-controls="directory-picker-v2-suggestions"
-            aria-activedescendant={
-              activeSuggestion() >= 0 ? `directory-picker-v2-suggestion-${activeSuggestion()}` : undefined
-            }
+            {...(activeSuggestion() >= 0
+              ? { "aria-activedescendant": `directory-picker-v2-suggestion-${activeSuggestion()}` }
+              : {})}
             onKeyDown={handleInputKey}
           />
           <div class="directory-picker-v2-actions">
@@ -372,7 +372,7 @@ export function DialogSelectDirectoryV2(props: DialogSelectDirectoryV2Props) {
                     data-directory-path={suggestion.absolute}
                     role="option"
                     aria-selected={index() === activeSuggestion()}
-                    data-active={index() === activeSuggestion() ? "" : undefined}
+                    bool:data-active={index() === activeSuggestion()}
                     onPointerMove={() => setActiveSuggestion(index())}
                     onClick={() => chooseSuggestion(suggestion)}
                   >
