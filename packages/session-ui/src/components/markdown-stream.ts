@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import { marked, type Tokens } from "marked"
+import { marked, type Token, type Tokens } from "marked"
 import remend from "remend"
 import { completedProjection } from "./markdown-projection"
 
@@ -49,6 +49,12 @@ function closesFence(raw: string, suffix: string) {
   return `${raw.slice(-(mark.length - 1))}${suffix}`.includes(mark)
 }
 
+// marked's Token union also has a Generic member with a string `type`, so the type check alone
+// does not narrow to Tokens.Code. The text check confirms the field that the code path reads.
+function isCodeToken(token: Token): token is Tokens.Code {
+  return token.type === "code" && typeof token.text === "string"
+}
+
 function heal(text: string) {
   return remend(text, { linkMode: "text-only" })
 }
@@ -68,9 +74,8 @@ export function stream(text: string, live: boolean): Block[] {
     if (!token || token.type === "space") continue
     let raw = token.raw
     while (tokens[index + 1]?.type === "space" && index + 1 < tail) raw += tokens[++index]!.raw
-    if (token.type === "code") {
-      const code = token as Tokens.Code
-      result.push({ raw, src: code.text, mode: "code", ...language(code.lang), complete: true })
+    if (isCodeToken(token)) {
+      result.push({ raw, src: token.text, mode: "code", ...language(token.lang), complete: true })
       continue
     }
     result.push({ raw, src: raw, mode: "full" })
@@ -80,11 +85,10 @@ export function stream(text: string, live: boolean): Block[] {
     .slice(tail)
     .map((token) => token.raw)
     .join("")
-  if (last.type !== "code") return [...result, { raw, src: heal(raw), mode: "live" }]
+  if (!isCodeToken(last)) return [...result, { raw, src: heal(raw), mode: "live" }]
 
-  const code = last as Tokens.Code
-  if (!open(code.raw)) return [...result, { raw, src: code.text, mode: "code", ...language(code.lang), complete: true }]
-  return [...result, { raw, src: openCode(code.raw), mode: "code", ...language(code.lang) }]
+  if (!open(last.raw)) return [...result, { raw, src: last.text, mode: "code", ...language(last.lang), complete: true }]
+  return [...result, { raw, src: openCode(last.raw), mode: "code", ...language(last.lang) }]
 }
 
 export function project(previous: Option.Option<Projection>, text: string, live: boolean): Projection {

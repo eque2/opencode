@@ -132,16 +132,11 @@ function createCopyButton(labels: CopyLabels) {
   const host = document.createElement("div")
   host.setAttribute("data-slot", "markdown-copy-button")
 
-  const state: Partial<CopyButtonState> = {}
-  const dispose = render(() => {
-    const [labelState, setLabels] = createSignal(labels, { equals: false })
-    const [copied, setCopied] = createSignal(false)
-    state.setLabels = setLabels
-    state.setCopied = setCopied
-    return <MarkdownCopyButton labels={labelState} copied={copied} />
-  }, host)
-  state.dispose = dispose
-  copyButtonState.set(host, state as CopyButtonState)
+  // The signals need no owner, so they are made before render and the state is complete at once.
+  const [labelState, setLabels] = createSignal(labels, { equals: false })
+  const [copied, setCopied] = createSignal(false)
+  const dispose = render(() => <MarkdownCopyButton labels={labelState} copied={copied} />, host)
+  copyButtonState.set(host, { setLabels, setCopied, dispose })
   return host
 }
 

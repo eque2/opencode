@@ -43,10 +43,9 @@ const parser = createMarkdownParser((code, language) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const instance = yield* Effect.promise(() => getHighlighter())
-      const name = language in bundledLanguages ? language : "text"
-      if (!instance.getLoadedLanguages().includes(name))
-        yield* Effect.promise(() => instance.loadLanguage(bundledLanguages[name as BundledLanguage]))
-      return instance.codeToHtml(code, { lang: name as BundledLanguage, theme: "OpenCode", tabindex: false })
+      const name = isBundledLanguage(language) ? language : "text"
+      if (!instance.getLoadedLanguages().includes(name)) yield* Effect.promise(() => instance.loadLanguage(name))
+      return instance.codeToHtml(code, { lang: name, theme: "OpenCode", tabindex: false })
     }),
   ),
 )
@@ -95,12 +94,11 @@ function runProject(request: Extract<MarkdownWorkerRequest, { type: "project" }>
 function highlight(request: Extract<MarkdownWorkerRequest, { type: "highlight" }>): Effect.Effect<void> {
   return Effect.gen(function* () {
     const instance = yield* Effect.promise(() => getHighlighter())
-    const language = request.language in bundledLanguages ? request.language : "text"
-    if (!instance.getLoadedLanguages().includes(language))
-      yield* Effect.promise(() => instance.loadLanguage(bundledLanguages[language as BundledLanguage]))
+    const language = isBundledLanguage(request.language) ? request.language : "text"
+    if (!instance.getLoadedLanguages().includes(language)) yield* Effect.promise(() => instance.loadLanguage(language))
 
     if (request.complete) {
-      const result = instance.codeToTokens(request.text, { lang: language as BundledLanguage, theme: "OpenCode" })
+      const result = instance.codeToTokens(request.text, { lang: language, theme: "OpenCode" })
       MutableHashMap.remove(streams, request.key)
       post({
         type: "highlight",
@@ -155,6 +153,11 @@ function highlight(request: Extract<MarkdownWorkerRequest, { type: "highlight" }
 function failure(cause: Cause.Cause<unknown>) {
   const error = Cause.squash(cause)
   return error instanceof Error ? error.message : String(error)
+}
+
+// Own keys only: an Object.prototype name such as "constructor" is not a bundled language.
+function isBundledLanguage(language: string): language is BundledLanguage {
+  return Object.hasOwn(bundledLanguages, language)
 }
 
 function getHighlighter() {
