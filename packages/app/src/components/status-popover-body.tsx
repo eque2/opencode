@@ -3,7 +3,6 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
-import { showToast } from "@/utils/toast"
 import { useNavigate } from "@solidjs/router"
 import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -259,14 +258,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const navigate = useNavigate()
   const settings = useSettings()
   const protocol = useServerProtocol()
-
-  const fail = (err: unknown) => {
-    showToast({
-      variant: "error",
-      title: language.t("common.requestFailed"),
-      description: err instanceof Error ? err.message : String(err),
-    })
-  }
 
   createEffect(() => {
     if (!props.shown()) return
