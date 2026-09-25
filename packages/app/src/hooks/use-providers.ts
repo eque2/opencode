@@ -2,7 +2,7 @@ import { useServerSync } from "@/context/server-sync"
 import { decode64 } from "@/utils/base64"
 import { useParams } from "@solidjs/router"
 import { HashSet, Iterable } from "effect"
-import { createEffect, createMemo, type Accessor } from "solid-js"
+import type { Accessor } from "solid-js"
 import { selectProviderCatalog } from "./provider-catalog"
 
 export const popularProviders = [
