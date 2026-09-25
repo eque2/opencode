@@ -146,17 +146,21 @@ export namespace Storage {
     return key.join("/") + ".json"
   }
 
-  export function read<T>(key: ReadonlyArray<string>) {
+  export function read<A>(schema: Schema.Codec<A, unknown>, key: ReadonlyArray<string>) {
     return Effect.gen(function* () {
       const storage = yield* adapter
-      const result = yield* storage.read(resolve(key))
-      if (Option.isNone(result) || result.value === "") return Option.none<T>()
-      return Option.some(JSON.parse(result.value) as T)
+      const text = yield* storage.read(resolve(key))
+      if (Option.isNone(text) || text.value === "") return Option.none()
+      return Option.some(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(text.value))
     })
   }
 
-  export function write<T>(key: ReadonlyArray<string>, value: T) {
-    return Effect.flatMap(adapter, (storage) => storage.write(resolve(key), JSON.stringify(value)))
+  export function write<A>(schema: Schema.Codec<A, unknown>, key: ReadonlyArray<string>, value: A) {
+    return Effect.gen(function* () {
+      const storage = yield* adapter
+      const text = yield* Schema.encodeEffect(Schema.fromJsonString(schema))(value)
+      yield* storage.write(resolve(key), text)
+    })
   }
 
   export function remove(key: ReadonlyArray<string>) {
@@ -177,12 +181,12 @@ export namespace Storage {
     })
   }
 
-  export function update<T>(key: ReadonlyArray<string>, fn: (draft: T) => void) {
+  export function update<A>(schema: Schema.Codec<A, unknown>, key: ReadonlyArray<string>, fn: (draft: A) => void) {
     return Effect.gen(function* () {
-      const val = yield* read<T>(key)
+      const val = yield* read(schema, key)
       if (Option.isNone(val)) return yield* new NotFoundError({ key })
       fn(val.value)
-      yield* write(key, val.value)
+      yield* write(schema, key, val.value)
       return val.value
     })
   }

@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Share } from "./src/core/share"
 import { Storage } from "./src/core/storage"
 
@@ -31,7 +31,7 @@ const test = Effect.gen(function* () {
   console.log("Events (reversed):", events.toReversed())
 
   for (const event of events.toReversed()) {
-    const data = yield* Storage.read(event)
+    const data = yield* Storage.read(Schema.Array(Share.Data), event)
     console.log("Event data (reversed order):", event, Option.getOrUndefined(data))
   }
 

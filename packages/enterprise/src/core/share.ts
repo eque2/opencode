@@ -77,14 +77,14 @@ export namespace Share {
     AlreadyExists: AlreadyExistsError,
   }
 
-  type Snapshot = {
-    data: ReadonlyArray<Data>
-  }
+  const DataList = Schema.Array(Data)
 
-  type Compaction = {
-    event?: string
-    data: ReadonlyArray<Data>
-  }
+  export const Snapshot = Schema.Struct({ data: DataList }).annotate({ identifier: "Share.Snapshot" })
+
+  const Compaction = Schema.Struct({
+    event: Schema.OptionFromOptionalKey(Schema.String),
+    data: DataList,
+  }).annotate({ identifier: "Share.Compaction" })
 
   const key = Match.type<Data>().pipe(
     Match.discriminatorsExhaustive("type")({
@@ -106,23 +106,26 @@ export namespace Share {
   }
 
   const readSnapshot = (shareID: string) =>
-    Storage.read<Snapshot>(["share_snapshot", shareID]).pipe(Effect.map(Option.map((snapshot) => snapshot.data)))
+    Storage.read(Snapshot, ["share_snapshot", shareID]).pipe(Effect.map(Option.map((snapshot) => snapshot.data)))
 
   const writeSnapshot = (shareID: string, data: ReadonlyArray<Data>) =>
-    Storage.write(["share_snapshot", shareID], { data })
+    Storage.write(Snapshot, ["share_snapshot", shareID], { data })
 
   const legacy = Effect.fnUntraced(function* (shareID: string) {
     const compaction = Option.getOrElse(
-      yield* Storage.read<Compaction>(["share_compaction", shareID]),
-      (): Compaction => ({ data: [] }),
+      yield* Storage.read(Compaction, ["share_compaction", shareID]),
+      (): typeof Compaction.Type => ({ event: Option.none(), data: [] }),
     )
-    const list = (yield* Storage.list({ prefix: ["share_event", shareID], before: compaction.event })).toReversed()
+    const list = (yield* Storage.list({
+      prefix: ["share_event", shareID],
+      before: Option.getOrUndefined(compaction.event),
+    })).toReversed()
     if (list.length === 0) {
       if (compaction.data.length > 0) yield* writeSnapshot(shareID, compaction.data)
       return compaction.data
     }
 
-    const events = yield* Effect.forEach(list, (event) => Storage.read<Data[]>(event), { concurrency: "unbounded" })
+    const events = yield* Effect.forEach(list, (event) => Storage.read(DataList, event), { concurrency: "unbounded" })
     const next = merge(
       compaction.data,
       events.flatMap((item) => Option.getOrElse(item, () => [])),
@@ -130,8 +133,8 @@ export namespace Share {
 
     yield* Effect.all(
       [
-        Storage.write(["share_compaction", shareID], {
-          event: list.at(-1)?.at(-1),
+        Storage.write(Compaction, ["share_compaction", shareID], {
+          event: Option.fromNullishOr(list.at(-1)?.at(-1)),
           data: next,
         }),
         writeSnapshot(shareID, next),
@@ -168,7 +171,7 @@ export namespace Share {
     }
     const exists = yield* get(info.id)
     if (Option.isSome(exists)) return yield* new AlreadyExistsError({ id: info.id })
-    yield* Effect.all([Storage.write(["share", info.id], info), writeSnapshot(info.id, [])], {
+    yield* Effect.all([Storage.write(Info, ["share", info.id], info), writeSnapshot(info.id, [])], {
       concurrency: "unbounded",
       discard: true,
     })
@@ -176,7 +179,7 @@ export namespace Share {
   })
 
   export const get = Effect.fn("Share.get")(function* (id: string) {
-    return yield* Storage.read<Info>(["share", id])
+    return yield* Storage.read(Info, ["share", id])
   })
 
   export const remove = Effect.fn("Share.remove")(function* (input: typeof Credentials.Encoded) {
@@ -220,11 +223,12 @@ export namespace Share {
     const shareID = body.share.id
     const write = Match.type<Data>().pipe(
       Match.discriminatorsExhaustive("type")({
-        session: (item) => Storage.write(["share_data", shareID, "session"], item.data),
-        message: (item) => Storage.write(["share_data", shareID, "message", item.data.id], item.data),
-        part: (item) => Storage.write(["share_data", shareID, "part", item.data.messageID, item.data.id], item.data),
-        session_diff: (item) => Storage.write(["share_data", shareID, "session_diff"], item.data),
-        model: (item) => Storage.write(["share_data", shareID, "model"], item.data),
+        session: (item) => Storage.write(SessionData, ["share_data", shareID, "session"], item.data),
+        message: (item) => Storage.write(MessageData, ["share_data", shareID, "message", item.data.id], item.data),
+        part: (item) =>
+          Storage.write(PartData, ["share_data", shareID, "part", item.data.messageID, item.data.id], item.data),
+        session_diff: (item) => Storage.write(DiffData, ["share_data", shareID, "session_diff"], item.data),
+        model: (item) => Storage.write(ModelData, ["share_data", shareID, "model"], item.data),
       }),
     )
     yield* Effect.forEach(body.data, write, { concurrency: "unbounded", discard: true })

@@ -1,14 +1,16 @@
 import { describe, expect, test, afterAll } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { Storage } from "../../src/core/storage"
+
+const User = Schema.Struct({ name: Schema.String })
 
 describe("core.storage", () => {
   test("should list files with after and before range", async () => {
-    await Effect.runPromise(Storage.write(["test", "users", "user1"], { name: "user1" }))
-    await Effect.runPromise(Storage.write(["test", "users", "user2"], { name: "user2" }))
-    await Effect.runPromise(Storage.write(["test", "users", "user3"], { name: "user3" }))
-    await Effect.runPromise(Storage.write(["test", "users", "user4"], { name: "user4" }))
-    await Effect.runPromise(Storage.write(["test", "users", "user5"], { name: "user5" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user1"], { name: "user1" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user2"], { name: "user2" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user3"], { name: "user3" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user4"], { name: "user4" }))
+    await Effect.runPromise(Storage.write(User, ["test", "users", "user5"], { name: "user5" }))
 
     const result = await Effect.runPromise(Storage.list({ prefix: ["test", "users"], after: "user2", before: "user4" }))
 

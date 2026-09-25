@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Share } from "../../src/core/share"
 import { Storage } from "../../src/core/storage"
 import { Identifier } from "@opencode-ai/core/util/identifier"
@@ -41,7 +41,7 @@ describe.concurrent("core.share", () => {
       }),
     )
 
-    const snapshot = await Effect.runPromise(Storage.read<{ data: Share.Data[] }>(["share_snapshot", share.id]))
+    const snapshot = await Effect.runPromise(Storage.read(Share.Snapshot, ["share_snapshot", share.id]))
     expect(Option.getOrThrow(snapshot).data).toHaveLength(1)
 
     await Effect.runPromise(Share.remove({ id: share.id, secret: share.secret }))
@@ -79,7 +79,7 @@ describe.concurrent("core.share", () => {
       }),
     )
 
-    const snapshot = await Effect.runPromise(Storage.read<{ data: Share.Data[] }>(["share_snapshot", share.id]))
+    const snapshot = await Effect.runPromise(Storage.read(Share.Snapshot, ["share_snapshot", share.id]))
     expect(Option.getOrThrow(snapshot).data).toHaveLength(2)
 
     await Effect.runPromise(Share.remove({ id: share.id, secret: share.secret }))
@@ -232,10 +232,10 @@ describe.concurrent("core.share", () => {
     ]
 
     await Effect.runPromise(Storage.remove(["share_snapshot", share.id]))
-    await Effect.runPromise(Storage.write(["share_event", share.id, Identifier.descending()], data))
+    await Effect.runPromise(Storage.write(Schema.Array(Share.Data), ["share_event", share.id, Identifier.descending()], data))
 
     const result = await Effect.runPromise(Share.data(share.id))
-    const snapshot = await Effect.runPromise(Storage.read<{ data: Share.Data[] }>(["share_snapshot", share.id]))
+    const snapshot = await Effect.runPromise(Storage.read(Share.Snapshot, ["share_snapshot", share.id]))
 
     expect(result).toHaveLength(1)
     expect(Option.getOrThrow(snapshot).data).toHaveLength(1)
