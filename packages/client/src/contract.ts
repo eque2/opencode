@@ -1,5 +1,6 @@
 import { makeDefaultApi } from "@opencode-ai/protocol/api"
 import { InvalidRequestError, SessionNotFoundError } from "@opencode-ai/protocol/errors"
+import { HashSet } from "effect"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 
 class LocationMiddleware extends HttpApiMiddleware.Service<LocationMiddleware>()(
@@ -50,4 +51,4 @@ export const endpointNames = {
   "question.request.list": "listRequests",
 } as const
 
-export const omitEndpoints = new Set(["fs.read", "pty.connect", "pty.connectToken"])
+export const omitEndpoints = HashSet.make("fs.read", "pty.connect", "pty.connectToken")

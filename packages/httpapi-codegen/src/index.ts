@@ -92,7 +92,7 @@ type Transport = {
 type CompileOptions = {
   readonly groupNames?: Readonly<Record<string, string>>
   readonly endpointNames?: Readonly<Record<string, string>>
-  readonly omitEndpoints?: ReadonlySet<string>
+  readonly omitEndpoints?: HashSet.HashSet<string>
 }
 
 type PromiseOptions = {
@@ -144,7 +144,7 @@ function compileResult<Id extends string, Groups extends HttpApiGroup.Constraint
   HttpApi.reflect(api, {
     onGroup() {},
     onEndpoint({ endpoint, errors, group, middleware }) {
-      if (options?.omitEndpoints?.has(endpoint.identifier)) return
+      if (options?.omitEndpoints !== undefined && HashSet.has(options.omitEndpoints, endpoint.identifier)) return
       reflected = Chunk.append(reflected, { endpoint, errors, group, middleware })
     },
   })

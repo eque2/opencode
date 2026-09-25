@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, FileSystem, Schema, SchemaAST, SchemaGetter } from "effect"
+import { Effect, FileSystem, HashSet, Schema, SchemaAST, SchemaGetter } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi"
 import { format } from "prettier"
 import {
@@ -157,7 +157,7 @@ describe("HttpApiCodegen.generate", () => {
         .add(HttpApiEndpoint.get("pty.get", "/pty", { success: Schema.String }))
         .add(HttpApiEndpoint.get("pty.connect", "/pty/connect", { success: Schema.Boolean })),
     )
-    const contract = compileContract(source, { omitEndpoints: new Set(["pty.connect"]) })
+    const contract = compileContract(source, { omitEndpoints: HashSet.make("pty.connect") })
 
     expect(contract.groups[0]?.endpoints.map((endpoint) => endpoint.endpoint.identifier)).toEqual(["pty.get"])
   })
