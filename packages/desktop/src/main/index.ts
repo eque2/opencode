@@ -8,7 +8,7 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
 
-import { Deferred, Effect, Fiber } from "effect"
+import { Data, Deferred, Effect, Fiber } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -63,6 +63,8 @@ const APP_IDS: Record<string, string> = {
 const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
 const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
+
+class PortError extends Data.TaggedError("PortError")<{ readonly message: string }> {}
 
 let logger: ReturnType<typeof initLogging>
 let server: SidecarListener | null = null
@@ -356,16 +358,21 @@ const main = Effect.gen(function* () {
 
       const res = yield* Deferred.make<number, unknown>()
       const socket = createServer()
-      socket.on("error", (e) => Deferred.failSync(res, () => e))
+      // Node calls these listeners outside the fiber, so each one completes the Deferred directly.
+      socket.on("error", (e) => {
+        Deferred.doneUnsafe(res, Effect.fail(e))
+      })
       socket.listen(0, "127.0.0.1", () => {
         const address = socket.address()
         if (typeof address !== "object" || !address) {
           socket.close()
-          Deferred.failSync(res, () => new Error("Failed to get port"))
+          Deferred.doneUnsafe(res, Effect.fail(new PortError({ message: "Failed to get port" })))
           return
         }
         const port = address.port
-        socket.close(() => Effect.runSync(Deferred.succeed(res, port)))
+        socket.close(() => {
+          Deferred.doneUnsafe(res, Effect.succeed(port))
+        })
       })
 
       return yield* Deferred.await(res)
