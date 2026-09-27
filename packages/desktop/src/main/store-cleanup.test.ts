@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Array as Arr, DateTime, Effect, MutableHashSet, Order } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, DateTime, Effect, FileSystem, MutableHashSet, Order } from "effect"
 import { cleanupStoreFiles, deleteStoreFileIfEmpty } from "./store-cleanup"
 
 const roots = MutableHashSet.empty<string>()
 
+// Runs one Node.js filesystem step. A test fixture failure is a defect.
+const withFs = <A, E>(use: (fs: FileSystem.FileSystem) => Effect.Effect<A, E>) =>
+  FileSystem.FileSystem.pipe(Effect.flatMap(use), Effect.orDie, Effect.provide(NodeFileSystem.layer))
+
 const tempRoot = Effect.fnUntraced(function* () {
-  const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "opencode-store-cleanup-")))
+  const root = yield* withFs((fs) => fs.makeTempDirectory({ prefix: "opencode-store-cleanup-" }))
   MutableHashSet.add(roots, root)
   return root
 })
@@ -19,17 +22,17 @@ const writeStore = Effect.fnUntraced(function* (
   value: string,
   modified: DateTime.DateTime,
 ) {
-  yield* Effect.promise(() => writeFile(join(root, name), value))
-  yield* Effect.promise(() => utimes(join(root, name), DateTime.toDate(modified), DateTime.toDate(modified)))
+  yield* withFs((fs) => fs.writeFileString(join(root, name), value))
+  yield* withFs((fs) => fs.utimes(join(root, name), DateTime.toDate(modified), DateTime.toDate(modified)))
 })
 
-const listRoot = (root: string) => Effect.promise(() => readdir(root))
+const listRoot = (root: string) => withFs((fs) => fs.readDirectory(root))
 
 afterEach(() => {
   const pending = [...roots]
   MutableHashSet.clear(roots)
   return Effect.runPromise(
-    Effect.forEach(pending, (root) => Effect.promise(() => rm(root, { recursive: true, force: true })), {
+    Effect.forEach(pending, (root) => withFs((fs) => fs.remove(root, { recursive: true, force: true })), {
       concurrency: "unbounded",
       discard: true,
     }),

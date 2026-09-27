@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { open } from "node:fs/promises"
-import { Data, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Data, Effect, FileSystem, MutableHashMap, MutableHashSet, Option } from "effect"
+import type { PlatformError } from "effect/PlatformError"
 import { nativeT } from "./native-translations"
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -59,28 +60,27 @@ export const assertAttachmentBudget = (files: { size: number }[]) =>
   files.reduce((sum, file) => sum + file.size, 0) <= MAX_ATTACHMENT_BYTES ? Effect.void : Effect.fail(sizeLimitError())
 
 export const readAttachment = (filePath: string, maxBytes = MAX_ATTACHMENT_BYTES) =>
-  Effect.acquireUseRelease(
-    fileOperation(() => open(filePath, "r")),
-    (file) =>
-      Effect.gen(function* () {
-        const info = yield* fileOperation(() => file.stat())
-        if (info.size > maxBytes) return yield* sizeLimitError()
-        const bytes = Buffer.allocUnsafe(info.size)
-        let offset = 0
-        while (offset < info.size) {
-          const result = yield* fileOperation(() => file.read(bytes, offset, info.size - offset, offset))
-          if (result.bytesRead === 0) break
-          offset += result.bytesRead
-        }
-        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + offset)
-      }),
-    (file) => fileOperation(() => file.close()),
-  )
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const file = yield* fs.open(filePath, { flag: "r" }).pipe(Effect.mapError(fileError))
+    const info = yield* file.stat.pipe(Effect.mapError(fileError))
+    const size = Number(info.size)
+    if (size > maxBytes) return yield* sizeLimitError()
+    const bytes = Buffer.allocUnsafe(size)
+    let offset = 0
+    while (offset < size) {
+      // The handle keeps its own read position, so each read fills the rest of the buffer.
+      const bytesRead = yield* file.read(bytes.subarray(offset)).pipe(Effect.mapError(fileError))
+      if (bytesRead === 0) break
+      offset += bytesRead
+    }
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + offset)
+  }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer))
 
-// The IPC boundary forwards the message to the renderer, so a filesystem failure keeps the Node.js message text.
-const fileOperation = <A>(run: () => Promise<A>) =>
-  Effect.tryPromise({
-    try: run,
-    catch: (cause) =>
-      new AttachmentPickerError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+// The IPC boundary forwards the message to the renderer, so a filesystem failure keeps the Node.js message text,
+// which PlatformError keeps as its cause.
+const fileError = (error: PlatformError) =>
+  new AttachmentPickerError({
+    message: error.cause instanceof Error ? error.cause.message : error.message,
+    cause: error.cause ?? error,
   })

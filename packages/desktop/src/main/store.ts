@@ -1,8 +1,8 @@
 import Store from "electron-store"
 import electron from "electron"
-import { rmSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, MutableHashMap, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, FileSystem, MutableHashMap, Option } from "effect"
 
 import { SETTINGS_STORE } from "./store-keys"
 import { deleteEmptyStoreFile } from "./store-cleanup"
@@ -35,11 +35,13 @@ export function removeStoreFileIfEmpty(name: string) {
         }),
       ),
       Effect.asVoid,
+      Effect.provide(NodeFileSystem.layer),
     ),
   )
 }
 
-export function removeStoreFile(name: string) {
-  rmSync(join(electron.app.getPath("userData"), name), { force: true })
+export const removeStoreFile = Effect.fnUntraced(function* (name: string) {
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.remove(join(electron.app.getPath("userData"), name), { force: true })
   MutableHashMap.remove(cache, name)
-}
+})

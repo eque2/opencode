@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
-import { existsSync } from "node:fs"
-import { chmod, copyFile, mkdir, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import { app } from "electron"
-import { Array as Arr, Config, ConfigProvider, Data, Effect, Option, Predicate } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, Config, ConfigProvider, Data, Effect, FileSystem, Option, Predicate } from "effect"
+import type { PlatformError } from "effect/PlatformError"
 
 const execFileAsync = promisify(execFile)
 const root = dirname(fileURLToPath(import.meta.url))
@@ -31,10 +31,23 @@ const attempt = <A>(run: () => Promise<A>) =>
     catch: (cause) => new BackgroundCliError({ message: errorMessage(cause), cause }),
   })
 
+// The log keeps the Node.js message text, which PlatformError keeps as its cause.
+const fsStep = <A>(effect: Effect.Effect<A, PlatformError>) =>
+  effect.pipe(
+    Effect.mapError((error) => {
+      const cause = error.cause ?? error
+      return new BackgroundCliError({ message: errorMessage(cause), cause })
+    }),
+  )
+
+// existsSync reported an unreadable path as absent, so an error also counts as absent.
+const exists = (fs: FileSystem.FileSystem, path: string) => fs.exists(path).pipe(Effect.orElseSucceed(() => false))
+
 // main/index.ts awaits this Promise; it rejects with a BackgroundCliError when a CLI step fails.
 export function startBackgroundCli(logger: Logger, shellStateHome?: string) {
   return Effect.runPromise(
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
       const stateHome = yield* Config.option(Config.String("XDG_STATE_HOME")).parse(launchEnv).pipe(Effect.orDie)
       const bundled = app.isPackaged
         ? join(process.resourcesPath, executableName())
@@ -45,11 +58,15 @@ export function startBackgroundCli(logger: Logger, shellStateHome?: string) {
       const binary = app.isPackaged ? yield* installCli(bundled, version, logger) : bundled
 
       // Option.none() stands for an unset XDG_STATE_HOME, which run removes from the child env.
-      const candidates = Arr.dedupe([
-        stateHome,
-        Option.fromNullishOr(shellStateHome),
-        ...desktopStateNames.map((name) => Option.some(join(app.getPath("appData"), name))),
-      ]).filter((candidate) => Option.match(candidate, { onNone: () => true, onSome: existsSync }))
+      const candidates = yield* Effect.filter(
+        Arr.dedupe([
+          stateHome,
+          Option.fromNullishOr(shellStateHome),
+          ...desktopStateNames.map((name) => Option.some(join(app.getPath("appData"), name))),
+        ]),
+        (candidate) =>
+          Option.match(candidate, { onNone: () => Effect.succeed(true), onSome: (path) => exists(fs, path) }),
+      )
       const discovered = yield* Effect.forEach(
         candidates,
         (candidate) =>
@@ -80,25 +97,26 @@ export function startBackgroundCli(logger: Logger, shellStateHome?: string) {
         username: "opencode",
         password,
       }
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   )
 }
 
 function installCli(source: string, version: string, logger: Logger) {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
     const directory = join(app.getPath("userData"), "cli", version.replace(/[^a-zA-Z0-9._-]/g, "-"))
     const destination = join(directory, executableName())
-    if (existsSync(destination)) {
+    if (yield* exists(fs, destination)) {
       logger.log("v2 CLI staged executable reused", { path: destination, version })
       return destination
     }
 
     const temp = destination + `.${process.pid}.tmp`
-    yield* attempt(() => mkdir(directory, { recursive: true }))
-    yield* attempt(() => copyFile(source, temp))
-    if (process.platform !== "win32") yield* attempt(() => chmod(temp, 0o755))
+    yield* fsStep(fs.makeDirectory(directory, { recursive: true }))
+    yield* fsStep(fs.copyFile(source, temp))
+    if (process.platform !== "win32") yield* fsStep(fs.chmod(temp, 0o755))
     // A failed rename removes the temporary copy, then fails with the rename error.
-    yield* attempt(() => rename(temp, destination)).pipe(Effect.tapError(() => attempt(() => rm(temp, { force: true }))))
+    yield* fsStep(fs.rename(temp, destination)).pipe(Effect.tapError(() => fsStep(fs.remove(temp, { force: true }))))
     logger.log("v2 CLI executable staged", { source, path: destination, version })
     return destination
   })

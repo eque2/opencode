@@ -1,6 +1,7 @@
-import { readdir, readFile, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
-import { Array as Arr, Clock, Data, Effect, Option, Predicate, Schema } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, ByteSize, Clock, Data, Effect, FileSystem, Option, Predicate, Schema } from "effect"
+import type { PlatformError } from "effect/PlatformError"
 
 const EMPTY_STORE_MAX_BYTES = 128
 const DRAFT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -20,24 +21,20 @@ class StoreFileError extends Data.TaggedError("StoreFileError")<{ readonly cause
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 export function cleanupStoreFiles(userDataPath: string, now?: number) {
-  return Effect.runPromise(cleanupStores(userDataPath, now))
+  return Effect.runPromise(cleanupStores(userDataPath, now).pipe(Effect.provide(NodeFileSystem.layer)))
 }
 
 export function deleteStoreFileIfEmpty(userDataPath: string, name: string) {
-  return Effect.runPromise(deleteEmptyStoreFile(userDataPath, name))
+  return Effect.runPromise(deleteEmptyStoreFile(userDataPath, name).pipe(Effect.provide(NodeFileSystem.layer)))
 }
 
 const cleanupStores = Effect.fnUntraced(function* (userDataPath: string, nowOverride?: number) {
+  const fs = yield* FileSystem.FileSystem
   const now = nowOverride ?? (yield* Clock.currentTimeMillis)
-  const entries = yield* attempt(() => readdir(userDataPath, { withFileTypes: true })).pipe(
-    Effect.orElseSucceed(() => []),
-  )
+  const names = yield* fs.readDirectory(userDataPath).pipe(Effect.orElseSucceed((): string[] => []))
+  // storeCandidate keeps regular files only, through fileStats.
   const candidates = Arr.getSomes(
-    yield* Effect.forEach(
-      entries.filter((entry) => entry.isFile()),
-      (entry) => storeCandidate(userDataPath, entry.name),
-      { concurrency: "unbounded" },
-    ),
+    yield* Effect.forEach(names, (name) => storeCandidate(userDataPath, name), { concurrency: "unbounded" }),
   )
 
   const expired = candidates.filter(
@@ -51,7 +48,7 @@ const cleanupStores = Effect.fnUntraced(function* (userDataPath: string, nowOver
 
   const deleted = yield* Effect.forEach(
     stale,
-    (candidate) => attempt(() => rm(candidate.path, { force: true })).pipe(Effect.as(candidate.name)),
+    (candidate) => fs.remove(candidate.path, { force: true }).pipe(Effect.mapError(storeFileError), Effect.as(candidate.name)),
     { concurrency: "unbounded" },
   )
 
@@ -66,7 +63,8 @@ export const deleteEmptyStoreFile = Effect.fnUntraced(function* (userDataPath: s
   if (Option.isNone(stats)) return false
   if (!(yield* isEmptyStore(file, stats.value.size))) return false
 
-  yield* attempt(() => rm(file, { force: true }))
+  const fs = yield* FileSystem.FileSystem
+  yield* fs.remove(file, { force: true }).pipe(Effect.mapError(storeFileError))
   return true
 })
 
@@ -82,7 +80,8 @@ const storeCandidate = Effect.fnUntraced(function* (userDataPath: string, name: 
     name,
     path,
     kind: kind.value,
-    modified: stats.value.mtimeMs,
+    // Node.js always reports mtime, so the fallback only guards other backends.
+    modified: Option.match(stats.value.mtime, { onNone: () => 0, onSome: (mtime) => mtime.getTime() }),
     empty: yield* isEmptyStore(path, stats.value.size),
   })
 })
@@ -93,14 +92,16 @@ function storeKind(name: string): Option.Option<StoreKind> {
   return Option.none()
 }
 
-function fileStats(file: string) {
-  return attempt(() => stat(file)).pipe(Effect.option, Effect.map(Option.filter((stats) => stats.isFile())))
-}
+const fileStats = Effect.fnUntraced(function* (file: string) {
+  const fs = yield* FileSystem.FileSystem
+  return yield* fs.stat(file).pipe(Effect.option, Effect.map(Option.filter((stats) => stats.type === "File")))
+})
 
-const isEmptyStore = Effect.fnUntraced(function* (file: string, size: number) {
-  if (size > EMPTY_STORE_MAX_BYTES) return false
+const isEmptyStore = Effect.fnUntraced(function* (file: string, size: ByteSize.ByteSize) {
+  if (Number(size) > EMPTY_STORE_MAX_BYTES) return false
 
-  const raw = yield* attempt(() => readFile(file, "utf8")).pipe(Effect.option)
+  const fs = yield* FileSystem.FileSystem
+  const raw = yield* fs.readFileString(file, "utf8").pipe(Effect.option)
   return Option.match(raw, {
     onNone: () => false,
     onSome: (text) =>
@@ -109,6 +110,7 @@ const isEmptyStore = Effect.fnUntraced(function* (file: string, size: number) {
   })
 })
 
-function attempt<A>(evaluate: () => Promise<A>) {
-  return Effect.tryPromise({ try: evaluate, catch: (cause) => new StoreFileError({ cause }) })
+// The rejected Promise keeps the Node.js error, which PlatformError keeps as its cause.
+function storeFileError(error: PlatformError) {
+  return new StoreFileError({ cause: error.cause ?? error })
 }

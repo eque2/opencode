@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { mkdirSync, rmSync } from "node:fs"
 import * as http from "node:http"
 import { createServer } from "node:net"
 import { homedir, tmpdir } from "node:os"
@@ -8,7 +7,8 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
 
-import { Array as Arr, Config, ConfigProvider, Data, Deferred, Effect, Fiber, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, Config, ConfigProvider, Data, Deferred, Effect, Fiber, FileSystem, Option } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -46,7 +46,7 @@ import {
 import { createWslServersController } from "./wsl/servers"
 import { registerWslIpcHandlers } from "./wsl/ipc"
 import { spawnWslSidecar } from "./wsl/sidecar"
-import { migrate } from "./migrate"
+import { runTauriMigration } from "./migrate"
 import { cleanupStoreFiles } from "./store-cleanup"
 import { startBackgroundCli } from "./background-cli"
 import { setNativeTranslations } from "./native-translations"
@@ -66,7 +66,7 @@ const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 class PortError extends Data.TaggedError("PortError")<{ readonly message: string }> {}
 class StartupStepError extends Data.TaggedError("StartupStepError")<{ readonly cause: unknown }> {}
 
-let logger: ReturnType<typeof initLogging>
+let logger: Effect.Success<typeof initLogging>
 let server: Option.Option<SidecarListener> = Option.none()
 
 let pendingDeepLinks: ReadonlyArray<string> = []
@@ -131,12 +131,15 @@ const ensureLoopbackNoProxy = Effect.forEach(
 )
 
 // Creates the throwaway data folders for the onboarding E2E run and points the app and the
-// sidecar at them through process.env.
-function createOnboardingTestRoot() {
+// sidecar at them through process.env. A filesystem failure stops startup, as the thrown error did.
+const createOnboardingTestRoot = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem
   const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
-  rmSync(root, { recursive: true, force: true })
-  ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
-    mkdirSync(join(root, dir), { recursive: true }),
+  yield* fs.remove(root, { recursive: true, force: true }).pipe(Effect.orDie)
+  yield* Effect.forEach(
+    ["data", "config", "cache", "state", "desktop", "session"],
+    (dir) => fs.makeDirectory(join(root, dir), { recursive: true }).pipe(Effect.orDie),
+    { discard: true },
   )
   Object.assign(process.env, {
     OPENCODE_DB: ":memory:",
@@ -146,7 +149,7 @@ function createOnboardingTestRoot() {
     XDG_STATE_HOME: join(root, "state"),
   })
   return root
-}
+})
 
 const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
@@ -161,7 +164,7 @@ const main = Effect.gen(function* () {
   const sidecarVersion = Option.contains(yield* readEnv("OPENCODE_SIDECAR_V2"), "1") ? "v2" : "v1"
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
-  const onboardingTestRoot = testOnboarding ? Option.some(createOnboardingTestRoot()) : Option.none<string>()
+  const onboardingTestRoot = testOnboarding ? Option.some(yield* createOnboardingTestRoot) : Option.none<string>()
   app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
   app.setAppUserModelId(appId)
   app.setPath(
@@ -172,9 +175,9 @@ const main = Effect.gen(function* () {
     }),
   )
   if (Option.isSome(onboardingTestRoot)) app.setPath("sessionData", join(onboardingTestRoot.value, "session"))
-  initializeOldLayoutEligibility(app.getPath("userData"))
-  logger = initLogging()
-  initCrashReporter()
+  yield* initializeOldLayoutEligibility(app.getPath("userData"))
+  logger = yield* initLogging
+  yield* initCrashReporter
 
   const wslServers = createWslServersController(
     app.getVersion(),
@@ -290,7 +293,8 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
-  if (!testOnboarding) yield* Effect.promise(() => migrate())
+  // A migration failure stops startup, as the rejected Promise did.
+  if (!testOnboarding) yield* runTauriMigration().pipe(Effect.orDie)
   yield* Effect.promise(() => cleanupStoreFiles(app.getPath("userData"))).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
@@ -480,4 +484,4 @@ const main = Effect.gen(function* () {
   if (windows.length) createMenu(menuDeps)
 })
 
-Effect.runFork(main)
+Effect.runFork(main.pipe(Effect.provide(NodeFileSystem.layer)))

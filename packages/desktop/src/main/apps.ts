@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process"
-import { access, readFile, readdir } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import util from "node:util"
-import { Array as Arr, Config, Data, Effect, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Array as Arr, Config, Data, Effect, FileSystem, Option } from "effect"
 
 const execFilePromise = util.promisify(execFile)
 
@@ -11,7 +11,11 @@ class AppLookupError extends Data.TaggedError("AppLookupError")<{ readonly cause
 const attempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new AppLookupError({ cause }) })
 
-const exists = (path: string) => attempt(() => access(path)).pipe(Effect.as(true), Effect.orElseSucceed(() => false))
+const exists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    return yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false))
+  })
 
 // Returns the first candidate path that exists, checking in order and stopping at the first hit.
 const firstExisting = (paths: ReadonlyArray<string>) => Effect.findFirst(paths, (path) => exists(path))
@@ -19,14 +23,16 @@ const firstExisting = (paths: ReadonlyArray<string>) => Effect.findFirst(paths, 
 export function checkAppExists(appName: string) {
   if (process.platform === "win32") return true
   if (process.platform === "linux") return true
-  return Effect.runPromise(checkMacosApp(appName))
+  return Effect.runPromise(checkMacosApp(appName).pipe(Effect.provide(NodeFileSystem.layer)))
 }
 
 // Answers synchronously off Windows. On Windows the Promise resolves to null when no path is found,
 // which is the IPC reply type in preload/types.ts.
 export function resolveAppPath(appName: string) {
   if (process.platform !== "win32") return appName
-  return Effect.runPromise(resolveWindowsAppPath(appName).pipe(Effect.map(Option.getOrNull)))
+  return Effect.runPromise(
+    resolveWindowsAppPath(appName).pipe(Effect.map(Option.getOrNull), Effect.provide(NodeFileSystem.layer)),
+  )
 }
 
 function checkMacosApp(appName: string) {
@@ -49,6 +55,7 @@ function checkMacosApp(appName: string) {
 
 function resolveWindowsAppPath(appName: string) {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
     const output = yield* attempt(() => execFilePromise("where", [appName])).pipe(
       Effect.map((result) => result.stdout),
       Effect.option,
@@ -68,7 +75,9 @@ function resolveWindowsAppPath(appName: string) {
     // A read failure fails the whole lookup, as the rejected readFile did before.
     const resolveCmd = (path: string) =>
       Effect.gen(function* () {
-        const content = yield* attempt(() => readFile(path, "utf8"))
+        const content = yield* fs
+          .readFileString(path, "utf8")
+          .pipe(Effect.mapError((cause) => new AppLookupError({ cause })))
         for (const token of content.split('"').map((value: string) => value.trim())) {
           const lower = token.toLowerCase()
           if (!lower.includes(".exe")) continue
@@ -127,7 +136,7 @@ function resolveWindowsAppPath(appName: string) {
         const dirs = [dirname(path), dirname(dirname(path)), dirname(dirname(dirname(path)))]
         for (const dir of dirs) {
           // An unreadable directory is skipped.
-          const entries = yield* attempt(() => readdir(dir)).pipe(Effect.orElseSucceed((): string[] => []))
+          const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed((): string[] => []))
           for (const entry of entries) {
             const candidate = join(dir, entry)
             if (!hasExt(candidate, "exe")) continue

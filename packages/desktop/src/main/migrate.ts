@@ -1,9 +1,8 @@
 import { app } from "electron"
 import log from "electron-log/main.js"
-import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { Config, Data, Effect, Option, Schema } from "effect"
+import { Config, Data, Effect, FileSystem, Option, Schema } from "effect"
 import { CHANNEL } from "./constants"
 import { getStore } from "./store"
 
@@ -45,10 +44,10 @@ function tauriAppId() {
 // keep their full filename as the electron-store name so they match what the
 // renderer already passes via IPC (e.g. `"default.dat"`, `"opencode.global.dat"`).
 const migrateFile = Effect.fnUntraced(function* (datPath: string, filename: string) {
-  const parsed = yield* Effect.try({
-    try: () => readFileSync(datPath, "utf-8"),
-    catch: (cause) => new TauriMigrationError({ cause }),
-  }).pipe(
+  const fs = yield* FileSystem.FileSystem
+  // The log keeps the Node.js error, which PlatformError keeps as its cause.
+  const parsed = yield* fs.readFileString(datPath, "utf-8").pipe(
+    Effect.mapError((error) => new TauriMigrationError({ cause: error.cause ?? error })),
     Effect.flatMap(decodeTauriData),
     Effect.map(Option.some),
     Effect.catch((error) =>
@@ -87,16 +86,17 @@ export const runTauriMigration = Effect.fnUntraced(function* () {
   const dir = yield* tauriDir(tauriAppId())
   log.log("tauri migration: starting", { dir })
 
-  if (!existsSync(dir)) {
+  const fs = yield* FileSystem.FileSystem
+  // existsSync reported an unreadable path as absent, so an error also counts as absent.
+  if (!(yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false)))) {
     log.log("tauri migration: no tauri data directory found, nothing to migrate")
     getStore().set(TAURI_MIGRATED_KEY, true)
     return
   }
 
-  const files = yield* Effect.try({
-    try: () => readdirSync(dir),
-    catch: (cause) => new TauriMigrationError({ cause }),
-  })
+  const files = yield* fs
+    .readDirectory(dir)
+    .pipe(Effect.mapError((error) => new TauriMigrationError({ cause: error.cause ?? error })))
   yield* Effect.forEach(
     files.filter((filename) => filename.endsWith(".dat")),
     (filename) => migrateFile(join(dir, filename), filename),
@@ -106,7 +106,3 @@ export const runTauriMigration = Effect.fnUntraced(function* () {
   log.log("tauri migration: complete")
   getStore().set(TAURI_MIGRATED_KEY, true)
 })
-
-export function migrate() {
-  return Effect.runPromise(runTauriMigration())
-}

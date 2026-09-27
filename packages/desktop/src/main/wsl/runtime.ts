@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process"
-import { existsSync } from "node:fs"
 import { join } from "node:path"
 import * as pty from "@lydell/node-pty"
-import { Config, Data, Effect, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Config, Data, Effect, FileSystem, Option } from "effect"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../../preload/types"
 import { wslTerminalArgs } from "./policy"
 import { nativeT } from "../native-translations"
@@ -264,7 +264,7 @@ export function installWslDistro(name: string, opts?: RunWslOptions) {
         withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
         DEFAULT_WSL_INSTALL_TIMEOUT_MS,
       )
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   )
 }
 
@@ -280,7 +280,7 @@ export function installWslOpencode(version: string, distro: string, opts?: RunWs
         withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
         DEFAULT_WSL_INSTALL_TIMEOUT_MS,
       )
-    }),
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   )
 }
 
@@ -414,17 +414,15 @@ export function shellEscape(value: string) {
 }
 
 function resolveSystem32Command(command: string) {
-  return Config.option(Config.String("SystemRoot").pipe(Config.orElse(() => Config.String("windir")))).pipe(
-    Effect.map((root) =>
-      Option.match(root, {
-        onNone: () => command,
-        onSome: (systemRoot) => {
-          const resolved = join(systemRoot, "System32", command)
-          return existsSync(resolved) ? resolved : command
-        },
-      }),
-    ),
-  )
+  return Effect.gen(function* () {
+    const root = yield* Config.option(Config.String("SystemRoot").pipe(Config.orElse(() => Config.String("windir"))))
+    if (Option.isNone(root)) return command
+    const resolved = join(root.value, "System32", command)
+    const fs = yield* FileSystem.FileSystem
+    // existsSync reported an unreadable path as absent, so an error also falls back to the bare command.
+    const found = yield* fs.exists(resolved).pipe(Effect.orElseSucceed(() => false))
+    return found ? resolved : command
+  })
 }
 
 function withTimeout(opts: RunWslOptions | undefined, timeoutMs: number): RunWslOptions {

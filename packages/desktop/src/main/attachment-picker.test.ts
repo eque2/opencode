@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Exit } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, Exit, FileSystem } from "effect"
 import {
   AttachmentPickerError,
   assertAttachmentBudget,
@@ -11,12 +10,12 @@ import {
   readAttachment,
 } from "./attachment-picker"
 
-const withTempDirectory = <A, E>(use: (directory: string) => Effect.Effect<A, E>) =>
-  Effect.acquireUseRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), "opencode-attachment-"))),
-    use,
-    (directory) => Effect.promise(() => rm(directory, { recursive: true, force: true })),
-  )
+const withTempDirectory = <A, E>(use: (directory: string, fs: FileSystem.FileSystem) => Effect.Effect<A, E>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "opencode-attachment-" }).pipe(Effect.orDie)
+    return yield* use(directory, fs)
+  }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer))
 
 describe("assertAttachmentBudget", () => {
   test("accepts selections within the media ingest limit", () =>
@@ -39,10 +38,10 @@ describe("assertAttachmentBudget", () => {
 
   test("reads an approved file through a bounded buffer", () =>
     Effect.runPromise(
-      withTempDirectory((directory) =>
+      withTempDirectory((directory, fs) =>
         Effect.gen(function* () {
           const file = join(directory, "example.txt")
-          yield* Effect.promise(() => writeFile(file, "lorem ipsum"))
+          yield* fs.writeFileString(file, "lorem ipsum").pipe(Effect.orDie)
           expect(new TextDecoder().decode(yield* readAttachment(file))).toBe("lorem ipsum")
         }),
       ),
@@ -50,11 +49,11 @@ describe("assertAttachmentBudget", () => {
 
   test("rejects an oversized file before allocating its contents", () =>
     Effect.runPromise(
-      withTempDirectory((directory) =>
+      withTempDirectory((directory, fs) =>
         Effect.gen(function* () {
           const file = join(directory, "oversized.txt")
-          yield* Effect.promise(() => writeFile(file, ""))
-          yield* Effect.promise(() => truncate(file, MAX_ATTACHMENT_BYTES + 1))
+          yield* fs.writeFileString(file, "").pipe(Effect.orDie)
+          yield* fs.truncate(file, MAX_ATTACHMENT_BYTES + 1).pipe(Effect.orDie)
           const error = yield* Effect.flip(readAttachment(file))
           expect(error.message).toContain("20 MB limit")
         }),

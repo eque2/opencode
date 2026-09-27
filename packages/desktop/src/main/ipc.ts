@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process"
-import { stat } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
-import { Data, Effect, Option, Schema } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Data, Effect, FileSystem, Option, Schema } from "effect"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import { parseDesktopNativeBundle, type DesktopNativeBundle } from "@opencode-ai/app/i18n/desktop-native"
@@ -201,6 +201,7 @@ export function registerIpcHandlers(deps: Deps) {
     ) =>
       runIpcHandler(
         Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem
           const result = yield* Effect.promise(() =>
             dialog.showOpenDialog({
               properties: ["openFile", ...(opts?.multiple ? ["multiSelections" as const] : [])],
@@ -213,15 +214,17 @@ export function registerIpcHandlers(deps: Deps) {
           const files = yield* Effect.forEach(
             result.filePaths,
             (filePath) =>
-              Effect.tryPromise({ try: () => stat(filePath), catch: toIpcHandlerError }).pipe(
-                Effect.map((info) => ({ path: filePath, name: basename(filePath), size: info.size })),
+              fs.stat(filePath).pipe(
+                // The renderer receives the Node.js message text, which PlatformError keeps as its cause.
+                Effect.mapError((error) => toIpcHandlerError(error.cause ?? error)),
+                Effect.map((info) => ({ path: filePath, name: basename(filePath), size: Number(info.size) })),
               ),
             { concurrency: "unbounded" },
           )
           yield* assertAttachmentBudget(files)
           const token = pickedFiles.add(event.sender.id, result.filePaths)
           return Option.some({ token, files })
-        }).pipe(Effect.map(Option.getOrNull)),
+        }).pipe(Effect.map(Option.getOrNull), Effect.provide(NodeFileSystem.layer)),
       ),
   )
 
@@ -265,8 +268,12 @@ export function registerIpcHandlers(deps: Deps) {
 
   ipcMain.handle("reveal-path", (_event: IpcMainInvokeEvent, path: string) =>
     Effect.runPromise(
-      Effect.isSuccess(Effect.tryPromise(() => stat(path))).pipe(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        return yield* Effect.isSuccess(fs.stat(path))
+      }).pipe(
         Effect.tap((exists) => (exists ? Effect.sync(() => shell.showItemInFolder(path)) : Effect.void)),
+        Effect.provide(NodeFileSystem.layer),
       ),
     ),
   )

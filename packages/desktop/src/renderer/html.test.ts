@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Effect, FileSystem } from "effect"
 import { join, dirname, resolve } from "node:path"
-import { existsSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 
 const dir = dirname(fileURLToPath(import.meta.url))
@@ -68,8 +68,9 @@ describe("electron vite publicDir", () => {
         expect(pub).not.toBeNull()
         expect(rendererRoot).not.toBeNull()
         const resolved = resolve(root, rendererRoot![1], pub![1])
-        expect(existsSync(resolved)).toBe(true)
-        expect(existsSync(join(resolved, "oc-theme-preload.js"))).toBe(true)
-      }),
+        const fs = yield* FileSystem.FileSystem
+        expect(yield* fs.exists(resolved)).toBe(true)
+        expect(yield* fs.exists(join(resolved, "oc-theme-preload.js"))).toBe(true)
+      }).pipe(Effect.provide(NodeFileSystem.layer)),
     ))
 })

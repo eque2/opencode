@@ -3,9 +3,9 @@ import { resolveThemeVariant } from "@opencode-ai/ui/theme/resolve"
 import { parseDesktopTheme } from "@opencode-ai/ui/theme/validate"
 import oc2ThemeJson from "../../../ui/src/theme/themes/oc-2.json"
 import { randomUUID } from "node:crypto"
-import { rmSync } from "node:fs"
 import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol, shell } from "electron"
-import { Config, Data, Effect, Option } from "effect"
+import { NodeFileSystem } from "@effect/platform-node"
+import { Config, Data, Effect, FileSystem, Option } from "effect"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
@@ -57,9 +57,21 @@ const windowIDs = new WeakMap<BrowserWindow, string>()
 const registry = createWindowRegistry<BrowserWindow>({
   read: () => getStore().get(WINDOW_IDS_KEY),
   write: (ids) => getStore().set(WINDOW_IDS_KEY, ids),
+  // The registry calls cleanup from a synchronous window event, so the files go in the background.
+  // A failure is logged; the synchronous rmSync used to throw it out of the event handler.
   cleanup: (id) => {
-    rmSync(join(app.getPath("userData"), windowStateFile(id)), { force: true })
-    removeStoreFile(windowDataFile(id))
+    Effect.runFork(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        yield* fs.remove(join(app.getPath("userData"), windowStateFile(id)), { force: true })
+        yield* removeStoreFile(windowDataFile(id))
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => writeLog("window", "failed to remove window files", { id, error }, "warn")),
+        ),
+        Effect.provide(NodeFileSystem.layer),
+      ),
+    )
   },
 })
 const titlebarHeight = 40
