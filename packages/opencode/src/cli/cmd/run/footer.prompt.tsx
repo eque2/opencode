@@ -966,7 +966,7 @@ export function createPromptState(input: PromptInput): PromptState {
       typeId: type,
     })
     MutableHashMap.set(marks, id, parts.length)
-    parts.push(part)
+    parts = [...parts, part]
     hide()
     syncDraft()
     scheduleRows()

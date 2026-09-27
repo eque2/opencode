@@ -461,16 +461,17 @@ export function RunFooterView(props: RunFooterViewProps) {
       return []
     }
 
-    const items: Array<{ kind: string; key: string; label: string }> = []
-    if (foregroundSubagents() && backgroundShortcut()) {
-      items.push({ kind: "background", key: backgroundShortcut(), label: "background" })
-    }
-    if (queuedPrompts().length > 0 && queuedShortcut()) {
-      items.push({ kind: "queued", key: queuedShortcut(), label: `${queue()} queued` })
-    }
-    if (activeTabs().length > 0 && subagentShortcut()) {
-      items.push({ kind: "subagents", key: subagentShortcut(), label: "subagents" })
-    }
+    const items: Array<{ kind: string; key: string; label: string }> = [
+      ...(foregroundSubagents() && backgroundShortcut()
+        ? [{ kind: "background", key: backgroundShortcut(), label: "background" }]
+        : []),
+      ...(queuedPrompts().length > 0 && queuedShortcut()
+        ? [{ kind: "queued", key: queuedShortcut(), label: `${queue()} queued` }]
+        : []),
+      ...(activeTabs().length > 0 && subagentShortcut()
+        ? [{ kind: "subagents", key: subagentShortcut(), label: "subagents" }]
+        : []),
+    ]
 
     const limit = responsive().statusline.contextHintLimit
     return limit === undefined ? items : items.slice(0, limit)
