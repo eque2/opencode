@@ -28,12 +28,12 @@ export function messageTurnSummaryCommit(
 ): StreamCommit | undefined {
   const info = message.info
   if (info.role !== "assistant") {
-    return
+    return undefined
   }
 
   const completed = info.time.completed
   if (typeof completed !== "number" || completed <= info.time.created) {
-    return
+    return undefined
   }
 
   const model = providers?.find((item) => item.id === info.providerID)?.models[info.modelID]?.name
