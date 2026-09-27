@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option } from "effect"
+import { Context, Effect, Layer, MutableHashSet, Option } from "effect"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import * as Socket from "effect/unstable/socket/Socket"
 
@@ -15,23 +15,23 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/HttpApiWebSocketTracker") {}
 
 const layer = Layer.sync(Service)(() => {
-  const sockets = new Set<Close>()
+  const sockets = MutableHashSet.empty<Close>()
   let closing = false
   return Service.of({
     add: (close) =>
       Effect.gen(function* () {
         if (closing) return false
-        sockets.add(close)
+        MutableHashSet.add(sockets, close)
         return true
       }),
     remove: (close) =>
       Effect.sync(() => {
-        sockets.delete(close)
+        MutableHashSet.remove(sockets, close)
       }),
     closeAll: Effect.gen(function* () {
       closing = true
       const active = Array.from(sockets)
-      sockets.clear()
+      MutableHashSet.clear(sockets)
       yield* Effect.all(
         active.map((close) =>
           close.pipe(

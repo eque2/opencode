@@ -1,4 +1,6 @@
-const hop = new Set([
+import { HashSet } from "effect"
+
+const hop = HashSet.make(
   "connection",
   "keep-alive",
   "proxy-authenticate",
@@ -9,7 +11,7 @@ const hop = new Set([
   "transfer-encoding",
   "upgrade",
   "host",
-])
+)
 
 function sanitize(out: Headers) {
   for (const key of hop) out.delete(key)

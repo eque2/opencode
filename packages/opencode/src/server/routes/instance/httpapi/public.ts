@@ -1,5 +1,5 @@
 import { OpenCodeEvent } from "@opencode-ai/protocol/groups/event"
-import { Schema } from "effect"
+import { MutableHashSet, Predicate, Schema } from "effect"
 import { OpenApi } from "effect/unstable/httpapi"
 import { OpenCodeHttpApi } from "./api"
 import { QueryBooleanOpenApi } from "./groups/query"
@@ -307,7 +307,7 @@ function rewriteJsonSchemaDefinitionRefs(input: unknown): unknown {
 
 // Every OpenApiSchema field is optional, so any plain object is a structurally valid OpenApiSchema.
 function isOpenApiSchema(input: unknown): input is OpenApiSchema {
-  return typeof input === "object" && input !== null && !Array.isArray(input)
+  return Predicate.isObject(input)
 }
 
 function applyLegacySchemaOverrides(spec: OpenApiSpec) {
@@ -477,18 +477,18 @@ function legacyErrorResponse(description: string, name: "BadRequestError" | "Not
 function fixSelfReferencingComponents(spec: OpenApiSpec) {
   const schemas = spec.components?.schemas
   if (!schemas) return
-  const selfRefs = new Set<string>()
+  const selfRefs = MutableHashSet.empty<string>()
   for (const [name, schema] of Object.entries(schemas)) {
-    if (schema.$ref === `#/components/schemas/${name}`) selfRefs.add(name)
+    if (schema.$ref === `#/components/schemas/${name}`) MutableHashSet.add(selfRefs, name)
   }
-  if (selfRefs.size === 0) return
+  if (MutableHashSet.size(selfRefs) === 0) return
   // Find a parent union component whose anyOf/oneOf contains a $ref to the
   // broken component — that parent was generated correctly and holds the inline
   // schema we need.
   for (const [, schema] of Object.entries(schemas)) {
     for (const member of schema.anyOf ?? schema.oneOf ?? []) {
       const ref = member.$ref?.replace("#/components/schemas/", "")
-      if (!ref || !selfRefs.has(ref)) continue
+      if (!ref || !MutableHashSet.has(selfRefs, ref)) continue
       // This member's $ref points to a self-referencing component. The member
       // itself is just {$ref:...}, so the actual schema must be resolved from
       // the union. Since the union component was generated before the

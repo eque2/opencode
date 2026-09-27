@@ -2,7 +2,7 @@ import { listAdapters } from "@/control-plane/adapters"
 import { Workspace } from "@/control-plane/workspace"
 import * as InstanceState from "@/effect/instance-state"
 import { Vcs } from "@/project/vcs"
-import { Cause, Effect } from "effect"
+import { Cause, Effect, HashSet } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 import { notFound } from "../errors"
@@ -53,8 +53,10 @@ export const workspaceHandlers = HttpApiBuilder.group(InstanceHttpApi, "workspac
     })
 
     const status = Effect.fn("WorkspaceHttpApi.status")(function* () {
-      const ids = new Set((yield* workspace.list((yield* InstanceState.context).project)).map((item) => item.id))
-      return (yield* workspace.status()).filter((item) => ids.has(item.workspaceID))
+      const ids = HashSet.fromIterable(
+        (yield* workspace.list((yield* InstanceState.context).project)).map((item) => item.id),
+      )
+      return (yield* workspace.status()).filter((item) => HashSet.has(ids, item.workspaceID))
     })
 
     const remove = Effect.fn("WorkspaceHttpApi.remove")(function* (ctx: { params: { id: Workspace.Info["id"] } }) {
