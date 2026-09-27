@@ -15,6 +15,7 @@
 import os from "os"
 import path from "path"
 import stripAnsi from "strip-ansi"
+import { Option } from "effect"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import type * as Tool from "@/tool/tool"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
@@ -1290,31 +1291,21 @@ export function toolStructuredFinal(commit: StreamCommit): boolean {
 export function toolInlineInfo(part: ToolPart): ToolInline {
   const ctx = frame(part)
   const draw = rule(ctx.name)?.run
-  try {
-    if (draw) {
-      return draw(props(ctx))
-    }
-  } catch {
+  if (!draw) {
     return fallbackInline(ctx)
   }
 
-  return fallbackInline(ctx)
+  // A renderer that throws on malformed input falls back to the generic view.
+  return Option.liftThrowable(() => draw(props(ctx)))().pipe(Option.getOrElse(() => fallbackInline(ctx)))
 }
 
 export function toolScroll(phase: ToolPhase, ctx: ToolFrame): string {
   const draw = rule(ctx.name)?.scroll?.[phase]
-  try {
-    if (draw) {
-      return draw(props(ctx))
+  if (draw) {
+    const drawn = Option.liftThrowable(() => draw(props(ctx)))()
+    if (Option.isSome(drawn)) {
+      return drawn.value
     }
-  } catch {
-    if (phase === "start") {
-      return fallbackStart(ctx)
-    }
-    if (phase === "progress") {
-      return ctx.raw
-    }
-    return fallbackFinal(ctx)
   }
 
   if (phase === "start") {
@@ -1339,11 +1330,7 @@ export function toolPermissionInfo(
     return undefined
   }
 
-  try {
-    return draw(permission({ input, meta, patterns }))
-  } catch {
-    return undefined
-  }
+  return Option.getOrUndefined(Option.liftThrowable(() => draw(permission({ input, meta, patterns })))())
 }
 
 export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | undefined {
@@ -1353,11 +1340,7 @@ export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | 
     return undefined
   }
 
-  try {
-    return draw(props(ctx))
-  } catch {
-    return undefined
-  }
+  return Option.getOrUndefined(Option.liftThrowable(() => draw(props(ctx)))())
 }
 
 function textBody(content: string): RunEntryBody | undefined {
