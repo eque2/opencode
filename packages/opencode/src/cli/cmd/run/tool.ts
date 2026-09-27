@@ -15,7 +15,7 @@
 import os from "os"
 import path from "path"
 import stripAnsi from "strip-ansi"
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import type * as Tool from "@/tool/tool"
 import type { ApplyPatchTool } from "@/tool/apply_patch"
@@ -273,8 +273,13 @@ export function toolPath(input?: string, opts: { home?: boolean } = {}): string 
   return abs.replaceAll("\\", "/")
 }
 
+// Tool input is untrusted JSON; input that cannot be encoded shows as "Unknown".
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 function fallbackInline(ctx: ToolFrame): ToolInline {
-  const title = text(ctx.state.title) || (Object.keys(ctx.input).length > 0 ? JSON.stringify(ctx.input) : "Unknown")
+  const title =
+    text(ctx.state.title) ||
+    (Object.keys(ctx.input).length > 0 ? Option.getOrElse(encodeJson(ctx.input), () => "Unknown") : "Unknown")
 
   return {
     icon: "⚙",
