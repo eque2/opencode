@@ -96,12 +96,12 @@ function emitDeepLinks(urls: string[]) {
   if (win) sendDeepLinks(win, urls)
 }
 
-async function killSidecar() {
-  if (Option.isNone(server)) return
+const killSidecar = Effect.suspend(() => {
+  if (Option.isNone(server)) return Effect.void
   const current = server.value
   server = Option.none()
-  await current.stop()
-}
+  return Effect.promise(() => current.stop())
+})
 
 // Reads one environment variable when the Effect runs. The default ConfigProvider keeps a
 // copy of process.env, but startup writes process.env (preferAppEnv, ensureLoopbackNoProxy).
@@ -177,7 +177,7 @@ const main = Effect.gen(function* () {
 
   const wslServers = createWslServersController(
     app.getVersion(),
-    async (distro) => {
+    (distro) => {
       logger.log("spawning wsl sidecar", { distro })
       return spawnWslSidecar(distro, {
         onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
@@ -190,16 +190,19 @@ const main = Effect.gen(function* () {
       },
     },
   )
-  const stopSidecars = async () => {
-    await killSidecar()
-    wslServers.stopAll()
-  }
+  const stopSidecars = killSidecar.pipe(Effect.andThen(Effect.sync(() => wslServers.stopAll())))
   const relaunch = () => {
     setAppQuitting()
-    void stopSidecars().finally(() => {
-      app.relaunch()
-      app.quit()
-    })
+    Effect.runFork(
+      stopSidecars.pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            app.relaunch()
+            app.quit()
+          }),
+        ),
+      ),
+    )
   }
 
   yield* Effect.try({
@@ -254,12 +257,12 @@ const main = Effect.gen(function* () {
 
   app.on("before-quit", () => {
     setAppQuitting()
-    void stopSidecars()
+    Effect.runFork(stopSidecars)
   })
 
   app.on("will-quit", () => {
     setAppQuitting()
-    void stopSidecars()
+    Effect.runFork(stopSidecars)
   })
 
   app.on("child-process-gone", (_event, details) => {
@@ -277,7 +280,7 @@ const main = Effect.gen(function* () {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       setAppQuitting()
-      void stopSidecars().finally(() => app.quit())
+      Effect.runFork(stopSidecars.pipe(Effect.ensuring(Effect.sync(() => app.quit()))))
     })
   }
 
@@ -302,7 +305,7 @@ const main = Effect.gen(function* () {
   app.setAsDefaultProtocolClient("opencode")
   registerRendererProtocol()
   setDockIcon()
-  const updater = setupAutoUpdater(stopSidecars)
+  const updater = setupAutoUpdater(() => Effect.runPromise(stopSidecars))
   const menuDeps = {
     trigger: (id: string) => {
       const win = getLastFocusedWindow()
@@ -312,7 +315,7 @@ const main = Effect.gen(function* () {
     relaunch,
   }
   registerIpcHandlers({
-    killSidecar: () => killSidecar(),
+    killSidecar: () => Effect.runPromise(killSidecar),
     relaunch,
     awaitInitialization: Effect.fnUntraced(
       function* () {
@@ -337,7 +340,14 @@ const main = Effect.gen(function* () {
     getDisplayBackend: () => Effect.runPromise(Effect.succeed(Option.getOrNull(Option.none<string>()))),
     setDisplayBackend: () => {},
     checkAppExists: (appName) => checkAppExists(appName),
-    resolveAppPath: async (appName) => resolveAppPath(appName),
+    // resolveAppPath answers synchronously off Windows and with a Promise on Windows.
+    resolveAppPath: (appName) =>
+      Effect.runPromise(
+        Effect.suspend(() => {
+          const path = resolveAppPath(appName)
+          return typeof path === "string" ? Effect.succeed(path) : Effect.promise(() => path)
+        }),
+      ),
     updater,
     showUpdater: () => showUpdaterDialog(updater, true),
     setBackgroundColor: (color) => setBackgroundColor(color),
