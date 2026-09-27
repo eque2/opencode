@@ -1,7 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
 import { Session as SessionNs } from "@/session/session"
 
@@ -80,9 +80,11 @@ function request(path: string) {
   return TestInstance.pipe(Effect.flatMap((test) => requestInDirectory(path, test.directory)))
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
-  return response.json.pipe(Effect.map((body) => body as T))
+function json(response: HttpClientResponse.HttpClientResponse) {
+  return response.json
 }
+
+const decodeMessages = HttpClientResponse.schemaBodyJson(Schema.Array(SessionV1.WithParts))
 
 describe("session messages endpoint", () => {
   it.instance(
@@ -94,7 +96,7 @@ describe("session messages endpoint", () => {
 
         const a = yield* request(`/session/${session.id}/message?limit=2`)
         expect(a.status).toBe(200)
-        const aBody = yield* json<SessionV1.WithParts[]>(a)
+        const aBody = yield* decodeMessages(a)
         expect(aBody.map((item) => item.info.id)).toEqual(ids.slice(-2))
         const cursor = a.headers["x-next-cursor"]
         expect(cursor).toBeTruthy()
@@ -102,7 +104,7 @@ describe("session messages endpoint", () => {
 
         const b = yield* request(`/session/${session.id}/message?limit=2&before=${encodeURIComponent(cursor)}`)
         expect(b.status).toBe(200)
-        const bBody = yield* json<SessionV1.WithParts[]>(b)
+        const bBody = yield* decodeMessages(b)
         expect(bBody.map((item) => item.info.id)).toEqual(ids.slice(-4, -2))
       }),
     ),
@@ -118,7 +120,7 @@ describe("session messages endpoint", () => {
 
         const res = yield* request(`/session/${session.id}/message`)
         expect(res.status).toBe(200)
-        const body = yield* json<SessionV1.WithParts[]>(res)
+        const body = yield* decodeMessages(res)
         expect(body.map((item) => item.info.id)).toEqual(ids)
       }),
     ),
@@ -150,7 +152,7 @@ describe("session messages endpoint", () => {
 
         const res = yield* request(`/session/${session.id}/message?limit=510`)
         expect(res.status).toBe(200)
-        const body = yield* json<SessionV1.WithParts[]>(res)
+        const body = yield* decodeMessages(res)
         expect(body).toHaveLength(510)
       }),
     ),
@@ -169,7 +171,7 @@ describe("session messages endpoint", () => {
           `/session/${session.id}/message?limit=80&directory=${encodeURIComponent(tmp.directory)}`,
         )
         expect(res.status).toBe(200)
-        const body = yield* json<unknown[]>(res)
+        const body = yield* json(res)
         expect(Array.isArray(body)).toBe(true)
         expect(body).toHaveLength(1)
       }),

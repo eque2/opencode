@@ -43,7 +43,7 @@ const request = Effect.fnUntraced(function* (
   )
 })
 
-const json = <A>(response: Response) => Effect.promise(() => response.json() as Promise<A>)
+const json = (response: Response) => Effect.promise(() => response.json())
 
 const readResponse = Effect.fnUntraced(function* (input: { app: TestApp; path: string; headers: HeadersInit }) {
   const response = yield* Effect.promise(() =>

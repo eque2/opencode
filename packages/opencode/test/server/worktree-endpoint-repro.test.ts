@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer, Queue } from "effect"
+import { Effect, Layer, Queue, Schema } from "effect"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Worktree } from "@/worktree"
 import { Server } from "../../src/server/server"
@@ -39,9 +39,15 @@ function withRequestTimeout(effect: Effect.Effect<Response>, label: string, ms =
   )
 }
 
-function json<T>(response: Response) {
-  return Effect.promise(() => response.json() as Promise<T>)
+function json<S extends Schema.Constraint>(response: Response, schema: S) {
+  return Effect.promise(() => response.json()).pipe(Effect.flatMap(Schema.decodeUnknownEffect(schema)))
 }
+
+// The create routes return a Worktree.Info or a Workspace.Info; the tests read directory and
+// assert other fields, so the rest of the body is kept.
+const CreatedWorktree = Schema.StructWithRest(Schema.Struct({ directory: Schema.String }), [
+  Schema.Record(Schema.String, Schema.Unknown),
+])
 
 function readyWatcher() {
   return Effect.gen(function* () {
@@ -91,7 +97,7 @@ function removeCreatedWorktree(input: {
       const message = yield* Effect.promise(() => removed.text())
       throw new Error(`failed to remove worktree: ${removed.status} ${message}`)
     }
-    const ok = yield* json<boolean>(removed)
+    const ok = yield* json(removed, Schema.Boolean)
     if (!ok) throw new Error(`failed to remove worktree ${input.worktreeDirectory}`)
   })
 }
@@ -117,7 +123,7 @@ function createWorktreeScoped(input: {
         throw new Error(`${input.timeoutLabel} failed: ${response.status} ${message}`)
       }
       expect(response.status).toBe(200)
-      const body = yield* json<CreatedWorktree>(response)
+      const body = yield* json(response, CreatedWorktree)
       return { directory: body.directory, body, ready: waitReady(body.directory) } satisfies ScopedWorktree
     }),
     (created) =>
@@ -134,7 +140,7 @@ function setProjectStartCommand(input: { server: TestServer; directory: string; 
   return Effect.gen(function* () {
     const current = yield* request(input.server, `/project/current?directory=${encodeURIComponent(input.directory)}`)
     expect(current.status).toBe(200)
-    const project = yield* json<{ id: string }>(current)
+    const project = yield* json(current, Schema.Struct({ id: Schema.String }))
     const updated = yield* request(
       input.server,
       `/project/${project.id}?directory=${encodeURIComponent(input.directory)}`,
