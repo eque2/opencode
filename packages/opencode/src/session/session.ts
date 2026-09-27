@@ -685,7 +685,7 @@ const layer: Layer.Layer<
         )
         .get()
         .pipe(Effect.orDie)
-      if (!row) return
+      if (!row) return undefined
       return {
         ...row.data,
         id: row.id,
