@@ -270,9 +270,13 @@ describe("HttpApi Server.listen", () => {
     const listener = await startListener()
     await withTimeout(listener.stop(), 10_000, "timed out waiting for graceful listener.stop()")
     await withTimeout(listener.stop(), 5_000, "timed out waiting for repeated graceful listener.stop()")
-    await expect(
-      fetch(new URL(PtyPaths.shells, listener.url), { headers: { authorization: authorization() } }),
-    ).rejects.toThrow()
+    const failure: unknown = await fetch(new URL(PtyPaths.shells, listener.url), {
+      headers: { authorization: authorization() },
+    }).then(
+      () => "resolved",
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
   })
 
   test("default in-process handler does not emit Effect HTTP response logs", async () => {
