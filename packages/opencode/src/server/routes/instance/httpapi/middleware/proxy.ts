@@ -1,12 +1,12 @@
 import { ProxyUtil } from "@/server/proxy-util"
-import { Effect, Stream } from "effect"
+import { Effect, Predicate, Stream } from "effect"
 import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { WebSocketTracker } from "../websocket-tracker"
 
 function requestBody(request: HttpServerRequest.HttpServerRequest) {
   if (request.method === "GET" || request.method === "HEAD") return HttpBody.empty
-  if (request.source instanceof Request && request.source.body === null) return HttpBody.empty
+  if (request.source instanceof Request && Predicate.isNull(request.source.body)) return HttpBody.empty
   const len = request.headers["content-length"]
   const contentType = request.headers["content-type"]
   return len
