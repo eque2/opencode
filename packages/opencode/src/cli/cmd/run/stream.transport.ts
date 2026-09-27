@@ -1490,14 +1490,17 @@ function createLayer(input: StreamInput) {
 //
 // The transport is single-turn: only one runPromptTurn() call can be active
 // at a time. The prompt queue enforces this from above.
-export async function createSessionTransport(input: StreamInput): Promise<SessionTransport> {
+//
+// The first runPromise builds the layer (subscription and bootstrap) before the
+// facade resolves. This Promise facade is the run-mode entry boundary.
+export function createSessionTransport(input: StreamInput): Promise<SessionTransport> {
   const runtime = makeRuntime(Service, createLayer(input))
-  await runtime.runPromise(() => Effect.void)
-
-  return {
-    runPromptTurn: (next) => runtime.runPromise((svc) => svc.runPromptTurn(next)),
-    selectSubagent: (sessionID) => runtime.runSync((svc) => svc.selectSubagent(sessionID)),
-    replayOnResize: (next) => runtime.runPromise((svc) => svc.replayOnResize(next)),
-    close: () => runtime.runPromise((svc) => svc.close()),
-  }
+  return runtime.runPromise(() =>
+    Effect.succeed({
+      runPromptTurn: (next) => runtime.runPromise((svc) => svc.runPromptTurn(next)),
+      selectSubagent: (sessionID) => runtime.runSync((svc) => svc.selectSubagent(sessionID)),
+      replayOnResize: (next) => runtime.runPromise((svc) => svc.replayOnResize(next)),
+      close: () => runtime.runPromise((svc) => svc.close()),
+    }),
+  )
 }

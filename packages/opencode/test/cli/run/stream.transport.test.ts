@@ -1315,11 +1315,13 @@ describe("run stream transport", () => {
     })
 
     try {
+      // The child call input arrives from the forked history bootstrap, after the
+      // transport resolves, so wait for the permission that carries it.
       const boot = await waitFor(() => {
         const item = ui.events.findLast((event) => event.type === "stream.subagent")
         const state = item?.type === "stream.subagent" ? item.state : undefined
         return state?.tabs.some((tab) => tab.sessionID === "child-1") &&
-          state.permissions.some((req) => req.id === "perm-1")
+          state.permissions.some((req) => req.id === "perm-1" && req.metadata.input !== undefined)
           ? state
           : undefined
       })
