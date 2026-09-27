@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
-import { Data, Deferred, Effect, Option, Predicate } from "effect"
+import { Config, ConfigProvider, Data, Deferred, Effect, Option, Predicate } from "effect"
 import type { Details } from "electron"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
@@ -41,17 +41,35 @@ export function setDefaultServerUrl(url: string | null) {
   getStore().delete(DEFAULT_SERVER_URL_KEY)
 }
 
+/**
+ * Merges the login shell environment and the desktop flags into process.env.
+ * Returns the shell environment, or null when the probe did not load one.
+ */
+export function loadAppEnv(userDataPath: string) {
+  return Effect.gen(function* () {
+    const shellEnv =
+      process.platform === "win32"
+        ? Option.none<Record<string, string>>()
+        : loadShellEnv(yield* getUserShell(), getLogger())
+    const stateHome = yield* Config.option(Config.String("XDG_STATE_HOME"))
+    Object.assign(process.env, {
+      ...Option.getOrUndefined(shellEnv),
+      OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
+      OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
+      OPENCODE_CLIENT: "desktop",
+      XDG_STATE_HOME: Option.getOrElse(stateHome, () => userDataPath),
+    })
+    return Option.getOrNull(shellEnv)
+  }).pipe(
+    // The default ConfigProvider snapshots process.env on first use. main/index.ts
+    // writes XDG_* test paths before this runs, so read a fresh snapshot here.
+    // preserveEmptyStrings keeps an empty XDG_STATE_HOME, as the old ?? did.
+    Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  )
+}
+
 export function preferAppEnv(userDataPath: string) {
-  const shellEnv =
-    process.platform === "win32" ? Option.none<Record<string, string>>() : loadShellEnv(getUserShell(), getLogger())
-  Object.assign(process.env, {
-    ...Option.getOrUndefined(shellEnv),
-    OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
-    OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
-    OPENCODE_CLIENT: "desktop",
-    XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
-  })
-  return Option.getOrNull(shellEnv)
+  return Effect.runSync(loadAppEnv(userDataPath))
 }
 
 export function spawnLocalServer(hostname: string, port: number, password: string, options: SpawnLocalServerOptions) {

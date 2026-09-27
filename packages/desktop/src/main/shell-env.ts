@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { userInfo } from "node:os"
 import { basename } from "node:path"
-import { Option } from "effect"
+import { Config, Data, Effect, Option } from "effect"
 
 const TIMEOUT = 5_000
 
@@ -18,12 +18,18 @@ export function resolveUserShell(envShell: Option.Option<string>, loginShell: Op
   )
 }
 
+class UserInfoError extends Data.TaggedError("UserInfoError")<{ readonly cause: unknown }> {}
+
 export function getUserShell() {
-  try {
-    return resolveUserShell(Option.fromNullishOr(process.env.SHELL), Option.fromNullishOr(userInfo().shell))
-  } catch {
-    return resolveUserShell(Option.fromNullishOr(process.env.SHELL), Option.none())
-  }
+  return Effect.gen(function* () {
+    // userInfo() throws when the OS has no entry for the current user.
+    const loginShell = yield* Effect.try({
+      try: () => userInfo().shell,
+      catch: (cause) => new UserInfoError({ cause }),
+    }).pipe(Effect.option)
+    const envShell = yield* Config.option(Config.String("SHELL"))
+    return resolveUserShell(envShell, Option.flatMap(loginShell, Option.fromNullishOr))
+  })
 }
 
 export function parseShellEnv(out: Buffer) {
