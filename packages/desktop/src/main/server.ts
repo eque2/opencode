@@ -243,8 +243,8 @@ function healthy(url: string, password?: string | null) {
 
 function createSidecarEnv(): Record<string, string> {
   const env = Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]): Array<[string, string]> =>
-      value === undefined ? [] : [[key, value]],
+    Object.entries(process.env).flatMap(
+      ([key, value]): Array<[string, string]> => (value === undefined ? [] : [[key, value]]),
     ),
   )
   delete env.DEBUG
