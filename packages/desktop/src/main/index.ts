@@ -35,6 +35,7 @@ import { setupAutoUpdater, showUpdaterDialog } from "./updater"
 import { safeWebContentsURL } from "./window-state"
 import {
   getLastFocusedWindow,
+  loadRendererDevUrl,
   registerRendererProtocol,
   setRelaunchHandler,
   setAppQuitting,
@@ -235,6 +236,7 @@ const main = Effect.gen(function* () {
   }
 
   const shellEnv = yield* loadAppEnv(app.getPath("userData"))
+  yield* loadRendererDevUrl
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))

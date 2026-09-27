@@ -5,7 +5,7 @@ import oc2ThemeJson from "../../../ui/src/theme/themes/oc-2.json"
 import { randomUUID } from "node:crypto"
 import { rmSync } from "node:fs"
 import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol, shell } from "electron"
-import { Data, Effect, Option } from "effect"
+import { Config, Data, Effect, Option } from "effect"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
@@ -350,10 +350,19 @@ export function registerRendererProtocol() {
   )
 }
 
+// electron-vite sets ELECTRON_RENDERER_URL in development. Electron callbacks read it
+// synchronously, so main/index.ts loads it once with loadRendererDevUrl before any window.
+let rendererDevUrl = Option.none<string>()
+
+/** Reads ELECTRON_RENDERER_URL once; an empty value counts as absent. */
+export const loadRendererDevUrl = Effect.gen(function* () {
+  const devUrl = yield* Config.option(Config.String("ELECTRON_RENDERER_URL"))
+  rendererDevUrl = Option.filter(devUrl, (value) => value.length > 0)
+})
+
 function loadWindow(win: BrowserWindow, html: string) {
-  const devUrl = process.env.ELECTRON_RENDERER_URL
-  if (devUrl) {
-    const url = new URL(html, devUrl)
+  if (Option.isSome(rendererDevUrl)) {
+    const url = new URL(html, rendererDevUrl.value)
     void win.loadURL(url.toString())
     return
   }
@@ -552,9 +561,8 @@ function isRendererUrl(value?: string, html = false) {
   const url = new URL(value)
   if (html && !url.pathname.endsWith(".html")) return false
   if (url.protocol === `${rendererProtocol}:` && url.host === rendererHost) return true
-  const devUrl = process.env.ELECTRON_RENDERER_URL
-  if (!devUrl || !URL.canParse(devUrl)) return false
-  return url.origin === new URL(devUrl).origin
+  if (Option.isNone(rendererDevUrl) || !URL.canParse(rendererDevUrl.value)) return false
+  return url.origin === new URL(rendererDevUrl.value).origin
 }
 
 function wireZoom(win: BrowserWindow) {
