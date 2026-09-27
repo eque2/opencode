@@ -76,6 +76,12 @@ interface ProcessorContext extends Input {
 
 type StreamEvent = LLMEvent
 
+// A stream event that ends the provider turn: a provider error, a tool error
+// without an error value, or a tool call while a summary is generated.
+class StreamEventError extends Schema.TaggedError<StreamEventError>()("SessionProcessorStreamEventError", {
+  message: Schema.String,
+}) {}
+
 // JSON text of a tool result or tool input. A value that JSON cannot encode
 // (undefined, a function) is None, as JSON.stringify returned undefined for it.
 const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
@@ -326,7 +332,10 @@ const layer = Layer.effect(
 
           case "tool-input-start":
             if (ctx.assistantMessage.summary) {
-              throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+              yield* new StreamEventError({
+                message: `Tool call not allowed while generating summary: ${value.name}`,
+              })
+              return
             }
             yield* ensureToolCall(value)
             return
@@ -342,7 +351,10 @@ const layer = Layer.effect(
 
           case "tool-call": {
             if (ctx.assistantMessage.summary) {
-              throw new Error(`Tool call not allowed while generating summary: ${value.name}`)
+              yield* new StreamEventError({
+                message: `Tool call not allowed while generating summary: ${value.name}`,
+              })
+              return
             }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
@@ -429,12 +441,13 @@ const layer = Layer.effect(
           }
 
           case "tool-error": {
-            yield* failToolCall(value.id, value.error ?? new Error(value.message))
+            yield* failToolCall(value.id, value.error ?? new StreamEventError({ message: value.message }))
             return
           }
 
           case "provider-error":
-            throw new Error(value.message)
+            yield* new StreamEventError({ message: value.message })
+            return
 
           case "step-start":
             if (Option.isNone(ctx.snapshot)) ctx.snapshot = snapshotHash(yield* snapshot.track())
