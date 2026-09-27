@@ -80,8 +80,12 @@ export function createDesktopDraftStore(filename: string) {
           ),
         ),
       ),
-    set(key: string, value: string | null) {
-      MutableHashMap.set(pending, key, Option.fromNullishOr(value))
+    set(key: string, value: string) {
+      MutableHashMap.set(pending, key, Option.some(value))
+      schedule()
+    },
+    delete(key: string) {
+      MutableHashMap.set(pending, key, Option.none())
       schedule()
     },
     putBlob(data: Uint8Array) {

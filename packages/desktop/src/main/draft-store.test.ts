@@ -14,3 +14,16 @@ test("flushes the latest buffered draft and stores blobs", () => {
   expect(store.getBlob(id)).toEqual(bytes)
   store.close()
 })
+
+test("deletes a buffered and a flushed draft", () => {
+  const store = createDesktopDraftStore(":memory:")
+  store.set("prompt", "text")
+  store.delete("prompt")
+  expect(store.get("prompt")).toBeNull()
+  store.set("prompt", "text")
+  store.flush()
+  store.delete("prompt")
+  store.flush()
+  expect(store.get("prompt")).toBeNull()
+  store.close()
+})

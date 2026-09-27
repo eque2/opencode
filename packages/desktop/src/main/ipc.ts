@@ -163,7 +163,7 @@ export function registerIpcHandlers(deps: Deps) {
   })
   ipcMain.handle("draft-get", (_event, key: string) => drafts.get(key))
   ipcMain.handle("draft-set", (_event, key: string, value: string) => drafts.set(key, value))
-  ipcMain.handle("draft-delete", (_event, key: string) => drafts.set(key, null))
+  ipcMain.handle("draft-delete", (_event, key: string) => drafts.delete(key))
   ipcMain.handle("draft-blob-put", (_event, data: ArrayBuffer) => drafts.putBlob(new Uint8Array(data)))
   ipcMain.handle("draft-blob-get", (_event, id: string) =>
     Option.fromNullishOr(drafts.getBlob(id)).pipe(
