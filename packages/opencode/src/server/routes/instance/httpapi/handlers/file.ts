@@ -64,7 +64,6 @@ export const fileHandlers = HttpApiBuilder.group(InstanceHttpApi, "file", (handl
     })
 
     const list = Effect.fn("FileHttpApi.list")(function* (ctx: { query: { path: string } }) {
-      const directory = (yield* InstanceState.context).directory
       return yield* filesystem(
         Effect.gen(function* () {
           const fs = yield* FileSystem.Service
