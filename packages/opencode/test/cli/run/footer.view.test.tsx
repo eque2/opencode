@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import { expect, test } from "bun:test"
-import { BoxRenderable, RGBA, type RootRenderable } from "@opentui/core"
+import { BoxRenderable, RGBA, parseColor, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
@@ -243,14 +243,19 @@ async function renderFooter(
 }
 
 function expectPaletteList(list: BoxRenderable, selectedIndex: number) {
-  expect(list.backgroundColor.toInts()).toEqual((RUN_THEME_FALLBACK.footer.shade as RGBA).toInts())
-  expect((list.getChildren()[selectedIndex] as BoxRenderable).backgroundColor.toInts()).toEqual(
-    (RUN_THEME_FALLBACK.footer.selected as RGBA).toInts(),
+  expect(list.backgroundColor.toInts()).toEqual(parseColor(RUN_THEME_FALLBACK.footer.shade).toInts())
+  expect(asBox(list.getChildren()[selectedIndex]).backgroundColor.toInts()).toEqual(
+    parseColor(RUN_THEME_FALLBACK.footer.selected).toInts(),
   )
 }
 
+function asBox(item: unknown) {
+  if (item instanceof BoxRenderable) return item
+  throw new Error("Expected a BoxRenderable")
+}
+
 function child(root: BoxRenderable | RootRenderable, index: number) {
-  return root.getChildren()[index] as BoxRenderable
+  return asBox(root.getChildren()[index])
 }
 
 function boxPath(root: BoxRenderable | RootRenderable, name: string): BoxRenderable[] | undefined {
@@ -268,8 +273,8 @@ function footerComposerFrame(root: BoxRenderable | RootRenderable) {
 }
 
 function footerStatusline(root: BoxRenderable | RootRenderable) {
-  const status = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-  const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
+  const status = parseColor(RUN_THEME_FALLBACK.footer.status).toInts()
+  const accent = parseColor(RUN_THEME_FALLBACK.footer.statusAccent).toInts()
   const boxes = root.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
   for (const box of boxes) {
     const first = box.getChildren().find((item): item is BoxRenderable => item instanceof BoxRenderable)
@@ -286,7 +291,7 @@ function footerStatusline(root: BoxRenderable | RootRenderable) {
 function panelMenu(root: BoxRenderable | RootRenderable) {
   const panel = child(child(root, 0), 0)
   const content = child(panel, 0)
-  return child(content.getChildren().at(-1) as BoxRenderable, 0)
+  return child(asBox(content.getChildren().at(-1)), 0)
 }
 
 test("direct footer composer area does not adopt footer surface", async () => {
@@ -1027,8 +1032,8 @@ test("direct footer shows editable prompts and additional queued work while runn
     await app.renderOnce()
     const frame = app.captureCharFrame()
     const transparent = RGBA.fromValues(0, 0, 0, 0).toInts()
-    const tinted = (RUN_THEME_FALLBACK.footer.status as RGBA).toInts()
-    const accent = (RUN_THEME_FALLBACK.footer.statusAccent as RGBA).toInts()
+    const tinted = parseColor(RUN_THEME_FALLBACK.footer.status).toInts()
+    const accent = parseColor(RUN_THEME_FALLBACK.footer.statusAccent).toInts()
     const statusline = footerStatusline(app.renderer.root)
     const statusItems = statusline.getChildren().filter((item): item is BoxRenderable => item instanceof BoxRenderable)
     const mode = statusItems[0]
