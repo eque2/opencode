@@ -4,6 +4,7 @@ import type { JSONSchema7 } from "@ai-sdk/provider"
 import type * as Provider from "./provider"
 import type * as ModelsDev from "@opencode-ai/core/models-dev"
 import { iife } from "@/util/iife"
+import { Option, Predicate } from "effect"
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -182,8 +183,8 @@ function normalizeMessages(
           if (part.type === "reasoning") {
             return (
               part.text.trim().length > 0 ||
-              part.providerOptions?.anthropic?.signature != null ||
-              part.providerOptions?.anthropic?.redactedData != null
+              Predicate.isNotNullish(part.providerOptions?.anthropic?.signature) ||
+              Predicate.isNotNullish(part.providerOptions?.anthropic?.redactedData)
             )
           }
           return true
@@ -211,7 +212,11 @@ function normalizeMessages(
             // Match what the SDK can replay before assigning cache points. Otherwise
             // unsigned reasoning can leave an empty or cache-point-only message.
             const metadata = part.providerOptions?.[model.providerID] ?? part.providerOptions?.bedrock
-            return metadata?.signature != null || metadata?.redactedContent != null || metadata?.redactedData != null
+            return (
+              Predicate.isNotNullish(metadata?.signature) ||
+              Predicate.isNotNullish(metadata?.redactedContent) ||
+              Predicate.isNotNullish(metadata?.redactedData)
+            )
           }
           return true
         })
@@ -666,18 +671,18 @@ function anthropicOpus45(apiId: string) {
   return ["opus-4-5", "opus-4.5"].some((value) => apiId.includes(value))
 }
 
-function anthropicAdaptiveEfforts(apiId: string): string[] | null {
+function anthropicAdaptiveEfforts(apiId: string): Option.Option<string[]> {
   if (anthropicUsesModernAdaptiveThinking(apiId)) {
-    return ["low", "medium", "high", "xhigh", "max"]
+    return Option.some(["low", "medium", "high", "xhigh", "max"])
   }
   if (
     ["opus-4-6", "opus-4.6", "4-6-opus", "4.6-opus", "sonnet-4-6", "sonnet-4.6", "4-6-sonnet", "4.6-sonnet"].some((v) =>
       apiId.includes(v),
     )
   ) {
-    return ["low", "medium", "high", "max"]
+    return Option.some(["low", "medium", "high", "max"])
   }
-  return null
+  return Option.none()
 }
 
 function anthropicOmitsThinking(apiId: string) {
@@ -879,9 +884,9 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@ai-sdk/gateway":
       if (model.api.id.includes("anthropic")) {
-        if (adaptiveEfforts) {
+        if (Option.isSome(adaptiveEfforts)) {
           return Object.fromEntries(
-            adaptiveEfforts.map((effort) => [
+            adaptiveEfforts.value.map((effort) => [
               effort,
               {
                 thinking: {
@@ -1033,8 +1038,8 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
     // https://v5.ai-sdk.dev/providers/ai-sdk-providers/anthropic
     case "@ai-sdk/google-vertex/anthropic":
       // https://v5.ai-sdk.dev/providers/ai-sdk-providers/google-vertex#anthropic-provider
-      if (adaptiveEfforts) {
-        let efforts = [...adaptiveEfforts]
+      if (Option.isSome(adaptiveEfforts)) {
+        let efforts = [...adaptiveEfforts.value]
         if (model.providerID === "github-copilot") {
           if (model.api.id.includes("opus-4.7")) {
             efforts = ["medium"]
@@ -1079,9 +1084,9 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@ai-sdk/amazon-bedrock":
       // https://v5.ai-sdk.dev/providers/ai-sdk-providers/amazon-bedrock
-      if (adaptiveEfforts) {
+      if (Option.isSome(adaptiveEfforts)) {
         return Object.fromEntries(
-          adaptiveEfforts.map((effort) => [
+          adaptiveEfforts.value.map((effort) => [
             effort,
             {
               reasoningConfig: {
@@ -1169,12 +1174,12 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
 
     case "@jerome-benoit/sap-ai-provider-v2": {
       if (id.includes("anthropic")) {
-        if (adaptiveEfforts) {
+        if (Option.isSome(adaptiveEfforts)) {
           // Bedrock adaptive splits `effort` out into `output_config` (vs Anthropic
           // native which inlines it). Claude 4.7+ defaults `display` to "omitted".
           return wrapInSapModelParams(
             Object.fromEntries(
-              adaptiveEfforts.map((effort) => [
+              adaptiveEfforts.value.map((effort) => [
                 effort,
                 {
                   thinking: { type: "adaptive", ...(adaptiveThinkingOmitted ? { display: "summarized" } : {}) },
@@ -1472,7 +1477,7 @@ export function maxOutputTokens(model: Provider.Model, outputTokenMax = OUTPUT_T
 type JsonRecord = Record<string, unknown>
 
 function isPlainObject(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 // Mirrors Codex's Rust JSON schema compatibility lowering for OpenAI tool schemas.
@@ -1585,7 +1590,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
 
   if (model.providerID === "moonshotai" || model.api.id.toLowerCase().includes("kimi")) {
     const sanitizeMoonshot = (obj: unknown): unknown => {
-      if (obj === null || typeof obj !== "object") return obj
+      if (!Predicate.isObjectOrArray(obj)) return obj
       if (Array.isArray(obj)) return obj.map(sanitizeMoonshot)
       // Moonshot expands $ref before validation and rejects sibling keywords like description on the same node.
       if ("$ref" in obj && typeof obj.$ref === "string") return { $ref: obj.$ref }
@@ -1596,15 +1601,13 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
     }
 
     const sanitized = sanitizeMoonshot(schema)
-    if (typeof sanitized === "object" && sanitized !== null && !Array.isArray(sanitized)) {
+    if (Predicate.isObject(sanitized)) {
       schema = sanitized
     }
   }
 
   // Convert integer enums to string enums for Google/Gemini
   if (model.providerID === "google" || model.api.id.includes("gemini")) {
-    const isPlainObject = (node: unknown): node is Record<string, any> =>
-      typeof node === "object" && node !== null && !Array.isArray(node)
     const hasCombiner = (node: unknown) =>
       isPlainObject(node) && (Array.isArray(node.anyOf) || Array.isArray(node.oneOf) || Array.isArray(node.allOf))
     const hasSchemaIntent = (node: unknown) => {
@@ -1629,7 +1632,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
     }
 
     const sanitizeGemini = (obj: any): any => {
-      if (obj === null || typeof obj !== "object") {
+      if (!Predicate.isObjectOrArray(obj)) {
         return obj
       }
 
@@ -1646,7 +1649,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
           if (result.type === "integer" || result.type === "number") {
             result.type = "string"
           }
-        } else if (typeof value === "object" && value !== null) {
+        } else if (Predicate.isObjectOrArray(value)) {
           result[key] = sanitizeGemini(value)
         } else {
           result[key] = value
@@ -1677,7 +1680,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
       }
 
       if (result.type === "array" && !hasCombiner(result)) {
-        if (result.items == null) {
+        if (Predicate.isNullish(result.items)) {
           result.items = {}
         }
         // Ensure items has a type only when it's still schema-empty.
@@ -1723,7 +1726,7 @@ function effortVariants(model: Provider.Model, values: readonly unknown[]) {
   return Object.fromEntries(
     values.flatMap((value) => {
       const id = (() => {
-        if (value === null) return "none"
+        if (Predicate.isNull(value)) return "none"
         if (typeof value === "string") return value
       })()
       if (id === undefined) return []
@@ -1777,7 +1780,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
     case "@ai-sdk/google-vertex":
       return { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
     case "@ai-sdk/amazon-bedrock":
-      if (anthropicAdaptiveEfforts(model.api.id))
+      if (Option.isSome(anthropicAdaptiveEfforts(model.api.id)))
         return {
           reasoningConfig: {
             type: "adaptive",
@@ -1840,7 +1843,7 @@ function anthropicEffort(model: Provider.Model, effort: string) {
   if (anthropicOpus45(model.api.id)) return anthropicOpus45Effort(model, effort)
   // Kimi defaults to omitting adaptive thinking text unless summarized display is requested.
   if (isKimiFamily(model)) return { thinking: { type: "adaptive", display: "summarized" }, effort }
-  if (!anthropicAdaptiveEfforts(model.api.id)) return
+  if (Option.isNone(anthropicAdaptiveEfforts(model.api.id))) return
   return {
     thinking: {
       type: "adaptive",
