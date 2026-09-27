@@ -1008,7 +1008,7 @@ const ProviderApiInfo = Schema.Struct({
   id: Schema.String,
   url: Schema.String,
   npm: Schema.String,
-})
+}).annotate({ description: "Upstream API model id, base URL, and AI SDK package of a model" })
 
 const ProviderModalities = Schema.Struct({
   text: Schema.Boolean,
@@ -1016,7 +1016,7 @@ const ProviderModalities = Schema.Struct({
   image: Schema.Boolean,
   video: Schema.Boolean,
   pdf: Schema.Boolean,
-})
+}).annotate({ description: "Content types that a model accepts or produces" })
 
 const ProviderInterleavedField = Schema.Union([
   Schema.Literals(["reasoning", "reasoning_content", "reasoning_text"]),
@@ -1038,12 +1038,12 @@ const ProviderCapabilities = Schema.Struct({
   input: ProviderModalities,
   output: ProviderModalities,
   interleaved: ProviderInterleaved,
-})
+}).annotate({ description: "Features that a model supports" })
 
 const ProviderCacheCost = Schema.Struct({
   read: Schema.Finite,
   write: Schema.Finite,
-})
+}).annotate({ description: "Cost of cache reads and cache writes" })
 
 const ProviderCostTier = Schema.Struct({
   input: Schema.Finite,
@@ -1053,7 +1053,7 @@ const ProviderCostTier = Schema.Struct({
     type: Schema.Literal("context"),
     size: Schema.Finite,
   }),
-})
+}).annotate({ description: "Cost that applies above a context size" })
 
 const ProviderCost = Schema.Struct({
   input: Schema.Finite,
@@ -1067,13 +1067,13 @@ const ProviderCost = Schema.Struct({
       cache: ProviderCacheCost,
     }),
   ),
-})
+}).annotate({ description: "Token cost of a model" })
 
 const ProviderLimit = Schema.Struct({
   context: Schema.Finite,
   input: optional(Schema.Finite),
   output: Schema.Finite,
-})
+}).annotate({ description: "Token limits of a model" })
 
 export const Model = Schema.Struct({
   id: ModelV2.ID,
@@ -1109,13 +1109,13 @@ export const ListResult = Schema.Struct({
   all: Schema.Array(Info),
   default: DefaultModelIDs,
   connected: Schema.Array(Schema.String),
-})
+}).annotate({ description: "Providers, default model ids, and connected provider ids" })
 export type ListResult = Types.DeepMutable<Schema.Schema.Type<typeof ListResult>>
 
 export const ConfigProvidersResult = Schema.Struct({
   providers: Schema.Array(Info),
   default: DefaultModelIDs,
-})
+}).annotate({ description: "Configured providers and their default model ids" })
 export type ConfigProvidersResult = Types.DeepMutable<Schema.Schema.Type<typeof ConfigProvidersResult>>
 
 export function toPublicInfo(provider: Info): Info {
