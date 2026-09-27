@@ -1,6 +1,6 @@
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { InstanceStore } from "@/project/instance-store"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 import { WorkspaceRouteContext } from "./workspace-routing"
@@ -12,12 +12,11 @@ export class InstanceContextMiddleware extends HttpApiMiddleware.Service<
   }
 >()("@opencode/ExperimentalHttpApiInstanceContext") {}
 
+const decodeURIComponentOption = Option.liftThrowable(decodeURIComponent)
+
+// A malformed percent escape keeps the raw directory.
 function decode(input: string): string {
-  try {
-    return decodeURIComponent(input)
-  } catch {
-    return input
-  }
+  return Option.getOrElse(decodeURIComponentOption(input), () => input)
 }
 
 function provideInstanceContext<E>(
