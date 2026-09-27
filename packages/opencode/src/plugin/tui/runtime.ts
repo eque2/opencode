@@ -41,13 +41,13 @@ import { ConfigPlugin } from "@/config/plugin"
 import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { createCommandShim } from "@opencode-ai/tui/plugin/command-shim"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Effect } from "effect"
+import { Cause, Clock, Console, Duration, Effect, HashSet, MutableHashMap, Option, Predicate, Result, Schema } from "effect"
 import { createPluginRuntime, type PluginRuntime, type TuiPluginHost } from "@opencode-ai/tui/plugin/runtime"
 
 ensureRuntimePluginSupport({ additional: keymapRuntimeModules })
 
 type PluginLoad = {
-  options: ConfigPluginV1.Options | undefined
+  options: Option.Option<ConfigPluginV1.Options>
   spec: string
   target: string
   retry: boolean
@@ -63,8 +63,8 @@ type Api = HostPluginApi
 
 type PluginScope = {
   lifecycle: TuiPluginApi["lifecycle"]
-  track: (fn: (() => void) | undefined) => () => void
-  dispose: () => Promise<void>
+  track: (fn: () => void) => () => void
+  dispose: Effect.Effect<void>
 }
 
 type PluginEntry = {
@@ -74,10 +74,20 @@ type PluginEntry = {
   themes: Record<string, PluginMeta.Theme>
   plugin: TuiPlugin
   enabled: boolean
-  scope?: PluginScope
+  scope: Option.Option<PluginScope>
 }
 
-const ScopedKeymapMethods = new Set<PropertyKey>([
+// A plugin step failed: plugin code threw or rejected, or a plugin file could not be read.
+export class PluginStepError extends Schema.TaggedError<PluginStepError>()("TuiPluginRuntime.PluginStepError", {
+  cause: Schema.Defect(),
+}) {}
+
+export class InitDirectoryError extends Schema.TaggedError<InitDirectoryError>()(
+  "TuiPluginRuntime.InitDirectoryError",
+  { message: Schema.String },
+) {}
+
+const ScopedKeymapMethods = HashSet.fromIterable<PropertyKey>([
   "acquireResource",
   "registerLayer",
   "registerLayerFields",
@@ -114,46 +124,64 @@ type RuntimeState = {
   dispose?: () => void
   slots: HostSlots
   plugins: PluginEntry[]
-  plugins_by_id: Map<string, PluginEntry>
-  pending: Map<string, ConfigPlugin.Origin>
+  plugins_by_id: MutableHashMap.MutableHashMap<string, PluginEntry>
+  pending: MutableHashMap.MutableHashMap<string, ConfigPlugin.Origin>
   dispose_timeout_ms: number
 }
 
 const DISPOSE_TIMEOUT_MS = 5000
 const KV_KEY = "plugin_enabled"
 const EMPTY_TUI: TuiPluginModule = {
-  tui: async () => {},
+  // The plugin contract returns a Promise; a theme-only package has no TUI work to run.
+  tui: () => Effect.runPromise(Effect.void),
 }
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+const attempt = <A>(run: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new PluginStepError({ cause }) })
+
+const attemptSync = <A>(run: () => A) => Effect.try({ try: run, catch: (cause) => new PluginStepError({ cause }) })
+
+// Plugin callbacks return a Promise or a plain value. Settle both, and keep the thrown value as the cause.
+const settle = (run: () => unknown) =>
+  attemptSync(run).pipe(
+    Effect.flatMap((out) => (Predicate.isPromiseLike(out) ? attempt(() => out) : Effect.void)),
+    Effect.asVoid,
+  )
+
+const isDisposer = (value: unknown): value is () => void => typeof value === "function"
+
+const isTuiModule = (value: Record<string, unknown>): value is Record<string, unknown> & TuiPluginModule =>
+  typeof value.tui === "function"
+
 function fail(message: string, data: Record<string, unknown>) {
-  if (!("error" in data)) {
-    console.error(`[tui.plugin] ${message}`, data)
-    return
-  }
+  if (!("error" in data)) return Console.error(`[tui.plugin] ${message}`, data)
 
   const text = `${message}: ${errorMessage(data.error)}`
   const next = { ...data, error: errorData(data.error) }
-  console.error(`[tui.plugin] ${text}`, next)
+  return Console.error(`[tui.plugin] ${text}`, next)
 }
 
 function warn(message: string, data: Record<string, unknown>) {
-  console.warn(`[tui.plugin] ${message}`, data)
+  return Console.warn(`[tui.plugin] ${message}`, data)
 }
 
 function createScopedKeymap(keymap: TuiPluginApi["keymap"], scope: PluginScope): TuiPluginApi["keymap"] {
-  const cache = new Map<PropertyKey, unknown>()
+  const cache = MutableHashMap.empty<PropertyKey, unknown>()
   return new Proxy(keymap, {
     get(target, prop) {
-      const value = Reflect.get(target, prop, target)
+      const value: unknown = Reflect.get(target, prop, target)
       if (typeof value !== "function") return value
-      if (cache.has(prop)) return cache.get(prop)
-      const fn = ScopedKeymapMethods.has(prop)
+      const hit = MutableHashMap.get(cache, prop)
+      if (Option.isSome(hit)) return hit.value
+      const fn = HashSet.has(ScopedKeymapMethods, prop)
         ? (...args: unknown[]) => {
-            const dispose = (value as (...args: unknown[]) => unknown).apply(target, args)
-            return scope.track(typeof dispose === "function" ? (dispose as () => void) : undefined)
+            const dispose: unknown = Reflect.apply(value, target, args)
+            return isDisposer(dispose) ? scope.track(dispose) : () => {}
           }
-        : (...args: unknown[]) => (value as (...args: unknown[]) => unknown).apply(target, args)
-      cache.set(prop, fn)
+        : (...args: unknown[]): unknown => Reflect.apply(value, target, args)
+      MutableHashMap.set(cache, prop, fn)
       return fn
     },
   })
@@ -201,28 +229,9 @@ function createScopedMode(mode: TuiPluginApi["mode"], scope: PluginScope): TuiPl
   }
 }
 
-type CleanupResult = { type: "ok" } | { type: "error"; error: unknown } | { type: "timeout" }
-
-function runCleanup(fn: () => unknown, ms: number): Promise<CleanupResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      resolve({ type: "timeout" })
-    }, ms)
-
-    Promise.resolve()
-      .then(fn)
-      .then(
-        () => {
-          resolve({ type: "ok" })
-        },
-        (error) => {
-          resolve({ type: "error", error })
-        },
-      )
-      .finally(() => {
-        clearTimeout(timer)
-      })
-  })
+// Success holds `Option.none()` when the cleanup did not settle within the time limit.
+function runCleanup(fn: TuiDispose, ms: number) {
+  return settle(fn).pipe(Effect.timeoutOption(Duration.millis(ms)), Effect.result)
 }
 
 function isTheme(value: unknown) {
@@ -242,91 +251,100 @@ function resolveRoot(root: string) {
   return path.resolve(process.cwd(), root)
 }
 
-function createThemeInstaller(
+const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
   meta: ConfigPlugin.Origin,
   root: string,
-  spec: string,
   plugin: PluginEntry,
-): TuiTheme["install"] {
-  return async (file) => {
-    const src = Filesystem.resolveFilePath(root, file)
-    const name = path.basename(src, path.extname(src))
-    const source_dir = path.dirname(meta.source)
-    const local_dir =
-      path.basename(source_dir) === ".opencode"
-        ? path.join(source_dir, "themes")
-        : path.join(source_dir, ".opencode", "themes")
-    const dest_dir = meta.scope === "local" ? local_dir : path.join(Global.Path.config, "themes")
-    const dest = path.join(dest_dir, `${name}.json`)
-    const stat = await Filesystem.statAsync(src)
-    const mtime = stat ? Math.floor(typeof stat.mtimeMs === "bigint" ? Number(stat.mtimeMs) : stat.mtimeMs) : undefined
-    const size = stat ? (typeof stat.size === "bigint" ? Number(stat.size) : stat.size) : undefined
-    const info = {
-      src,
-      dest,
-      mtime,
-      size,
-    }
+  file: string,
+) {
+  const src = Filesystem.resolveFilePath(root, file)
+  const name = path.basename(src, path.extname(src))
+  const source_dir = path.dirname(meta.source)
+  const local_dir =
+    path.basename(source_dir) === ".opencode"
+      ? path.join(source_dir, "themes")
+      : path.join(source_dir, ".opencode", "themes")
+  const dest_dir = meta.scope === "local" ? local_dir : path.join(Global.Path.config, "themes")
+  const dest = path.join(dest_dir, `${name}.json`)
+  // A stat failure other than a missing file is a defect: the install call rejects with it.
+  const stat = Option.fromNullishOr(yield* Effect.promise(() => Filesystem.statAsync(src)))
+  const info: PluginMeta.Theme = {
+    src,
+    dest,
+    ...Option.match(stat, {
+      onNone: () => ({}),
+      onSome: (value) => ({
+        mtime: Math.floor(typeof value.mtimeMs === "bigint" ? Number(value.mtimeMs) : value.mtimeMs),
+        size: typeof value.size === "bigint" ? Number(value.size) : value.size,
+      }),
+    }),
+  }
 
-    await Flock.withLock(`tui-theme:${dest}`, async () => {
-      const save = async () => {
-        plugin.themes[name] = info
-        await Effect.runPromise(PluginMeta.setTheme(plugin.id, name, info)).catch(() => {})
-      }
+  const save = Effect.gen(function* () {
+    plugin.themes[name] = info
+    yield* PluginMeta.setTheme(plugin.id, name, info).pipe(Effect.catchCause(() => Effect.void))
+  })
 
-      const exists = hasTheme(name)
-      const prev = plugin.themes[name]
-      if (exists) {
-        if (plugin.meta.state !== "updated") {
-          if (!prev && (await Filesystem.exists(dest))) {
-            await save()
-          }
-          return
-        }
-        if (prev?.dest === dest && prev.mtime === mtime && prev.size === size) return
-      }
-
-      const text = await Filesystem.readText(src).catch(() => undefined)
-      if (text === undefined) return
-
-      const fail = Symbol()
-      const data = await Promise.resolve(text)
-        .then((x) => JSON.parse(x))
-        .catch(() => fail)
-      if (data === fail) return
-
-      if (!isTheme(data)) {
+  const write = Effect.gen(function* () {
+    const exists = hasTheme(name)
+    const prev = Option.fromNullishOr(plugin.themes[name])
+    if (exists) {
+      if (plugin.meta.state !== "updated") {
+        if (Option.isNone(prev) && (yield* Effect.promise(() => Filesystem.exists(dest)))) yield* save
         return
       }
+      if (
+        Option.isSome(prev) &&
+        prev.value.dest === dest &&
+        prev.value.mtime === info.mtime &&
+        prev.value.size === info.size
+      )
+        return
+    }
 
-      if (exists || !(await Filesystem.exists(dest))) {
-        await Filesystem.write(dest, text).catch(() => {})
-      }
+    const text = yield* Effect.option(attempt(() => Filesystem.readText(src)))
+    if (Option.isNone(text)) return
 
-      upsertTheme(name, data)
-      await save()
-    }).catch(() => {})
-  }
+    const data = decodeJson(text.value)
+    if (Option.isNone(data)) return
+    if (!isTheme(data.value)) return
+
+    if (exists || !(yield* Effect.promise(() => Filesystem.exists(dest)))) {
+      yield* Effect.ignore(attempt(() => Filesystem.write(dest, text.value)))
+    }
+
+    upsertTheme(name, data.value)
+    yield* save
+  })
+
+  // A lock or write failure leaves the theme uninstalled without failing the plugin.
+  yield* Effect.scoped(Flock.effect(`tui-theme:${dest}`).pipe(Effect.andThen(write))).pipe(
+    Effect.catchCause(() => Effect.void),
+  )
+})
+
+function createThemeInstaller(meta: ConfigPlugin.Origin, root: string, plugin: PluginEntry): TuiTheme["install"] {
+  return (file) => Effect.runPromise(installTheme(meta, root, plugin, file))
 }
 
-function createMeta(
+const createMeta = Effect.fn("TuiPluginRuntime.createMeta")(function* (
   source: PluginLoad["source"],
   spec: string,
   target: string,
-  meta: { state: PluginMeta.State; entry: PluginMeta.Entry } | undefined,
-  id?: string,
-): TuiPluginMeta {
-  if (meta) {
+  meta: Option.Option<PluginMeta.Hit>,
+  id: string,
+) {
+  if (Option.isSome(meta)) {
     return {
-      state: meta.state,
-      ...meta.entry,
-    }
+      state: meta.value.state,
+      ...meta.value.entry,
+    } satisfies TuiPluginMeta
   }
 
-  const now = Date.now()
+  const now = yield* Clock.currentTimeMillis
   return {
     state: source === "internal" ? "same" : "first",
-    id: id ?? spec,
+    id,
     source,
     spec,
     target,
@@ -335,15 +353,15 @@ function createMeta(
     time_changed: now,
     load_count: 1,
     fingerprint: target,
-  }
-}
+  } satisfies TuiPluginMeta
+})
 
 function loadInternalPlugin(item: InternalTuiPlugin): PluginLoad {
   const spec = item.id
   const target = spec
 
   return {
-    options: undefined,
+    options: Option.none(),
     spec,
     target,
     retry: false,
@@ -360,50 +378,54 @@ function loadInternalPlugin(item: InternalTuiPlugin): PluginLoad {
   }
 }
 
-async function readThemeFiles(spec: string, pkg?: PluginPackage) {
-  if (!pkg) return [] as string[]
-  return Promise.resolve()
-    .then(() => readPackageThemes(spec, pkg))
-    .catch((error) => {
+function readThemeFiles(spec: string, pkg?: PluginPackage) {
+  if (!pkg) return Effect.succeed<string[]>([])
+  return attemptSync(() => readPackageThemes(spec, pkg)).pipe(
+    Effect.catch((error) =>
       warn("invalid tui plugin oc-themes", {
         path: spec,
         pkg: pkg.pkg,
-        error,
-      })
-      return [] as string[]
-    })
+        error: error.cause,
+      }).pipe(Effect.as<string[]>([])),
+    ),
+  )
 }
 
-async function syncPluginThemes(plugin: PluginEntry) {
+const syncPluginThemes = Effect.fn("TuiPluginRuntime.syncPluginThemes")(function* (plugin: PluginEntry) {
   if (!plugin.load.theme_files.length) return
   if (plugin.meta.state === "same") return
-  const install = createThemeInstaller(plugin.load.origin, plugin.load.plugin_root, plugin.load.spec, plugin)
   for (const file of plugin.load.theme_files) {
-    await install(file).catch((error) => {
-      warn("failed to sync tui plugin oc-themes", { path: plugin.load.spec, id: plugin.id, theme: file, error })
-    })
+    yield* installTheme(plugin.load.origin, plugin.load.plugin_root, plugin, file).pipe(
+      Effect.catchCause((cause) =>
+        warn("failed to sync tui plugin oc-themes", {
+          path: plugin.load.spec,
+          id: plugin.id,
+          theme: file,
+          error: Cause.squash(cause),
+        }),
+      ),
+    )
   }
-}
+})
 
-function createPluginScope(load: PluginLoad, id: string, disposeTimeoutMs: number) {
+function createPluginScope(load: PluginLoad, id: string, disposeTimeoutMs: number): PluginScope {
   const ctrl = new AbortController()
-  let list: { key: symbol; fn: TuiDispose }[] = []
+  let queue: ReadonlyArray<{ key: symbol; fn: TuiDispose }> = []
   let done = false
 
   const onDispose = (fn: TuiDispose) => {
     if (done) return () => {}
     const key = Symbol()
-    list.push({ key, fn })
+    queue = [...queue, { key, fn }]
     let drop = false
     return () => {
       if (drop) return
       drop = true
-      list = list.filter((x) => x.key !== key)
+      queue = queue.filter((x) => x.key !== key)
     }
   }
 
-  const track = (fn: (() => void) | undefined) => {
-    if (!fn) return () => {}
+  const track = (fn: () => void) => {
     let drop = false
     let off = () => {}
     const wrapped = () => {
@@ -421,44 +443,41 @@ function createPluginScope(load: PluginLoad, id: string, disposeTimeoutMs: numbe
     onDispose,
   }
 
-  const dispose = async () => {
+  const timedOut = fail("timed out cleaning up tui plugin", {
+    path: load.spec,
+    id,
+    timeout: disposeTimeoutMs,
+  })
+
+  const dispose = Effect.gen(function* () {
     if (done) return
     done = true
     ctrl.abort()
-    const queue = [...list].reverse()
-    list = []
-    const until = Date.now() + disposeTimeoutMs
-    for (const item of queue) {
-      const left = until - Date.now()
+    const pending = [...queue].reverse()
+    queue = []
+    const until = (yield* Clock.currentTimeMillis) + disposeTimeoutMs
+    for (const item of pending) {
+      const left = until - (yield* Clock.currentTimeMillis)
       if (left <= 0) {
-        fail("timed out cleaning up tui plugin", {
-          path: load.spec,
-          id,
-          timeout: disposeTimeoutMs,
-        })
+        yield* timedOut
         break
       }
 
-      const out = await runCleanup(item.fn, left)
-      if (out.type === "ok") continue
-      if (out.type === "timeout") {
-        fail("timed out cleaning up tui plugin", {
+      const out = yield* runCleanup(item.fn, left)
+      if (Result.isFailure(out)) {
+        yield* fail("failed to clean up tui plugin", {
           path: load.spec,
           id,
-          timeout: disposeTimeoutMs,
+          error: out.failure.cause,
         })
-        break
+        continue
       }
-
-      if (out.type === "error") {
-        fail("failed to clean up tui plugin", {
-          path: load.spec,
-          id,
-          error: out.error,
-        })
+      if (Option.isNone(out.success)) {
+        yield* timedOut
+        break
       }
     }
-  }
+  })
 
   return {
     lifecycle,
@@ -495,78 +514,80 @@ function listPluginStatus(state: RuntimeState): TuiPluginStatus[] {
     spec: plugin.meta.spec,
     target: plugin.meta.target,
     enabled: plugin.enabled,
-    active: plugin.scope !== undefined,
+    active: Option.isSome(plugin.scope),
   }))
 }
 
-async function deactivatePluginEntry(state: RuntimeState, plugin: PluginEntry, persist: boolean) {
+const deactivatePluginEntry = Effect.fn("TuiPluginRuntime.deactivatePluginEntry")(function* (
+  state: RuntimeState,
+  plugin: PluginEntry,
+  persist: boolean,
+) {
   plugin.enabled = false
   if (persist) writePluginEnabledState(state.api, plugin.id, false)
-  if (!plugin.scope) {
-    state.view.update({ status: listPluginStatus(state) })
-    return true
-  }
   const scope = plugin.scope
-  plugin.scope = undefined
-  await scope.dispose()
+  plugin.scope = Option.none()
+  if (Option.isSome(scope)) yield* scope.value.dispose
   state.view.update({ status: listPluginStatus(state) })
   return true
-}
+})
 
-async function activatePluginEntry(state: RuntimeState, plugin: PluginEntry, persist: boolean) {
+const activatePluginEntry = Effect.fn("TuiPluginRuntime.activatePluginEntry")(function* (
+  state: RuntimeState,
+  plugin: PluginEntry,
+  persist: boolean,
+) {
   plugin.enabled = true
   if (persist) writePluginEnabledState(state.api, plugin.id, true)
-  if (plugin.scope) {
+  if (Option.isSome(plugin.scope)) {
     state.view.update({ status: listPluginStatus(state) })
     return true
   }
 
   const scope = createPluginScope(plugin.load, plugin.id, state.dispose_timeout_ms)
   const api = pluginApi(state, plugin, scope, plugin.id)
-  const ok = await Promise.resolve()
-    .then(async () => {
-      await syncPluginThemes(plugin)
-      await plugin.plugin(api, plugin.load.options, plugin.meta)
-      return true
-    })
-    .catch((error) => {
+  const ok = yield* syncPluginThemes(plugin).pipe(
+    // The plugin contract takes `undefined` when a plugin has no options.
+    Effect.andThen(settle(() => plugin.plugin(api, Option.getOrUndefined(plugin.load.options), plugin.meta))),
+    Effect.as(true),
+    Effect.catch((error) =>
       fail("failed to initialize tui plugin", {
         path: plugin.load.spec,
         id: plugin.id,
-        error,
-      })
-      return false
-    })
+        error: error.cause,
+      }).pipe(Effect.as(false)),
+    ),
+  )
 
   if (!ok) {
-    await scope.dispose()
+    yield* scope.dispose
     state.view.update({ status: listPluginStatus(state) })
     return false
   }
 
   if (!plugin.enabled) {
-    await scope.dispose()
+    yield* scope.dispose
     state.view.update({ status: listPluginStatus(state) })
     return true
   }
 
-  plugin.scope = scope
+  plugin.scope = Option.some(scope)
   state.view.update({ status: listPluginStatus(state) })
   return true
+})
+
+function activatePluginById(state: RuntimeState, id: string, persist: boolean) {
+  return Option.match(MutableHashMap.get(state.plugins_by_id, id), {
+    onNone: () => Effect.succeed(false),
+    onSome: (plugin) => activatePluginEntry(state, plugin, persist),
+  })
 }
 
-async function activatePluginById(state: RuntimeState | undefined, id: string, persist: boolean) {
-  if (!state) return false
-  const plugin = state.plugins_by_id.get(id)
-  if (!plugin) return false
-  return activatePluginEntry(state, plugin, persist)
-}
-
-async function deactivatePluginById(state: RuntimeState | undefined, id: string, persist: boolean) {
-  if (!state) return false
-  const plugin = state.plugins_by_id.get(id)
-  if (!plugin) return false
-  return deactivatePluginEntry(state, plugin, persist)
+function deactivatePluginById(state: RuntimeState, id: string, persist: boolean) {
+  return Option.match(MutableHashMap.get(state.plugins_by_id, id), {
+    onNone: () => Effect.succeed(false),
+    onSome: (plugin) => deactivatePluginEntry(state, plugin, persist),
+  })
 }
 
 function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScope, base: string): TuiPluginApi {
@@ -587,7 +608,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
   }
 
   const theme: TuiPluginApi["theme"] = Object.assign(Object.create(api.theme), {
-    install: createThemeInstaller(load.origin, load.plugin_root, load.spec, plugin),
+    install: createThemeInstaller(load.origin, load.plugin_root, plugin),
   })
 
   const event: TuiPluginApi["event"] = {
@@ -609,6 +630,7 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
     },
   }
 
+  // The plugins API is part of the Promise-based plugin contract.
   return {
     app: api.app,
     attention: createScopedAttention(api.attention, scope, load.plugin_root),
@@ -634,35 +656,38 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
         return listPluginStatus(runtime)
       },
       activate(id) {
-        return activatePluginById(runtime, id, true)
+        return Effect.runPromise(activatePluginById(runtime, id, true))
       },
       deactivate(id) {
-        return deactivatePluginById(runtime, id, true)
+        return Effect.runPromise(deactivatePluginById(runtime, id, true))
       },
       add(spec) {
-        return addPluginBySpec(runtime, spec)
+        return Effect.runPromise(addPluginBySpec(runtime, spec))
       },
       install(spec, options) {
-        return installPluginBySpec(runtime, spec, options?.global)
+        return Effect.runPromise(installPluginBySpec(runtime, spec, options?.global))
       },
     },
     lifecycle: scope.lifecycle,
   }
 }
 
-function addPluginEntry(state: RuntimeState, plugin: PluginEntry) {
-  if (state.plugins_by_id.has(plugin.id)) {
-    fail("duplicate tui plugin id", {
+const addPluginEntry = Effect.fn("TuiPluginRuntime.addPluginEntry")(function* (
+  state: RuntimeState,
+  plugin: PluginEntry,
+) {
+  if (MutableHashMap.has(state.plugins_by_id, plugin.id)) {
+    yield* fail("duplicate tui plugin id", {
       id: plugin.id,
       path: plugin.load.spec,
     })
     return false
   }
 
-  state.plugins_by_id.set(plugin.id, plugin)
-  state.plugins.push(plugin)
+  MutableHashMap.set(state.plugins_by_id, plugin.id, plugin)
+  state.plugins = [...state.plugins, plugin]
   return true
-}
+})
 
 function applyInitialPluginEnabledState(state: RuntimeState, config: TuiConfig.Resolved) {
   const map = pluginEnabledState(state, config)
@@ -673,144 +698,177 @@ function applyInitialPluginEnabledState(state: RuntimeState, config: TuiConfig.R
   }
 }
 
-async function resolveExternalPlugins(list: ConfigPlugin.Origin[], wait: () => Promise<void>) {
-  return PluginLoader.loadExternal({
-    items: list,
-    kind: "tui",
-    wait: async () => {
-      await wait().catch(() => {})
-    },
-    finish: async (loaded, origin, retry) => {
-      const mod = await Promise.resolve()
-        .then(() => readV1Plugin(loaded.mod as Record<string, unknown>, loaded.spec, "tui") as TuiPluginModule)
-        .catch((error) => {
-          fail("failed to load tui plugin", {
-            path: loaded.spec,
-            target: loaded.entry,
-            retry,
-            error,
-          })
-          return
-        })
-      if (!mod) return
-
-      const id = await resolvePluginId(
-        loaded.source,
-        loaded.spec,
-        loaded.target,
-        readPluginId(mod.id, loaded.spec),
-        loaded.pkg,
-      ).catch((error) => {
-        fail("failed to load tui plugin", { path: loaded.spec, target: loaded.target, retry, error })
-        return
-      })
-      if (!id) return
-
-      const theme_files = await readThemeFiles(loaded.spec, loaded.pkg)
-
-      return {
-        options: loaded.options,
-        spec: loaded.spec,
-        target: loaded.target,
+const finishExternalPlugin = Effect.fn("TuiPluginRuntime.finishExternalPlugin")(function* (
+  loaded: PluginLoader.Loaded,
+  origin: ConfigPlugin.Origin,
+  retry: boolean,
+) {
+  const mod = yield* attemptSync(() => readV1Plugin(loaded.mod, loaded.spec, "tui")).pipe(
+    Effect.map((value) => Option.filter(Option.fromNullishOr(value), isTuiModule)),
+    Effect.catch((error) =>
+      fail("failed to load tui plugin", {
+        path: loaded.spec,
+        target: loaded.entry,
         retry,
-        source: loaded.source,
-        id,
-        module: mod,
-        origin,
-        plugin_root: loaded.pkg?.dir ?? resolveRoot(loaded.target),
-        theme_files,
-      }
-    },
-    missing: async (loaded, origin, retry) => {
-      const theme_files = await readThemeFiles(loaded.spec, loaded.pkg)
-      if (!theme_files.length) return
-
-      const name =
-        typeof loaded.pkg?.json.name === "string" && loaded.pkg.json.name.trim().length > 0
-          ? loaded.pkg.json.name.trim()
-          : undefined
-      const id = await resolvePluginId(loaded.source, loaded.spec, loaded.target, name, loaded.pkg).catch((error) => {
-        fail("failed to load tui plugin", { path: loaded.spec, target: loaded.target, retry, error })
-        return
-      })
-      if (!id) return
-
-      return {
-        options: loaded.options,
-        spec: loaded.spec,
-        target: loaded.target,
-        retry,
-        source: loaded.source,
-        id,
-        module: EMPTY_TUI,
-        origin,
-        plugin_root: loaded.pkg?.dir ?? resolveRoot(loaded.target),
-        theme_files,
-      }
-    },
-    report: {
-      start() {},
-      missing(candidate, retry, message) {
-        warn("tui plugin has no entrypoint", { path: candidate.plan.spec, retry, message })
-      },
-      error(candidate, retry, stage, error, resolved) {
-        const spec = candidate.plan.spec
-        if (stage === "install") {
-          fail("failed to resolve tui plugin", { path: spec, retry, error })
-          return
-        }
-        if (stage === "compatibility") {
-          fail("tui plugin incompatible", { path: spec, retry, error })
-          return
-        }
-        if (stage === "entry") {
-          fail("failed to resolve tui plugin entry", { path: spec, retry, error })
-          return
-        }
-        fail("failed to load tui plugin", { path: spec, target: resolved?.entry, retry, error })
-      },
-    },
-  })
-}
-
-async function addExternalPluginEntries(state: RuntimeState, ready: PluginLoad[]) {
-  if (!ready.length) return { plugins: [] as PluginEntry[], ok: true }
-
-  const meta = await Effect.runPromise(
-    PluginMeta.touchMany(
-      ready.map((item) => ({
-        spec: item.spec,
-        target: item.target,
-        id: item.id,
-      })),
+        error: error.cause,
+      }).pipe(Effect.as(Option.none())),
     ),
-  ).catch(() => undefined)
+  )
+  if (Option.isNone(mod)) return Option.none<PluginLoad>()
 
-  const plugins: PluginEntry[] = []
-  let ok = true
-  for (let i = 0; i < ready.length; i++) {
-    const entry = ready[i]
-    if (!entry) continue
-    const hit = meta?.[i]
-    const info = createMeta(entry.source, entry.spec, entry.target, hit, entry.id)
-    const themes = hit?.entry.themes ? { ...hit.entry.themes } : {}
-    const plugin: PluginEntry = {
-      id: entry.id,
-      load: entry,
-      meta: info,
-      themes,
-      plugin: entry.module.tui,
-      enabled: true,
-    }
-    if (!addPluginEntry(state, plugin)) {
-      ok = false
-      continue
-    }
-    plugins.push(plugin)
-  }
+  // An invalid id export is a defect of this load attempt, as it was before the id lookup.
+  const declared = readPluginId(mod.value.id, loaded.spec)
+  const id = yield* attempt(() => resolvePluginId(loaded.source, loaded.spec, loaded.target, declared, loaded.pkg)).pipe(
+    Effect.map(Option.some),
+    Effect.catch((error) =>
+      fail("failed to load tui plugin", {
+        path: loaded.spec,
+        target: loaded.target,
+        retry,
+        error: error.cause,
+      }).pipe(Effect.as(Option.none<string>())),
+    ),
+  )
+  if (Option.isNone(id) || !id.value) return Option.none<PluginLoad>()
 
-  return { plugins, ok }
+  const theme_files = yield* readThemeFiles(loaded.spec, loaded.pkg)
+
+  return Option.some<PluginLoad>({
+    options: Option.fromNullishOr(loaded.options),
+    spec: loaded.spec,
+    target: loaded.target,
+    retry,
+    source: loaded.source,
+    id: id.value,
+    module: mod.value,
+    origin,
+    plugin_root: loaded.pkg?.dir ?? resolveRoot(loaded.target),
+    theme_files,
+  })
+})
+
+const missingExternalPlugin = Effect.fn("TuiPluginRuntime.missingExternalPlugin")(function* (
+  loaded: PluginLoader.Missing,
+  origin: ConfigPlugin.Origin,
+  retry: boolean,
+) {
+  const theme_files = yield* readThemeFiles(loaded.spec, loaded.pkg)
+  if (!theme_files.length) return Option.none<PluginLoad>()
+
+  const name = Option.fromNullishOr(loaded.pkg?.json.name).pipe(
+    Option.filter(Predicate.isString),
+    Option.map((value) => value.trim()),
+    Option.filter((value) => value.length > 0),
+  )
+  const id = yield* attempt(() =>
+    // The shared resolver takes `undefined` when the package has no usable name.
+    resolvePluginId(loaded.source, loaded.spec, loaded.target, Option.getOrUndefined(name), loaded.pkg),
+  ).pipe(
+    Effect.map(Option.some),
+    Effect.catch((error) =>
+      fail("failed to load tui plugin", {
+        path: loaded.spec,
+        target: loaded.target,
+        retry,
+        error: error.cause,
+      }).pipe(Effect.as(Option.none<string>())),
+    ),
+  )
+  if (Option.isNone(id) || !id.value) return Option.none<PluginLoad>()
+
+  return Option.some<PluginLoad>({
+    options: Option.fromNullishOr(loaded.options),
+    spec: loaded.spec,
+    target: loaded.target,
+    retry,
+    source: loaded.source,
+    id: id.value,
+    module: EMPTY_TUI,
+    origin,
+    plugin_root: loaded.pkg?.dir ?? resolveRoot(loaded.target),
+    theme_files,
+  })
+})
+
+// The loader takes Promise callbacks; each one runs its Effect at this edge.
+function resolveExternalPlugins(list: ConfigPlugin.Origin[]) {
+  return attempt(() =>
+    PluginLoader.loadExternal<PluginLoad>({
+      items: list,
+      kind: "tui",
+      wait: () => Effect.runPromise(Effect.ignore(attempt(() => TuiConfig.waitForDependencies()))),
+      finish: (loaded, origin, retry) =>
+        Effect.runPromise(finishExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
+      missing: (loaded, origin, retry) =>
+        Effect.runPromise(missingExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
+      report: {
+        start() {},
+        missing(candidate, retry, message) {
+          Effect.runFork(warn("tui plugin has no entrypoint", { path: candidate.plan.spec, retry, message }))
+        },
+        error(candidate, retry, stage, error, resolved) {
+          const spec = candidate.plan.spec
+          if (stage === "install") {
+            Effect.runFork(fail("failed to resolve tui plugin", { path: spec, retry, error }))
+            return
+          }
+          if (stage === "compatibility") {
+            Effect.runFork(fail("tui plugin incompatible", { path: spec, retry, error }))
+            return
+          }
+          if (stage === "entry") {
+            Effect.runFork(fail("failed to resolve tui plugin entry", { path: spec, retry, error }))
+            return
+          }
+          Effect.runFork(fail("failed to load tui plugin", { path: spec, target: resolved?.entry, retry, error }))
+        },
+      },
+    }),
+  )
 }
+
+const addExternalPluginEntries = Effect.fn("TuiPluginRuntime.addExternalPluginEntries")(function* (
+  state: RuntimeState,
+  ready: ReadonlyArray<PluginLoad>,
+) {
+  if (!ready.length) return { plugins: [], ok: true }
+
+  const meta = yield* PluginMeta.touchMany(
+    ready.map((item) => ({
+      spec: item.spec,
+      target: item.target,
+      id: item.id,
+    })),
+  ).pipe(
+    Effect.map(Option.some),
+    Effect.catchCause(() => Effect.succeed(Option.none())),
+  )
+
+  const added = yield* Effect.forEach(ready, (entry, i) =>
+    Effect.gen(function* () {
+      const hit = Option.flatMap(meta, (hits) => Option.fromNullishOr(hits[i]))
+      const info = yield* createMeta(entry.source, entry.spec, entry.target, hit, entry.id)
+      const plugin: PluginEntry = {
+        id: entry.id,
+        load: entry,
+        meta: info,
+        themes: Option.match(hit, {
+          onNone: () => ({}),
+          onSome: (value) => ({ ...value.entry.themes }),
+        }),
+        plugin: entry.module.tui,
+        enabled: true,
+        scope: Option.none(),
+      }
+      return { plugin, ok: yield* addPluginEntry(state, plugin) }
+    }),
+  )
+
+  return {
+    plugins: added.filter((item) => item.ok).map((item) => item.plugin),
+    ok: added.every((item) => item.ok),
+  }
+})
 
 function defaultPluginOrigin(state: RuntimeState, spec: string): ConfigPlugin.Origin {
   return {
@@ -821,13 +879,13 @@ function defaultPluginOrigin(state: RuntimeState, spec: string): ConfigPlugin.Or
 }
 
 function installCause(err: unknown) {
-  if (!err || typeof err !== "object") return
-  if (!("cause" in err)) return
-  return (err as { cause?: unknown }).cause
+  if (!err || typeof err !== "object") return Option.none()
+  if (!("cause" in err)) return Option.none()
+  return Option.fromNullishOr(err.cause)
 }
 
 function installDetail(err: unknown) {
-  const hit = installCause(err) ?? err
+  const hit = Option.getOrElse(installCause(err), () => err)
   if (!(hit instanceof Process.RunFailedError)) {
     return {
       message: errorMessage(hit),
@@ -847,67 +905,57 @@ function installDetail(err: unknown) {
   }
 }
 
-async function addPluginBySpec(state: RuntimeState | undefined, raw: string) {
-  if (!state) return false
+const addPluginBySpec = Effect.fn("TuiPluginRuntime.addPluginBySpec")(function* (state: RuntimeState, raw: string) {
   const spec = raw.trim()
   if (!spec) return false
 
-  const cfg = state.pending.get(spec) ?? defaultPluginOrigin(state, spec)
+  const cfg = Option.getOrElse(MutableHashMap.get(state.pending, spec), () => defaultPluginOrigin(state, spec))
   const next = ConfigPlugin.pluginSpecifier(cfg.spec)
   if (state.plugins.some((plugin) => plugin.load.spec === next)) {
-    state.pending.delete(spec)
+    MutableHashMap.remove(state.pending, spec)
     return true
   }
-  const ready = await resolveExternalPlugins([cfg], () => TuiConfig.waitForDependencies()).catch((error) => {
-    fail("failed to add tui plugin", { path: next, error })
-    return [] as PluginLoad[]
-  })
+  const ready = yield* resolveExternalPlugins([cfg]).pipe(
+    Effect.catch((error) =>
+      fail("failed to add tui plugin", { path: next, error: error.cause }).pipe(Effect.as<PluginLoad[]>([])),
+    ),
+  )
   if (!ready.length) {
     return false
   }
 
-  const first = ready[0]
-  if (!first) {
-    fail("failed to add tui plugin", { path: next })
+  const first = Option.fromNullishOr(ready[0])
+  if (Option.isNone(first)) {
+    yield* fail("failed to add tui plugin", { path: next })
     return false
   }
-  if (state.plugins_by_id.has(first.id)) {
-    state.pending.delete(spec)
+  if (MutableHashMap.has(state.plugins_by_id, first.value.id)) {
+    MutableHashMap.remove(state.pending, spec)
     return true
   }
 
-  const out = await addExternalPluginEntries(state, [first])
-  let ok = out.ok && out.plugins.length > 0
-  for (const plugin of out.plugins) {
-    const active = await activatePluginEntry(state, plugin, false)
-    if (!active) ok = false
-  }
+  const out = yield* addExternalPluginEntries(state, [first.value])
+  const active = yield* Effect.forEach(out.plugins, (plugin) => activatePluginEntry(state, plugin, false))
+  const ok = out.ok && out.plugins.length > 0 && active.every(Boolean)
 
-  if (ok) state.pending.delete(spec)
+  if (ok) MutableHashMap.remove(state.pending, spec)
   if (!ok) {
-    fail("failed to add tui plugin", { path: next })
+    yield* fail("failed to add tui plugin", { path: next })
   }
   return ok
-}
+})
 
-async function installPluginBySpec(
-  state: RuntimeState | undefined,
+const installPluginBySpec = Effect.fn("TuiPluginRuntime.installPluginBySpec")(function* (
+  state: RuntimeState,
   raw: string,
   global = false,
-): Promise<TuiPluginInstallResult> {
-  if (!state) {
-    return {
-      ok: false,
-      message: "Plugin runtime is not ready.",
-    }
-  }
-
+) {
   const spec = raw.trim()
   if (!spec) {
     return {
       ok: false,
       message: "Plugin package name is required",
-    }
+    } satisfies TuiPluginInstallResult
   }
 
   const dir = state.api.state.path
@@ -915,61 +963,64 @@ async function installPluginBySpec(
     return {
       ok: false,
       message: "Paths are still syncing. Try again in a moment.",
-    }
+    } satisfies TuiPluginInstallResult
   }
 
-  const install = await installModulePlugin(spec)
+  // These helpers report failures as results; a rejection is a defect and rejects the install call.
+  const install = yield* Effect.promise(() => installModulePlugin(spec))
   if (!install.ok) {
     const out = installDetail(install.error)
     return {
       ok: false,
       message: out.message,
       missing: out.missing,
-    }
+    } satisfies TuiPluginInstallResult
   }
 
-  const manifest = await readPluginManifest(install.target)
+  const manifest = yield* Effect.promise(() => readPluginManifest(install.target))
   if (!manifest.ok) {
     if (manifest.code === "manifest_no_targets") {
       return {
         ok: false,
         message: `"${spec}" does not expose plugin entrypoints or oc-themes in package.json`,
-      }
+      } satisfies TuiPluginInstallResult
     }
 
     return {
       ok: false,
       message: `Installed "${spec}" but failed to read ${manifest.file}`,
-    }
+    } satisfies TuiPluginInstallResult
   }
 
-  const patch = await patchPluginConfig({
-    spec,
-    targets: manifest.targets,
-    global,
-    vcs: dir.worktree && dir.worktree !== "/" ? "git" : undefined,
-    worktree: dir.worktree,
-    directory: dir.directory,
-  })
+  const patch = yield* Effect.promise(() =>
+    patchPluginConfig({
+      spec,
+      targets: manifest.targets,
+      global,
+      ...(dir.worktree && dir.worktree !== "/" ? { vcs: "git" } : {}),
+      worktree: dir.worktree,
+      directory: dir.directory,
+    }),
+  )
   if (!patch.ok) {
     if (patch.code === "invalid_json") {
       return {
         ok: false,
         message: `Invalid JSON in ${patch.file} (${patch.parse} at line ${patch.line}, column ${patch.col})`,
-      }
+      } satisfies TuiPluginInstallResult
     }
 
     return {
       ok: false,
       message: errorMessage(patch.error),
-    }
+    } satisfies TuiPluginInstallResult
   }
 
   const tui = manifest.targets.find((item) => item.kind === "tui")
   if (tui) {
     const file = patch.items.find((item) => item.kind === "tui")?.file
-    const next = tui.opts ? ([spec, tui.opts] as ConfigPluginV1.Spec) : spec
-    state.pending.set(spec, {
+    const next: ConfigPluginV1.Spec = tui.opts ? [spec, tui.opts] : spec
+    MutableHashMap.set(state.pending, spec, {
       spec: next,
       scope: global ? "global" : "local",
       source: (file ?? dir.config) || path.join(patch.dir, "tui.json"),
@@ -980,14 +1031,17 @@ async function installPluginBySpec(
     ok: true,
     dir: patch.dir,
     tui: Boolean(tui),
-  }
-}
+  } satisfies TuiPluginInstallResult
+})
 
 let dir = ""
-let loaded: Promise<void> | undefined
-let runtime: RuntimeState | undefined
+let loaded: Option.Option<Promise<void>> = Option.none()
+let runtime: Option.Option<RuntimeState> = Option.none()
 
-export async function init(input: {
+// The exported functions below are the Promise-based host contract (TuiPluginHost and PluginRuntimeCommands).
+// Each one runs its Effect at this edge.
+
+export function init(input: {
   api: HostPluginApi
   config: TuiConfig.Resolved & TuiConfig.HostMetadata
   runtime?: PluginRuntime
@@ -995,83 +1049,113 @@ export async function init(input: {
   disposeTimeoutMs?: number
 }) {
   const cwd = process.cwd()
-  if (loaded) {
+  if (Option.isSome(loaded)) {
     if (dir !== cwd) {
-      throw new Error(`TuiPluginRuntime.init() called with a different working directory. expected=${dir} got=${cwd}`)
+      return Effect.runPromise(
+        Effect.fail(
+          new InitDirectoryError({
+            message: `TuiPluginRuntime.init() called with a different working directory. expected=${dir} got=${cwd}`,
+          }),
+        ),
+      )
     }
-    return loaded
+    return loaded.value
   }
 
   dir = cwd
-  loaded = load({ ...input, runtime: input.runtime ?? createPluginRuntime() })
-  return loaded
+  const next = setup({ ...input, runtime: input.runtime ?? createPluginRuntime() })
+  const task = Effect.runPromise(load(next, input.config))
+  loaded = Option.some(task)
+  return task
 }
 
 export function list() {
-  if (!runtime) return []
-  return listPluginStatus(runtime)
+  return Option.match(runtime, {
+    onNone: (): TuiPluginStatus[] => [],
+    onSome: listPluginStatus,
+  })
 }
 
-export async function activatePlugin(id: string) {
-  return activatePluginById(runtime, id, true)
+export function activatePlugin(id: string) {
+  return withRuntime(false, (state) => activatePluginById(state, id, true))
 }
 
-export async function deactivatePlugin(id: string) {
-  return deactivatePluginById(runtime, id, true)
+export function deactivatePlugin(id: string) {
+  return withRuntime(false, (state) => deactivatePluginById(state, id, true))
 }
 
-export async function addPlugin(spec: string) {
-  return addPluginBySpec(runtime, spec)
+export function addPlugin(spec: string) {
+  return withRuntime(false, (state) => addPluginBySpec(state, spec))
 }
 
-export async function installPlugin(spec: string, options?: { global?: boolean }) {
-  return installPluginBySpec(runtime, spec, options?.global)
+export function installPlugin(spec: string, options?: { global?: boolean }) {
+  return withRuntime<TuiPluginInstallResult>({ ok: false, message: "Plugin runtime is not ready." }, (state) =>
+    installPluginBySpec(state, spec, options?.global),
+  )
 }
 
-export async function dispose() {
+export function dispose() {
   const task = loaded
-  loaded = undefined
+  loaded = Option.none()
   dir = ""
-  if (task) await task.catch((error) => fail("failed to finish loading tui plugins during disposal", { error }))
-  const state = runtime
-  runtime = undefined
-  if (!state) return
-  const queue = [...state.plugins].reverse()
-  for (const plugin of queue) {
-    await deactivatePluginEntry(state, plugin, false).catch((error) =>
-      fail("failed to dispose tui plugin", { id: plugin.id, error }),
+  return Effect.runPromise(disposeRuntime(task))
+}
+
+function withRuntime<A>(missing: A, run: (state: RuntimeState) => Effect.Effect<A>) {
+  return Effect.runPromise(
+    Option.match(runtime, {
+      onNone: () => Effect.succeed(missing),
+      onSome: run,
+    }),
+  )
+}
+
+const disposeRuntime = Effect.fn("TuiPluginRuntime.dispose")(function* (task: Option.Option<Promise<void>>) {
+  if (Option.isSome(task)) {
+    yield* attempt(() => task.value).pipe(
+      Effect.catch((error) => fail("failed to finish loading tui plugins during disposal", { error: error.cause })),
     )
   }
-  try {
-    state.dispose?.()
-  } finally {
-    state.slots.dispose()
-    state.view.clear()
+  const current = runtime
+  runtime = Option.none()
+  if (Option.isNone(current)) return
+  const state = current.value
+  const queue = [...state.plugins].reverse()
+  for (const plugin of queue) {
+    yield* deactivatePluginEntry(state, plugin, false).pipe(
+      Effect.catchCause((cause) => fail("failed to dispose tui plugin", { id: plugin.id, error: Cause.squash(cause) })),
+    )
   }
-}
+  // A throwing host dispose still clears the slots and the view, then rejects the dispose call.
+  yield* Effect.sync(() => state.dispose?.()).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        state.slots.dispose()
+        state.view.clear()
+      }),
+    ),
+  )
+})
 
-async function load(input: {
+function setup(input: {
   api: Api
-  config: TuiConfig.Resolved & TuiConfig.HostMetadata
   runtime: PluginRuntime
   dispose?: () => void
   disposeTimeoutMs?: number
-}) {
-  const { api, config } = input
-  const cwd = process.cwd()
-  const slots = input.runtime.setupSlots(api)
+}): RuntimeState {
+  const slots = input.runtime.setupSlots(input.api)
   const next: RuntimeState = {
-    directory: cwd,
-    api,
+    directory: process.cwd(),
+    api: input.api,
     view: input.runtime,
     dispose: input.dispose,
     slots,
     plugins: [],
-    plugins_by_id: new Map(),
-    pending: new Map(),
+    plugins_by_id: MutableHashMap.empty(),
+    pending: MutableHashMap.empty(),
     dispose_timeout_ms: input.disposeTimeoutMs ?? DISPOSE_TIMEOUT_MS,
   }
-  runtime = next
+  runtime = Option.some(next)
   next.view.update({
     commands: {
       activate: activatePlugin,
@@ -1081,31 +1165,37 @@ async function load(input: {
     },
     status: listPluginStatus(next),
   })
-  try {
-    const flags = await Effect.runPromise(
-      Effect.gen(function* () {
-        return yield* RuntimeFlags.Service
-      }).pipe(Effect.provide(AppNodeBuilder.build(RuntimeFlags.node))),
-    )
-    const pluginOrigins = config.plugin_origins ?? (await TuiConfig.pluginOrigins())
-    const pure = await Effect.runPromise(FlagConfig.OPENCODE_PURE)
+  return next
+}
+
+const load = Effect.fn("TuiPluginRuntime.load")(function* (
+  next: RuntimeState,
+  config: TuiConfig.Resolved & TuiConfig.HostMetadata,
+) {
+  yield* Effect.gen(function* () {
+    const flags = yield* Effect.gen(function* () {
+      return yield* RuntimeFlags.Service
+    }).pipe(Effect.provide(AppNodeBuilder.build(RuntimeFlags.node)))
+    const pluginOrigins = config.plugin_origins ?? (yield* Effect.promise(() => TuiConfig.pluginOrigins()))
+    const pure = yield* FlagConfig.OPENCODE_PURE
     const records = pure ? [] : pluginOrigins
 
     for (const item of internalTuiPlugins(flags)) {
       const entry = loadInternalPlugin(item)
-      const meta = createMeta(entry.source, entry.spec, entry.target, undefined, entry.id)
-      addPluginEntry(next, {
+      const meta = yield* createMeta(entry.source, entry.spec, entry.target, Option.none(), entry.id)
+      yield* addPluginEntry(next, {
         id: entry.id,
         load: entry,
         meta,
         themes: {},
         plugin: entry.module.tui,
         enabled: item.enabled ?? true,
+        scope: Option.none(),
       })
     }
 
-    const ready = await resolveExternalPlugins(records, () => TuiConfig.waitForDependencies())
-    await addExternalPluginEntries(next, ready)
+    const ready = yield* resolveExternalPlugins(records)
+    yield* addExternalPluginEntries(next, ready)
 
     applyInitialPluginEnabledState(next, config)
     for (const plugin of next.plugins) {
@@ -1114,13 +1204,19 @@ async function load(input: {
       // command registration order affects keybind/command precedence,
       // route registration is last-wins when ids collide,
       // and hook chains rely on stable plugin ordering.
-      await activatePluginEntry(next, plugin, false)
+      yield* activatePluginEntry(next, plugin, false)
     }
     next.view.update({ status: listPluginStatus(next) })
-  } catch (error) {
-    fail("failed to load tui plugins", { directory: cwd, error })
-  }
-}
+  }).pipe(
+    Effect.catchCause((cause) => {
+      const error = Cause.squash(cause)
+      return fail("failed to load tui plugins", {
+        directory: next.directory,
+        error: error instanceof PluginStepError ? error.cause : error,
+      })
+    }),
+  )
+})
 
 export function createLegacyTuiPluginHost(): TuiPluginHost {
   return {
