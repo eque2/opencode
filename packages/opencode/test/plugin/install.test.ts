@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { parse as parseJsonc } from "jsonc-parser"
+import { Schema } from "effect"
 import { Filesystem } from "@/util/filesystem"
 import { createPlugTask, type PlugCtx, type PlugDeps } from "../../src/cli/cmd/plug"
 import { tmpdir } from "../fixture/fixture"
@@ -30,6 +31,9 @@ function deps(global: string, target: string | Error): PlugDeps {
     global,
   }
 }
+
+// The plugin list of a config file that the test reads back.
+const decodeConfig = Schema.decodeUnknownSync(Schema.Struct({ plugin: Schema.optional(Schema.Array(Schema.Unknown)) }))
 
 function ctx(dir: string): PlugCtx {
   return {
@@ -203,8 +207,8 @@ describe("plugin.install.task", () => {
     expect(tuiText).toContain("// tui keep")
     expect(tuiText).toContain("// tui tail")
 
-    const serverJson = parseJsonc(serverText) as { plugin?: unknown[] }
-    const tuiJson = parseJsonc(tuiText) as { plugin?: unknown[] }
+    const serverJson = decodeConfig(parseJsonc(serverText))
+    const tuiJson = decodeConfig(parseJsonc(tuiText))
     expect(serverJson.plugin).toEqual(["seed@1.0.0", "acme@1.2.3"])
     expect(tuiJson.plugin).toEqual(["seed@1.0.0", "acme@1.2.3"])
   })
@@ -239,7 +243,7 @@ describe("plugin.install.task", () => {
     const text = await fs.readFile(cfg, "utf8")
     expect(text).toContain("// keep this note")
 
-    const json = parseJsonc(text) as { plugin?: unknown[] }
+    const json = decodeConfig(parseJsonc(text))
     expect(json.plugin).toEqual(["acme@2.0.0"])
   })
 
