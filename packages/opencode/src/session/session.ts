@@ -192,7 +192,7 @@ const Summary = Schema.Struct({
   deletions: Schema.Finite,
   files: Schema.Finite,
   diffs: optional(Schema.Array(Snapshot.FileDiff)),
-})
+}).annotate({ description: "Line and file change counts of a session" })
 
 const Tokens = Schema.Struct({
   input: Schema.Finite,
@@ -202,13 +202,13 @@ const Tokens = Schema.Struct({
     read: Schema.Finite,
     write: Schema.Finite,
   }),
-})
+}).annotate({ description: "Token usage of a session" })
 
 const EmptyTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
 
 const Share = Schema.Struct({
   url: Schema.String,
-})
+}).annotate({ description: "Share link of a session" })
 
 // Legacy HTTP accepted negative values here. Keep archive timestamps permissive
 // while excluding non-finite values that cannot round-trip through JSON.
@@ -219,20 +219,20 @@ const Time = Schema.Struct({
   updated: NonNegativeInt,
   compacting: optional(NonNegativeInt),
   archived: optional(ArchivedTimestamp),
-})
+}).annotate({ description: "Lifecycle timestamps of a session" })
 
 const Revert = Schema.Struct({
   messageID: MessageID,
   partID: optional(PartID),
   snapshot: optional(Schema.String),
   diff: optional(Schema.String),
-})
+}).annotate({ description: "Revert point of a session" })
 
 const Model = Schema.Struct({
   id: ModelV2.ID,
   providerID: ProviderV2.ID,
   variant: optional(Schema.String),
-})
+}).annotate({ description: "Model that a session uses" })
 
 export const Metadata = Schema.Record(Schema.String, Schema.MutableJson)
 // The metadata column holds parsed JSON; the check also rejects a NULL column.
@@ -290,32 +290,34 @@ export type CreateInput = Types.DeepMutable<Schema.Schema.Type<typeof CreateInpu
 export const ForkInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
-})
+}).annotate({ description: "Input to fork a session" })
 export const GetInput = SessionID
 export const ChildrenInput = SessionID
 export const RemoveInput = SessionID
-export const SetTitleInput = Schema.Struct({ sessionID: SessionID, title: Schema.String })
+export const SetTitleInput = Schema.Struct({ sessionID: SessionID, title: Schema.String }).annotate({
+  description: "Input to set the title of a session",
+})
 export const SetArchivedInput = Schema.Struct({
   sessionID: SessionID,
   time: Schema.optional(ArchivedTimestamp),
-})
+}).annotate({ description: "Input to archive or unarchive a session" })
 export const SetMetadataInput = Schema.Struct({
   sessionID: SessionID,
   metadata: Metadata,
-})
+}).annotate({ description: "Input to set the metadata of a session" })
 export const SetPermissionInput = Schema.Struct({
   sessionID: SessionID,
   permission: PermissionV1.Ruleset,
-})
+}).annotate({ description: "Input to set the permission rules of a session" })
 export const SetRevertInput = Schema.Struct({
   sessionID: SessionID,
   revert: Schema.optional(Revert),
   summary: Schema.optional(Summary),
-})
+}).annotate({ description: "Input to set or clear the revert point of a session" })
 export const MessagesInput = Schema.Struct({
   sessionID: SessionID,
   limit: Schema.optional(NonNegativeInt),
-})
+}).annotate({ description: "Input to list the messages of a session" })
 export type ListInput = {
   directory?: string
   scope?: "project"
