@@ -8,7 +8,7 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
 
-import { Data, Deferred, Effect, Fiber } from "effect"
+import { Config, ConfigProvider, Data, Deferred, Effect, Fiber, Option } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -60,8 +60,6 @@ const APP_IDS: Record<string, string> = {
   beta: "ai.opencode.desktop.beta",
   prod: "ai.opencode.desktop",
 }
-const TEST_ONBOARDING = process.env.OPENCODE_TEST_ONBOARDING === "1"
-const SIDECAR_VERSION = process.env.OPENCODE_SIDECAR_V2 === "1" ? "v2" : "v1"
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 class PortError extends Data.TaggedError("PortError")<{ readonly message: string }> {}
@@ -94,25 +92,35 @@ async function killSidecar() {
   await current.stop()
 }
 
-function ensureLoopbackNoProxy() {
-  const loopback = ["127.0.0.1", "localhost", "::1"]
-  const upsert = (key: string) => {
-    const items = (process.env[key] ?? "")
-      .split(",")
-      .map((value: string) => value.trim())
-      .filter((value: string) => Boolean(value))
+// Reads one environment variable when the Effect runs. The default ConfigProvider keeps a
+// copy of process.env, but startup writes process.env (preferAppEnv, ensureLoopbackNoProxy).
+// The provider reads process.env itself, which keeps Windows case-insensitive lookups.
+const readEnv = (name: string) =>
+  Config.option(Config.String(name)).parse(ConfigProvider.fromEnvRecord(process.env)).pipe(Effect.orDie)
 
-    for (const host of loopback) {
-      if (items.some((value: string) => value.toLowerCase() === host)) continue
-      items.push(host)
-    }
+// NO_PROXY and no_proxy run in order: on Windows they name one variable, and the second
+// pass must read the value that the first pass wrote.
+const ensureLoopbackNoProxy = Effect.forEach(
+  ["NO_PROXY", "no_proxy"],
+  (key) =>
+    readEnv(key).pipe(
+      Effect.map((value) => {
+        const loopback = ["127.0.0.1", "localhost", "::1"]
+        const items = Option.getOrElse(value, () => "")
+          .split(",")
+          .map((value: string) => value.trim())
+          .filter((value: string) => Boolean(value))
 
-    process.env[key] = items.join(",")
-  }
+        for (const host of loopback) {
+          if (items.some((value: string) => value.toLowerCase() === host)) continue
+          items.push(host)
+        }
 
-  upsert("NO_PROXY")
-  upsert("no_proxy")
-}
+        Object.assign(process.env, { [key]: items.join(",") })
+      }),
+    ),
+  { discard: true },
+)
 
 const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
@@ -122,22 +130,26 @@ const main = Effect.gen(function* () {
     process.chdir(homedir())
   } catch {}
 
-  process.env.OPENCODE_DISABLE_EMBEDDED_WEB_UI = "true"
+  Object.assign(process.env, { OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true" })
+  const testOnboarding = Option.contains(yield* readEnv("OPENCODE_TEST_ONBOARDING"), "1")
+  const sidecarVersion = Option.contains(yield* readEnv("OPENCODE_SIDECAR_V2"), "1") ? "v2" : "v1"
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
   const onboardingTestRoot = ((): string | undefined => {
-    if (!TEST_ONBOARDING) return
+    if (!testOnboarding) return
 
     const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
     rmSync(root, { recursive: true, force: true })
     ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
       mkdirSync(join(root, dir), { recursive: true }),
     )
-    process.env.OPENCODE_DB = ":memory:"
-    process.env.XDG_DATA_HOME = join(root, "data")
-    process.env.XDG_CONFIG_HOME = join(root, "config")
-    process.env.XDG_CACHE_HOME = join(root, "cache")
-    process.env.XDG_STATE_HOME = join(root, "state")
+    Object.assign(process.env, {
+      OPENCODE_DB: ":memory:",
+      XDG_DATA_HOME: join(root, "data"),
+      XDG_CONFIG_HOME: join(root, "config"),
+      XDG_CACHE_HOME: join(root, "cache"),
+      XDG_STATE_HOME: join(root, "state"),
+    })
     return root
   })()
   app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
@@ -190,7 +202,7 @@ const main = Effect.gen(function* () {
     onboardingTest: Boolean(onboardingTestRoot),
   })
 
-  ensureLoopbackNoProxy()
+  yield* ensureLoopbackNoProxy
   useEnvProxy()
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
@@ -256,7 +268,7 @@ const main = Effect.gen(function* () {
 
   yield* Effect.promise(() => app.whenReady())
 
-  if (!TEST_ONBOARDING) migrate()
+  if (!testOnboarding) migrate()
   yield* Effect.promise(() => cleanupStoreFiles(app.getPath("userData"))).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
@@ -327,12 +339,12 @@ const main = Effect.gen(function* () {
   )
 
   const loadingTask = yield* Effect.gen(function* () {
-    logger.log("sidecar connection started", { version: SIDECAR_VERSION })
+    logger.log("sidecar connection started", { version: sidecarVersion })
 
-    ensureLoopbackNoProxy()
+    yield* ensureLoopbackNoProxy
     useEnvProxy()
 
-    if (SIDECAR_VERSION === "v2") {
+    if (sidecarVersion === "v2") {
       logger.log("spawning v2 sidecar")
       const sidecar = yield* Effect.promise(() => startBackgroundCli(logger, shellEnv?.XDG_STATE_HOME))
       yield* Deferred.succeed(serverReady, {
@@ -350,9 +362,9 @@ const main = Effect.gen(function* () {
     }
 
     const port = yield* Effect.gen(function* () {
-      const fromEnv = process.env.OPENCODE_PORT
-      if (fromEnv) {
-        const parsed = Number.parseInt(fromEnv, 10)
+      const fromEnv = yield* readEnv("OPENCODE_PORT")
+      if (Option.isSome(fromEnv)) {
+        const parsed = Number.parseInt(fromEnv.value, 10)
         if (!Number.isNaN(parsed)) return parsed
       }
 
