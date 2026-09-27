@@ -6,6 +6,7 @@ import { NonNegativeInt, PositiveInt } from "@opencode-ai/core/schema"
 import { ConfigAttachmentV1 } from "@opencode-ai/core/v1/config/attachment"
 import { ConfigLSPV1 } from "@opencode-ai/core/v1/config/lsp"
 import { InvalidError } from "@opencode-ai/core/v1/config/error"
+import { isRecord } from "@/util/record"
 
 export interface Diagnostic {
   readonly kind: "invalid" | "unsupported" | "conflict"
@@ -19,7 +20,6 @@ export interface Lowered {
 }
 
 const decodeOptions = { errors: "all", onExcessProperty: "ignore" } as const
-const Record = Schema.Record(Schema.String, Schema.Unknown)
 const Timeout = Schema.Struct({
   startup: Schema.optional(PositiveInt),
   catalog: Schema.optional(PositiveInt),
@@ -84,8 +84,18 @@ const Command = Schema.Struct({
   subtask: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "ConfigV2CompatCommand" })
 
-const decodeRecord = Schema.decodeUnknownOption(Record, decodeOptions)
+// A plain object (not an array) is the only shape this lowering walks into.
+const decodeRecord = Option.liftPredicate(isRecord)
 const decodeLspEntry = Schema.decodeUnknownOption(ConfigLSPV1.Entry, decodeOptions)
+const decodeBoolean = Schema.decodeUnknownOption(Schema.Boolean, decodeOptions)
+const decodeAttachment = Schema.decodeUnknownOption(ConfigAttachmentV1.Info, decodeOptions)
+const decodeStrings = Schema.decodeUnknownOption(Schema.Array(Schema.String), decodeOptions)
+const decodeNonNegativeInt = Schema.decodeUnknownOption(NonNegativeInt, decodeOptions)
+const decodeAgent = Schema.decodeUnknownOption(Agent, decodeOptions)
+const decodeCommand = Schema.decodeUnknownOption(Command, decodeOptions)
+const decodeServer = Schema.decodeUnknownOption(Server, decodeOptions)
+const decodeSelection = Schema.decodeUnknownOption(Selection, decodeOptions)
+const decodeTimeout = Schema.decodeUnknownOption(Timeout, decodeOptions)
 const builtinServers = new Set<string>(ConfigLSPV1.builtinServerIds)
 
 export function lower(input: unknown, source = "configuration"): Lowered {
@@ -133,18 +143,18 @@ export function lower(input: unknown, source = "configuration"): Lowered {
 
 function normalizeSettings(input: Record<string, unknown>, result: Record<string, unknown>, diagnostics: Diagnostic[]) {
   if (Object.hasOwn(input, "snapshots")) {
-    const value = decodeValue(Schema.Boolean, input.snapshots, ["snapshots"], diagnostics)
+    const value = decodeValue(decodeBoolean, input.snapshots, ["snapshots"], diagnostics)
     if (value !== undefined) preferLegacy(result, "snapshot", value, ["snapshots"], diagnostics)
   }
   if (Object.hasOwn(input, "media")) {
-    const value = decodeValue(ConfigAttachmentV1.Info, input.media, ["media"], diagnostics)
+    const value = decodeValue(decodeAttachment, input.media, ["media"], diagnostics)
     if (value !== undefined) preferLegacy(result, "attachment", value, ["media"], diagnostics)
   }
 }
 
 function normalizeModel(input: Record<string, unknown>, result: Record<string, unknown>, diagnostics: Diagnostic[]) {
   if (!Object.hasOwn(input, "model")) return
-  const selection = Schema.decodeUnknownOption(Selection, decodeOptions)(input.model)
+  const selection = decodeSelection(input.model)
   if (Option.isNone(selection)) return
   const value = lowerSelection(selection.value)
   result.model = value.model
@@ -153,7 +163,7 @@ function normalizeModel(input: Record<string, unknown>, result: Record<string, u
 
 function normalizeSkills(input: Record<string, unknown>, result: Record<string, unknown>, diagnostics: Diagnostic[]) {
   if (!Array.isArray(input.skills)) return
-  const skills = decodeValue(Schema.Array(Schema.String), input.skills, ["skills"], diagnostics)
+  const skills = decodeValue(decodeStrings, input.skills, ["skills"], diagnostics)
   if (skills === undefined) return
   result.skills = {
     paths: skills.filter((value) => !/^https?:\/\//i.test(value)),
@@ -170,15 +180,15 @@ function normalizeCompaction(
   if (Option.isNone(compaction)) return
   const value = { ...compaction.value }
   if (Object.hasOwn(value, "keep")) {
-    const keep = decodeValue(Record, value.keep, ["compaction", "keep"], diagnostics)
+    const keep = decodeValue(decodeRecord, value.keep, ["compaction", "keep"], diagnostics)
     if (keep !== undefined && Object.hasOwn(keep, "tokens")) {
-      const tokens = decodeValue(NonNegativeInt, keep.tokens, ["compaction", "keep", "tokens"], diagnostics)
+      const tokens = decodeValue(decodeNonNegativeInt, keep.tokens, ["compaction", "keep", "tokens"], diagnostics)
       if (tokens !== undefined)
         preferLegacy(value, "preserve_recent_tokens", tokens, ["compaction", "keep", "tokens"], diagnostics)
     }
   }
   if (Object.hasOwn(value, "buffer")) {
-    const buffer = decodeValue(NonNegativeInt, value.buffer, ["compaction", "buffer"], diagnostics)
+    const buffer = decodeValue(decodeNonNegativeInt, value.buffer, ["compaction", "buffer"], diagnostics)
     if (buffer !== undefined) preferLegacy(value, "reserved", buffer, ["compaction", "buffer"], diagnostics)
   }
   result.compaction = value
@@ -195,7 +205,7 @@ function normalizeExperimental(
     unsupported(["experimental", "portable_shell_scanner"], diagnostics)
   if (!Object.hasOwn(experimental.value, "subagent_depth")) return
   const depth = decodeValue(
-    NonNegativeInt,
+    decodeNonNegativeInt,
     experimental.value.subagent_depth,
     ["experimental", "subagent_depth"],
     diagnostics,
@@ -206,7 +216,7 @@ function normalizeExperimental(
 
 function normalizeAgents(input: Record<string, unknown>, result: Record<string, unknown>, diagnostics: Diagnostic[]) {
   if (!Object.hasOwn(input, "agents")) return
-  const agents = decodeValue(Record, input.agents, ["agents"], diagnostics)
+  const agents = decodeValue(decodeRecord, input.agents, ["agents"], diagnostics)
   if (agents === undefined) return
   const legacy = decodeRecord(result.agent)
   const merged: Record<string, unknown> = Option.isSome(legacy) ? { ...legacy.value } : {}
@@ -216,7 +226,7 @@ function normalizeAgents(input: Record<string, unknown>, result: Record<string, 
       if (!isDeepStrictEqual(merged[name], value)) conflict(path, diagnostics)
       continue
     }
-    const parsed = decodeValue(Agent, value, path, diagnostics)
+    const parsed = decodeValue(decodeAgent, value, path, diagnostics)
     if (parsed === undefined) continue
     if (parsed.request?.headers !== undefined) unsupported([...path, "request", "headers"], diagnostics)
     setOwn(merged, name, lowerAgent(parsed))
@@ -227,14 +237,14 @@ function normalizeAgents(input: Record<string, unknown>, result: Record<string, 
 
 function normalizeCommands(input: Record<string, unknown>, result: Record<string, unknown>, diagnostics: Diagnostic[]) {
   if (!Object.hasOwn(input, "commands")) return
-  const commands = decodeValue(Record, input.commands, ["commands"], diagnostics)
+  const commands = decodeValue(decodeRecord, input.commands, ["commands"], diagnostics)
   if (commands === undefined) return
   const legacy = decodeRecord(result.command)
   if (Object.hasOwn(result, "command") && Option.isNone(legacy)) return
   const merged: Record<string, unknown> = Option.isSome(legacy) ? { ...legacy.value } : {}
   for (const [name, value] of Object.entries(commands)) {
     const path = ["commands", name]
-    const parsed = decodeValue(Command, value, path, diagnostics)
+    const parsed = decodeValue(decodeCommand, value, path, diagnostics)
     if (parsed === undefined) continue
     preferLegacy(merged, name, lowerCommand(parsed), path, diagnostics)
   }
@@ -248,7 +258,7 @@ function normalizeMcp(input: Record<string, unknown>, result: Record<string, unk
   const nested = decodeRecord(mcp.value.servers)
   const envelope = Option.isSome(nested) && !isDirectServer(nested.value)
   const timeoutRecord = decodeRecord(mcp.value.timeout)
-  const timeout = Schema.decodeUnknownOption(Timeout, decodeOptions)(mcp.value.timeout)
+  const timeout = decodeTimeout(mcp.value.timeout)
   const globalTimeout =
     Option.isSome(timeout) &&
     Option.isSome(timeoutRecord) &&
@@ -319,7 +329,7 @@ function isDirectServer(value: Record<string, unknown>) {
 }
 
 function normalizeServer(input: unknown, path: string[], diagnostics: Diagnostic[]) {
-  const server = decodeValue(Server, input, path, diagnostics)
+  const server = decodeValue(decodeServer, input, path, diagnostics)
   if (server === undefined) return
   if (server.codemode !== undefined) unsupported([...path, "codemode"], diagnostics)
   if (server.timeout && lowerTimeout(server.timeout) === undefined && Object.keys(server.timeout).length)
@@ -410,13 +420,13 @@ function lowerCommand(input: Schema.Schema.Type<typeof Command>) {
   return { ...input, ...(input.model !== undefined ? lowerSelection(input.model) : {}) }
 }
 
-function decodeValue<S extends Schema.Codec<unknown, unknown, never, never>>(
-  schema: S,
+function decodeValue<A>(
+  decode: (value: unknown) => Option.Option<A>,
   value: unknown,
   path: string[],
   diagnostics: Diagnostic[],
 ) {
-  const decoded = Schema.decodeUnknownOption(schema, decodeOptions)(value)
+  const decoded = decode(value)
   if (Option.isSome(decoded)) return decoded.value
   diagnostics.push({ kind: "invalid", path, message: "Native setting could not be lowered because it is malformed" })
   return undefined

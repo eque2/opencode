@@ -6,11 +6,13 @@ import { TuiConfig } from "@opencode-ai/tui/config"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as ConfigPaths from "@/config/paths"
+import { isRecord } from "@/util/record"
 
 const TUI_SCHEMA_URL = "https://opencode.ai/tui.json"
 
 const decodeTheme = Schema.decodeUnknownOption(Schema.String)
-const decodeRecord = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
+// A plain object (not an array) is the only keybinds or tui shape worth moving.
+const decodeRecord = Option.liftPredicate(isRecord)
 const decodeScrollSpeed = Schema.decodeUnknownOption(TuiConfig.ScrollSpeed)
 const decodeScrollAcceleration = Schema.decodeUnknownOption(TuiConfig.ScrollAcceleration)
 const decodeDiffStyle = Schema.decodeUnknownOption(TuiConfig.DiffStyle)
