@@ -24,14 +24,14 @@ const Timeout = Schema.Struct({
   startup: Schema.optional(PositiveInt),
   catalog: Schema.optional(PositiveInt),
   execution: Schema.optional(PositiveInt),
-})
+}).annotate({ identifier: "ConfigV2CompatTimeout" })
 const OAuth = Schema.Struct({
   client_id: Schema.optional(Schema.String),
   client_secret: Schema.optional(Schema.String),
   scope: Schema.optional(Schema.String),
   callback_port: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
   redirect_uri: Schema.optional(Schema.String),
-})
+}).annotate({ identifier: "ConfigV2CompatOAuth" })
 const Server = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("local"),
@@ -75,14 +75,14 @@ const Agent = Schema.Struct({
   color: Schema.optional(Schema.String.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/))),
   steps: Schema.optional(PositiveInt),
   disabled: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "ConfigV2CompatAgent" })
 const Command = Schema.Struct({
   template: Schema.String,
   description: Schema.optional(Schema.String),
   agent: Schema.optional(Schema.String),
   model: Schema.optional(Selection),
   subtask: Schema.optional(Schema.Boolean),
-})
+}).annotate({ identifier: "ConfigV2CompatCommand" })
 
 const decodeRecord = Schema.decodeUnknownOption(Record, decodeOptions)
 const decodeLspEntry = Schema.decodeUnknownOption(ConfigLSPV1.Entry, decodeOptions)
