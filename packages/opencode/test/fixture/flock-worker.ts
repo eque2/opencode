@@ -1,18 +1,20 @@
 import fs from "fs/promises"
 import { Flock } from "@opencode-ai/core/util/flock"
+import { Schema } from "effect"
 
-type Msg = {
-  key: string
-  dir: string
-  staleMs?: number
-  timeoutMs?: number
-  baseDelayMs?: number
-  maxDelayMs?: number
-  holdMs?: number
-  ready?: string
-  active?: string
-  done?: string
-}
+const Msg = Schema.Struct({
+  key: Schema.String,
+  dir: Schema.String,
+  staleMs: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Number),
+  baseDelayMs: Schema.optional(Schema.Number),
+  maxDelayMs: Schema.optional(Schema.Number),
+  holdMs: Schema.optional(Schema.Number),
+  ready: Schema.optional(Schema.String),
+  active: Schema.optional(Schema.String),
+  done: Schema.optional(Schema.String),
+})
+type Msg = typeof Msg.Type
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
@@ -26,7 +28,7 @@ function input() {
     throw new Error("Missing flock worker input")
   }
 
-  return JSON.parse(raw) as Msg
+  return Schema.decodeUnknownSync(Schema.fromJsonString(Msg))(raw)
 }
 
 async function job(input: Msg) {

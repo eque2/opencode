@@ -80,7 +80,13 @@ type TmpDirOptions<T> = {
   init?: (dir: string) => Promise<T>
   dispose?: (dir: string) => Promise<T>
 }
-export async function tmpdir<T>(options?: TmpDirOptions<T>) {
+
+type TmpDir<T> = AsyncDisposable & { path: string; extra: T }
+
+// `extra` is what `init` resolved to, so a call without `init` has no extra value.
+export async function tmpdir<T>(options: TmpDirOptions<T> & { init: (dir: string) => Promise<T> }): Promise<TmpDir<T>>
+export async function tmpdir<T = undefined>(options?: TmpDirOptions<T> & { init?: undefined }): Promise<TmpDir<undefined>>
+export async function tmpdir<T>(options?: TmpDirOptions<T>): Promise<TmpDir<T | undefined>> {
   const dirpath = sanitizePath(path.join(os.tmpdir(), "opencode-test-" + Math.random().toString(36).slice(2)))
   await fs.mkdir(dirpath, { recursive: true })
   if (options?.git) {
@@ -112,7 +118,7 @@ export async function tmpdir<T>(options?: TmpDirOptions<T>) {
       }
     },
     path: realpath,
-    extra: extra as T,
+    extra,
   }
   return result
 }

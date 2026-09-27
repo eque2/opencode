@@ -1,6 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js"
+import { Schema } from "effect"
+
+const decodeMessage = Schema.decodeUnknownSync(Schema.Struct({ id: Schema.optional(Schema.Number), method: Schema.String }))
 
 const posts: Array<{ method: string; session: string | null }> = []
 let initializeCount = 0
@@ -11,7 +14,7 @@ const server = Bun.serve({
     if (request.method === "GET") return new Response(null, { status: 405 })
     if (request.method === "DELETE") return new Response(null, { status: 200 })
 
-    const message = (await request.json()) as { id?: number; method: string }
+    const message = decodeMessage(await request.json())
     const session = request.headers.get("mcp-session-id")
     posts.push({ method: message.method, session })
 
