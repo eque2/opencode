@@ -60,7 +60,6 @@ function fileSource(
 }
 
 export function messagePrompt(msg: SessionMessages[number]): RunPrompt {
-  const parts: RunPrompt["parts"] = []
   let text = msg.parts
     .filter((part): part is Extract<SessionMessages[number]["parts"][number], { type: "text" }> => {
       return part.type === "text" && !part.synthetic
@@ -97,33 +96,37 @@ export function messagePrompt(msg: SessionMessages[number]): RunPrompt {
     return { start, end, value }
   }
 
-  for (const part of msg.parts) {
+  // Each step reads the spans that earlier parts claimed, so the parts map in order.
+  const parts = msg.parts.flatMap((part): RunPrompt["parts"] => {
     if (part.type === "file") {
       const next = part.source?.text ? structuredClone(part.source.text) : take("@" + fileName(part.url, part.filename))
       const span = next ?? add("@" + fileName(part.url, part.filename))
       used.push({ start: span.start, end: span.end })
-      parts.push({
-        type: "file",
-        mime: part.mime,
-        filename: part.filename,
-        url: part.url,
-        source: fileSource(part, span),
-      })
-      continue
+      return [
+        {
+          type: "file",
+          mime: part.mime,
+          filename: part.filename,
+          url: part.url,
+          source: fileSource(part, span),
+        },
+      ]
     }
 
     if (part.type !== "agent") {
-      continue
+      return []
     }
 
     const span = part.source ? structuredClone(part.source) : (take("@" + part.name) ?? add("@" + part.name))
     used.push({ start: span.start, end: span.end })
-    parts.push({
-      type: "agent",
-      name: part.name,
-      source: span,
-    })
-  }
+    return [
+      {
+        type: "agent",
+        name: part.name,
+        source: span,
+      },
+    ]
+  })
 
   return { text, parts }
 }
