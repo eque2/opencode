@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { MutableHashSet } from "effect"
 import type { Event } from "@opencode-ai/sdk/v2"
 import { createSessionData, flushInterrupted, reduceSessionData } from "@/cli/cmd/run/session-data"
 import type { StreamCommit } from "@/cli/cmd/run/types"
@@ -159,7 +160,7 @@ describe("run session data", () => {
     const out = reduce(data, user("msg-user-1"))
 
     expect(out.commits).toEqual([])
-    expect(out.data.ids.has("txt-user-1")).toBe(true)
+    expect(MutableHashSet.has(out.data.ids, "txt-user-1")).toBe(true)
   })
 
   test("suppresses reasoning commits when thinking is disabled", () => {
@@ -175,7 +176,7 @@ describe("run session data", () => {
     )
 
     expect(out.commits).toEqual([])
-    expect(out.data.ids.has("reason-1")).toBe(true)
+    expect(MutableHashSet.has(out.data.ids, "reason-1")).toBe(true)
   })
 
   test("keeps permission precedence over queued questions", () => {

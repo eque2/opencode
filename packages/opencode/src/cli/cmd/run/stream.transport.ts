@@ -16,13 +16,14 @@
 // We also re-check live session status before resolving an idle event so a
 // delayed idle from an older turn cannot complete a newer busy turn.
 import type { Event, GlobalEvent, OpencodeClient } from "@opencode-ai/sdk/v2"
-import { Context, Deferred, Effect, Exit, Layer, Scope, Stream } from "effect"
+import { Context, Deferred, Effect, Exit, Layer, MutableHashMap, MutableHashSet, Option, Scope, Stream } from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import {
   blockerStatus,
   bootstrapSessionData,
   createSessionData,
   flushInterrupted,
+  lookup,
   pickBlockerView,
   reduceSessionData,
   type SessionData,
@@ -120,7 +121,7 @@ type State = {
   footerView: FooterView
   blockerTick: number
   selectedSubagent?: string
-  blockers: Map<string, number>
+  blockers: MutableHashMap.MutableHashMap<string, number>
 }
 
 type TransportService = {
@@ -286,11 +287,15 @@ function sameView(a: FooterView, b: FooterView) {
   return a.request === b.request
 }
 
-function blockerOrder(order: Map<string, number>, id: string) {
-  return order.get(id) ?? Number.MAX_SAFE_INTEGER
+function blockerOrder(order: MutableHashMap.MutableHashMap<string, number>, id: string) {
+  return lookup(order, id, Number.MAX_SAFE_INTEGER)
 }
 
-function firstByOrder<T extends { id: string }>(left: T[], right: T[], order: Map<string, number>) {
+function firstByOrder<T extends { id: string }>(
+  left: T[],
+  right: T[],
+  order: MutableHashMap.MutableHashMap<string, number>,
+) {
   return [...left, ...right].sort((a, b) => {
     const next = blockerOrder(order, a.id) - blockerOrder(order, b.id)
     if (next !== 0) {
@@ -301,7 +306,11 @@ function firstByOrder<T extends { id: string }>(left: T[], right: T[], order: Ma
   })[0]
 }
 
-function pickView(data: SessionData, subagent: SubagentData, order: Map<string, number>): FooterView {
+function pickView(
+  data: SessionData,
+  subagent: SubagentData,
+  order: MutableHashMap.MutableHashMap<string, number>,
+): FooterView {
   return pickBlockerView({
     permission: firstByOrder(data.permissions, listSubagentPermissions(subagent), order),
     question: firstByOrder(data.questions, listSubagentQuestions(subagent), order),
@@ -362,11 +371,11 @@ function composeFooter(input: {
 }
 
 function traceTabs(trace: Trace | undefined, prev: FooterSubagentTab[], next: FooterSubagentTab[]) {
-  const before = new Map(prev.map((item) => [item.sessionID, item]))
-  const after = new Map(next.map((item) => [item.sessionID, item]))
+  const before = MutableHashMap.fromIterable(prev.map((item) => [item.sessionID, item] as const))
+  const after = MutableHashMap.fromIterable(next.map((item) => [item.sessionID, item] as const))
 
   for (const [sessionID, tab] of after) {
-    if (sameSubagentTab(before.get(sessionID), tab)) {
+    if (Option.exists(MutableHashMap.get(before, sessionID), (current) => sameSubagentTab(current, tab))) {
       continue
     }
 
@@ -376,8 +385,8 @@ function traceTabs(trace: Trace | undefined, prev: FooterSubagentTab[], next: Fo
     })
   }
 
-  for (const sessionID of before.keys()) {
-    if (after.has(sessionID)) {
+  for (const sessionID of MutableHashMap.keys(before)) {
+    if (MutableHashMap.has(after, sessionID)) {
       continue
     }
 
@@ -449,19 +458,19 @@ function createLayer(input: StreamInput) {
           tick: 0,
           footerView: { type: "prompt" },
           blockerTick: 0,
-          blockers: new Map(),
+          blockers: MutableHashMap.empty(),
         }
         let booting = true
         let replaying = false
         let replayDisabled = false
         let replayPending: SessionResizeReplayInput | undefined
         const buffered: Event[] = []
-        const replayedParts = new Set<string>()
-        const recovering = new Set<string>()
+        const replayedParts = MutableHashSet.empty<string>()
+        const recovering = MutableHashSet.empty<string>()
         const tracked = (sessionID: string | undefined) =>
-          sessionID === input.sessionID || (!!sessionID && state.subagent.tabs.has(sessionID))
+          sessionID === input.sessionID || (!!sessionID && MutableHashMap.has(state.subagent.tabs, sessionID))
         const currentSubagentState = () => {
-          if (state.selectedSubagent && !state.subagent.tabs.has(state.selectedSubagent)) {
+          if (state.selectedSubagent && !MutableHashMap.has(state.subagent.tabs, state.selectedSubagent)) {
             state.selectedSubagent = undefined
           }
 
@@ -469,12 +478,12 @@ function createLayer(input: StreamInput) {
         }
 
         const seedBlocker = (id: string) => {
-          if (state.blockers.has(id)) {
+          if (MutableHashMap.has(state.blockers, id)) {
             return
           }
 
           state.blockerTick += 1
-          state.blockers.set(id, state.blockerTick)
+          MutableHashMap.set(state.blockers, id, state.blockerTick)
         }
 
         const trackBlocker = (event: Event) => {
@@ -482,7 +491,10 @@ function createLayer(input: StreamInput) {
             return
           }
 
-          if (event.properties.sessionID !== input.sessionID && !state.subagent.tabs.has(event.properties.sessionID)) {
+          if (
+            event.properties.sessionID !== input.sessionID &&
+            !MutableHashMap.has(state.subagent.tabs, event.properties.sessionID)
+          ) {
             return
           }
 
@@ -498,7 +510,7 @@ function createLayer(input: StreamInput) {
             return
           }
 
-          state.blockers.delete(event.properties.requestID)
+          MutableHashMap.remove(state.blockers, event.properties.requestID)
         }
 
         const syncFooter = (commits: StreamCommit[], patch?: FooterPatch, nextSubagent?: FooterSubagentState) => {
@@ -554,14 +566,14 @@ function createLayer(input: StreamInput) {
         })
 
         const recoverQuestion = Effect.fn("RunStreamTransport.recoverQuestion")(function* (partID: string) {
-          if (recovering.has(partID)) {
+          if (MutableHashSet.has(recovering, partID)) {
             return
           }
 
-          recovering.add(partID)
+          MutableHashSet.add(recovering, partID)
           try {
             while (!closed && !abort.signal.aborted && !input.footer.isClosed) {
-              if (state.data.questions.length > 0 || !state.data.tools.has(partID)) {
+              if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
                 return
               }
 
@@ -569,7 +581,7 @@ function createLayer(input: StreamInput) {
                 Effect.map((item) => (item.data ?? []).filter((request) => request.sessionID === input.sessionID)),
                 Effect.orElseSucceed(() => []),
               )
-              if (state.data.questions.length > 0 || !state.data.tools.has(partID)) {
+              if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
                 return
               }
 
@@ -594,7 +606,7 @@ function createLayer(input: StreamInput) {
               yield* Effect.sleep("250 millis")
             }
           } finally {
-            recovering.delete(partID)
+            MutableHashSet.remove(recovering, partID)
           }
         })
 
@@ -633,10 +645,10 @@ function createLayer(input: StreamInput) {
           )
 
         const markReplayedParts = (data: SessionData) => {
-          replayedParts.clear()
+          MutableHashSet.clear(replayedParts)
           for (const [partID] of data.text) {
-            if (data.part.has(partID)) {
-              replayedParts.add(partID)
+            if (MutableHashMap.has(data.part, partID)) {
+              MutableHashSet.add(replayedParts, partID)
             }
           }
         }
@@ -765,12 +777,15 @@ function createLayer(input: StreamInput) {
           }
 
           if (replay) {
-            const activeCommitIDs = new Set([...state.data.part.keys(), ...state.data.tools])
+            const activeCommitIDs = MutableHashSet.fromIterable([
+              ...MutableHashMap.keys(state.data.part),
+              ...state.data.tools,
+            ])
             for (const commit of replay.commits) {
               input.trace?.write("ui.commit", commit)
               input.footer.append(commit)
 
-              if (commit.partID && activeCommitIDs.has(commit.partID)) {
+              if (commit.partID && MutableHashSet.has(activeCommitIDs, commit.partID)) {
                 continue
               }
 
@@ -788,7 +803,7 @@ function createLayer(input: StreamInput) {
           booting = false
           yield* drainBuffered()
 
-          const sessions = [...state.subagent.tabs.keys()]
+          const sessions = [...MutableHashMap.keys(state.subagent.tabs)]
           if (sessions.length === 0) {
             return
           }
@@ -882,13 +897,13 @@ function createLayer(input: StreamInput) {
 
         const applyEvent = Effect.fn("RunStreamTransport.applyEvent")(function* (event: Event) {
           if (event.type === "message.part.delta" && event.properties.sessionID === input.sessionID) {
-            if (replayedParts.has(event.properties.partID)) {
-              const seen = state.data.text.get(event.properties.partID) ?? ""
+            if (MutableHashSet.has(replayedParts, event.properties.partID)) {
+              const seen = lookup(state.data.text, event.properties.partID, "")
               if (seen.endsWith(event.properties.delta)) {
                 return
               }
 
-              replayedParts.delete(event.properties.partID)
+              MutableHashSet.remove(replayedParts, event.properties.partID)
             }
           }
 
@@ -912,8 +927,11 @@ function createLayer(input: StreamInput) {
               messageID: visible.messageID,
               partID: visible.partID,
               toolState: visible.toolState,
-              ...(visible.partID && state.data.visible.has(visible.partID)
-                ? { visible: state.data.visible.get(visible.partID) }
+              ...(visible.partID
+                ? Option.match(MutableHashMap.get(state.data.visible, visible.partID), {
+                    onNone: () => ({}),
+                    onSome: (text) => ({ visible: text }),
+                  })
                 : {}),
             })
           }
@@ -1000,7 +1018,7 @@ function createLayer(input: StreamInput) {
             yield* replayOnResize(pending).pipe(Effect.asVoid)
           })
 
-          replayedParts.clear()
+          MutableHashSet.clear(replayedParts)
           replaying = true
           input.trace?.write("replay.resize.start", {
             sessionID: input.sessionID,
@@ -1035,7 +1053,7 @@ function createLayer(input: StreamInput) {
                 history,
                 activeCommits,
                 patch:
-                  history.data.part.size > 0 || history.data.tools.size > 0
+                  MutableHashMap.size(history.data.part) > 0 || MutableHashSet.size(history.data.tools) > 0
                     ? { ...history.patch, phase: "running" as const }
                     : history.patch,
                 visible:
@@ -1415,7 +1433,7 @@ function createLayer(input: StreamInput) {
               return
             }
 
-            const next = sessionID && state.subagent.tabs.has(sessionID) ? sessionID : undefined
+            const next = sessionID && MutableHashMap.has(state.subagent.tabs, sessionID) ? sessionID : undefined
             if (state.selectedSubagent === next) {
               return
             }

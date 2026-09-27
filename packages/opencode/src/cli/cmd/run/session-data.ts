@@ -24,6 +24,7 @@
 //   `data.questions`. The footer shows whichever is first. When a reply
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
+import { MutableHashMap, MutableHashSet, Option } from "effect"
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
@@ -72,20 +73,20 @@ type ShellCall = {
 export type SessionData = {
   includeUserText: boolean
   announced: boolean
-  ids: Set<string>
-  tools: Set<string>
-  call: Map<string, Dict>
-  shell: Map<string, ShellCall>
+  ids: MutableHashSet.MutableHashSet<string>
+  tools: MutableHashSet.MutableHashSet<string>
+  call: MutableHashMap.MutableHashMap<string, Dict>
+  shell: MutableHashMap.MutableHashMap<string, ShellCall>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
-  role: Map<string, MessageRole>
-  msg: Map<string, string>
-  part: Map<string, PartKind>
-  text: Map<string, string>
-  sent: Map<string, number>
-  visible: Map<string, string>
-  end: Set<string>
-  echo: Map<string, Set<string>>
+  role: MutableHashMap.MutableHashMap<string, MessageRole>
+  msg: MutableHashMap.MutableHashMap<string, string>
+  part: MutableHashMap.MutableHashMap<string, PartKind>
+  text: MutableHashMap.MutableHashMap<string, string>
+  sent: MutableHashMap.MutableHashMap<string, number>
+  visible: MutableHashMap.MutableHashMap<string, string>
+  end: MutableHashSet.MutableHashSet<string>
+  echo: MutableHashMap.MutableHashMap<string, MutableHashSet.MutableHashSet<string>>
 }
 
 export type SessionDataInput = {
@@ -110,21 +111,31 @@ export function createSessionData(
   return {
     includeUserText: input.includeUserText ?? false,
     announced: false,
-    ids: new Set(),
-    tools: new Set(),
-    call: new Map(),
-    shell: new Map(),
+    ids: MutableHashSet.empty(),
+    tools: MutableHashSet.empty(),
+    call: MutableHashMap.empty(),
+    shell: MutableHashMap.empty(),
     permissions: [],
     questions: [],
-    role: new Map(),
-    msg: new Map(),
-    part: new Map(),
-    text: new Map(),
-    sent: new Map(),
-    visible: new Map(),
-    end: new Set(),
-    echo: new Map(),
+    role: MutableHashMap.empty(),
+    msg: MutableHashMap.empty(),
+    part: MutableHashMap.empty(),
+    text: MutableHashMap.empty(),
+    sent: MutableHashMap.empty(),
+    visible: MutableHashMap.empty(),
+    end: MutableHashSet.empty(),
+    echo: MutableHashMap.empty(),
   }
+}
+
+// Reads a keyed value from a SessionData map, with a fallback for an absent key.
+export function lookup<V>(map: MutableHashMap.MutableHashMap<string, V>, key: string, fallback: V): V {
+  return Option.getOrElse(MutableHashMap.get(map, key), () => fallback)
+}
+
+// Message and part IDs are non-empty strings; an empty ID counts as absent, as it did with Map lookups.
+function lookupID(map: MutableHashMap.MutableHashMap<string, string>, key: string): Option.Option<string> {
+  return MutableHashMap.get(map, key).pipe(Option.filter((value) => value !== ""))
 }
 
 function modelKey(provider: string, model: string): string {
@@ -289,7 +300,7 @@ export function bootstrapSessionData(input: {
         continue
       }
 
-      input.data.call.set(key(part.messageID, part.callID), part.state.input)
+      MutableHashMap.set(input.data.call, key(part.messageID, part.callID), part.state.input)
     }
   }
 
@@ -311,10 +322,12 @@ function enrichPermission(data: SessionData, request: PermissionRequest): Permis
     return request
   }
 
-  const input = data.call.get(key(request.tool.messageID, request.tool.callID))
-  if (!input) {
+  const found = MutableHashMap.get(data.call, key(request.tool.messageID, request.tool.callID))
+  if (Option.isNone(found)) {
     return request
   }
+
+  const input = found.value
 
   const meta = request.metadata ?? {}
   if (meta.input === input) {
@@ -335,7 +348,7 @@ function enrichPermission(data: SessionData, request: PermissionRequest): Permis
 // tool's evolving state. Only triggers a footer update if the currently
 // displayed permission was the one that changed.
 function syncPermission(data: SessionData, part: ToolPart): FooterOutput | undefined {
-  data.call.set(key(part.messageID, part.callID), part.state.input)
+  MutableHashMap.set(data.call, key(part.messageID, part.callID), part.state.input)
   if (data.permissions.length === 0) {
     return undefined
   }
@@ -420,31 +433,31 @@ function toolStatus(part: ToolPart): string {
 // echo. If we haven't received the message.updated event yet, we return
 // false and the text stays buffered until replay() flushes it.
 function ready(data: SessionData, partID: string): boolean {
-  const msg = data.msg.get(partID)
-  if (!msg) {
+  const msg = lookupID(data.msg, partID)
+  if (Option.isNone(msg)) {
     return true
   }
 
-  const role = data.role.get(msg)
-  if (!role) {
+  const role = MutableHashMap.get(data.role, msg.value)
+  if (Option.isNone(role)) {
     return false
   }
 
-  if (role === "assistant") {
+  if (role.value === "assistant") {
     return true
   }
 
-  return data.includeUserText && role === "user"
+  return data.includeUserText && role.value === "user"
 }
 
 function syncText(data: SessionData, partID: string, next: string) {
-  const prev = data.text.get(partID) ?? ""
+  const prev = lookup(data.text, partID, "")
   if (!next) {
     return prev
   }
 
   if (!prev || next.length >= prev.length) {
-    data.text.set(partID, next)
+    MutableHashMap.set(data.text, partID, next)
     return next
   }
 
@@ -473,13 +486,13 @@ function stashEcho(data: SessionData, part: ToolPart) {
     return
   }
 
-  const set = data.echo.get(part.messageID) ?? new Set<string>()
-  set.add(text)
+  const set = Option.getOrElse(MutableHashMap.get(data.echo, part.messageID), () => MutableHashSet.empty<string>())
+  MutableHashSet.add(set, text)
   const trim = text.replace(/\n+$/, "")
   if (trim && trim !== text) {
-    set.add(trim)
+    MutableHashSet.add(set, trim)
   }
-  data.echo.set(part.messageID, set)
+  MutableHashMap.set(data.echo, part.messageID, set)
 }
 
 function stripEcho(data: SessionData, msg: string | undefined, chunk: string): string {
@@ -487,13 +500,13 @@ function stripEcho(data: SessionData, msg: string | undefined, chunk: string): s
     return chunk
   }
 
-  const set = data.echo.get(msg)
-  if (!set || set.size === 0) {
+  const set = MutableHashMap.get(data.echo, msg)
+  if (Option.isNone(set) || MutableHashSet.size(set.value) === 0) {
     return chunk
   }
 
-  data.echo.delete(msg)
-  const list = [...set].sort((a, b) => b.length - a.length)
+  MutableHashMap.remove(data.echo, msg)
+  const list = [...set.value].sort((a, b) => b.length - a.length)
   for (const item of list) {
     if (!item || !chunk.startsWith(item)) {
       continue
@@ -506,15 +519,17 @@ function stripEcho(data: SessionData, msg: string | undefined, chunk: string): s
 }
 
 function flushPart(data: SessionData, commits: SessionCommit[], partID: string, interrupted = false) {
-  const kind = data.part.get(partID)
-  if (!kind) {
+  const found = MutableHashMap.get(data.part, partID)
+  if (Option.isNone(found)) {
     return
   }
 
-  const text = data.text.get(partID) ?? ""
-  const sent = data.sent.get(partID) ?? 0
+  const kind = found.value
+  const text = lookup(data.text, partID, "")
+  const sent = lookup(data.sent, partID, 0)
   let chunk = text.slice(sent)
-  const msg = data.msg.get(partID)
+  // StreamCommit.messageID is an optional string field of the footer contract.
+  const msg = Option.getOrUndefined(MutableHashMap.get(data.msg, partID))
 
   if (sent === 0) {
     chunk = chunk.replace(/^\n+/, "")
@@ -535,8 +550,8 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
   }
 
   if (chunk) {
-    data.sent.set(partID, text.length)
-    data.visible.set(partID, (data.visible.get(partID) ?? "") + chunk)
+    MutableHashMap.set(data.sent, partID, text.length)
+    MutableHashMap.set(data.visible, partID, lookup(data.visible, partID, "") + chunk)
     commits.push({
       kind,
       text: chunk,
@@ -563,41 +578,42 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
 }
 
 function drop(data: SessionData, partID: string) {
-  data.part.delete(partID)
-  data.text.delete(partID)
-  data.sent.delete(partID)
-  data.visible.delete(partID)
-  data.msg.delete(partID)
-  data.end.delete(partID)
+  MutableHashMap.remove(data.part, partID)
+  MutableHashMap.remove(data.text, partID)
+  MutableHashMap.remove(data.sent, partID)
+  MutableHashMap.remove(data.visible, partID)
+  MutableHashMap.remove(data.msg, partID)
+  MutableHashSet.remove(data.end, partID)
 }
 
 // Called when we learn a message's role (from message.updated). Flushes any
 // buffered text parts that were waiting on role confirmation. User-role
 // parts are silently dropped.
 function replay(data: SessionData, commits: SessionCommit[], messageID: string, role: MessageRole, thinking: boolean) {
-  for (const [partID, msg] of data.msg.entries()) {
-    if (msg !== messageID || data.ids.has(partID)) {
+  for (const [partID, msg] of data.msg) {
+    if (msg !== messageID || MutableHashSet.has(data.ids, partID)) {
       continue
     }
 
     if (role === "user" && !data.includeUserText) {
-      data.ids.add(partID)
+      MutableHashSet.add(data.ids, partID)
       drop(data, partID)
       continue
     }
 
-    const kind = data.part.get(partID)
-    if (!kind) {
+    const found = MutableHashMap.get(data.part, partID)
+    if (Option.isNone(found)) {
       continue
     }
 
+    const kind = found.value
     if (role === "user" && kind === "assistant") {
-      data.part.set(partID, "user")
+      MutableHashMap.set(data.part, partID, "user")
     }
 
     if (kind === "reasoning" && !thinking) {
-      if (data.end.has(partID)) {
-        data.ids.add(partID)
+      if (MutableHashSet.has(data.end, partID)) {
+        MutableHashSet.add(data.ids, partID)
       }
       drop(data, partID)
       continue
@@ -605,11 +621,11 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
 
     flushPart(data, commits, partID)
 
-    if (!data.end.has(partID)) {
+    if (!MutableHashSet.has(data.end, partID)) {
       continue
     }
 
-    data.ids.add(partID)
+    MutableHashSet.add(data.ids, partID)
     drop(data, partID)
   }
 }
@@ -634,8 +650,9 @@ function shellPartID(callID: string): string {
 }
 
 function claimShell(data: SessionData, callID: string, source: ShellCall["source"], command?: string): ShellCall {
-  const current = data.shell.get(callID)
-  if (current) {
+  const found = MutableHashMap.get(data.shell, callID)
+  if (Option.isSome(found)) {
+    const current = found.value
     if (command && !current.command) {
       current.command = command
     }
@@ -647,7 +664,7 @@ function claimShell(data: SessionData, callID: string, source: ShellCall["source
     source,
     ...(command ? { command } : {}),
   } satisfies ShellCall
-  data.shell.set(callID, next)
+  MutableHashMap.set(data.shell, callID, next)
   return next
 }
 
@@ -737,20 +754,23 @@ function failTool(part: ToolPart, text: string): SessionCommit {
 
 // Emits "interrupted" final entries for all in-flight parts. Called when a turn is aborted.
 export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
-  for (const partID of data.part.keys()) {
-    if (data.ids.has(partID)) {
+  for (const partID of MutableHashMap.keys(data.part)) {
+    if (MutableHashSet.has(data.ids, partID)) {
       continue
     }
 
-    const msg = data.msg.get(partID)
-    if (msg && data.role.get(msg) === "user" && !data.includeUserText) {
-      data.ids.add(partID)
+    const user = lookupID(data.msg, partID).pipe(
+      Option.flatMap((msg) => MutableHashMap.get(data.role, msg)),
+      Option.contains("user"),
+    )
+    if (user && !data.includeUserText) {
+      MutableHashSet.add(data.ids, partID)
       drop(data, partID)
       continue
     }
 
     flushPart(data, commits, partID, true)
-    data.ids.add(partID)
+    MutableHashSet.add(data.ids, partID)
     drop(data, partID)
   }
 }
@@ -781,11 +801,11 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const partID = shellPartID(event.properties.callID)
-    if (data.ids.has(partID) || data.tools.has(partID)) {
+    if (MutableHashSet.has(data.ids, partID) || MutableHashSet.has(data.tools, partID)) {
       return out(data, commits, patch({ status: "running shell" }))
     }
 
-    data.tools.add(partID)
+    MutableHashSet.add(data.tools, partID)
     commits.push(startShell(event.properties.callID, shell.command ?? event.properties.command))
     return out(data, commits, patch({ status: "running shell" }))
   }
@@ -801,10 +821,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const partID = shellPartID(event.properties.callID)
-    const seen = data.tools.has(partID)
+    const seen = MutableHashSet.has(data.tools, partID)
     const command = shell.command ?? ""
-    data.tools.delete(partID)
-    if (data.ids.has(partID)) {
+    MutableHashSet.remove(data.tools, partID)
+    if (MutableHashSet.has(data.ids, partID)) {
       return out(data, commits)
     }
 
@@ -812,7 +832,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       commits.push(startShell(event.properties.callID, command))
     }
 
-    data.ids.add(partID)
+    MutableHashSet.add(data.ids, partID)
     commits.push(doneShell(event.properties.callID, command, event.properties.output))
     return out(data, commits)
   }
@@ -824,7 +844,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
     const info = event.properties.info
     if (typeof info.id === "string") {
-      data.role.set(info.id, info.role)
+      MutableHashMap.set(data.role, info.id, info.role)
       replay(data, commits, info.id, info.role, input.thinking)
     }
 
@@ -850,8 +870,13 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
     }
 
-    if (typeof info.id === "string" && info.error && !isAbort(info.error) && !data.ids.has(msgErr(info.id))) {
-      data.ids.add(msgErr(info.id))
+    if (
+      typeof info.id === "string" &&
+      info.error &&
+      !isAbort(info.error) &&
+      !MutableHashSet.has(data.ids, msgErr(info.id))
+    ) {
+      MutableHashSet.add(data.ids, msgErr(info.id))
       commits.push({
         kind: "error",
         text: formatError(info.error),
@@ -882,21 +907,23 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const partID = event.properties.partID
-    if (data.ids.has(partID)) {
+    if (MutableHashSet.has(data.ids, partID)) {
       return out(data, commits)
     }
 
     if (typeof event.properties.messageID === "string") {
-      data.msg.set(partID, event.properties.messageID)
+      MutableHashMap.set(data.msg, partID, event.properties.messageID)
     }
 
-    const text = data.text.get(partID) ?? ""
-    data.text.set(partID, text + event.properties.delta)
+    const text = lookup(data.text, partID, "")
+    MutableHashMap.set(data.text, partID, text + event.properties.delta)
 
-    const kind = data.part.get(partID)
-    if (!kind) {
+    const found = MutableHashMap.get(data.part, partID)
+    if (Option.isNone(found)) {
       return out(data, commits)
     }
+
+    const kind = found.value
 
     if (kind === "reasoning" && !input.thinking) {
       return out(data, commits)
@@ -925,12 +952,12 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       if (part.state.status === "running") {
-        if (data.ids.has(part.id)) {
+        if (MutableHashSet.has(data.ids, part.id)) {
           return out(data, commits, view)
         }
 
-        if (!data.tools.has(part.id)) {
-          data.tools.add(part.id)
+        if (!MutableHashSet.has(data.tools, part.id)) {
+          MutableHashSet.add(data.tools, part.id)
           commits.push(startTool(part))
         }
 
@@ -938,10 +965,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       if (part.state.status === "completed") {
-        const seen = data.tools.has(part.id)
+        const seen = MutableHashSet.has(data.tools, part.id)
         const mode = toolView(part.tool)
-        data.tools.delete(part.id)
-        if (data.ids.has(part.id)) {
+        MutableHashSet.remove(data.tools, part.id)
+        if (MutableHashSet.has(data.ids, part.id)) {
           return out(data, commits, view)
         }
 
@@ -949,7 +976,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           commits.push(startTool(part))
         }
 
-        data.ids.add(part.id)
+        MutableHashSet.add(data.ids, part.id)
         stashEcho(data, part)
 
         const output = part.state.output
@@ -975,9 +1002,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       if (part.state.status === "error") {
-        const seen = data.tools.has(part.id)
-        data.tools.delete(part.id)
-        if (data.ids.has(part.id)) {
+        const seen = MutableHashSet.has(data.tools, part.id)
+        MutableHashSet.remove(data.tools, part.id)
+        if (MutableHashSet.has(data.ids, part.id)) {
           return out(data, commits, view)
         }
 
@@ -985,7 +1012,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           commits.push(startTool(part))
         }
 
-        data.ids.add(part.id)
+        MutableHashSet.add(data.ids, part.id)
         const text =
           typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
         commits.push(failTool(part, text))
@@ -997,36 +1024,36 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    if (data.ids.has(part.id)) {
+    if (MutableHashSet.has(data.ids, part.id)) {
       return out(data, commits)
     }
 
     const kind = part.type === "text" ? "assistant" : "reasoning"
     if (typeof part.messageID === "string") {
-      data.msg.set(part.id, part.messageID)
+      MutableHashMap.set(data.msg, part.id, part.messageID)
     }
 
     const msg = part.messageID
-    const role = msg ? data.role.get(msg) : undefined
+    const role = msg ? Option.getOrUndefined(MutableHashMap.get(data.role, msg)) : undefined
     if (role === "user" && part.type === "text" && !data.includeUserText) {
-      data.ids.add(part.id)
+      MutableHashSet.add(data.ids, part.id)
       drop(data, part.id)
       return out(data, commits)
     }
 
     if (kind === "reasoning" && !input.thinking) {
       if (part.time?.end) {
-        data.ids.add(part.id)
+        MutableHashSet.add(data.ids, part.id)
       }
       drop(data, part.id)
       return out(data, commits)
     }
 
-    data.part.set(part.id, role === "user" && kind === "assistant" ? "user" : kind)
+    MutableHashMap.set(data.part, part.id, role === "user" && kind === "assistant" ? "user" : kind)
     syncText(data, part.id, part.text)
 
     if (part.time?.end) {
-      data.end.add(part.id)
+      MutableHashSet.add(data.end, part.id)
     }
 
     if (msg && !role) {
@@ -1043,7 +1070,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    data.ids.add(part.id)
+    MutableHashSet.add(data.ids, part.id)
     drop(data, part.id)
     return out(data, commits)
   }
