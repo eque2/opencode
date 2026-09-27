@@ -27,7 +27,7 @@ import {
 import { OPENCODE_BASE_MODE, useBindings } from "@opencode-ai/tui/keymap"
 import { realignEditorPromptParts, resolveEditorSlashValue } from "./prompt.editor"
 import { FOOTER_MENU_ROWS, createFooterMenuState, type RunFooterMenuItem } from "./footer.menu"
-import { FooterCallbackError, createFiberSlot } from "./footer.effect"
+import { FooterCallbackError, createFiberSlot, fromCallback } from "./footer.effect"
 import type { RunFooterTheme } from "./theme"
 import type { FooterState, RunAgent, RunCommand, RunPrompt, RunPromptPart, RunResource, RunTuiConfig } from "./types"
 
@@ -93,7 +93,7 @@ export type PromptState = {
   requestExit: () => boolean
   onSubmit: () => void
   submitText: (text: string) => void
-  openEditor: (input?: { value?: string }) => Promise<void>
+  openEditor: (input?: { value?: string }) => void
   onKeyDown: (event: KeyEvent) => void
   onContentChange: () => void
   replaceDraft: (text: string) => void
@@ -363,16 +363,20 @@ export function createPromptState(input: PromptInput): PromptState {
       },
     }))
   })
-  const [files] = createResource(
-    query,
-    async (value) => {
+  const findMentionFiles = (value: string) =>
+    Effect.suspend(() => {
       if (!visible() || mode() !== "mention") {
-        return []
+        return Effect.succeed<Auto[]>([])
       }
 
       const next = extractLineRange(value)
-      const list = await input.findFiles(next.base)
-      return list.map((item): Auto => {
+      return Effect.tryPromise({
+        try: () => input.findFiles(next.base),
+        catch: (cause) => new FooterCallbackError({ action: "findFiles", cause }),
+      }).pipe(Effect.map((list) => mentionFiles(list, next)))
+    })
+  const mentionFiles = (list: string[], next: ReturnType<typeof extractLineRange>) =>
+      list.map((item): Auto => {
         const url = pathToFileURL(path.resolve(input.directory, item))
         let filename = item
         if (next.line && !item.endsWith("/")) {
@@ -405,7 +409,10 @@ export function createPromptState(input: PromptInput): PromptState {
           },
         }
       })
-    },
+  const [files] = createResource(
+    query,
+    // Solid's resource fetcher takes a Promise, so the Effect runs here.
+    (value) => Effect.runPromise(findMentionFiles(value)),
     { initialValue: [] as Auto[] },
   )
   const mentionOptions = createMemo(() => [...agents(), ...files(), ...resources()])
@@ -818,31 +825,46 @@ export function createPromptState(input: PromptInput): PromptState {
     area.focus()
   }
 
-  const openEditor = async (inputValue?: { value?: string }) => {
+  const openEditor = (inputValue?: { value?: string }) => {
     input.onInputClear()
     syncDraft()
     hide()
 
     const current = clonePrompt(draft)
-    try {
-      const content = await input.onEditorOpen({
-        value: inputValue?.value ?? current.text,
-      })
-      if (content === undefined) {
-        return
-      }
-      const normalized = normalizePromptContent(content)
+    Effect.runFork(
+      Effect.tryPromise({
+        try: () =>
+          input.onEditorOpen({
+            value: inputValue?.value ?? current.text,
+          }),
+        catch: (cause) => new FooterCallbackError({ action: "editor.open", cause }),
+      }).pipe(
+        Effect.andThen((content) =>
+          Effect.try({
+            try: () => {
+              if (content === undefined) {
+                return
+              }
+              const normalized = normalizePromptContent(content)
 
-      restore({
-        text: normalized,
-        parts: realignEditorPromptParts(normalized, current.parts),
-        ...(current.mode ? { mode: current.mode } : {}),
-        ...(current.command ? { command: current.command } : {}),
-      })
-    } catch {
-      restore(current)
-      input.onStatus("failed to open editor")
-    }
+              restore({
+                text: normalized,
+                parts: realignEditorPromptParts(normalized, current.parts),
+                ...(current.mode ? { mode: current.mode } : {}),
+                ...(current.command ? { command: current.command } : {}),
+              })
+            },
+            catch: (cause) => new FooterCallbackError({ action: "editor.restore", cause }),
+          }),
+        ),
+        Effect.catch(() =>
+          Effect.sync(() => {
+            restore(current)
+            input.onStatus("failed to open editor")
+          }),
+        ),
+      ),
+    )
   }
 
   const select = (item?: PromptOption) => {
@@ -853,7 +875,7 @@ export function createPromptState(input: PromptInput): PromptState {
 
     if (next.kind === "slash") {
       if (next.action === "editor") {
-        void openEditor({
+        openEditor({
           value: resolveEditorSlashValue(area.plainText),
         })
         return
@@ -1024,7 +1046,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Open editor",
         category: "Prompt",
         run() {
-          void openEditor()
+          openEditor()
         },
       },
     ],
@@ -1210,17 +1232,26 @@ export function createPromptState(input: PromptInput): PromptState {
     const shellMode = next.mode === "shell"
 
     resetDraft()
-    queueMicrotask(async () => {
-      if (await input.onSubmit(submit)) {
-        push(next)
-        if (shellMode) {
-          setShellMode(false)
-          draft = emptyPrompt(false)
-        }
-        return
-      }
+    queueMicrotask(() => {
+      Effect.runFork(
+        fromCallback("prompt.submit", () => input.onSubmit(submit)).pipe(
+          Effect.andThen((accepted) =>
+            Effect.sync(() => {
+              if (accepted) {
+                push(next)
+                if (shellMode) {
+                  setShellMode(false)
+                  draft = emptyPrompt(false)
+                }
+                return
+              }
 
-      restore(next)
+              restore(next)
+            }),
+          ),
+          Effect.ignore,
+        ),
+      )
     })
   }
 

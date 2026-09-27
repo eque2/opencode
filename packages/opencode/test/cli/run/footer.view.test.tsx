@@ -3,6 +3,7 @@ import { expect, test } from "bun:test"
 import { BoxRenderable, RGBA, parseColor, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
+import { Effect } from "effect"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { OpencodeKeymapProvider, registerOpencodeKeymap } from "@opencode-ai/tui/keymap"
@@ -202,9 +203,9 @@ async function renderFooter(
           backgroundSubagents={input.backgroundSubagents ?? true}
           agent="opencode"
           onSubmit={input.onSubmit ?? (() => true)}
-          onPermissionReply={() => {}}
-          onQuestionReply={() => {}}
-          onQuestionReject={() => {}}
+          onPermissionReply={() => Effect.void}
+          onQuestionReply={() => Effect.void}
+          onQuestionReject={() => Effect.void}
           onCycle={input.onCycle ?? (() => {})}
           onInterrupt={() => false}
           onEditorOpen={async () => undefined}
@@ -215,7 +216,7 @@ async function renderFooter(
           onRows={() => {}}
           onLayout={() => {}}
           onStatus={() => {}}
-          onQueuedRemove={async () => true}
+          onQueuedRemove={() => Effect.succeed(true)}
         />
       </OpencodeKeymapProvider>
     )
@@ -997,9 +998,9 @@ test("direct footer shows editable prompts and additional queued work while runn
           backgroundSubagents={true}
           agent="opencode"
           onSubmit={() => true}
-          onPermissionReply={() => {}}
-          onQuestionReply={() => {}}
-          onQuestionReject={() => {}}
+          onPermissionReply={() => Effect.void}
+          onQuestionReply={() => Effect.void}
+          onQuestionReject={() => Effect.void}
           onCycle={() => {}}
           onInterrupt={() => false}
           onEditorOpen={async () => undefined}
@@ -1010,7 +1011,7 @@ test("direct footer shows editable prompts and additional queued work while runn
           onRows={() => {}}
           onLayout={() => {}}
           onStatus={() => {}}
-          onQueuedRemove={async () => true}
+          onQueuedRemove={() => Effect.succeed(true)}
         />
       </OpencodeKeymapProvider>
     )
@@ -1194,10 +1195,12 @@ test("direct question body separates single-select checkmark from label", async 
         <RunQuestionBody
           request={request}
           theme={RUN_THEME_FALLBACK.footer}
-          onReply={(input) => {
-            replies.push(input)
-          }}
-          onReject={() => {}}
+          onReply={(input) =>
+            Effect.sync(() => {
+              replies.push(input)
+            })
+          }
+          onReject={() => Effect.void}
         />
       </box>
     ),
@@ -1246,10 +1249,12 @@ test.skip("direct custom answer submits through keymap return binding", async ()
         <RunQuestionBody
           request={question}
           theme={RUN_THEME_FALLBACK.footer}
-          onReply={(input) => {
-            questions.push(input)
-          }}
-          onReject={() => {}}
+          onReply={(input) =>
+            Effect.sync(() => {
+              questions.push(input)
+            })
+          }
+          onReject={() => Effect.void}
         />
       </OpencodeKeymapProvider>
     )

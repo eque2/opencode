@@ -16,6 +16,7 @@
 import type { TextareaRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
+import { Effect } from "effect"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import {
   createQuestionBodyState,
@@ -43,12 +44,13 @@ import {
 import { footerWidthPolicy } from "./footer.width"
 import type { RunFooterTheme } from "./theme"
 import type { QuestionReject, QuestionReply } from "./types"
+import type { FooterCallbackError } from "./footer.effect"
 
 export function RunQuestionBody(props: {
   request: QuestionRequest
   theme: RunFooterTheme
-  onReply: (input: QuestionReply) => void | Promise<void>
-  onReject: (input: QuestionReject) => void | Promise<void>
+  onReply: (input: QuestionReply) => Effect.Effect<void, FooterCallbackError>
+  onReject: (input: QuestionReject) => Effect.Effect<void, FooterCallbackError>
 }) {
   const dims = useTerminalDimensions()
   const [state, setState] = createSignal(createQuestionBodyState(props.request.id))
@@ -89,24 +91,20 @@ export function RunQuestionBody(props: {
     setState((prev) => questionMove(prev, props.request, dir))
   }
 
-  const beginReply = async (input: QuestionReply) => {
+  // Marks the body as submitting, then clears the mark if the reply fails.
+  const beginSubmit = (reply: Effect.Effect<void, FooterCallbackError>) => {
     setState((prev) => questionSetSubmitting(prev, true))
-
-    try {
-      await props.onReply(input)
-    } catch {
-      setState((prev) => questionSetSubmitting(prev, false))
-    }
+    Effect.runFork(
+      reply.pipe(Effect.catch(() => Effect.sync(() => setState((prev) => questionSetSubmitting(prev, false))))),
+    )
   }
 
-  const beginReject = async (input: QuestionReject) => {
-    setState((prev) => questionSetSubmitting(prev, true))
+  const beginReply = (input: QuestionReply) => {
+    beginSubmit(Effect.suspend(() => props.onReply(input)))
+  }
 
-    try {
-      await props.onReject(input)
-    } catch {
-      setState((prev) => questionSetSubmitting(prev, false))
-    }
+  const beginReject = (input: QuestionReject) => {
+    beginSubmit(Effect.suspend(() => props.onReject(input)))
   }
 
   const saveCustom = () => {
@@ -120,7 +118,7 @@ export function RunQuestionBody(props: {
       return
     }
 
-    void beginReply(next.reply)
+    beginReply(next.reply)
   }
 
   const choose = (selected: number) => {
@@ -135,7 +133,7 @@ export function RunQuestionBody(props: {
       return
     }
 
-    void beginReply(next.reply)
+    beginReply(next.reply)
   }
 
   const mark = (selected: number) => {
@@ -153,15 +151,15 @@ export function RunQuestionBody(props: {
       return
     }
 
-    void beginReply(next.reply)
+    beginReply(next.reply)
   }
 
   const submit = () => {
-    void beginReply(questionSubmit(props.request, state()))
+    beginReply(questionSubmit(props.request, state()))
   }
 
   const reject = () => {
-    void beginReject(questionReject(props.request))
+    beginReject(questionReject(props.request))
   }
 
   useKeyboard((event) => {

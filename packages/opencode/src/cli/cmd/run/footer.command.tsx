@@ -679,8 +679,8 @@ export function RunQueuedPromptSelectBody(props: {
   theme: Accessor<RunFooterTheme>
   prompts: Accessor<FooterQueuedPrompt[]>
   onClose: () => void
-  onEdit: (prompt: FooterQueuedPrompt) => void | Promise<void>
-  onDelete: (prompt: FooterQueuedPrompt) => void | Promise<void>
+  onEdit: (prompt: FooterQueuedPrompt) => void
+  onDelete: (prompt: FooterQueuedPrompt) => void
   onRows?: (rows: number) => void
 }) {
   let field: InputRenderable | undefined

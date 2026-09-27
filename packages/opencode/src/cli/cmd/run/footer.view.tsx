@@ -10,6 +10,7 @@
 /** @jsxImportSource @opentui/solid */
 import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
+import { Effect } from "effect"
 import { registerOpencodeSpinner } from "@opencode-ai/tui/component/register-spinner"
 import { createColors, createFrames } from "@opencode-ai/tui/ui/spinner"
 import {
@@ -27,6 +28,7 @@ import { RunPromptBody, createPromptState } from "./footer.prompt"
 import { RunPermissionBody } from "./footer.permission"
 import { RunQuestionBody } from "./footer.question"
 import { footerWidthPolicy } from "./footer.width"
+import type { FooterCallbackError } from "./footer.effect"
 import {
   OPENCODE_BASE_MODE,
   formatKeyBindings,
@@ -93,9 +95,9 @@ type RunFooterViewProps = {
   history?: RunPrompt[]
   agent: string
   onSubmit: (input: RunPrompt) => boolean
-  onPermissionReply: (input: PermissionReply) => void | Promise<void>
-  onQuestionReply: (input: QuestionReply) => void | Promise<void>
-  onQuestionReject: (input: QuestionReject) => void | Promise<void>
+  onPermissionReply: (input: PermissionReply) => Effect.Effect<void, FooterCallbackError>
+  onQuestionReply: (input: QuestionReply) => Effect.Effect<void, FooterCallbackError>
+  onQuestionReject: (input: QuestionReject) => Effect.Effect<void, FooterCallbackError>
   onCycle: () => void
   onInterrupt: () => boolean
   onBackground?: () => void
@@ -110,7 +112,7 @@ type RunFooterViewProps = {
   onLayout: (input: { route: FooterPromptRoute; autocomplete: boolean; subagentRows: number }) => void
   onStatus: (text: string) => void
   onSubagentSelect?: (sessionID: string | undefined) => void
-  onQueuedRemove: (messageID: string) => Promise<boolean>
+  onQueuedRemove: (messageID: string) => Effect.Effect<boolean, FooterCallbackError>
 }
 
 export { TEXTAREA_MIN_ROWS, TEXTAREA_MAX_ROWS } from "./footer.prompt"
@@ -695,11 +697,22 @@ export function RunFooterView(props: RunFooterViewProps) {
                             theme={theme}
                             prompts={queuedPrompts}
                             onClose={closePanel}
-                            onDelete={(item) => void props.onQueuedRemove(item.messageID)}
-                            onEdit={async (item) => {
-                              if (!(await props.onQueuedRemove(item.messageID))) return
-                              closePanel()
-                              queueMicrotask(() => composer.replacePrompt(item.prompt))
+                            onDelete={(item) => {
+                              Effect.runFork(props.onQueuedRemove(item.messageID).pipe(Effect.ignore))
+                            }}
+                            onEdit={(item) => {
+                              Effect.runFork(
+                                props.onQueuedRemove(item.messageID).pipe(
+                                  Effect.andThen((removed) =>
+                                    Effect.sync(() => {
+                                      if (!removed) return
+                                      closePanel()
+                                      queueMicrotask(() => composer.replacePrompt(item.prompt))
+                                    }),
+                                  ),
+                                  Effect.ignore,
+                                ),
+                              )
                             }}
                             onRows={setSubagentMenuRows}
                           />
@@ -716,7 +729,7 @@ export function RunFooterView(props: RunFooterViewProps) {
                             onModel={openModel}
                             onEditor={() => {
                               closePanel()
-                              void composer.openEditor()
+                              composer.openEditor()
                             }}
                             onSkill={openSkillMenu}
                             onSubagent={openSubagentMenu}
