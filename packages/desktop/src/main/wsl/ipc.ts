@@ -1,10 +1,12 @@
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
-import { MutableHashMap, Option } from "effect"
+import { Data, Effect, MutableHashMap, Option } from "effect"
 import type { WslServersController } from "./servers"
 import { requireWslIpcString, requireWslIpcStrings } from "./policy"
 import type { WslServersState } from "../../preload/types"
 import { nativeT } from "../native-translations"
+
+class WslUnavailableError extends Data.TaggedError("WslUnavailableError")<{ readonly message: string }> {}
 
 export function registerWslIpcHandlers(controller: WslServersController) {
   if (process.platform !== "win32") {
@@ -70,9 +72,8 @@ export function registerWslIpcHandlers(controller: WslServersController) {
 }
 
 function registerUnavailableWslIpcHandlers() {
-  const unavailable = () => {
-    throw new Error(nativeT("desktop.wsl.error.windowsOnly"))
-  }
+  const unavailable = () =>
+    Effect.runPromise(Effect.fail(new WslUnavailableError({ message: nativeT("desktop.wsl.error.windowsOnly") })))
   const state = (): WslServersState => ({
     runtime: {
       available: false,
@@ -91,7 +92,7 @@ function registerUnavailableWslIpcHandlers() {
   ipcMain.handle("wsl-servers-subscribe", (event) => {
     event.sender.send("wsl-servers-event", { type: "state", state: state() })
   })
-  ipcMain.handle("wsl-servers-unsubscribe", () => undefined)
+  ipcMain.handle("wsl-servers-unsubscribe", () => {})
   ipcMain.handle("wsl-servers-get-state", () => state())
   ipcMain.handle("wsl-servers-probe-runtime", unavailable)
   ipcMain.handle("wsl-servers-refresh-distros", unavailable)
