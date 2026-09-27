@@ -463,17 +463,33 @@ function mapProviderOptions(
   msgs: ModelMessage[],
   transform: (options: Record<string, any> | undefined) => Record<string, any> | undefined,
 ) {
-  return msgs.map((msg) => {
-    if (!Array.isArray(msg.content)) return { ...msg, providerOptions: transform(msg.providerOptions) }
-    return {
-      ...msg,
-      providerOptions: transform(msg.providerOptions),
-      content: msg.content.map((part) =>
-        part.type === "tool-approval-request" || part.type === "tool-approval-response"
-          ? part
-          : { ...part, providerOptions: transform(part.providerOptions) },
-      ),
-    } as typeof msg
+  const withOptions = <T extends { providerOptions?: Record<string, any> }>(item: T): T => ({
+    ...item,
+    providerOptions: transform(item.providerOptions),
+  })
+  // Each role has its own part union, so map per role to keep the message type exact.
+  return msgs.map((msg): ModelMessage => {
+    const next = withOptions(msg)
+    switch (next.role) {
+      case "system":
+        return next
+      case "user":
+        return typeof next.content === "string" ? next : { ...next, content: next.content.map(withOptions) }
+      case "assistant":
+        return typeof next.content === "string"
+          ? next
+          : {
+              ...next,
+              content: next.content.map((part) => (part.type === "tool-approval-request" ? part : withOptions(part))),
+            }
+      case "tool":
+        return {
+          ...next,
+          content: next.content.map((part) => (part.type === "tool-approval-response" ? part : withOptions(part))),
+        }
+      default:
+        return next
+    }
   })
 }
 
@@ -1610,7 +1626,9 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
   */
 
   if (model.api.npm === "@ai-sdk/openai" || model.api.npm === "@ai-sdk/azure") {
-    schema = sanitizeOpenAISchema(schema) as JSONSchema7
+    // An object schema always lowers to an object schema, so the guard only narrows the type.
+    const sanitized = sanitizeOpenAISchema(schema)
+    if (isPlainObject(sanitized)) schema = sanitized
     // Codex also applies lossy compaction above 4 KB; defer that until OpenCode needs the same schema budget.
   }
 
