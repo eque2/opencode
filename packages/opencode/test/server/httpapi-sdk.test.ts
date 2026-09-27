@@ -28,6 +28,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Database } from "@opencode-ai/core/database/database"
 import { httpApiLayer } from "./httpapi-layer"
+import { TestFailure } from "../fixture/test-failure"
 
 const noopBootstrapLayer = Layer.succeed(InstanceBootstrap.Service, InstanceBootstrap.Service.of({ run: Effect.void }))
 const appLayer = AppNodeBuilder.build(
@@ -144,7 +145,7 @@ function firstEvent(open: (signal: AbortSignal) => Promise<{ stream: AsyncIterat
           call(() => events.stream.next()).pipe(
             Effect.timeoutOrElse({
               duration: "1 second",
-              orElse: () => Effect.fail(new Error("timed out waiting for SDK event")),
+              orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for SDK event" })),
             }),
           ),
         ),

@@ -36,6 +36,7 @@ import { runScenario } from "./runner"
 import { disposeApps } from "./backend"
 import { runtime } from "./runtime"
 import { type Scenario } from "./types"
+import { TestFailure } from "../../fixture/test-failure"
 
 function cursor(input: Record<string, unknown>) {
   return Buffer.from(JSON.stringify(input)).toString("base64url")
@@ -1761,7 +1762,7 @@ const main = Effect.gen(function* () {
 
   for (const scenario of scenarios) {
     if (scenario.kind === "active" && llmScenarios.has(scenario.name) && !scenario.project?.llm) {
-      return yield* Effect.fail(new Error(`${scenario.name} must use TestLLMServer via .withLlm()`))
+      return yield* new TestFailure({ message: `${scenario.name} must use TestLLMServer via .withLlm()` })
     }
   }
 
@@ -1785,11 +1786,11 @@ const main = Effect.gen(function* () {
   printResults(results, missing, extra)
 
   if (results.some((result) => result.status === "fail"))
-    return yield* Effect.fail(new Error("one or more scenarios failed"))
+    return yield* new TestFailure({ message: "one or more scenarios failed" })
   if (options.failOnSkip && results.some((result) => result.status === "skip"))
-    return yield* Effect.fail(new Error("one or more scenarios are skipped"))
+    return yield* new TestFailure({ message: "one or more scenarios are skipped" })
   if (options.failOnMissing && missing.length > 0)
-    return yield* Effect.fail(new Error("one or more routes have no scenario"))
+    return yield* new TestFailure({ message: "one or more routes have no scenario" })
   return undefined
 })
 

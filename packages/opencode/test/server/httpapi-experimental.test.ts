@@ -15,6 +15,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
+import { TestFailure } from "../fixture/test-failure"
 
 const it = testEffect(Layer.mergeAll(LayerNode.compile(LayerNode.group([Session.node, Database.node])), httpApiLayer))
 const testWorktreeMutations = process.platform === "win32" ? it.instance.skip : it.instance
@@ -47,7 +48,7 @@ function waitReady(input: { directory?: string; name?: string }) {
     return yield* Deferred.await(ready).pipe(
       Effect.timeoutOrElse({
         duration: "10 seconds",
-        orElse: () => Effect.fail(new Error("timed out waiting for worktree.ready")),
+        orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for worktree.ready" })),
       }),
     )
   })
@@ -124,9 +125,9 @@ function withCreatedWorktree(
           headers,
           body: JSON.stringify({ directory: info.directory }),
         })
-        if (removed.status !== 200) return yield* Effect.fail(new Error(`failed to remove worktree: ${removed.status}`))
+        if (removed.status !== 200) return yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
         const ok = yield* json<boolean>(removed)
-        if (!ok) return yield* Effect.fail(new Error(`failed to remove worktree ${info.directory}`))
+        if (!ok) return yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
       }),
   )
 }

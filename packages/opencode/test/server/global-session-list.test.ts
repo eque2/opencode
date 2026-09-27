@@ -7,6 +7,7 @@ import { Session as SessionNs } from "@/session/session"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { provideInstance, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { TestFailure } from "../fixture/test-failure"
 
 const it = testEffect(
   LayerNode.compile(LayerNode.group([SessionNs.node, SessionProjector.node, Project.node, CrossSpawnSpawner.node])),
@@ -84,7 +85,7 @@ describe("session.listGlobal", () => {
         yield* Deferred.await(ready).pipe(
           Effect.timeoutOrElse({
             duration: "1 second",
-            orElse: () => Effect.fail(new Error("timed out waiting between session creates")),
+            orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting between session creates" })),
           }),
         )
         const second = yield* withSession({ title: "page-two" })

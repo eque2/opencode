@@ -8,6 +8,7 @@ import { WorkspacePaths } from "../../src/server/routes/instance/httpapi/groups/
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { TestFailure } from "../fixture/test-failure"
 
 const stateLayer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -19,7 +20,7 @@ const it = testEffect(stateLayer)
 const worktreeTest = process.platform === "win32" ? it.instance.skip : it.instance
 type TestServer = ReturnType<typeof Server.Default>["app"]
 type CreatedWorktree = { directory: string }
-type ScopedWorktree = { directory: string; body: CreatedWorktree; ready: Effect.Effect<void, Error> }
+type ScopedWorktree = { directory: string; body: CreatedWorktree; ready: Effect.Effect<void, TestFailure> }
 
 function serverScoped() {
   return Effect.sync(() => Server.Default().app)
@@ -33,7 +34,7 @@ function withRequestTimeout(effect: Effect.Effect<Response>, label: string, ms =
   return effect.pipe(
     Effect.timeoutOrElse({
       duration: `${ms} millis`,
-      orElse: () => Effect.fail(new Error(`${label} timed out after ${ms}ms`)),
+      orElse: () => Effect.fail(new TestFailure({ message: `${label} timed out after ${ms}ms` })),
     }),
   )
 }
@@ -61,7 +62,7 @@ function readyWatcher() {
       }).pipe(
         Effect.timeoutOrElse({
           duration: "10 seconds",
-          orElse: () => Effect.fail(new Error(`timed out waiting for worktree.ready: ${directory}`)),
+          orElse: () => Effect.fail(new TestFailure({ message: `timed out waiting for worktree.ready: ${directory}` })),
         }),
       )
   })
@@ -71,7 +72,7 @@ function removeCreatedWorktree(input: {
   server: TestServer
   rootDirectory: string
   worktreeDirectory: string
-  ready: Effect.Effect<void, Error>
+  ready: Effect.Effect<void, TestFailure>
 }) {
   return Effect.gen(function* () {
     yield* input.ready.pipe(Effect.timeout("1 second"), Effect.ignore)
