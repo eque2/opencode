@@ -1,6 +1,70 @@
 import { describe, expect, test } from "bun:test"
-import { accessTokenIsExpiring, pollDeviceCodeToken, requestDeviceCode, XaiAuthPlugin } from "../../src/plugin/xai"
+import type { AuthOAuthResult, Hooks } from "@opencode-ai/plugin"
+import { Clock, Duration, Effect } from "effect"
+import {
+  accessTokenIsExpiring,
+  pollDeviceCodeToken,
+  requestDeviceCode,
+  XaiAuthPlugin,
+  type XaiAuthRecord,
+  type XaiPluginInput,
+} from "../../src/plugin/xai"
 import { OAUTH_DUMMY_KEY } from "../../src/auth"
+
+type AuthHook = NonNullable<Hooks["auth"]>
+type OAuthMethod = Extract<AuthHook["methods"][number], { type: "oauth" }>
+
+// The xAI loader ignores its provider argument; this is a complete value of that type.
+const provider: Parameters<NonNullable<AuthHook["loader"]>>[1] = {
+  id: "xai",
+  name: "xAI",
+  source: "custom",
+  env: [],
+  options: {},
+  models: {},
+}
+
+const expiring = (token: string | undefined, skewMs: number) => Effect.runSync(accessTokenIsExpiring(token, skewMs))
+
+// Runs an Effect against a clock whose time comes from `now` and whose sleeps
+// return at once and are recorded in `sleeps`.
+function runWithClock<A, E>(effect: Effect.Effect<A, E>, clock: { now?: () => number; sleeps?: number[] } = {}) {
+  const now = clock.now ?? (() => Date.now())
+  const controlled: Clock.Clock = {
+    currentTimeMillisUnsafe: now,
+    currentTimeMillis: Effect.sync(now),
+    currentTimeNanosUnsafe: () => BigInt(Date.now()) * 1_000_000n,
+    currentTimeNanos: Effect.sync(() => BigInt(Date.now()) * 1_000_000n),
+    monotonicTimeNanosUnsafe: () => process.hrtime.bigint(),
+    monotonicTimeNanos: Effect.sync(() => process.hrtime.bigint()),
+    sleep: (duration) =>
+      Effect.sync(() => {
+        clock.sleeps?.push(Duration.toMillis(duration))
+      }),
+  }
+  return Effect.runPromise(effect.pipe(Effect.provideService(Clock.Clock, controlled)))
+}
+
+function oauthMethod(hooks: Hooks): OAuthMethod {
+  const method = hooks.auth?.methods.find(
+    (m): m is OAuthMethod => m.type === "oauth" && m.label === "SuperGrok Subscription",
+  )
+  if (!method) throw new Error("SuperGrok Subscription method is missing")
+  return method
+}
+
+function autoCallback(result: AuthOAuthResult) {
+  if (result.method !== "auto") throw new Error(`Unexpected xAI authorization method ${result.method}`)
+  return result.callback()
+}
+
+// Settles a Promise and gives its rejection value, or "resolved" when it resolves.
+function rejection(promise: PromiseLike<unknown>): PromiseLike<unknown> {
+  return promise.then(
+    () => "resolved",
+    (error: unknown) => error,
+  )
+}
 
 function makeJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url")
@@ -9,20 +73,18 @@ function makeJwt(payload: object): string {
 }
 
 function makeInput(opts?: { failSet?: boolean }) {
-  const setCalls: Array<Record<string, unknown>> = []
-  return {
-    input: {
-      client: {
-        auth: {
-          set: async (req: Record<string, unknown>) => {
-            setCalls.push(req)
-            if (opts?.failSet) throw new Error("auth.set boom")
-          },
+  const setCalls: XaiAuthRecord[] = []
+  const input: XaiPluginInput = {
+    client: {
+      auth: {
+        set: async (req) => {
+          setCalls.push(req)
+          if (opts?.failSet) throw new Error("auth.set boom")
         },
       },
-    } as any,
-    setCalls,
+    },
   }
+  return { input, setCalls }
 }
 
 function makeServer(handler: (request: Request, url: URL) => Response | Promise<Response>) {
@@ -43,39 +105,39 @@ function serverOptions(server: ReturnType<typeof Bun.serve>) {
 describe("plugin.xai", () => {
   describe("accessTokenIsExpiring", () => {
     test("returns true for an already-expired JWT", () => {
-      expect(accessTokenIsExpiring(makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 }), 0)).toBe(true)
+      expect(expiring(makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 }), 0)).toBe(true)
     })
 
     test("returns false for a fresh JWT outside the skew window", () => {
-      expect(accessTokenIsExpiring(makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }), 0)).toBe(false)
+      expect(expiring(makeJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }), 0)).toBe(false)
     })
 
     test("honors the skew window", () => {
       const nearExpiry = makeJwt({ exp: Math.floor(Date.now() / 1000) + 30 })
-      expect(accessTokenIsExpiring(nearExpiry, 60_000)).toBe(true)
-      expect(accessTokenIsExpiring(nearExpiry, 0)).toBe(false)
+      expect(expiring(nearExpiry, 60_000)).toBe(true)
+      expect(expiring(nearExpiry, 0)).toBe(false)
     })
 
     test("clamps negative skew to zero rather than refusing to refresh", () => {
-      expect(accessTokenIsExpiring(makeJwt({ exp: Math.floor(Date.now() / 1000) - 1 }), -60_000)).toBe(true)
+      expect(expiring(makeJwt({ exp: Math.floor(Date.now() / 1000) - 1 }), -60_000)).toBe(true)
     })
 
     test("returns false for opaque and malformed tokens", () => {
-      expect(accessTokenIsExpiring("opaque-token-no-dots", 0)).toBe(false)
-      expect(accessTokenIsExpiring("", 0)).toBe(false)
-      expect(accessTokenIsExpiring(undefined, 0)).toBe(false)
-      expect(accessTokenIsExpiring(makeJwt({ sub: "user-1" }), 0)).toBe(false)
-      expect(accessTokenIsExpiring(makeJwt({ exp: "1234" }), 0)).toBe(false)
-      expect(accessTokenIsExpiring("header.!!!not-valid-base64-or-json!!!.sig", 0)).toBe(false)
+      expect(expiring("opaque-token-no-dots", 0)).toBe(false)
+      expect(expiring("", 0)).toBe(false)
+      expect(expiring(undefined, 0)).toBe(false)
+      expect(expiring(makeJwt({ sub: "user-1" }), 0)).toBe(false)
+      expect(expiring(makeJwt({ exp: "1234" }), 0)).toBe(false)
+      expect(expiring("header.!!!not-valid-base64-or-json!!!.sig", 0)).toBe(false)
     })
   })
 
   describe("loader", () => {
     test("returns no options unless stored auth is OAuth and exposes methods in order", async () => {
-      const hooks = await XaiAuthPlugin({} as any)
-      expect(await hooks.auth!.loader!(async () => ({ type: "api", key: "sk-test" }), {} as any)).toEqual({})
+      const hooks = await XaiAuthPlugin(makeInput().input)
+      expect(await hooks.auth!.loader!(async () => ({ type: "api", key: "sk-test" }), provider)).toEqual({})
       expect(
-        await hooks.auth!.loader!(async () => ({ type: "wellknown", key: "k", token: "t" }) as any, {} as any),
+        await hooks.auth!.loader!(async () => ({ type: "wellknown", key: "k", token: "t" }), provider),
       ).toEqual({})
       expect(hooks.auth!.methods.map((m) => [m.type, m.label])).toEqual([
         ["oauth", "SuperGrok Subscription"],
@@ -93,7 +155,7 @@ describe("plugin.xai", () => {
       const hooks = await XaiAuthPlugin(input)
       const opts = await hooks.auth!.loader!(
         async () => ({ type: "oauth", access: "live-token", refresh: "rt", expires: Date.now() + 3600_000 }),
-        {} as any,
+        provider,
       )
       expect(opts.apiKey).toBe(OAUTH_DUMMY_KEY)
       expect(opts.baseURL).toBeUndefined()
@@ -118,7 +180,7 @@ describe("plugin.xai", () => {
         await XaiAuthPlugin(input)
       ).auth!.loader!(
         async () => ({ type: "oauth", access: "tok", refresh: "rt", expires: Date.now() + 3600_000 }),
-        {} as any,
+        provider,
       )
 
       const objHeaders: Record<string, string> = {
@@ -159,7 +221,7 @@ describe("plugin.xai", () => {
         await XaiAuthPlugin(input)
       ).auth!.loader!(
         async () => ({ type: "oauth", access: "tok", refresh: "rt", expires: Date.now() + 3600_000 }),
-        {} as any,
+        provider,
       )
 
       await opts.fetch!(
@@ -195,7 +257,7 @@ describe("plugin.xai", () => {
           return { type: "oauth", access: "tok", refresh: "rt", expires: Date.now() + 3600_000 }
         }
         return { type: "api", key: "sk-new" }
-      }, {} as any)
+      }, provider)
 
       await opts.fetch!(new URL("/chat/completions", server.url), {
         headers: { Authorization: "Bearer sk-from-aisdk", "x-keep": "v" },
@@ -220,7 +282,7 @@ describe("plugin.xai", () => {
       })
       const opts = await (
         await XaiAuthPlugin(input, serverOptions(server))
-      ).auth!.loader!(async () => ({ type: "oauth" as const, access: "old", refresh: "rt-old", expires: 0 }), {} as any)
+      ).auth!.loader!(async () => ({ type: "oauth" as const, access: "old", refresh: "rt-old", expires: 0 }), provider)
 
       await Promise.all([
         opts.fetch!(new URL("/chat/completions", server.url), { headers: {} }),
@@ -233,7 +295,7 @@ describe("plugin.xai", () => {
         "Bearer new-access",
       ])
       expect(setCalls).toHaveLength(1)
-      expect((setCalls[0].body as any).refresh).toBe("rt-new")
+      expect(setCalls[0].body.refresh).toBe("rt-new")
     })
 
     test("does not share refresh single-flight across loader instances", async () => {
@@ -257,11 +319,11 @@ describe("plugin.xai", () => {
       const hooks = await XaiAuthPlugin(input, serverOptions(server))
       const first = await hooks.auth!.loader!(
         async () => ({ type: "oauth", access: "old-a", refresh: "rt-a", expires: 0 }),
-        {} as any,
+        provider,
       )
       const second = await hooks.auth!.loader!(
         async () => ({ type: "oauth", access: "old-b", refresh: "rt-b", expires: 0 }),
-        {} as any,
+        provider,
       )
 
       await Promise.all([
@@ -290,12 +352,12 @@ describe("plugin.xai", () => {
       })
       const opts = await (
         await XaiAuthPlugin(input, serverOptions(server))
-      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt-old", expires: 0 }), {} as any)
+      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt-old", expires: 0 }), provider)
 
       await opts.fetch!(new URL("/chat/completions", server.url), { headers: {} })
-      await expect(opts.fetch!(new URL("/chat/completions", server.url), { headers: {} })).rejects.toThrow(
-        /xAI token refresh failed \(503\)/,
-      )
+      const failure = await rejection(opts.fetch!(new URL("/chat/completions", server.url), { headers: {} }))
+      expect(failure).toBeInstanceOf(Error)
+      expect(failure).toMatchObject({ message: expect.stringMatching(/xAI token refresh failed \(503\)/) })
       await opts.fetch!(new URL("/chat/completions", server.url), { headers: {} })
       expect(tokenRequests).toBe(3)
     })
@@ -310,12 +372,12 @@ describe("plugin.xai", () => {
       })
       const opts = await (
         await XaiAuthPlugin(input, serverOptions(server))
-      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt-old", expires: 0 }), {} as any)
+      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt-old", expires: 0 }), provider)
 
       const resp = await opts.fetch!(new URL("/chat/completions", server.url), { headers: {} })
       expect(resp.status).toBe(200)
       expect(captured[0].get("authorization")).toBe("Bearer new-access")
-      expect((setCalls[0].body as any).refresh).toBe("rt-old")
+      expect(setCalls[0].body.refresh).toBe("rt-old")
     })
 
     test("refreshes based on stored expiry or JWT expiry and skips refresh when both are fresh", async () => {
@@ -337,7 +399,7 @@ describe("plugin.xai", () => {
           refresh: "rt",
           expires: Date.now() + 24 * 3600 * 1000,
         }),
-        {} as any,
+        provider,
       )
       await fresh.fetch!(new URL("/chat/completions", server.url), { headers: {} })
       expect(tokenRequests).toBe(0)
@@ -351,11 +413,11 @@ describe("plugin.xai", () => {
           refresh: "rt-old",
           expires: Date.now() + 24 * 3600 * 1000,
         }),
-        {} as any,
+        provider,
       )
       const missingExpires = await (
         await XaiAuthPlugin(input, serverOptions(server))
-      ).auth!.loader!(async () => ({ type: "oauth", access: "opaque-token", refresh: "rt", expires: 0 }), {} as any)
+      ).auth!.loader!(async () => ({ type: "oauth", access: "opaque-token", refresh: "rt", expires: 0 }), provider)
       await jwtExpiring.fetch!(new URL("/chat/completions", server.url), { headers: {} })
       await missingExpires.fetch!(new URL("/chat/completions", server.url), { headers: {} })
       expect(tokenRequests).toBe(2)
@@ -366,9 +428,9 @@ describe("plugin.xai", () => {
       const { input } = makeInput()
       const opts = await (
         await XaiAuthPlugin(input, { tokenUrl: "http://127.0.0.1:9/oauth2/token" })
-      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt", expires: 0 }), {} as any)
+      ).auth!.loader!(async () => ({ type: "oauth", access: "old", refresh: "rt", expires: 0 }), provider)
 
-      await expect(opts.fetch!("https://api.x.ai/v1/chat/completions", { headers: {} })).rejects.toThrow()
+      expect(await rejection(opts.fetch!("https://api.x.ai/v1/chat/completions", { headers: {} }))).toBeInstanceOf(Error)
     })
   })
 
@@ -390,17 +452,14 @@ describe("plugin.xai", () => {
         }
         return new Response("unexpected request", { status: 500 })
       })
-      const hooks = await XaiAuthPlugin({} as any, serverOptions(server))
-      const headless = hooks.auth!.methods.find(
-        (m): m is Extract<typeof m, { type: "oauth" }> => m.type === "oauth" && m.label === "SuperGrok Subscription",
-      )!
-      const result = await headless.authorize!()
+      const hooks = await XaiAuthPlugin(makeInput().input, serverOptions(server))
+      const result = await oauthMethod(hooks).authorize()
 
       expect(result.method).toBe("auto")
       expect(result.url).toBe("https://x.ai/device?user_code=ABCD-1234")
       expect(result.instructions).toContain("https://x.ai/device")
       expect(result.instructions).toContain("ABCD-1234")
-      expect(await (result as any).callback()).toMatchObject({ type: "success", refresh: "RT", access: "AT" })
+      expect(await autoCallback(result)).toMatchObject({ type: "success", refresh: "RT", access: "AT" })
     })
 
     test("authorize falls back to verification_uri when verification_uri_complete is absent", async () => {
@@ -414,10 +473,8 @@ describe("plugin.xai", () => {
         }
         return new Response("unexpected request", { status: 500 })
       })
-      const headless = (await XaiAuthPlugin({} as any, serverOptions(server))).auth!.methods.find(
-        (m): m is Extract<typeof m, { type: "oauth" }> => m.type === "oauth" && m.label === "SuperGrok Subscription",
-      )!
-      expect((await headless.authorize!()).url).toBe("https://x.ai/device")
+      const headless = oauthMethod(await XaiAuthPlugin(makeInput().input, serverOptions(server)))
+      expect((await headless.authorize()).url).toBe("https://x.ai/device")
     })
 
     test("requestDeviceCode posts form body, validates fields, and surfaces endpoint errors", async () => {
@@ -433,19 +490,23 @@ describe("plugin.xai", () => {
         return Response.json({ device_code: "DC", user_code: "UC", verification_uri: "https://x.ai/device" })
       })
 
-      await requestDeviceCode({ deviceAuthorizationUrl: new URL("/oauth2/device/code", server.url).toString() })
+      await Effect.runPromise(
+        requestDeviceCode({ deviceAuthorizationUrl: new URL("/oauth2/device/code", server.url).toString() }),
+      )
       const parsed = new URLSearchParams(capturedBody)
       expect(parsed.get("client_id")).toBe("b1a00492-073a-47ea-816f-4c329264a828")
       expect(parsed.get("scope")).toContain("offline_access")
       expect(parsed.get("scope")).toContain("grok-cli:access")
       expect(parsed.get("scope")).toContain("api:access")
       expect(parsed.get("referrer")).toBe("opencode")
-      await expect(
-        requestDeviceCode({ deviceAuthorizationUrl: new URL("/error", server.url).toString() }),
-      ).rejects.toThrow(/429.*rate limited/)
-      await expect(
-        requestDeviceCode({ deviceAuthorizationUrl: new URL("/missing", server.url).toString() }),
-      ).rejects.toThrow(/missing device_code/)
+      const rateLimited = await Effect.runPromise(
+        Effect.flip(requestDeviceCode({ deviceAuthorizationUrl: new URL("/error", server.url).toString() })),
+      )
+      expect(rateLimited.message).toMatch(/429.*rate limited/)
+      const missing = await Effect.runPromise(
+        Effect.flip(requestDeviceCode({ deviceAuthorizationUrl: new URL("/missing", server.url).toString() })),
+      )
+      expect(missing.message).toMatch(/missing device_code/)
     })
 
     test("pollDeviceCodeToken resolves on success and posts the device-code grant", async () => {
@@ -459,9 +520,11 @@ describe("plugin.xai", () => {
         return Response.json({ access_token: "AT", refresh_token: "RT", expires_in: 3600 })
       })
 
-      const tokens = await pollDeviceCodeToken(
-        { device_code: "DC-1", user_code: "UC", verification_uri: "https://x.ai/device", interval: 1, expires_in: 600 },
-        { sleep: async () => {}, tokenUrl: new URL("/oauth2/token", server.url).toString() },
+      const tokens = await runWithClock(
+        pollDeviceCodeToken(
+          { device_code: "DC-1", user_code: "UC", verification_uri: "https://x.ai/device", interval: 1, expires_in: 600 },
+          { tokenUrl: new URL("/oauth2/token", server.url).toString() },
+        ),
       )
       expect(tokens.access_token).toBe("AT")
       expect(tokens.refresh_token).toBe("RT")
@@ -477,9 +540,12 @@ describe("plugin.xai", () => {
         return Response.json({ access_token: "AT", refresh_token: "RT", expires_in: 3600 })
       })
       const sleeps: number[] = []
-      const tokens = await pollDeviceCodeToken(
-        { device_code: "DC", user_code: "UC", verification_uri: "https://x.ai/device", interval: 5, expires_in: 600 },
-        { sleep: async (ms) => void sleeps.push(ms), tokenUrl: new URL("/oauth2/token", server.url).toString() },
+      const tokens = await runWithClock(
+        pollDeviceCodeToken(
+          { device_code: "DC", user_code: "UC", verification_uri: "https://x.ai/device", interval: 5, expires_in: 600 },
+          { tokenUrl: new URL("/oauth2/token", server.url).toString() },
+        ),
+        { sleeps },
       )
       expect(tokens.access_token).toBe("AT")
       expect(n).toBe(3)
@@ -493,36 +559,39 @@ describe("plugin.xai", () => {
         [{ error: "server_error", error_description: "oops" }, /500.*oops/],
       ] as const) {
         using server = makeServer(() => Response.json(body, { status: 500 }))
-        await expect(
-          pollDeviceCodeToken(
-            {
-              device_code: "DC",
-              user_code: "UC",
-              verification_uri: "https://x.ai/device",
-              interval: 1,
-              expires_in: 600,
-            },
-            { sleep: async () => {}, tokenUrl: new URL("/oauth2/token", server.url).toString() },
+        const failure = await runWithClock(
+          Effect.flip(
+            pollDeviceCodeToken(
+              {
+                device_code: "DC",
+                user_code: "UC",
+                verification_uri: "https://x.ai/device",
+                interval: 1,
+                expires_in: 600,
+              },
+              { tokenUrl: new URL("/oauth2/token", server.url).toString() },
+            ),
           ),
-        ).rejects.toThrow(error)
+        )
+        expect(failure.message).toMatch(error)
       }
 
       using pending = makeServer(() => Response.json({ error: "authorization_pending" }, { status: 400 }))
       let tick = 0
-      await expect(
-        pollDeviceCodeToken(
-          { device_code: "DC", user_code: "UC", verification_uri: "https://x.ai/device", interval: 1, expires_in: 1 },
-          {
-            sleep: async () => {},
-            now: () => 1_000_000 + tick++ * 600,
-            tokenUrl: new URL("/oauth2/token", pending.url).toString(),
-          },
+      const timeout = await runWithClock(
+        Effect.flip(
+          pollDeviceCodeToken(
+            { device_code: "DC", user_code: "UC", verification_uri: "https://x.ai/device", interval: 1, expires_in: 1 },
+            { tokenUrl: new URL("/oauth2/token", pending.url).toString() },
+          ),
         ),
-      ).rejects.toThrow(/timed out/)
+        { now: () => 1_000_000 + tick++ * 600 },
+      )
+      expect(timeout.message).toMatch(/timed out/)
     })
 
     test("pollDeviceCodeToken normalizes bad interval and expires_in values", async () => {
-      const badIntervals: Array<unknown> = [Number.NaN, "NaN", "garbage", -5, null, 0]
+      const badIntervals: Array<number | string | null> = [Number.NaN, "NaN", "garbage", -5, null, 0]
       for (const bad of badIntervals) {
         let n = 0
         using server = makeServer(() => {
@@ -531,15 +600,18 @@ describe("plugin.xai", () => {
           return Response.json({ access_token: "AT", refresh_token: "RT", expires_in: 3600 })
         })
         const sleeps: number[] = []
-        await pollDeviceCodeToken(
-          {
-            device_code: "DC",
-            user_code: "UC",
-            verification_uri: "https://x.ai/device",
-            interval: bad as number,
-            expires_in: 600,
-          },
-          { sleep: async (ms) => void sleeps.push(ms), tokenUrl: new URL("/oauth2/token", server.url).toString() },
+        await runWithClock(
+          pollDeviceCodeToken(
+            {
+              device_code: "DC",
+              user_code: "UC",
+              verification_uri: "https://x.ai/device",
+              interval: bad,
+              expires_in: 600,
+            },
+            { tokenUrl: new URL("/oauth2/token", server.url).toString() },
+          ),
+          { sleeps },
         )
         expect(sleeps[0]).toBe(8_000)
       }
@@ -548,15 +620,17 @@ describe("plugin.xai", () => {
         using server = makeServer(() => Response.json({ access_token: "AT", refresh_token: "RT", expires_in: 3600 }))
         expect(
           (
-            await pollDeviceCodeToken(
-              {
-                device_code: "DC",
-                user_code: "UC",
-                verification_uri: "https://x.ai/device",
-                interval: 1,
-                expires_in: bad as number,
-              },
-              { sleep: async () => {}, tokenUrl: new URL("/oauth2/token", server.url).toString() },
+            await runWithClock(
+              pollDeviceCodeToken(
+                {
+                  device_code: "DC",
+                  user_code: "UC",
+                  verification_uri: "https://x.ai/device",
+                  interval: 1,
+                  expires_in: bad,
+                },
+                { tokenUrl: new URL("/oauth2/token", server.url).toString() },
+              ),
             )
           ).access_token,
         ).toBe("AT")
@@ -576,10 +650,8 @@ describe("plugin.xai", () => {
         }
         return Response.json({ error: "access_denied" }, { status: 400 })
       })
-      const headless = (await XaiAuthPlugin({} as any, serverOptions(server))).auth!.methods.find(
-        (m): m is Extract<typeof m, { type: "oauth" }> => m.type === "oauth" && m.label === "SuperGrok Subscription",
-      )!
-      expect(await ((await headless.authorize!()) as any).callback()).toEqual({ type: "failed" })
+      const headless = oauthMethod(await XaiAuthPlugin(makeInput().input, serverOptions(server)))
+      expect(await autoCallback(await headless.authorize())).toEqual({ type: "failed" })
     })
   })
 })
