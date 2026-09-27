@@ -63,20 +63,31 @@ const APP_IDS: Record<string, string> = {
 const jsCallStackFeature = "DocumentPolicyIncludeJSCallStacksInCrashReports"
 
 class PortError extends Data.TaggedError("PortError")<{ readonly message: string }> {}
+class StartupStepError extends Data.TaggedError("StartupStepError")<{ readonly cause: unknown }> {}
 
 let logger: ReturnType<typeof initLogging>
 let server: SidecarListener | null = null
 
 const pendingDeepLinks: string[] = []
 
-function useEnvProxy() {
-  try {
-    // Electron 41.2 runs Node 24.14.1; latest @types/node@24 is 24.12.2.
-    ;(http as any).setGlobalProxyFromEnv()
-  } catch (error) {
-    logger.warn("failed to load proxy environment", error)
-  }
-}
+// Electron 41.2 runs Node 24.14.1, which has http.setGlobalProxyFromEnv; latest @types/node@24
+// is 24.12.2 and does not declare it.
+const hasEnvProxy = (module: typeof http): module is typeof http & { setGlobalProxyFromEnv: () => void } =>
+  "setGlobalProxyFromEnv" in module && typeof module.setGlobalProxyFromEnv === "function"
+
+const useEnvProxy = Effect.suspend(() => {
+  // A namespace import does not narrow, so the guard checks a local binding.
+  const module = http
+  return hasEnvProxy(module)
+    ? Effect.try({ try: () => module.setGlobalProxyFromEnv(), catch: (cause) => new StartupStepError({ cause }) })
+    : Effect.fail(new StartupStepError({ cause: "http.setGlobalProxyFromEnv is not available" }))
+}).pipe(
+  Effect.catch((error) =>
+    Effect.sync(() => {
+      logger.warn("failed to load proxy environment", error.cause)
+    }),
+  ),
+)
 
 function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
@@ -126,9 +137,9 @@ const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
 
   // on macOS apps run in `/` which can cause issues with ripgrep
-  try {
-    process.chdir(homedir())
-  } catch {}
+  yield* Effect.try({ try: () => process.chdir(homedir()), catch: (cause) => new StartupStepError({ cause }) }).pipe(
+    Effect.ignore,
+  )
 
   Object.assign(process.env, { OPENCODE_DISABLE_EMBEDDED_WEB_UI: "true" })
   const testOnboarding = Option.contains(yield* readEnv("OPENCODE_TEST_ONBOARDING"), "1")
@@ -190,11 +201,17 @@ const main = Effect.gen(function* () {
     })
   }
 
-  try {
-    setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])])
-  } catch (error) {
-    logger.warn("failed to load system certificates", error)
-  }
+  yield* Effect.try({
+    try: () =>
+      setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])]),
+    catch: (cause) => new StartupStepError({ cause }),
+  }).pipe(
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logger.warn("failed to load system certificates", error.cause)
+      }),
+    ),
+  )
 
   logger.log("app starting", {
     version: app.getVersion(),
@@ -203,7 +220,7 @@ const main = Effect.gen(function* () {
   })
 
   yield* ensureLoopbackNoProxy
-  useEnvProxy()
+  yield* useEnvProxy
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)
@@ -342,7 +359,7 @@ const main = Effect.gen(function* () {
     logger.log("sidecar connection started", { version: sidecarVersion })
 
     yield* ensureLoopbackNoProxy
-    useEnvProxy()
+    yield* useEnvProxy
 
     if (sidecarVersion === "v2") {
       logger.log("spawning v2 sidecar")
