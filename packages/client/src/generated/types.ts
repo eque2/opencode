@@ -10,6 +10,7 @@ export type JsonValue =
   | ReadonlyArray<JsonValue>
   | { readonly [key: string]: JsonValue }
 
+// eslint-disable-next-line effect/no-null-use-option -- (b) JSON null: typeof null is object, so this guard over unknown wire JSON must exclude null before property access
 const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null
 
 export type UnauthorizedError = typeof ProtocolErrors.UnauthorizedError.Encoded

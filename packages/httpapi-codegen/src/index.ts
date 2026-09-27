@@ -530,11 +530,18 @@ const promiseRuntimeReason =
   "(c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle"
 const promiseErrorReason =
   "(c) public rejection class of the zero-Effect Promise root of @opencode-ai/client: consumers use instanceof, name, reason and cause, and promise.test.ts pins them"
+const responseBodyReason =
+  "(a) DOM fetch boundary: Response.body is typed ReadableStream<Uint8Array> | null, and null means the response has no body"
+const jsonNullReason =
+  "(b) JSON null: typeof null is object, so this guard over unknown wire JSON must exclude null before property access"
+const queryNullReason =
+  "(b) JavaScript null in caller query values typed unknown: null is skipped like undefined, because Object.entries(null) throws"
 const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
 const tryCatchRule = "effect/no-try-catch-use-effect"
 const jsonParseRule = "effect/no-json-parse-use-schema"
 const jsonStringifyRule = "effect/no-json-stringify-use-schema"
+const nullRule = "effect/no-null-use-option"
 const classExtendsErrorRule = "effect/no-class-extends-error"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
@@ -628,7 +635,7 @@ function renderPromiseTypes(
     const objectGuard =
       errorTypes.length === 0
         ? ""
-        : 'const isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null'
+        : `${eslintDirective([nullRule], jsonNullReason)}\nconst isNonNullObject = (value: unknown): value is object => typeof value === "object" && value !== null`
     return [...imports, json, objectGuard, ...errorTypes, operations].filter(Boolean).join("\n\n")
   })
 }
@@ -799,6 +806,7 @@ export function make(options: ClientOptions) {
         ${runtimeDirective(throwRule)}
         throw new ClientError("UnsupportedContentType")
       }
+      ${eslintDirective([nullRule], responseBodyReason)}
       if (response.body === null) {
         ${runtimeDirective(throwRule)}
         throw new ClientError("MalformedResponse")
@@ -861,6 +869,7 @@ export function make(options: ClientOptions) {
 }
 
 function appendQuery(params: URLSearchParams, key: string, value: unknown): void {
+  ${eslintDirective([nullRule], queryNullReason)}
   if (value === undefined || value === null) return
   if (Array.isArray(value)) {
     for (const item of value) appendQuery(params, key, item)

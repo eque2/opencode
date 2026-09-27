@@ -224,6 +224,7 @@ export function make(options: ClientOptions) {
         // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         throw new ClientError("UnsupportedContentType")
       }
+      // eslint-disable-next-line effect/no-null-use-option -- (a) DOM fetch boundary: Response.body is typed ReadableStream<Uint8Array> | null, and null means the response has no body
       if (response.body === null) {
         // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         throw new ClientError("MalformedResponse")
@@ -990,6 +991,7 @@ export function make(options: ClientOptions) {
 }
 
 function appendQuery(params: URLSearchParams, key: string, value: unknown): void {
+  // eslint-disable-next-line effect/no-null-use-option -- (b) JavaScript null in caller query values typed unknown: null is skipped like undefined, because Object.entries(null) throws
   if (value === undefined || value === null) return
   if (Array.isArray(value)) {
     for (const item of value) appendQuery(params, key, item)
