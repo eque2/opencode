@@ -24,7 +24,9 @@ export const WorkspaceRoutingQueryFields = {
   workspace: Schema.optional(Schema.String),
 }
 
-export const WorkspaceRoutingQuery = Schema.Struct(WorkspaceRoutingQueryFields)
+export const WorkspaceRoutingQuery = Schema.Struct(WorkspaceRoutingQueryFields).annotate({
+  description: "Query parameters that select the workspace and directory of a request",
+})
 
 type RemoteTarget = Extract<Target, { type: "remote" }>
 
