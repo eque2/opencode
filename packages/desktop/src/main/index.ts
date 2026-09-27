@@ -359,9 +359,15 @@ const main = Effect.gen(function* () {
   })
   registerWslIpcHandlers(wslServers)
   void updater.start()
-  const updateTimer = setInterval(() => void updater.check(), 10 * 60 * 1000)
-  updateTimer.unref()
-  app.once("will-quit", () => clearInterval(updateTimer))
+  // Checks for updates every ten minutes after startup, until the app quits.
+  const updateChecks = yield* Effect.sleep("10 minutes").pipe(
+    Effect.andThen(Effect.sync(() => void updater.check())),
+    Effect.forever,
+    Effect.forkDetach,
+  )
+  app.once("will-quit", () => {
+    Effect.runFork(Fiber.interrupt(updateChecks))
+  })
   yield* Effect.promise(() => startNetLog()).pipe(
     Effect.catch((error) =>
       Effect.sync(() => {
