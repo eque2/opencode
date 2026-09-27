@@ -115,13 +115,12 @@ function capture(request: () => Promise<SdkResult>) {
 }
 
 function captureThrown(request: () => Promise<unknown>) {
-  return call(async () => {
-    try {
-      await request()
-    } catch (error) {
-      return error
-    }
-  })
+  return call(() =>
+    request().then(
+      () => undefined,
+      (error: unknown) => error,
+    ),
+  )
 }
 
 function expectStatus(request: () => Promise<{ response: Response }>, status: number) {

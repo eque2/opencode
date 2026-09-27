@@ -125,9 +125,9 @@ function withCreatedWorktree(
           headers,
           body: JSON.stringify({ directory: info.directory }),
         })
-        if (removed.status !== 200) return yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
+        if (removed.status !== 200) yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
         const ok = yield* json<boolean>(removed)
-        if (!ok) return yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
+        if (!ok) yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
       }),
   )
 }
