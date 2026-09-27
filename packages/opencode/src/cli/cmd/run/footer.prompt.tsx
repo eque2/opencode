@@ -216,7 +216,7 @@ export function RunPromptBody(props: {
 
   const refreshPasteLayout = () => {
     pasteTick.run(
-      Effect.sleep(0).pipe(
+      Effect.sleep("0 millis").pipe(
         Effect.andThen(
           Effect.suspend(() => {
             if (!area || area.isDestroyed) {
