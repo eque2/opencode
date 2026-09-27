@@ -1217,20 +1217,34 @@ export const ConfigProvidersResult = Schema.Struct({
 }).annotate({ description: "Configured providers and their default model ids" })
 export type ConfigProvidersResult = Types.DeepMutable<Schema.Schema.Type<typeof ConfigProvidersResult>>
 
+// The JSON a provider is served as: functions, symbols, and undefined values drop out, and
+// bigints become strings.
+const PublicJson = Schema.fromJsonString(Schema.Unknown, {
+  replacer: (_, value) => {
+    if (typeof value === "function" || typeof value === "symbol" || value === undefined) return undefined
+    if (typeof value === "bigint") return value.toString()
+    return value
+  },
+})
+const encodePublicJson = Schema.encodeUnknownSync(PublicJson)
+const decodePublicJson = Schema.decodeUnknownSync(PublicJson)
+const isInfo = Schema.is(Info)
+
+// JSON.parse output is plain mutable data, so a value that passes the Info schema is a mutable Info.
+function isPublicInfo(value: unknown): value is Info {
+  return isInfo(value)
+}
+
 export function toPublicInfo(provider: Info): Info {
-  return JSON.parse(
-    JSON.stringify(
-      {
-        ...provider,
-        models: Object.fromEntries(Object.entries(provider.models).filter(([, model]) => Schema.is(Model)(model))),
-      },
-      (_, value) => {
-        if (typeof value === "function" || typeof value === "symbol" || value === undefined) return undefined
-        if (typeof value === "bigint") return value.toString()
-        return value
-      },
-    ),
+  const value = decodePublicJson(
+    encodePublicJson({
+      ...provider,
+      models: Object.fromEntries(Object.entries(provider.models).filter(([, model]) => Schema.is(Model)(model))),
+    }),
   )
+  // The JSON copy of an Info whose invalid models are filtered out is itself a valid Info, so the
+  // fallback to the input only covers data that already breaks the Info type.
+  return isPublicInfo(value) ? value : provider
 }
 
 export function defaultModelIDs<T extends { models: Record<string, { id: string }> }>(providers: Record<string, T>) {
@@ -1882,7 +1896,7 @@ const layer = Layer.effect(
           }
 
         const key = Hash.fast(
-          JSON.stringify({
+          Schema.encodeSync(JsonText)({
             providerID: model.providerID,
             npm: model.api.npm,
             options,
