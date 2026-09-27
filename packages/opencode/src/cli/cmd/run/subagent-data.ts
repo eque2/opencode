@@ -671,9 +671,9 @@ export function snapshotSubagentData(data: SubagentData): FooterSubagentState {
 
 export function snapshotSelectedSubagentData(
   data: SubagentData,
-  selectedSessionID: string | undefined,
+  selectedSessionID: Option.Option<string>,
 ): FooterSubagentState {
-  const detail = selectedSessionID ? MutableHashMap.get(data.details, selectedSessionID) : Option.none()
+  const detail = Option.flatMap(selectedSessionID, (sessionID) => MutableHashMap.get(data.details, sessionID))
 
   return snapshotState(
     data,
