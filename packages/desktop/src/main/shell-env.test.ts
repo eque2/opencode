@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 
 import { isNushell, mergeShellEnv, parseShellEnv, resolveUserShell } from "./shell-env"
 
@@ -35,10 +36,10 @@ describe("shell env", () => {
   })
 
   test("resolveUserShell falls back to the login shell before /bin/sh", () => {
-    expect(resolveUserShell("/custom/env-shell", "/bin/zsh")).toBe("/custom/env-shell")
-    expect(resolveUserShell(undefined, "/bin/zsh")).toBe("/bin/zsh")
-    expect(resolveUserShell(undefined, "unknown")).toBe("/bin/sh")
-    expect(resolveUserShell(undefined, undefined)).toBe("/bin/sh")
+    expect(resolveUserShell(Option.some("/custom/env-shell"), Option.some("/bin/zsh"))).toBe("/custom/env-shell")
+    expect(resolveUserShell(Option.none(), Option.some("/bin/zsh"))).toBe("/bin/zsh")
+    expect(resolveUserShell(Option.none(), Option.some("unknown"))).toBe("/bin/sh")
+    expect(resolveUserShell(Option.none(), Option.none())).toBe("/bin/sh")
   })
 
   test("isNushell handles path and binary name", () => {

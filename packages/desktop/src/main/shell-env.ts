@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { userInfo } from "node:os"
 import { basename } from "node:path"
+import { Option } from "effect"
 
 const TIMEOUT = 5_000
 
@@ -9,16 +10,19 @@ type ShellEnvLogger = {
   log: (message: string) => void
 }
 
-export function resolveUserShell(envShell: string | undefined, loginShell: string | null | undefined) {
-  const resolvedLoginShell = loginShell && loginShell !== "unknown" ? loginShell : undefined
-  return envShell || resolvedLoginShell || "/bin/sh"
+export function resolveUserShell(envShell: Option.Option<string>, loginShell: Option.Option<string>) {
+  return envShell.pipe(
+    Option.filter((shell) => shell.length > 0),
+    Option.orElse(() => Option.filter(loginShell, (shell) => shell.length > 0 && shell !== "unknown")),
+    Option.getOrElse(() => "/bin/sh"),
+  )
 }
 
 export function getUserShell() {
   try {
-    return resolveUserShell(process.env.SHELL, userInfo().shell)
+    return resolveUserShell(Option.fromNullishOr(process.env.SHELL), Option.fromNullishOr(userInfo().shell))
   } catch {
-    return resolveUserShell(process.env.SHELL, undefined)
+    return resolveUserShell(Option.fromNullishOr(process.env.SHELL), Option.none())
   }
 }
 
@@ -67,30 +71,30 @@ export function isNushell(shell: string) {
   return name === "nu" || name === "nu.exe" || raw.endsWith("\\nu.exe")
 }
 
-export function loadShellEnv(shell: string, logger: ShellEnvLogger) {
+export function loadShellEnv(shell: string, logger: ShellEnvLogger): Option.Option<Record<string, string>> {
   if (isNushell(shell)) {
     logger.log(`[server] Skipping shell env probe for nushell: ${shell}`)
-    return null
+    return Option.none()
   }
 
   const interactive = probe(shell, "-il", logger)
   if (interactive.type === "Loaded") {
     logger.log(`[server] Loaded shell environment with -il (${Object.keys(interactive.value).length} vars)`)
-    return interactive.value
+    return Option.some(interactive.value)
   }
   if (interactive.type === "Timeout") {
     logger.log(`[server] Interactive shell env probe timed out: ${shell}`)
-    return null
+    return Option.none()
   }
 
   const login = probe(shell, "-l", logger)
   if (login.type === "Loaded") {
     logger.log(`[server] Loaded shell environment with -l (${Object.keys(login.value).length} vars)`)
-    return login.value
+    return Option.some(login.value)
   }
 
   logger.log(`[server] Falling back to app environment: ${shell}`)
-  return null
+  return Option.none()
 }
 
 export function mergeShellEnv(shell: Record<string, string> | null, env: Record<string, string>) {

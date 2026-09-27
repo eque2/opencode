@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
+import { Option, Predicate } from "effect"
 import type { Details } from "electron"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
@@ -28,8 +29,7 @@ type SpawnLocalServerOptions = {
 }
 
 export function getDefaultServerUrl(): string | null {
-  const value = getStore().get(DEFAULT_SERVER_URL_KEY)
-  return typeof value === "string" ? value : null
+  return Option.getOrNull(Option.liftPredicate(getStore().get(DEFAULT_SERVER_URL_KEY), Predicate.isString))
 }
 
 export function setDefaultServerUrl(url: string | null) {
@@ -42,16 +42,16 @@ export function setDefaultServerUrl(url: string | null) {
 }
 
 export function preferAppEnv(userDataPath: string) {
-  const shell = process.platform === "win32" ? null : getUserShell()
-  const shellEnv = shell ? loadShellEnv(shell, getLogger()) : null
+  const shellEnv =
+    process.platform === "win32" ? Option.none<Record<string, string>>() : loadShellEnv(getUserShell(), getLogger())
   Object.assign(process.env, {
-    ...shellEnv,
+    ...Option.getOrUndefined(shellEnv),
     OPENCODE_EXPERIMENTAL_ICON_DISCOVERY: "true",
     OPENCODE_EXPERIMENTAL_FILEWATCHER: "true",
     OPENCODE_CLIENT: "desktop",
     XDG_STATE_HOME: process.env.XDG_STATE_HOME ?? userDataPath,
   })
-  return shellEnv
+  return Option.getOrNull(shellEnv)
 }
 
 export async function spawnLocalServer(
