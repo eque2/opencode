@@ -58,7 +58,7 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
     })
 
     const shells = Effect.fn("PtyHttpApi.shells")(function* () {
-      return yield* Effect.promise(() => Shell.list())
+      return yield* Shell.list()
     })
 
     const list = Effect.fn("PtyHttpApi.list")(function* () {

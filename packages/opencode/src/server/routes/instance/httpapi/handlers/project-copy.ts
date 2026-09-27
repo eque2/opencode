@@ -24,9 +24,9 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
 
     const generateName = Effect.fn("ProjectCopyHttpApi.generateName")(function* (context: string | undefined) {
       const text = context?.trim()
-      if (!text) return Slug.create()
+      if (!text) return yield* Slug.make
       const fallback = yield* provider.defaultModel().pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (!fallback) return Slug.create()
+      if (!fallback) return yield* Slug.make
       const model =
         (yield* provider.getSmallModel(fallback.providerID)) ??
         (yield* provider.getModel(fallback.providerID, fallback.modelID))
@@ -56,7 +56,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
           Stream.mkString,
         )
       const output = result.trim()
-      return output ? slugify(output.split(/\s+/).slice(0, 3).join(" ")) : Slug.create()
+      return output ? slugify(output.split(/\s+/).slice(0, 3).join(" ")) : yield* Slug.make
     })
 
     return handlers.handle("generateName", (ctx) =>
@@ -65,7 +65,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
           Effect.logWarning("project copy name generation failed", {
             projectID: ctx.params.projectID,
             cause,
-          }).pipe(Effect.as(Slug.create())),
+          }).pipe(Effect.andThen(Slug.make)),
         ),
         Effect.map((name) => ({ name })),
       ),

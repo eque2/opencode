@@ -7,7 +7,7 @@ import { HttpApiProxy } from "./proxy"
 import * as Fence from "@/server/shared/fence"
 import { getWorkspaceRouteSessionID, isLocalWorkspaceRoute, workspaceProxyURL } from "@/server/shared/workspace-routing"
 import { NotFoundError } from "@/storage/storage"
-import { Flag } from "@opencode-ai/core/flag/flag"
+import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Context, Data, Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
@@ -31,7 +31,7 @@ type RemoteTarget = Extract<Target, { type: "remote" }>
 type RequestPlan = Data.TaggedEnum<{
   InvalidWorkspace: {}
   MissingWorkspace: { readonly workspaceID: WorkspaceV2.ID }
-  Local: { readonly directory: string; readonly workspaceID?: WorkspaceV2.ID }
+  Local: { readonly directory: string; readonly workspaceID: Option.Option<WorkspaceV2.ID> }
   Remote: {
     readonly request: HttpServerRequest.HttpServerRequest
     readonly workspace: Workspace.Info
@@ -62,25 +62,34 @@ function requestURL(request: HttpServerRequest.HttpServerRequest): URL {
   return new URL(request.url, "http://localhost")
 }
 
-function configuredWorkspaceID(): WorkspaceV2.ID | undefined {
-  return Flag.OPENCODE_WORKSPACE_ID ? WorkspaceV2.ID.make(Flag.OPENCODE_WORKSPACE_ID) : undefined
+// The ambient provider treats an empty variable as not set. The variable is optional, so a
+// ConfigError is a defect.
+const configuredWorkspaceID = FlagConfig.OPENCODE_WORKSPACE_ID.pipe(
+  Effect.orDie,
+  Effect.map(Option.map((id) => WorkspaceV2.ID.make(id))),
+)
+
+function workspaceParam(url: URL): Option.Option<string> {
+  return Option.fromNullishOr(url.searchParams.get("workspace")).pipe(Option.filter((value) => value !== ""))
 }
 
-function selectedWorkspaceID(url: URL, sessionWorkspaceID?: WorkspaceV2.ID): WorkspaceV2.ID | undefined {
-  const workspaceParam = url.searchParams.get("workspace")
-  return sessionWorkspaceID ?? (workspaceParam ? WorkspaceV2.ID.make(workspaceParam) : undefined)
+function selectedWorkspaceID(
+  url: URL,
+  sessionWorkspaceID: Option.Option<WorkspaceV2.ID>,
+): Option.Option<WorkspaceV2.ID> {
+  return Option.orElse(sessionWorkspaceID, () => Option.map(workspaceParam(url), (id) => WorkspaceV2.ID.make(id)))
 }
 
 function selectedV2WorkspaceID(
   url: URL,
-  sessionWorkspaceID?: WorkspaceV2.ID,
-): WorkspaceV2.ID | typeof InvalidWorkspaceID | undefined {
-  if (sessionWorkspaceID) return sessionWorkspaceID
-  const workspaceParam = url.searchParams.get("workspace")
-  if (!workspaceParam) return undefined
-  const workspaceID = Schema.decodeUnknownOption(WorkspaceV2.ID)(workspaceParam)
+  sessionWorkspaceID: Option.Option<WorkspaceV2.ID>,
+): Option.Option<WorkspaceV2.ID> | typeof InvalidWorkspaceID {
+  if (Option.isSome(sessionWorkspaceID) && sessionWorkspaceID.value) return sessionWorkspaceID
+  const param = workspaceParam(url)
+  if (Option.isNone(param)) return Option.none()
+  const workspaceID = Schema.decodeUnknownOption(WorkspaceV2.ID)(param.value)
   if (Option.isNone(workspaceID)) return InvalidWorkspaceID
-  return workspaceID.value
+  return workspaceID
 }
 
 function defaultDirectory(request: HttpServerRequest.HttpServerRequest, url: URL): string {
@@ -92,11 +101,11 @@ function shouldStayOnControlPlane(request: HttpServerRequest.HttpServerRequest, 
 }
 
 function resolveWorkspace(
-  id: WorkspaceV2.ID | undefined,
-  envWorkspaceID: WorkspaceV2.ID | undefined,
-): Effect.Effect<Workspace.Info | void, never, Workspace.Service> {
-  if (!id || envWorkspaceID) return Effect.void
-  return Workspace.Service.use((workspace) => workspace.get(id))
+  id: Option.Option<WorkspaceV2.ID>,
+  envWorkspaceID: Option.Option<WorkspaceV2.ID>,
+): Effect.Effect<Option.Option<Workspace.Info>, never, Workspace.Service> {
+  if (Option.isNone(id) || Option.isSome(envWorkspaceID)) return Effect.succeedNone
+  return Workspace.Service.use((workspace) => workspace.get(id.value)).pipe(Effect.map(Option.fromNullishOr))
 }
 
 function missingWorkspaceResponse(id: WorkspaceV2.ID): HttpServerResponse.HttpServerResponse {
@@ -130,18 +139,12 @@ function proxyRemote(
     if (headers["upgrade"]?.toLowerCase() === "websocket") return yield* HttpApiProxy.websocket(request, proxyURL)
     const response = yield* HttpApiProxy.http(client, proxyURL, target.headers, request)
     const sync = Fence.parse(new Headers(response.headers))
-    if (sync) {
-      const syncFailure = yield* Fence.wait(
-        workspace.id,
-        sync,
-        request.source instanceof Request ? request.source.signal : undefined,
-      ).pipe(
-        Effect.as(undefined),
-        Effect.catch((error) => Effect.succeed(HttpServerResponse.text(error.message, { status: 503 }))),
-      )
-      if (syncFailure) return syncFailure
-    }
-    return response
+    if (!sync) return response
+    const signal = request.source instanceof Request ? Option.some(request.source.signal) : Option.none()
+    return yield* Fence.wait(workspace.id, sync, Option.getOrUndefined(signal)).pipe(
+      Effect.as(response),
+      Effect.catch((error) => Effect.succeed(HttpServerResponse.text(error.message, { status: 503 }))),
+    )
   })
 }
 
@@ -153,34 +156,38 @@ function planWorkspaceRequest(
   return Effect.gen(function* () {
     const target = yield* resolveTarget(workspace)
     if (target.type === "remote") return RequestPlan.Remote({ request, workspace, target, url })
-    return RequestPlan.Local({ directory: target.directory, workspaceID: workspace.id })
+    return RequestPlan.Local({ directory: target.directory, workspaceID: Option.some(workspace.id) })
   })
 }
 
 function planRequest(
   request: HttpServerRequest.HttpServerRequest,
-  session?: Session.Info,
+  session: Option.Option<Session.Info>,
 ): Effect.Effect<RequestPlan, never, Workspace.Service> {
   return Effect.gen(function* () {
     const url = requestURL(request)
-    const envWorkspaceID = configuredWorkspaceID()
+    const envWorkspaceID = yield* configuredWorkspaceID
+    const sessionWorkspaceID = Option.flatMap(session, (info) => Option.fromNullishOr(info.workspaceID))
     const workspaceID = url.pathname.startsWith("/api/")
-      ? selectedV2WorkspaceID(url, session?.workspaceID)
-      : selectedWorkspaceID(url, session?.workspaceID)
+      ? selectedV2WorkspaceID(url, sessionWorkspaceID)
+      : selectedWorkspaceID(url, sessionWorkspaceID)
     if (workspaceID === InvalidWorkspaceID) return RequestPlan.InvalidWorkspace()
     const workspace = yield* resolveWorkspace(workspaceID, envWorkspaceID)
 
-    if (workspaceID && workspace === undefined && !envWorkspaceID) {
-      return RequestPlan.MissingWorkspace({ workspaceID })
+    if (Option.isSome(workspaceID) && Option.isNone(workspace) && Option.isNone(envWorkspaceID)) {
+      return RequestPlan.MissingWorkspace({ workspaceID: workspaceID.value })
     }
 
-    if (workspace !== undefined && !envWorkspaceID && !shouldStayOnControlPlane(request, url)) {
-      return yield* planWorkspaceRequest(request, url, workspace)
+    if (Option.isSome(workspace) && Option.isNone(envWorkspaceID) && !shouldStayOnControlPlane(request, url)) {
+      return yield* planWorkspaceRequest(request, url, workspace.value)
     }
 
     return RequestPlan.Local({
-      directory: session?.directory || defaultDirectory(request, url),
-      workspaceID: envWorkspaceID ?? workspaceID,
+      directory: Option.match(session, {
+        onNone: () => defaultDirectory(request, url),
+        onSome: (info) => info.directory || defaultDirectory(request, url),
+      }),
+      workspaceID: Option.orElse(envWorkspaceID, () => workspaceID),
     })
   })
 }
@@ -205,7 +212,12 @@ function routeWorkspace<E>(
     MissingWorkspace: ({ workspaceID }) => Effect.succeed(missingWorkspaceResponse(workspaceID)),
     Remote: ({ request, workspace, target, url }) => proxyRemote(client, request, workspace, target, url),
     Local: ({ directory, workspaceID }) =>
-      effect.pipe(Effect.provideService(WorkspaceRouteContext, WorkspaceRouteContext.of({ directory, workspaceID }))),
+      effect.pipe(
+        Effect.provideService(
+          WorkspaceRouteContext,
+          WorkspaceRouteContext.of({ directory, workspaceID: Option.getOrUndefined(workspaceID) }),
+        ),
+      ),
   })
 }
 
@@ -219,16 +231,18 @@ function routeHttpApiWorkspace<E>(
 > {
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
-    const sessionID = getWorkspaceRouteSessionID(requestURL(request))
-    const session = sessionID
-      ? yield* Session.Service.use((svc) => svc.get(sessionID)).pipe(
+    const session = yield* Option.match(Option.fromNullishOr(getWorkspaceRouteSessionID(requestURL(request))), {
+      onNone: () => Effect.succeedNone,
+      onSome: (sessionID) =>
+        Session.Service.use((svc) => svc.get(sessionID)).pipe(
+          Effect.map(Option.some),
           Effect.catchIf(
             (error): error is NotFoundError => NotFoundError.isInstance(error),
-            () => Effect.succeed(undefined),
+            () => Effect.succeedNone,
           ),
-          Effect.catchDefect(() => Effect.succeed(undefined)),
-        )
-      : undefined
+          Effect.catchDefect(() => Effect.succeedNone),
+        ),
+    })
     const plan = yield* planRequest(request, session)
     return yield* routeWorkspace(client, effect, plan)
   })

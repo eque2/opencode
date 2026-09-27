@@ -1,5 +1,4 @@
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { describe, expect } from "bun:test"
 import { Config, ConfigProvider, Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
@@ -12,17 +11,8 @@ import { testEffect } from "../lib/effect"
 
 const testStateLayer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const original = {
-      OPENCODE_SERVER_PASSWORD: Flag.OPENCODE_SERVER_PASSWORD,
-    }
-    Flag.OPENCODE_SERVER_PASSWORD = "secret"
     yield* Effect.promise(() => resetDatabase())
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(async () => {
-        Flag.OPENCODE_SERVER_PASSWORD = original.OPENCODE_SERVER_PASSWORD
-        await resetDatabase()
-      }),
-    )
+    yield* Effect.addFinalizer(() => Effect.promise(() => resetDatabase()))
   }),
 )
 
@@ -35,6 +25,10 @@ const it = testEffect(
   Layer.mergeAll(
     testStateLayer,
     servedRoutes.pipe(
+      // The served routes read the server password from the ambient ConfigProvider.
+      Layer.provide(
+        ConfigProvider.layerAdd(ConfigProvider.fromUnknown({ OPENCODE_SERVER_PASSWORD: "secret" }), { asPrimary: true }),
+      ),
       Layer.provide(Socket.layerWebSocketConstructorGlobal),
       Layer.provideMerge(NodeHttpServer.layerTest),
       Layer.provideMerge(NodeServices.layer),
