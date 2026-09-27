@@ -475,12 +475,11 @@ function stashEcho(data: SessionData, part: ToolPart) {
     return
   }
 
-  const output = "output" in part.state ? part.state.output : undefined
-  if (typeof output !== "string") {
+  if (!("output" in part.state) || typeof part.state.output !== "string") {
     return
   }
 
-  const text = output.replace(/^\n+/, "")
+  const text = part.state.output.replace(/^\n+/, "")
   if (!text.trim()) {
     return
   }
@@ -655,12 +654,19 @@ function shellPartID(callID: string): string {
   return `shell:${callID}`
 }
 
-function claimShell(data: SessionData, callID: string, source: ShellCall["source"], command?: string): ShellCall {
+function claimShell(
+  data: SessionData,
+  callID: string,
+  source: ShellCall["source"],
+  command: Option.Option<string>,
+): ShellCall {
+  // An empty command string counts as no command.
+  const known = Option.filter(command, (value) => value !== "")
   const found = MutableHashMap.get(data.shell, callID)
   if (Option.isSome(found)) {
     const current = found.value
-    if (command && !current.command) {
-      current.command = command
+    if (Option.isSome(known) && !current.command) {
+      current.command = known.value
     }
 
     return current
@@ -668,24 +674,24 @@ function claimShell(data: SessionData, callID: string, source: ShellCall["source
 
   const next = {
     source,
-    ...(command ? { command } : {}),
+    ...(Option.isSome(known) ? { command: known.value } : {}),
   } satisfies ShellCall
   MutableHashMap.set(data.shell, callID, next)
   return next
 }
 
-function bashCommand(part: ToolPart): string | undefined {
+function bashCommand(part: ToolPart): Option.Option<string> {
   if (part.tool !== "bash") {
-    return undefined
+    return Option.none()
   }
 
   const input = part.state.input
   if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return undefined
+    return Option.none()
   }
 
   const command = Reflect.get(input, "command")
-  return typeof command === "string" ? command : undefined
+  return typeof command === "string" ? Option.some(command) : Option.none()
 }
 
 function shellCommit(
@@ -819,7 +825,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, [])
     }
 
-    const shell = claimShell(data, event.properties.callID, "shell", event.properties.command)
+    const shell = claimShell(data, event.properties.callID, "shell", Option.some(event.properties.command))
     if (shell.source !== "shell") {
       return out(data, [])
     }
@@ -842,7 +848,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, [])
     }
 
-    const shell = claimShell(data, event.properties.callID, "shell")
+    const shell = claimShell(data, event.properties.callID, "shell", Option.none())
     if (shell.source !== "shell") {
       return out(data, [])
     }
@@ -883,7 +889,8 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     const usage = formatUsage(
       info.tokens,
       input.limits[modelKey(info.providerID, info.modelID)],
-      typeof info.cost === "number" ? info.cost : undefined,
+      // formatUsage ignores a cost that is not a positive number.
+      info.cost,
     )
     if (usage) {
       next = {
@@ -1039,8 +1046,9 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const msg = part.messageID
-    const role = msg ? Option.getOrUndefined(MutableHashMap.get(data.role, msg)) : undefined
-    if (role === "user" && part.type === "text" && !data.includeUserText) {
+    const role = msg ? MutableHashMap.get(data.role, msg) : Option.none<MessageRole>()
+    const user = Option.contains(role, "user")
+    if (user && part.type === "text" && !data.includeUserText) {
       MutableHashSet.add(data.ids, part.id)
       drop(data, part.id)
       return out(data, [])
@@ -1054,14 +1062,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, [])
     }
 
-    MutableHashMap.set(data.part, part.id, role === "user" && kind === "assistant" ? "user" : kind)
+    MutableHashMap.set(data.part, part.id, user && kind === "assistant" ? "user" : kind)
     syncText(data, part.id, part.text)
 
     if (part.time?.end) {
       MutableHashSet.add(data.end, part.id)
     }
 
-    if (msg && !role) {
+    if (msg && Option.isNone(role)) {
       return out(data, [])
     }
 
