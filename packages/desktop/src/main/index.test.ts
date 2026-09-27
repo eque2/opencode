@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Deferred, Effect, Exit, Fiber } from "effect"
+import { Cause, Data, Deferred, Effect, Exit, Fiber } from "effect"
 import { forwardInitializationFailure } from "./initialization"
 
+class SidecarStartupError extends Data.TaggedError("SidecarStartupError")<{ readonly message: string }> {}
+
 describe("desktop initialization", () => {
-  const failure = new Error("sidecar startup failed")
+  const failure = new SidecarStartupError({ message: "sidecar startup failed" })
   const expectFailure = (exit: Exit.Exit<unknown, unknown>) => {
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isSuccess(exit)) return
