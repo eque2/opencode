@@ -1005,6 +1005,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 }
 
 const ProviderApiInfo = Schema.Struct({
+  // eslint-disable-next-line effect/prefer-schema-brand -- (c) public contract: api.id is the upstream API model name that plugin model hooks and SDK consumers set as a plain string
   id: Schema.String,
   url: Schema.String,
   npm: Schema.String,
