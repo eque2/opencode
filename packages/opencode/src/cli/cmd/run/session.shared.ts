@@ -3,7 +3,7 @@
 // Fetches session messages from the SDK and extracts user turn text for
 // the prompt history ring. Also finds the most recently used variant for
 // the current model so the footer can pre-select it.
-import { Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { promptCopy, promptSame } from "./prompt.shared"
 import type { RunInput, RunPrompt } from "./types"
 
@@ -154,13 +154,26 @@ export function createSession(messages: SessionMessages): RunSession {
   }
 }
 
-export async function resolveSession(sdk: RunInput["sdk"], sessionID: string, limit = LIMIT): Promise<RunSession> {
-  const response = await sdk.session.messages({
-    sessionID,
-    limit,
+export class SessionReadError extends Schema.TaggedError<SessionReadError>()("SessionReadError", {
+  sessionID: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+export const resolveSession = Effect.fn("RunSession.resolveSession")(function* (
+  sdk: RunInput["sdk"],
+  sessionID: string,
+  limit: number = LIMIT,
+) {
+  const response = yield* Effect.tryPromise({
+    try: () =>
+      sdk.session.messages({
+        sessionID,
+        limit,
+      }),
+    catch: (cause) => new SessionReadError({ sessionID, cause }),
   })
   return createSession(response.data ?? [])
-}
+})
 
 export function sessionHistory(session: RunSession, limit = LIMIT): RunPrompt[] {
   const out: RunPrompt[] = []
