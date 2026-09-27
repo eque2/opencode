@@ -2,7 +2,8 @@ import { beforeAll, describe, expect, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { pathToFileURL } from "url"
-import { createTestKeymap } from "@opentui/keymap/testing"
+import { createTestRenderer } from "@opentui/core/testing"
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import type { TuiAttentionSoundPack } from "@opencode-ai/plugin/tui"
 import { tmpdir } from "../../fixture/fixture"
 import { createTuiPluginApi } from "../../fixture/tui-plugin"
@@ -11,11 +12,19 @@ import { Global } from "@opencode-ai/core/global"
 import { TuiConfig } from "../../../src/config/tui"
 import { Filesystem } from "@/util/filesystem"
 import { PluginLoader } from "../../../src/plugin/loader"
+import { Schema } from "effect"
 
 const { allThemes, addTheme } = await import("@opencode-ai/tui/context/theme")
 const { TuiPluginRuntime } = await import("../../../src/plugin/tui/runtime")
 
 type Row = Record<string, unknown>
+
+const decodeValueExport = Schema.decodeUnknownSync(Schema.Struct({ value: Schema.String }))
+
+// The fixture keymap with some methods replaced by test doubles.
+function keymapWith<Methods extends object>(methods: Methods) {
+  return Object.assign(createTuiPluginApi().keymap, methods)
+}
 
 test("does not retry permanent file plugin load errors", async () => {
   await using tmp = await tmpdir({
@@ -78,7 +87,7 @@ export default { id: "demo.retry.load", tui: async () => {}, value }
     },
     finish: async (loaded, _origin, retry) => ({
       retry,
-      value: (loaded.mod.default as { value: string }).value,
+      value: decodeValueExport(loaded.mod.default).value,
     }),
     report: {
       start(_candidate, retry) {
@@ -952,7 +961,7 @@ test("auto-disposes plugin keymap layers", async () => {
 
   let command_add = 0
   let command_drop = 0
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer(layer: { commands?: Array<{ name: string }> }) {
       const tracked = layer.commands?.some((item) => item.name === "demo.keymap.cleanup") ?? false
       if (tracked) command_add += 1
@@ -961,7 +970,7 @@ test("auto-disposes plugin keymap layers", async () => {
         command_drop += 1
       }
     },
-  } as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -1007,14 +1016,16 @@ test("plugin keymap proxy preserves real keymap receiver", async () => {
     },
   })
 
-  const harness = createTestKeymap({ defaultKeys: true })
+  // A real renderer keymap, so the plugin API gets the TuiKeymap type without a cast.
+  const { renderer } = await createTestRenderer({})
+  const keymap = createDefaultOpenTuiKeymap(renderer)
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
   try {
     await TuiPluginRuntime.init({
       api: createTuiPluginApi({
-        keymap: harness.keymap as unknown as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"],
+        keymap,
       }),
       config: createTuiResolvedConfig({
         plugin: [tmp.extra.spec],
@@ -1023,10 +1034,10 @@ test("plugin keymap proxy preserves real keymap receiver", async () => {
     })
 
     expect(await fs.readFile(tmp.extra.marker, "utf8")).toBe("ok")
-    expect(harness.keymap.getData("demo.receiver")).toBe("ok")
+    expect(keymap.getData("demo.receiver")).toBe("ok")
   } finally {
     await TuiPluginRuntime.dispose()
-    harness.cleanup()
+    renderer.destroy()
     cwd.mockRestore()
     wait.mockRestore()
   }
@@ -1143,13 +1154,13 @@ test("auto-disposes plugin keymap transformers", async () => {
       drop += 1
     }
   }
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer: () => () => {},
     prependLayerBindingsTransformer: track,
     appendLayerBindingsTransformer: track,
     prependCommandTransformer: track,
     appendCommandTransformer: track,
-  } as unknown as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -1198,7 +1209,7 @@ test("manual onDispose for plugin keymap layers stays idempotent", async () => {
   })
 
   let command_drop = 0
-  const keymap = {
+  const keymap = keymapWith({
     registerLayer(layer: { commands?: Array<{ name: string }> }) {
       const tracked = layer.commands?.some((item) => item.name === "demo.keymap.cleanup.manual") ?? false
       return () => {
@@ -1206,7 +1217,7 @@ test("manual onDispose for plugin keymap layers stays idempotent", async () => {
         command_drop += 1
       }
     },
-  } as NonNullable<Parameters<typeof createTuiPluginApi>[0]>["keymap"]
+  })
   const wait = spyOn(TuiConfig, "waitForDependencies").mockResolvedValue()
   const cwd = spyOn(process, "cwd").mockImplementation(() => tmp.path)
 
@@ -1328,7 +1339,7 @@ test("updates installed theme when plugin metadata changes", async () => {
     expect(text).toContain("#222222")
     expect(text).not.toContain("#111111")
     const list = await Filesystem.readJson<Record<string, { themes?: Record<string, { dest: string }> }>>(
-      process.env.OPENCODE_PLUGIN_META_FILE!,
+      process.env.OPENCODE_PLUGIN_META_FILE,
     )
     expect(list["demo.theme-update"]?.themes?.[tmp.extra.themeName]?.dest).toBe(tmp.extra.dest)
   } finally {
