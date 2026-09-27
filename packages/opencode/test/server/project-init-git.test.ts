@@ -31,8 +31,8 @@ function request(directory: string, url: string, init: RequestInit = {}) {
   return requestInDirectory(url, directory, init)
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
-  return response.json.pipe(Effect.map((value) => value as T))
+function json(response: HttpClientResponse.HttpClientResponse) {
+  return response.json
 }
 
 function collectGlobalEvents() {

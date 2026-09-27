@@ -1,6 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Fiber, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
@@ -28,8 +28,8 @@ function createSession(input?: Session.CreateInput) {
   return Session.use.create(input)
 }
 
-function json<T>(response: HttpClientResponse.HttpClientResponse) {
-  return response.json.pipe(Effect.map((value) => value as T))
+function json(response: HttpClientResponse.HttpClientResponse) {
+  return response.json
 }
 
 function waitReady(input: { directory?: string; name?: string }) {
@@ -112,7 +112,7 @@ function withCreatedWorktree(
       })
 
       expect(created.status).toBe(200)
-      const info = yield* json<Worktree.Info>(created)
+      const info = yield* HttpClientResponse.schemaBodyJson(Worktree.Info)(created)
       expect(info).toMatchObject({ name, branch: "opencode/api-test" })
       yield* Fiber.join(ready)
       return info
@@ -126,7 +126,7 @@ function withCreatedWorktree(
           body: JSON.stringify({ directory: info.directory }),
         })
         if (removed.status !== 200) yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
-        const ok = yield* json<boolean>(removed)
+        const ok = yield* HttpClientResponse.schemaBodyJson(Schema.Boolean)(removed)
         if (!ok) yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
       }),
   )
@@ -166,7 +166,7 @@ describe("experimental HttpApi", () => {
         expect(yield* json(consoleOrgs)).toEqual({ orgs: [] })
 
         expect(toolList.status).toBe(200)
-        expect(yield* json<unknown[]>(toolList)).toContainEqual(
+        expect(yield* json(toolList)).toContainEqual(
           expect.objectContaining({
             id: "bash",
             description: expect.any(String),
@@ -250,7 +250,7 @@ describe("experimental HttpApi", () => {
         expect(page.status).toBe(200)
         expect(page.headers["x-next-cursor"]).toBeTruthy()
 
-        const body = yield* json<Session.GlobalInfo[]>(page)
+        const body = yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(page)
         expect(body.map((session) => session.id)).toEqual([second.id])
         expect(body[0].project?.id).toBe(second.projectID)
 
@@ -263,7 +263,7 @@ describe("experimental HttpApi", () => {
           tmp.directory,
         )
         expect(next.status).toBe(200)
-        expect((yield* json<Session.GlobalInfo[]>(next)).map((session) => session.id)).toContain(first.id)
+        expect((yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(next)).map((session) => session.id)).toContain(first.id)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

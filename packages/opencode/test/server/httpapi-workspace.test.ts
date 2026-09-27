@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
-import { Effect, Layer, Stream } from "effect"
+import { Effect, Layer, Schema, Stream } from "effect"
+import { HttpClientResponse } from "effect/unstable/http"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { registerAdapter } from "../../src/control-plane/adapters"
@@ -28,6 +29,9 @@ const appLayer = AppNodeBuilder.build(
   [[InstanceStore.bootstrapNode, InstanceBootstrap.node]],
 )
 const it = testEffect(Layer.mergeAll(appLayer, httpApiLayer))
+
+const decodeWorkspace = HttpClientResponse.schemaBodyJson(Workspace.Info)
+const decodeSession = HttpClientResponse.schemaBodyJson(Session.Info)
 
 function request(path: string, directory: string, init: RequestInit = {}) {
   return requestInDirectory(path, directory, init)
@@ -209,7 +213,7 @@ describe("workspace HttpApi", () => {
         body: JSON.stringify({ type: "local-test", branch: null }),
       })
       expect(created.status).toBe(200)
-      const workspace = (yield* created.json) as Workspace.Info
+      const workspace = yield* decodeWorkspace(created)
       expect(workspace).toMatchObject({ type: "local-test", name: "local-test" })
 
       const session = yield* Session.use.create({}).pipe(provideInstance(dir))
@@ -286,7 +290,7 @@ describe("workspace HttpApi", () => {
       })
 
       expect(created.status).toBe(200)
-      expect((yield* created.json) as Workspace.Info).toMatchObject({
+      expect(yield* decodeWorkspace(created)).toMatchObject({
         type: "local-test",
         name: "local-test",
       })
@@ -305,7 +309,7 @@ describe("workspace HttpApi", () => {
 
       const body = yield* Effect.promise(() => created.text())
       expect({ status: created.status, body }).toMatchObject({ status: 200 })
-      const workspace = JSON.parse(body) as Workspace.Info
+      const workspace = Schema.decodeUnknownSync(Schema.fromJsonString(Workspace.Info))(body)
       expect(workspace).toMatchObject({ type: "worktree" })
     }),
   )
@@ -321,7 +325,7 @@ describe("workspace HttpApi", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type: "local-target", branch: null }),
       })
-      const workspace = (yield* created.json) as Workspace.Info
+      const workspace = yield* decodeWorkspace(created)
 
       const url = new URL(`http://localhost${InstancePaths.path}`)
       url.searchParams.set("workspace", workspace.id)
@@ -376,7 +380,7 @@ describe("workspace HttpApi", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type: "remote-target", branch: null }),
       })
-      const workspace = (yield* created.json) as Workspace.Info
+      const workspace = yield* decodeWorkspace(created)
 
       const url = new URL("http://localhost/config")
       url.searchParams.set("workspace", workspace.id)
@@ -451,9 +455,9 @@ describe("workspace HttpApi", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type: "remote-session-target", branch: null }),
       })
-      const workspace = (yield* created.json) as Workspace.Info
+      const workspace = yield* decodeWorkspace(created)
       const sessionResponse = yield* requestDefault("/session", dir, { method: "POST" })
-      const session = (yield* sessionResponse.json) as Session.Info
+      const session = yield* decodeSession(sessionResponse)
       const warped = yield* requestDefault(WorkspacePaths.warp, dir, {
         method: "POST",
         headers: { "content-type": "application/json" },
