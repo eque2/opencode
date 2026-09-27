@@ -1,10 +1,13 @@
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Database } from "@opencode-ai/core/database/database"
-import { Effect, HashSet, Option } from "effect"
+import { Effect, HashSet, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import * as Fence from "@/server/shared/fence"
 
 const ignoredMethods = HashSet.fromIterable<string>(["GET", "HEAD", "OPTIONS"])
+
+// The fence header carries the changed aggregate sequence numbers as a JSON object.
+const encodeFence = Schema.encodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Number)))
 
 export const fenceLayer = HttpRouter.middleware<{ requires: Database.Service; handles: unknown }>()(
   Effect.gen(function* () {
@@ -20,7 +23,7 @@ export const fenceLayer = HttpRouter.middleware<{ requires: Database.Service; ha
         const current = Fence.diff(previous, yield* Fence.load(db))
         if (Object.keys(current).length === 0) return response
 
-        return HttpServerResponse.setHeader(response, Fence.HEADER, JSON.stringify(current))
+        return HttpServerResponse.setHeader(response, Fence.HEADER, yield* encodeFence(current).pipe(Effect.orDie))
       })
   }),
 ).layer
