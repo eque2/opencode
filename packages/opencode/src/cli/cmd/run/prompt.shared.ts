@@ -8,9 +8,14 @@
 // the current draft is saved and history begins. Arrowing past the end
 // restores the draft.
 export { displayCharAt, displaySlice, mentionTriggerIndex } from "../prompt-display"
+import { Equal, Schema } from "effect"
 import type { RunPrompt } from "./types"
 
 const HISTORY_LIMIT = 200
+
+// Prompts compare by their JSON text, as before. An absent command encodes to
+// None on both sides, so two prompts without a command still match.
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 export type PromptHistoryState = {
   items: RunPrompt[]
@@ -38,8 +43,8 @@ export function promptSame(a: RunPrompt, b: RunPrompt): boolean {
   return (
     a.mode === b.mode &&
     a.text === b.text &&
-    JSON.stringify(a.parts) === JSON.stringify(b.parts) &&
-    JSON.stringify(a.command) === JSON.stringify(b.command)
+    Equal.equals(encodeJson(a.parts), encodeJson(b.parts)) &&
+    Equal.equals(encodeJson(a.command), encodeJson(b.command))
   )
 }
 
