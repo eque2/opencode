@@ -118,7 +118,7 @@ const getBase = (appId: string): Configuration => ({
   },
 })
 
-function getConfig() {
+function getConfig(): Configuration {
   const appId = APP_IDS[channel]
   const base = getBase(appId)
 
@@ -143,17 +143,16 @@ function getConfig() {
         rpm: { packageName: "opencode-beta", fpm: [metainfoFpm(appId)] },
       }
     }
-    case "prod": {
-      return {
-        ...base,
-        appId,
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
-        rpm: { packageName: "opencode", fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
-      }
-    }
+  }
+
+  return {
+    ...base,
+    appId,
+    productName: "OpenCode",
+    protocols: { name: "OpenCode", schemes: ["opencode"] },
+    publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
+    deb: { fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
+    rpm: { packageName: "opencode", fpm: [metainfoFpm(appId), legacyDesktopEntryFpm] },
   }
 }
 

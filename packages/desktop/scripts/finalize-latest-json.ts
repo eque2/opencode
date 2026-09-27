@@ -95,10 +95,7 @@ async function read(sub: string, file: string) {
 }
 
 function pick(list: Item[], exts: string[]) {
-  for (const ext of exts) {
-    const found = list.find((item) => item.url.split("?")[0]?.toLowerCase().endsWith(ext))
-    if (found) return found.url
-  }
+  return exts.flatMap((ext) => list.filter((item) => item.url.split("?")[0]?.toLowerCase().endsWith(ext))).at(0)?.url
 }
 
 function link(raw: string) {

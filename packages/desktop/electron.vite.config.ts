@@ -57,15 +57,16 @@ const require = __cjs_mod__.createRequire(import.meta.url);
       {
         name: "opencode:node-pty-narrower",
         enforce: "pre",
+        // Rollup defers to the next resolver when resolveId returns null.
         resolveId(s) {
-          if (s === "@lydell/node-pty") return nodePtyPkg
+          return s === "@lydell/node-pty" ? nodePtyPkg : null
         },
       },
       {
         name: "opencode:virtual-server-module",
         enforce: "pre",
         resolveId(id) {
-          if (id === "virtual:opencode-server") return this.resolve(`${OPENCODE_SERVER_DIST}/node.js`)
+          return id === "virtual:opencode-server" ? this.resolve(`${OPENCODE_SERVER_DIST}/node.js`) : null
         },
       },
       {
