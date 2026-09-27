@@ -1,17 +1,23 @@
-import { Effect } from "effect"
+import { Data, Effect, Option } from "effect"
 import { nativeT } from "../native-translations"
 
 export function wslServerIdsToStartOnInitialize(servers: { id: string }[]) {
   return servers.map((server) => server.id)
 }
 
-export function expectOpencodeVersion(installed: string | null, expected: string, distro = "Debian") {
-  if (installed === expected) return
-  throw new Error(
-    nativeT("desktop.wsl.error.updateVersion", {
-      distro,
-      installed: installed ?? nativeT("desktop.wsl.error.noVersion"),
-      expected,
+export class WslVersionMismatchError extends Data.TaggedError("WslVersionMismatchError")<{
+  readonly message: string
+}> {}
+
+export function expectOpencodeVersion(installed: Option.Option<string>, expected: string, distro = "Debian") {
+  if (Option.contains(installed, expected)) return Effect.void
+  return Effect.fail(
+    new WslVersionMismatchError({
+      message: nativeT("desktop.wsl.error.updateVersion", {
+        distro,
+        installed: Option.getOrElse(installed, () => nativeT("desktop.wsl.error.noVersion")),
+        expected,
+      }),
     }),
   )
 }
