@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
 import * as pty from "@lydell/node-pty"
+import { Config, Data, Effect, Option } from "effect"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../../preload/types"
 import { wslTerminalArgs } from "./policy"
 import { nativeT } from "../native-translations"
@@ -13,7 +14,7 @@ export type WslCommandLine = {
 
 export type WslCommandResult = {
   code: number | null
-  signal: NodeJS.Signals | null
+  signal: Option.Option<NodeJS.Signals>
   stdout: string
   stderr: string
 }
@@ -34,6 +35,12 @@ export type RunWslOptions = {
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
 const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
 
+class WslCommandTimeoutError extends Data.TaggedError("WslCommandTimeoutError")<{ readonly message: string }> {}
+
+class WslCommandError extends Data.TaggedError("WslCommandError")<{ readonly message: string }> {}
+
+class WslProcessKillError extends Data.TaggedError("WslProcessKillError")<{ readonly cause: unknown }> {}
+
 export function wslArgs(args: string[], distro?: string | null, user?: string | null) {
   return [...(distro ? ["-d", distro] : []), ...(user ? ["--user", user] : []), "--", ...args]
 }
@@ -51,28 +58,17 @@ function runPowerShell(command: string, opts: RunWslOptions = {}) {
 }
 
 function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
-  return new Promise<WslCommandResult>((resolve, reject) => {
+  // Guard every wsl.exe invocation with a timeout. When the distro or
+  // the LXSS service is wedged (Ubuntu first-run state, Windows update
+  // pending, etc.) wsl.exe produces no output and never exits; without
+  // this the whole sidecar spawn flow stalls the app forever.
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_WSL_TIMEOUT_MS
+  return Effect.callback<WslCommandResult, Error>((resume) => {
     const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       signal: opts.signal,
     })
-
-    // Guard every wsl.exe invocation with a timeout. When the distro or
-    // the LXSS service is wedged (Ubuntu first-run state, Windows update
-    // pending, etc.) wsl.exe produces no output and never exits; without
-    // this the whole sidecar spawn flow stalls the app forever.
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_WSL_TIMEOUT_MS
-    const timeoutId = setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-      reject(
-        new Error(nativeT("desktop.wsl.error.commandTimeout", { command, args: args.join(" "), timeout: timeoutMs })),
-      )
-    }, timeoutMs)
 
     let stdout = ""
     let stderr = ""
@@ -102,19 +98,19 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       append("stderr", stderrDecoder.flush())
     })
 
-    child.once("error", (error) => {
-      clearTimeout(timeoutId)
-      reject(error)
-    })
-    child.once("close", (code, signal) => {
-      clearTimeout(timeoutId)
-      resolve({ code, signal, stdout, stderr })
-    })
-  })
+    child.once("error", (error) => resume(Effect.fail(error)))
+    child.once("close", (code, signal) =>
+      resume(Effect.succeed({ code, signal: Option.fromNullishOr(signal), stdout, stderr })),
+    )
+
+    // Runs only when the timeout interrupts the wait.
+    return killQuietly(() => child.kill())
+  }).pipe(Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => commandTimedOut(command, args, timeoutMs) }))
 }
 
 function runInteractiveCommand(command: string, args: string[], opts: RunWslOptions = {}, defaultTimeoutMs: number) {
-  return new Promise<WslCommandResult>((resolve, reject) => {
+  const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs
+  const exited = Effect.callback<WslCommandResult>((resume) => {
     const child = pty.spawn(command, args, {
       name: "xterm-color",
       cols: 80,
@@ -124,57 +120,42 @@ function runInteractiveCommand(command: string, args: string[], opts: RunWslOpti
       useConpty: true,
     })
 
-    let settled = false
     let stdout = ""
-
-    const cleanup = () => {
-      clearTimeout(timeoutId)
-      abortCleanup?.()
-    }
-
-    const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs
-    const timeoutId = setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(
-        new Error(nativeT("desktop.wsl.error.commandTimeout", { command, args: args.join(" "), timeout: timeoutMs })),
-      )
-    }, timeoutMs)
-
-    const abortHandler = () => {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-      if (settled) return
-      settled = true
-      cleanup()
-      reject(new DOMException("Aborted", "AbortError"))
-    }
-    const abortCleanup = opts.signal
-      ? (() => {
-          opts.signal?.addEventListener("abort", abortHandler, { once: true })
-          return () => opts.signal?.removeEventListener("abort", abortHandler)
-        })()
-      : undefined
-
     child.onData((data: string) => {
       stdout += data
     })
     child.onExit((event: { exitCode: number }) => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolve({ code: event.exitCode, signal: null, stdout, stderr: "" })
+      resume(Effect.succeed({ code: event.exitCode, signal: Option.none(), stdout, stderr: "" }))
     })
+
+    // Runs only when the abort signal or the timeout interrupts the wait.
+    return killQuietly(() => child.kill())
   })
+
+  return Effect.raceFirst(exited, abortRequested(opts.signal)).pipe(
+    Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => commandTimedOut(command, args, timeoutMs) }),
+  )
+}
+
+function abortRequested(signal?: AbortSignal) {
+  if (!signal) return Effect.never
+  return Effect.callback<never, DOMException>((resume) => {
+    const onAbort = () => resume(Effect.fail(new DOMException("Aborted", "AbortError")))
+    signal.addEventListener("abort", onAbort, { once: true })
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort))
+  })
+}
+
+function commandTimedOut(command: string, args: string[], timeoutMs: number) {
+  return Effect.fail(
+    new WslCommandTimeoutError({
+      message: nativeT("desktop.wsl.error.commandTimeout", { command, args: args.join(" "), timeout: timeoutMs }),
+    }),
+  )
+}
+
+function killQuietly(kill: () => void) {
+  return Effect.try({ try: kill, catch: (cause) => new WslProcessKillError({ cause }) }).pipe(Effect.ignore)
 }
 
 function createOutputDecoder() {
@@ -207,136 +188,178 @@ export function runWslSh(script: string, distro?: string | null, opts?: RunWslOp
   return runWslInDistro(["sh", "-lc", script], distro, opts)
 }
 
-export async function probeWslRuntime(opts?: RunWslOptions): Promise<WslRuntimeCheck> {
-  const version = await runWsl(["--version"], opts).catch((error) => ({
-    code: 1,
-    signal: null,
-    stdout: "",
-    stderr: error instanceof Error ? error.message : String(error),
-  }))
+export function probeWslRuntime(opts?: RunWslOptions): Promise<WslRuntimeCheck> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const version = yield* runWsl(["--version"], opts).pipe(
+        Effect.catch((error) => Effect.succeed(failedCommand(error.message))),
+      )
 
-  if (version.code !== 0) {
-    return {
-      available: false,
-      version: null,
-      error: summarize(version.stderr || version.stdout) || nativeT("desktop.wsl.error.unavailable"),
-    }
-  }
+      if (version.code !== 0) {
+        return {
+          available: false,
+          // eslint-disable-next-line effect/no-null-use-option -- (a) WslRuntimeCheck from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types a missing version as null
+          version: null,
+          error: summarize(version.stderr || version.stdout) || nativeT("desktop.wsl.error.unavailable"),
+        }
+      }
 
-  return {
-    available: true,
-    version: firstLine(version.stdout),
-    error: null,
-  }
+      return {
+        available: true,
+        version: Option.getOrNull(firstLine(version.stdout)),
+        // eslint-disable-next-line effect/no-null-use-option -- (a) WslRuntimeCheck from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types "no error" as null
+        error: null,
+      }
+    }),
+  )
 }
 
-export async function listInstalledWslDistros(opts?: RunWslOptions) {
-  const result = await runWsl(["--list", "--verbose"], opts)
-  if (result.code !== 0) {
-    throw new Error(summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.listInstalled"))
-  }
-  return parseInstalledDistros(result.stdout)
+export function listInstalledWslDistros(opts?: RunWslOptions) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const result = yield* runWsl(["--list", "--verbose"], opts)
+      if (result.code !== 0) {
+        return yield* Effect.fail(
+          new WslCommandError({
+            message: summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.listInstalled"),
+          }),
+        )
+      }
+      return parseInstalledDistros(result.stdout)
+    }),
+  )
 }
 
-export async function listOnlineWslDistros(opts?: RunWslOptions) {
-  const result = await runWsl(["--list", "--online"], opts)
-  if (result.code !== 0) {
-    throw new Error(summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.listOnline"))
-  }
-  return parseOnlineDistros(result.stdout)
+export function listOnlineWslDistros(opts?: RunWslOptions) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const result = yield* runWsl(["--list", "--online"], opts)
+      if (result.code !== 0) {
+        return yield* Effect.fail(
+          new WslCommandError({
+            message: summarize(result.stderr || result.stdout) || nativeT("desktop.wsl.error.listOnline"),
+          }),
+        )
+      }
+      return parseOnlineDistros(result.stdout)
+    }),
+  )
 }
 
-export async function installWslRuntimeElevated(opts?: RunWslOptions) {
+export function installWslRuntimeElevated(opts?: RunWslOptions) {
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "$process = Start-Process -FilePath 'wsl.exe' -Verb RunAs -ArgumentList @('--install','--no-distribution') -Wait -PassThru",
     "if ($null -ne $process.ExitCode) { exit $process.ExitCode }",
   ].join("; ")
-  return runPowerShell(script, withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS))
+  return Effect.runPromise(runPowerShell(script, withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS)))
 }
 
-export async function installWslDistro(name: string, opts?: RunWslOptions) {
-  return runInteractiveCommand(
-    resolveSystem32Command("wsl.exe"),
-    ["--install", "-d", name, "--web-download", "--no-launch"],
-    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
-    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
-  )
-}
-
-export async function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
-  return runInteractiveCommand(
-    resolveSystem32Command("wsl.exe"),
-    wslArgs(
-      ["bash", "-lc", `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`],
-      distro,
-    ),
-    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
-    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
-  )
-}
-
-export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<WslDistroProbe> {
-  const executable = await runWslInDistro(["/bin/true"], name, opts).catch((error) => ({
-    code: 1,
-    signal: null,
-    stdout: "",
-    stderr: error instanceof Error ? error.message : String(error),
-  }))
-  if (executable.code !== 0) {
-    return {
-      name,
-      canExecute: false,
-      hasBash: false,
-      hasCurl: false,
-      error: summarize(executable.stderr || executable.stdout) || nativeT("desktop.wsl.error.executeDistro"),
-    }
-  }
-
-  const [bash, curl] = await Promise.all([
-    runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
-    runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
-  ])
-
-  return {
-    name,
-    canExecute: true,
-    hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
-    hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
-    error: null,
-  }
-}
-
-export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
-  return firstLine(
-    (
-      await runWslSh(
-        'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
-        distro,
-        opts,
+export function installWslDistro(name: string, opts?: RunWslOptions) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* runInteractiveCommand(
+        yield* resolveSystem32Command("wsl.exe"),
+        ["--install", "-d", name, "--web-download", "--no-launch"],
+        withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+        DEFAULT_WSL_INSTALL_TIMEOUT_MS,
       )
-    ).stdout,
+    }),
   )
 }
 
-export async function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
-  const result = await runWslSh(`${shellEscape(command)} --version 2>/dev/null || true`, distro, opts)
-  return firstLine(result.stdout)
+export function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      return yield* runInteractiveCommand(
+        yield* resolveSystem32Command("wsl.exe"),
+        wslArgs(
+          ["bash", "-lc", `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`],
+          distro,
+        ),
+        withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+        DEFAULT_WSL_INSTALL_TIMEOUT_MS,
+      )
+    }),
+  )
+}
+
+export function probeWslDistro(name: string, opts?: RunWslOptions): Promise<WslDistroProbe> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const executable = yield* runWslInDistro(["/bin/true"], name, opts).pipe(
+        Effect.catch((error) => Effect.succeed(failedCommand(error.message))),
+      )
+      if (executable.code !== 0) {
+        return {
+          name,
+          canExecute: false,
+          hasBash: false,
+          hasCurl: false,
+          error: summarize(executable.stderr || executable.stdout) || nativeT("desktop.wsl.error.executeDistro"),
+        }
+      }
+
+      const [bash, curl] = yield* Effect.all(
+        [
+          runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
+          runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
+        ],
+        { concurrency: "unbounded" },
+      )
+
+      return {
+        name,
+        canExecute: true,
+        hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
+        hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
+        // eslint-disable-next-line effect/no-null-use-option -- (a) WslDistroProbe from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types "no error" as null
+        error: null,
+      }
+    }),
+  )
+}
+
+/** Finds the opencode binary installed in the distro's home directory. */
+export function findWslOpencode(distro: string, opts?: RunWslOptions) {
+  return runWslSh(
+    'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
+    distro,
+    opts,
+  ).pipe(Effect.map((result) => firstLine(result.stdout)))
+}
+
+export function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
+  return Effect.runPromise(findWslOpencode(distro, opts).pipe(Effect.map(Option.getOrNull)))
+}
+
+export function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
+  return Effect.runPromise(
+    runWslSh(`${shellEscape(command)} --version 2>/dev/null || true`, distro, opts).pipe(
+      Effect.map((result) => Option.getOrNull(firstLine(result.stdout))),
+    ),
+  )
 }
 
 export function openWslTerminal(distro?: string | null) {
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn("cmd.exe", wslTerminalArgs(distro), {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    })
-    child.once("error", reject)
-    child.once("spawn", () => {
-      child.unref()
-      resolve()
-    })
-  })
+  return Effect.runPromise(
+    Effect.callback<void, Error>((resume) => {
+      const child = spawn("cmd.exe", wslTerminalArgs(distro), {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      })
+      child.once("error", (error) => resume(Effect.fail(error)))
+      child.once("spawn", () => {
+        child.unref()
+        resume(Effect.void)
+      })
+    }),
+  )
+}
+
+function failedCommand(message: string): WslCommandResult {
+  return { code: 1, signal: Option.none(), stdout: "", stderr: message }
 }
 
 function parseInstalledDistros(output: string) {
@@ -350,7 +373,7 @@ function parseInstalledDistros(output: string) {
     return [
       {
         name: name.trim(),
-        version: Number.isNaN(Number.parseInt(version, 10)) ? null : Number.parseInt(version, 10),
+        version: Option.getOrNull(Option.liftPredicate(Number.parseInt(version, 10), (value) => !Number.isNaN(value))),
         isDefault: marker === "*",
       } satisfies WslInstalledDistro,
     ]
@@ -370,11 +393,11 @@ function parseOnlineDistros(output: string) {
 }
 
 function firstLine(value: string) {
-  return (
+  return Option.fromNullishOr(
     value
       .split(/\r?\n/g)
       .map((line) => line.trim())
-      .find(Boolean) ?? null
+      .find(Boolean),
   )
 }
 
@@ -391,10 +414,17 @@ export function shellEscape(value: string) {
 }
 
 function resolveSystem32Command(command: string) {
-  const root = process.env.SystemRoot ?? process.env.windir
-  if (!root) return command
-  const resolved = join(root, "System32", command)
-  return existsSync(resolved) ? resolved : command
+  return Config.option(Config.String("SystemRoot").pipe(Config.orElse(() => Config.String("windir")))).pipe(
+    Effect.map((root) =>
+      Option.match(root, {
+        onNone: () => command,
+        onSome: (systemRoot) => {
+          const resolved = join(systemRoot, "System32", command)
+          return existsSync(resolved) ? resolved : command
+        },
+      }),
+    ),
+  )
 }
 
 function withTimeout(opts: RunWslOptions | undefined, timeoutMs: number): RunWslOptions {
