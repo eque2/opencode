@@ -4,7 +4,7 @@ import { LLM } from "@/session/llm"
 import { MessageID, SessionID } from "@/session/schema"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { LLMEvent } from "@opencode-ai/llm"
-import { Effect, Option, Stream } from "effect"
+import { Clock, Effect, Option, Stream } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 
@@ -32,6 +32,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
         (yield* provider.getSmallModel(fallback.providerID)) ??
         (yield* provider.getModel(fallback.providerID, fallback.modelID))
       const sessionID = SessionID.descending()
+      const created = yield* Clock.currentTimeMillis
       const result = yield* llm
         .stream({
           agent: COPY_NAME_AGENT,
@@ -39,7 +40,7 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
             id: MessageID.ascending(),
             sessionID,
             role: "user",
-            time: { created: Date.now() },
+            time: { created },
             agent: COPY_NAME_AGENT.name,
             model: { providerID: model.providerID, modelID: model.id },
           },
