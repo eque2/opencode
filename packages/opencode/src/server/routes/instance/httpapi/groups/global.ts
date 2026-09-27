@@ -12,7 +12,7 @@ import { described } from "./metadata"
 const GlobalHealth = Schema.Struct({
   healthy: Schema.Literal(true),
   version: Schema.String,
-})
+}).annotate({ description: "Server health and version" })
 
 const SyncEventSchemas = EventManifest.Latest.values()
   .flatMap((definition) => {
@@ -52,7 +52,7 @@ export const GlobalUpgradeInput = Schema.Struct({
   target: Schema.String.check(
     Schema.makeFilter((value) => (semver.valid(value) === null ? "Expected a semantic version" : undefined)),
   ),
-})
+}).annotate({ description: "Request to upgrade opencode" })
 
 const GlobalUpgradeResult = Schema.Union([
   Schema.Struct({

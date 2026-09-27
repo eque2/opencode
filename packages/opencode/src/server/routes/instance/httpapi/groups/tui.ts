@@ -9,7 +9,7 @@ import { ApiNotFoundError } from "../errors"
 import { described } from "./metadata"
 
 const root = "/tui"
-export const CommandPayload = Schema.Struct({ command: Schema.String })
+export const CommandPayload = Schema.Struct({ command: Schema.String }).annotate({ description: "TUI command to run" })
 const EventTuiPromptAppend = Schema.Struct({
   type: Schema.Literal(TuiEvent.PromptAppend.type),
   properties: TuiEvent.PromptAppend.data,

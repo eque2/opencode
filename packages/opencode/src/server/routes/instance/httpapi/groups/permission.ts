@@ -11,7 +11,7 @@ const root = "/permission"
 const ReplyPayload = Schema.Struct({
   reply: PermissionV1.Reply,
   message: Schema.optional(Schema.String),
-})
+}).annotate({ description: "Reply to a permission request" })
 
 export const PermissionApi = HttpApi.make("permission")
   .add(

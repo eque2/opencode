@@ -33,16 +33,16 @@ export const ListQuery = Schema.Struct({
   start: Schema.optional(Schema.NumberFromString),
   search: Schema.optional(Schema.String),
   limit: Schema.optional(Schema.NumberFromString),
-})
+}).annotate({ description: "Query parameters that filter and page the session list" })
 export const DiffQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   ...Struct.omit(SessionSummary.DiffInput.fields, ["sessionID"]),
-})
+}).annotate({ description: "Query parameters for the session diff" })
 export const MessagesQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
   limit: Schema.optional(Schema.NumberFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
   before: Schema.optional(Schema.String),
-})
+}).annotate({ description: "Query parameters that page the session messages" })
 export const StatusMap = Schema.Record(Schema.String, SessionStatus.Info)
 export const UpdatePayload = Schema.Struct({
   title: Schema.optional(Schema.String),
@@ -53,25 +53,35 @@ export const UpdatePayload = Schema.Struct({
       archived: Schema.optional(Session.ArchivedTimestamp),
     }),
   ),
+}).annotate({ description: "Session properties to update" })
+export const ForkPayload = Schema.Struct(Struct.omit(Session.ForkInput.fields, ["sessionID"])).annotate({
+  description: "Request to fork a session",
 })
-export const ForkPayload = Schema.Struct(Struct.omit(Session.ForkInput.fields, ["sessionID"]))
 export const InitPayload = Schema.Struct({
   modelID: ModelV2.ID,
   providerID: ProviderV2.ID,
   messageID: MessageID,
-})
+}).annotate({ description: "Request to initialize a session" })
 export const SummarizePayload = Schema.Struct({
   providerID: ProviderV2.ID,
   modelID: ModelV2.ID,
   auto: Schema.optional(Schema.Boolean),
+}).annotate({ description: "Request to summarize a session" })
+export const PromptPayload = Schema.Struct(Struct.omit(SessionPrompt.PromptInput.fields, ["sessionID"])).annotate({
+  description: "Prompt to send to a session",
 })
-export const PromptPayload = Schema.Struct(Struct.omit(SessionPrompt.PromptInput.fields, ["sessionID"]))
-export const CommandPayload = Schema.Struct(Struct.omit(SessionPrompt.CommandInput.fields, ["sessionID"]))
-export const ShellPayload = Schema.Struct(Struct.omit(SessionPrompt.ShellInput.fields, ["sessionID"]))
-export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput.fields, ["sessionID"]))
+export const CommandPayload = Schema.Struct(Struct.omit(SessionPrompt.CommandInput.fields, ["sessionID"])).annotate({
+  description: "Command to run in a session",
+})
+export const ShellPayload = Schema.Struct(Struct.omit(SessionPrompt.ShellInput.fields, ["sessionID"])).annotate({
+  description: "Shell command to run in a session",
+})
+export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput.fields, ["sessionID"])).annotate({
+  description: "Request to revert a session to a message or part",
+})
 export const PermissionResponsePayload = Schema.Struct({
   response: PermissionV1.Reply,
-})
+}).annotate({ description: "Reply to a session permission request" })
 
 export const SessionPaths = {
   list: root,

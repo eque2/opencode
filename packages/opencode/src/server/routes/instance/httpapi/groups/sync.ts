@@ -15,17 +15,17 @@ export const ReplayEvent = Schema.Struct({
   seq: NonNegativeInt,
   type: Schema.String,
   data: Schema.Record(Schema.String, Schema.Unknown),
-})
+}).annotate({ description: "Sync event to replay" })
 export const ReplayPayload = Schema.Struct({
   directory: Schema.String,
   events: Schema.NonEmptyArray(ReplayEvent),
-})
+}).annotate({ description: "Sync events to replay" })
 export const ReplayResponse = Schema.Struct({
   sessionID: Schema.String,
-})
+}).annotate({ description: "Result of the sync replay" })
 export const SessionPayload = Schema.Struct({
   sessionID: SessionID,
-})
+}).annotate({ description: "Request for the sync history of a session" })
 export const HistoryPayload = Schema.Record(Schema.String, NonNegativeInt)
 export const HistoryEvent = Schema.Struct({
   id: EventV2.ID,
@@ -33,7 +33,7 @@ export const HistoryEvent = Schema.Struct({
   seq: NonNegativeInt,
   type: Schema.String,
   data: Schema.Record(Schema.String, Schema.Unknown),
-})
+}).annotate({ description: "Sync event in the history" })
 
 export const SyncPaths = {
   start: `${root}/start`,

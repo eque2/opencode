@@ -4,7 +4,7 @@ import { Schema } from "effect"
 export const TuiRequest = Schema.Struct({
   path: Schema.String,
   body: Schema.Unknown,
-})
+}).annotate({ description: "Request that the server sends to the TUI" })
 
 export type TuiRequest = Schema.Schema.Type<typeof TuiRequest>
 

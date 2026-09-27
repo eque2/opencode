@@ -7,7 +7,7 @@ import { WorkspaceRoutingMiddleware, WorkspaceRoutingQuery } from "../middleware
 
 export const GenerateNamePayload = Schema.Struct({
   context: Schema.optional(Schema.String),
-})
+}).annotate({ description: "Request to generate a project copy name" })
 
 export const ProjectCopyApi = HttpApi.make("projectCopyName").add(
   HttpApiGroup.make("projectCopyName")

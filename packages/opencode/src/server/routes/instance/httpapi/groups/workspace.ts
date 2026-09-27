@@ -10,12 +10,14 @@ import { WorkspaceRoutingMiddleware, WorkspaceRoutingQuery } from "../middleware
 import { described } from "./metadata"
 
 const root = "/experimental/workspace"
-export const CreatePayload = Schema.Struct(Struct.omit(Workspace.CreateInput.fields, ["projectID"]))
+export const CreatePayload = Schema.Struct(Struct.omit(Workspace.CreateInput.fields, ["projectID"])).annotate({
+  description: "Request to create a workspace",
+})
 export const WarpPayload = Schema.Struct({
   id: Schema.NullOr(Workspace.Info.fields.id),
   sessionID: Workspace.SessionWarpInput.fields.sessionID,
   copyChanges: Workspace.SessionWarpInput.fields.copyChanges,
-})
+}).annotate({ description: "Request to move a session to a workspace" })
 
 export class ApiWorkspaceWarpError extends Schema.Error<ApiWorkspaceWarpError>("WorkspaceWarpError")(
   {
