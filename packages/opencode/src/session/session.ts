@@ -475,7 +475,7 @@ export interface Interface {
     messageID: MessageID
     partID: PartID
   }) => Effect.Effect<SessionV1.Part | undefined>
-  readonly updatePart: <T extends SessionV1.Part>(part: T) => Effect.Effect<T>
+  readonly updatePart: <T extends typeof SessionV1.Part.Type>(part: T) => Effect.Effect<T>
   readonly updatePartDelta: (input: {
     sessionID: SessionID
     messageID: MessageID
@@ -662,7 +662,7 @@ const layer: Layer.Layer<
         return msg
       }).pipe(Effect.withSpan("Session.updateMessage"))
 
-    const updatePart = <T extends SessionV1.Part>(part: T): Effect.Effect<T> =>
+    const updatePart = <T extends typeof SessionV1.Part.Type>(part: T): Effect.Effect<T> =>
       Effect.gen(function* () {
         yield* events.publish(SessionV1.Event.PartUpdated, {
           sessionID: part.sessionID,

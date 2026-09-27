@@ -396,7 +396,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       payload: typeof SessionV1.Part.Type
     }) {
       yield* requireSession(ctx.params.sessionID)
-      const payload = ctx.payload as SessionV1.Part
+      const payload = ctx.payload
       if (
         payload.id !== ctx.params.partID ||
         payload.messageID !== ctx.params.messageID ||
