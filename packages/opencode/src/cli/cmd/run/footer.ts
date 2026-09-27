@@ -29,11 +29,13 @@ import type { Keymap } from "@opentui/keymap"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { Duration, Effect, Option } from "effect"
 import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
 import { PROMPT_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { RunFooterView } from "./footer.view"
+import { makeFiberSlot } from "./footer.effect"
 import { RunScrollbackStream } from "./scrollback.surface"
 import { RUN_THEME_FALLBACK, resolveRunTheme, type RunTheme } from "./theme"
 import { modelInfo } from "./variant.shared"
@@ -107,8 +109,9 @@ const SKILL_ROWS = RUN_COMMAND_PANEL_ROWS
 const SUBAGENT_ROWS = RUN_SUBAGENT_PANEL_ROWS
 const MODEL_ROWS = RUN_COMMAND_PANEL_ROWS
 const VARIANT_ROWS = RUN_COMMAND_PANEL_ROWS
-const NOTICE_DURATION = 3000
-const THEME_REFRESH_DELAYS = [1000, 1000] as const
+const NOTICE_DURATION = Duration.seconds(3)
+const TWO_PRESS_WINDOW = Duration.seconds(5)
+const THEME_REFRESH_DELAYS = [Duration.seconds(1), Duration.seconds(1)] as const
 
 function createEmptySubagentState(): FooterSubagentState {
   return {
@@ -205,17 +208,19 @@ export class RunFooter implements FooterApi {
   private promptRoute: FooterPromptRoute = { type: "composer" }
   private subagentMenuRows = SUBAGENT_ROWS
   private autocomplete = false
-  private interruptTimeout: NodeJS.Timeout | undefined
-  private exitTimeout: NodeJS.Timeout | undefined
-  private noticeTimeout: NodeJS.Timeout | undefined
-  private noticeRestoreStatus = ""
+  private interruptTimer = makeFiberSlot()
+  private exitTimer = makeFiberSlot()
+  private noticeTimer = makeFiberSlot()
+  // The status to restore when the pending notice expires. Some only while a
+  // notice timer is pending.
+  private noticeRestore: Option.Option<string> = Option.none()
   private statusVersion = 0
   private requestExitHandler: (() => boolean) | undefined
   private scrollback: RunScrollbackStream
   private themes: RunTheme[]
   private paletteRefreshRunning = false
   private paletteRefreshQueued = false
-  private themeRefreshTimeouts: NodeJS.Timeout[] = []
+  private themeRefreshTimer = makeFiberSlot()
 
   private createScrollback(wrote: boolean): RunScrollbackStream {
     return new RunScrollbackStream(this.renderer, this.theme(), {
@@ -649,27 +654,30 @@ export class RunFooter implements FooterApi {
   }
 
   private setNotice(status: string): void {
-    const restore = this.noticeTimeout ? this.noticeRestoreStatus : this.state().status
-    this.clearNoticeTimer(false)
+    const restore = Option.getOrElse(this.noticeRestore, () => this.state().status)
+    this.clearNoticeTimer()
     this.patch({ status })
     if (!status) {
-      this.noticeRestoreStatus = ""
       return
     }
 
-    this.noticeRestoreStatus = restore
+    this.noticeRestore = Option.some(restore)
     const version = this.statusVersion
-    this.noticeTimeout = setTimeout(() => {
-      this.noticeTimeout = undefined
-      if (this.isGone || version !== this.statusVersion) {
-        this.noticeRestoreStatus = ""
-        return
-      }
+    this.noticeTimer.run(
+      Effect.sleep(NOTICE_DURATION).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            const next = this.noticeRestore
+            this.noticeRestore = Option.none()
+            if (this.isGone || version !== this.statusVersion || Option.isNone(next)) {
+              return
+            }
 
-      const next = this.noticeRestoreStatus
-      this.noticeRestoreStatus = ""
-      this.patch({ status: next })
-    }, NOTICE_DURATION)
+            this.patch({ status: next.value })
+          }),
+        ),
+      ),
+    )
   }
 
   private setRequestExitHandler = (fn?: () => boolean): void => {
@@ -905,60 +913,48 @@ export class RunFooter implements FooterApi {
   }
 
   private clearInterruptTimer(): void {
-    if (!this.interruptTimeout) {
-      return
-    }
-
-    clearTimeout(this.interruptTimeout)
-    this.interruptTimeout = undefined
+    this.interruptTimer.interrupt()
   }
 
-  private clearNoticeTimer(reset = true): void {
-    if (!this.noticeTimeout) {
-      if (reset) {
-        this.noticeRestoreStatus = ""
-      }
-      return
-    }
-
-    clearTimeout(this.noticeTimeout)
-    this.noticeTimeout = undefined
-    if (reset) {
-      this.noticeRestoreStatus = ""
-    }
+  private clearNoticeTimer(): void {
+    this.noticeTimer.interrupt()
+    this.noticeRestore = Option.none()
   }
 
   private armInterruptTimer(): void {
-    this.clearInterruptTimer()
-    this.interruptTimeout = setTimeout(() => {
-      this.interruptTimeout = undefined
-      if (this.isGone || this.state().phase !== "running") {
-        return
-      }
+    this.interruptTimer.run(
+      Effect.sleep(TWO_PRESS_WINDOW).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (this.isGone || this.state().phase !== "running") {
+              return
+            }
 
-      this.patch({ interrupt: 0 })
-    }, 5000)
+            this.patch({ interrupt: 0 })
+          }),
+        ),
+      ),
+    )
   }
 
   private clearExitTimer(): void {
-    if (!this.exitTimeout) {
-      return
-    }
-
-    clearTimeout(this.exitTimeout)
-    this.exitTimeout = undefined
+    this.exitTimer.interrupt()
   }
 
   private armExitTimer(): void {
-    this.clearExitTimer()
-    this.exitTimeout = setTimeout(() => {
-      this.exitTimeout = undefined
-      if (this.isGone || this.isClosed) {
-        return
-      }
+    this.exitTimer.run(
+      Effect.sleep(TWO_PRESS_WINDOW).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            if (this.isGone || this.isClosed) {
+              return
+            }
 
-      this.patch({ exit: 0 })
-    }, 5000)
+            this.patch({ exit: 0 })
+          }),
+        ),
+      ),
+    )
   }
 
   // Two-press interrupt: first press shows a hint ("esc again to interrupt"),
@@ -1073,11 +1069,13 @@ export class RunFooter implements FooterApi {
 
   private handleThemeSignal = (): void => {
     // Omarchy signals immediately after requesting a terminal config reload.
-    for (const timeout of this.themeRefreshTimeouts) clearTimeout(timeout)
-    this.themeRefreshTimeouts = THEME_REFRESH_DELAYS.map((delay) =>
-      setTimeout(() => {
-        this.handleThemeRefresh()
-      }, delay),
+    // Each delay counts from the signal, so the refreshes run side by side.
+    this.themeRefreshTimer.run(
+      Effect.forEach(
+        THEME_REFRESH_DELAYS,
+        (delay) => Effect.sleep(delay).pipe(Effect.andThen(Effect.sync(this.handleThemeRefresh))),
+        { concurrency: "unbounded", discard: true },
+      ),
     )
   }
 
@@ -1097,8 +1095,7 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.THEME_MODE, this.handleThemeRefresh)
     this.renderer.removeInputHandler(this.handleThemeNotification)
     process.off("SIGUSR2", this.handleThemeSignal)
-    for (const timeout of this.themeRefreshTimeouts) clearTimeout(timeout)
-    this.themeRefreshTimeouts.length = 0
+    this.themeRefreshTimer.interrupt()
     this.prompts.clear()
     this.queuedRemoves.clear()
     this.closes.clear()

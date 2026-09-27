@@ -12,6 +12,7 @@ import { normalizePromptContent } from "@opencode-ai/tui/editor"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
+import { Effect } from "effect"
 import * as Locale from "@/util/locale"
 import {
   createPromptHistory,
@@ -26,6 +27,7 @@ import {
 import { OPENCODE_BASE_MODE, useBindings } from "@opencode-ai/tui/keymap"
 import { realignEditorPromptParts, resolveEditorSlashValue } from "./prompt.editor"
 import { FOOTER_MENU_ROWS, createFooterMenuState, type RunFooterMenuItem } from "./footer.menu"
+import { FooterCallbackError, createFiberSlot } from "./footer.effect"
 import type { RunFooterTheme } from "./theme"
 import type { FooterState, RunAgent, RunCommand, RunPrompt, RunPromptPart, RunResource, RunTuiConfig } from "./types"
 
@@ -209,33 +211,40 @@ export function RunPromptBody(props: {
 }) {
   const renderer = useRenderer()
   let area: TextareaRenderable | undefined
-  let pasteTick: ReturnType<typeof setTimeout> | undefined
+  // The pending paste relayout. The component cleanup interrupts it.
+  const pasteTick = createFiberSlot()
 
   const refreshPasteLayout = () => {
-    if (pasteTick) {
-      clearTimeout(pasteTick)
-    }
+    pasteTick.run(
+      Effect.sleep(0).pipe(
+        Effect.andThen(
+          Effect.suspend(() => {
+            if (!area || area.isDestroyed) {
+              return Effect.void
+            }
 
-    pasteTick = setTimeout(() => {
-      pasteTick = undefined
-      if (!area || area.isDestroyed) {
-        return
-      }
+            // Paste can leave the textarea layout stale until the next edit.
+            area.getLayoutNode().markDirty()
+            renderer.requestRender()
+            return Effect.tryPromise({
+              try: () => renderer.idle(),
+              catch: (cause) => new FooterCallbackError({ action: "renderer.idle", cause }),
+            }).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  if (!area || area.isDestroyed) {
+                    return
+                  }
 
-      // Paste can leave the textarea layout stale until the next edit.
-      area.getLayoutNode().markDirty()
-      renderer.requestRender()
-      void renderer
-        .idle()
-        .then(() => {
-          if (!area || area.isDestroyed) {
-            return
-          }
-
-          props.onContentChange()
-        })
-        .catch(() => {})
-    }, 0)
+                  props.onContentChange()
+                }),
+              ),
+              Effect.ignore,
+            )
+          }),
+        ),
+      ),
+    )
   }
 
   onMount(() => {
@@ -243,9 +252,6 @@ export function RunPromptBody(props: {
   })
 
   onCleanup(() => {
-    if (pasteTick) {
-      clearTimeout(pasteTick)
-    }
     props.bind(undefined)
   })
 
