@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron"
 import type { ElectronAPI, WslServersEvent } from "./types"
 import type { UpdaterState } from "@opencode-ai/app/updater"
 
+// eslint-disable-next-line effect/no-set-use-hashset -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; the callback registry needs a plain Set
 const updaterCallbacks = new Set<(state: UpdaterState) => void>()
 let updaterState: UpdaterState | undefined
 let updaterSubscription: Promise<void> | undefined
