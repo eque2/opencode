@@ -66,7 +66,7 @@ class PortError extends Data.TaggedError("PortError")<{ readonly message: string
 class StartupStepError extends Data.TaggedError("StartupStepError")<{ readonly cause: unknown }> {}
 
 let logger: ReturnType<typeof initLogging>
-let server: SidecarListener | null = null
+let server: Option.Option<SidecarListener> = Option.none()
 
 const pendingDeepLinks: string[] = []
 
@@ -97,9 +97,9 @@ function emitDeepLinks(urls: string[]) {
 }
 
 async function killSidecar() {
-  if (!server) return
-  const current = server
-  server = null
+  if (Option.isNone(server)) return
+  const current = server.value
+  server = Option.none()
   await current.stop()
 }
 
@@ -133,6 +133,24 @@ const ensureLoopbackNoProxy = Effect.forEach(
   { discard: true },
 )
 
+// Creates the throwaway data folders for the onboarding E2E run and points the app and the
+// sidecar at them through process.env.
+function createOnboardingTestRoot() {
+  const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
+  rmSync(root, { recursive: true, force: true })
+  ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
+    mkdirSync(join(root, dir), { recursive: true }),
+  )
+  Object.assign(process.env, {
+    OPENCODE_DB: ":memory:",
+    XDG_DATA_HOME: join(root, "data"),
+    XDG_CONFIG_HOME: join(root, "config"),
+    XDG_CACHE_HOME: join(root, "cache"),
+    XDG_STATE_HOME: join(root, "state"),
+  })
+  return root
+}
+
 const main = Effect.gen(function* () {
   contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
 
@@ -146,30 +164,17 @@ const main = Effect.gen(function* () {
   const sidecarVersion = Option.contains(yield* readEnv("OPENCODE_SIDECAR_V2"), "1") ? "v2" : "v1"
 
   const appId = app.isPackaged ? APP_IDS[CHANNEL] : "ai.opencode.desktop.dev"
-  const onboardingTestRoot = ((): string | undefined => {
-    if (!testOnboarding) return
-
-    const root = join(tmpdir(), `opencode-onboarding-${randomUUID()}`)
-    rmSync(root, { recursive: true, force: true })
-    ;["data", "config", "cache", "state", "desktop", "session"].forEach((dir) =>
-      mkdirSync(join(root, dir), { recursive: true }),
-    )
-    Object.assign(process.env, {
-      OPENCODE_DB: ":memory:",
-      XDG_DATA_HOME: join(root, "data"),
-      XDG_CONFIG_HOME: join(root, "config"),
-      XDG_CACHE_HOME: join(root, "cache"),
-      XDG_STATE_HOME: join(root, "state"),
-    })
-    return root
-  })()
+  const onboardingTestRoot = testOnboarding ? Option.some(createOnboardingTestRoot()) : Option.none<string>()
   app.setName(app.isPackaged ? APP_NAMES[CHANNEL] : "OpenCode Dev")
   app.setAppUserModelId(appId)
   app.setPath(
     "userData",
-    onboardingTestRoot ? join(onboardingTestRoot, "desktop") : join(app.getPath("appData"), appId),
+    Option.match(onboardingTestRoot, {
+      onNone: () => join(app.getPath("appData"), appId),
+      onSome: (root) => join(root, "desktop"),
+    }),
   )
-  if (onboardingTestRoot) app.setPath("sessionData", join(onboardingTestRoot, "session"))
+  if (Option.isSome(onboardingTestRoot)) app.setPath("sessionData", join(onboardingTestRoot.value, "session"))
   initializeOldLayoutEligibility(app.getPath("userData"))
   logger = initLogging()
   initCrashReporter()
@@ -216,7 +221,7 @@ const main = Effect.gen(function* () {
   logger.log("app starting", {
     version: app.getVersion(),
     packaged: app.isPackaged,
-    onboardingTest: Boolean(onboardingTestRoot),
+    onboardingTest: Option.isSome(onboardingTestRoot),
   })
 
   yield* ensureLoopbackNoProxy
@@ -329,8 +334,9 @@ const main = Effect.gen(function* () {
     isFirstLaunchOnboardingPending,
     finishFirstLaunchOnboarding,
     isOldLayoutEligible,
-    getDisplayBackend: async () => null,
-    setDisplayBackend: async () => undefined,
+    // The desktop app keeps no Linux display backend setting, so the IPC reply is always absent.
+    getDisplayBackend: () => Effect.runPromise(Effect.succeed(Option.getOrNull(Option.none<string>()))),
+    setDisplayBackend: () => {},
     checkAppExists: (appName) => checkAppExists(appName),
     resolveAppPath: async (appName) => resolveAppPath(appName),
     updater,
@@ -419,7 +425,7 @@ const main = Effect.gen(function* () {
         onExit: (code) => writeLog("utility", "sidecar exited", { code }, "warn"),
       }),
     )
-    server = listener
+    server = Option.some(listener)
     yield* Deferred.succeed(serverReady, {
       url,
       username: "opencode",
