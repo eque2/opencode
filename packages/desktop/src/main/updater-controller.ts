@@ -1,4 +1,5 @@
 import type { UpdaterState } from "@opencode-ai/app/updater"
+import { Data, Deferred, Effect, MutableHashSet, Option } from "effect"
 
 export type { UpdaterState } from "@opencode-ai/app/updater"
 
@@ -7,14 +8,21 @@ export type UpdaterReadyRecord = { version: string }
 export type UpdaterBackend = {
   checkForUpdates(): Promise<{ isUpdateAvailable?: boolean; updateInfo?: { version?: string } } | null | undefined>
   downloadUpdate(): Promise<unknown>
-  quitAndInstall(): void
+  quitAndInstall(): Effect.Effect<void, Error>
 }
 
 type UpdaterPersistence = {
-  get(): UpdaterReadyRecord | undefined | Promise<UpdaterReadyRecord | undefined>
-  set(value: UpdaterReadyRecord): void | Promise<void>
-  clear(): void | Promise<void>
+  get(): Option.Option<UpdaterReadyRecord>
+  set(value: UpdaterReadyRecord): void
+  clear(): void
 }
+
+// The message carries the original error text because ipcMain.handle sends
+// only the message of a rejected install to the renderer.
+class UpdaterError extends Data.TaggedError("UpdaterError")<{ readonly message: string; readonly cause?: unknown }> {}
+
+const updaterError = (cause: unknown) =>
+  new UpdaterError({ message: cause instanceof Error ? cause.message : String(cause), cause })
 
 export function createUpdaterController(input: {
   enabled: boolean
@@ -25,72 +33,82 @@ export function createUpdaterController(input: {
   log?: (message: string, data?: object) => void
 }) {
   let state: UpdaterState = input.enabled ? { status: "idle" } : { status: "disabled" }
-  let pending: Promise<UpdaterState> | undefined
-  const listeners = new Set<(state: UpdaterState) => void>()
+  let pending = Option.none<Deferred.Deferred<UpdaterState>>()
+  const listeners = MutableHashSet.empty<(state: UpdaterState) => void>()
 
   const transition = (next: UpdaterState) => {
     input.log?.("updater state changed", { from: state.status, to: next.status })
     state = next
-    listeners.forEach((listener) => listener(state))
+    Array.from(listeners).forEach((listener) => listener(state))
     return state
   }
 
-  const check = () => {
-    if (!input.enabled) return Promise.resolve(state)
-    if (state.status === "ready") return Promise.resolve(state)
-    if (pending) return pending
+  const persist = <A>(run: () => A) => Effect.try({ try: run, catch: updaterError })
 
-    pending = (async () => {
-      transition({ status: "checking" })
-      const result = await input.backend.checkForUpdates()
-      const version = result?.updateInfo?.version
-      if (!result?.isUpdateAvailable || !version || version === input.currentVersion) {
-        await input.persistence.clear()
-        return transition({ status: "up-to-date" })
-      }
+  const download = Effect.gen(function* () {
+    transition({ status: "checking" })
+    const result = yield* Effect.tryPromise({ try: () => input.backend.checkForUpdates(), catch: updaterError })
+    const version = result?.updateInfo?.version
+    if (!result?.isUpdateAvailable || !version || version === input.currentVersion) {
+      yield* persist(() => input.persistence.clear())
+      return transition({ status: "up-to-date" })
+    }
 
-      transition({ status: "downloading", version })
-      await input.backend.downloadUpdate()
-      await input.persistence.set({ version })
-      return transition({ status: "ready", version })
-    })()
-      .catch((error) =>
-        transition({ status: "error", message: error instanceof Error ? error.message : String(error) }),
-      )
-      .finally(() => {
-        pending = undefined
-      })
-    return pending
-  }
+    transition({ status: "downloading", version })
+    yield* Effect.tryPromise({ try: () => input.backend.downloadUpdate(), catch: updaterError })
+    yield* persist(() => input.persistence.set({ version }))
+    return transition({ status: "ready", version })
+  }).pipe(Effect.catch((error) => Effect.sync(() => transition({ status: "error", message: error.message }))))
+
+  // Concurrent callers join the check in flight. The Deferred is registered
+  // before the first yield, so a second caller always sees it.
+  const check = Effect.suspend(() => {
+    if (!input.enabled || state.status === "ready") return Effect.succeed(state)
+    return Option.match(pending, {
+      onSome: (inFlight) => Deferred.await(inFlight),
+      onNone: () => {
+        const inFlight = Deferred.makeUnsafe<UpdaterState>()
+        pending = Option.some(inFlight)
+        return Effect.exit(download).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              pending = Option.none()
+            }),
+          ),
+          Effect.tap((exit) => Deferred.done(inFlight, exit)),
+          Effect.flatMap((exit) => exit),
+        )
+      },
+    })
+  })
+
+  const start = Effect.gen(function* () {
+    const ready = yield* persist(() => input.persistence.get())
+    if (Option.exists(ready, (record) => record.version === input.currentVersion))
+      yield* persist(() => input.persistence.clear())
+    return yield* check
+  })
+
+  const install = Effect.gen(function* () {
+    if (state.status !== "ready") return yield* new UpdaterError({ message: "Update is not ready to install" })
+    const version = state.version
+    transition({ status: "installing", version })
+    return yield* Effect.tryPromise({ try: () => input.stop(), catch: updaterError }).pipe(
+      Effect.andThen(input.backend.quitAndInstall().pipe(Effect.mapError(updaterError))),
+      Effect.ensuring(Effect.sync(() => transition({ status: "ready", version }))),
+    )
+  })
 
   return {
     getState: () => state,
     subscribe(listener: (state: UpdaterState) => void) {
-      listeners.add(listener)
+      MutableHashSet.add(listeners, listener)
       listener(state)
-      return () => listeners.delete(listener)
+      return () => MutableHashSet.remove(listeners, listener)
     },
-    async start() {
-      const ready = await input.persistence.get()
-      if (ready?.version === input.currentVersion) await input.persistence.clear()
-      return check()
-    },
-    check,
-    async install() {
-      if (state.status !== "ready") throw new Error("Update is not ready to install")
-      const version = state.version
-      transition({ status: "installing", version })
-      await input
-        .stop()
-        .then(() => {
-          input.backend.quitAndInstall()
-          transition({ status: "ready", version })
-        })
-        .catch((error) => {
-          transition({ status: "ready", version })
-          throw error
-        })
-    },
+    start: () => Effect.runPromise(start),
+    check: () => Effect.runPromise(check),
+    install: () => Effect.runPromise(install),
   }
 }
 
