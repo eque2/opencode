@@ -24,7 +24,7 @@
 //   `data.questions`. The footer shows whichever is first. When a reply
 //   event arrives, the queue entry is removed and the footer falls back
 //   to the next pending request or to the prompt view.
-import { MutableHashMap, MutableHashSet, Option } from "effect"
+import { Array as Arr, MutableHashMap, MutableHashSet, Option } from "effect"
 import type { Event, Part, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import * as Locale from "@/util/locale"
 import { toolView } from "./tool"
@@ -266,24 +266,23 @@ function queueOut(data: SessionData, commits: SessionCommit[]): SessionDataOutpu
   return out(data, commits, queueFooter(data))
 }
 
-function upsert<T extends { id: string }>(list: T[], item: T) {
+function upsert<T extends { id: string }>(list: T[], item: T): T[] {
   const idx = list.findIndex((entry) => entry.id === item.id)
   if (idx === -1) {
-    list.push(item)
-    return
+    return Arr.append(list, item)
   }
 
-  list[idx] = item
+  return list.map((entry, index) => (index === idx ? item : entry))
 }
 
-function remove(list: Array<{ id: string }>, id: string): boolean {
+// Returns the list without the first entry that has this ID, or none when no entry matches.
+function remove<T extends { id: string }>(list: T[], id: string): Option.Option<T[]> {
   const idx = list.findIndex((entry) => entry.id === id)
   if (idx === -1) {
-    return false
+    return Option.none()
   }
 
-  list.splice(idx, 1)
-  return true
+  return Option.some(Arr.remove(list, idx))
 }
 
 export function bootstrapSessionData(input: {
@@ -305,11 +304,11 @@ export function bootstrapSessionData(input: {
   }
 
   for (const request of input.permissions.slice().sort((a, b) => a.id.localeCompare(b.id))) {
-    upsert(input.data.permissions, enrichPermission(input.data, request))
+    input.data.permissions = upsert(input.data.permissions, enrichPermission(input.data, request))
   }
 
   for (const request of input.questions.slice().sort((a, b) => a.id.localeCompare(b.id))) {
-    upsert(input.data.questions, request)
+    input.data.questions = upsert(input.data.questions, request)
   }
 }
 
@@ -518,10 +517,10 @@ function stripEcho(data: SessionData, msg: string | undefined, chunk: string): s
   return chunk
 }
 
-function flushPart(data: SessionData, commits: SessionCommit[], partID: string, interrupted = false) {
+function flushPart(data: SessionData, partID: string, interrupted = false): SessionCommit[] {
   const found = MutableHashMap.get(data.part, partID)
   if (Option.isNone(found)) {
-    return
+    return []
   }
 
   const kind = found.value
@@ -536,7 +535,7 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     // Some models emit a standalone whitespace token before real content.
     // Keep buffering until we have visible text so scrollback doesn't get a blank row.
     if (!chunk.trim()) {
-      return
+      return []
     }
     if (kind === "reasoning" && chunk) {
       chunk = `Thinking: ${chunk.replace(/\[REDACTED\]/g, "")}`
@@ -544,29 +543,33 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
     if (kind === "assistant" && chunk) {
       chunk = stripEcho(data, msg, chunk)
       if (!chunk.trim()) {
-        return
+        return []
       }
     }
   }
 
+  const progress: SessionCommit[] = chunk
+    ? [
+        {
+          kind,
+          text: chunk,
+          phase: "progress",
+          source: kind === "user" ? "system" : kind,
+          messageID: msg,
+          partID,
+        },
+      ]
+    : []
   if (chunk) {
     MutableHashMap.set(data.sent, partID, text.length)
     MutableHashMap.set(data.visible, partID, lookup(data.visible, partID, "") + chunk)
-    commits.push({
-      kind,
-      text: chunk,
-      phase: "progress",
-      source: kind === "user" ? "system" : kind,
-      messageID: msg,
-      partID,
-    })
   }
 
   if (!interrupted) {
-    return
+    return progress
   }
 
-  commits.push({
+  return Arr.append(progress, {
     kind,
     text: "",
     phase: "final",
@@ -589,21 +592,24 @@ function drop(data: SessionData, partID: string) {
 // Called when we learn a message's role (from message.updated). Flushes any
 // buffered text parts that were waiting on role confirmation. User-role
 // parts are silently dropped.
-function replay(data: SessionData, commits: SessionCommit[], messageID: string, role: MessageRole, thinking: boolean) {
-  for (const [partID, msg] of data.msg) {
+//
+// Each step only drops its own part, so a snapshot of the entries visits the
+// same parts in the same order as the live map did.
+function replay(data: SessionData, messageID: string, role: MessageRole, thinking: boolean): SessionCommit[] {
+  return [...data.msg].flatMap(([partID, msg]) => {
     if (msg !== messageID || MutableHashSet.has(data.ids, partID)) {
-      continue
+      return []
     }
 
     if (role === "user" && !data.includeUserText) {
       MutableHashSet.add(data.ids, partID)
       drop(data, partID)
-      continue
+      return []
     }
 
     const found = MutableHashMap.get(data.part, partID)
     if (Option.isNone(found)) {
-      continue
+      return []
     }
 
     const kind = found.value
@@ -616,18 +622,18 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
         MutableHashSet.add(data.ids, partID)
       }
       drop(data, partID)
-      continue
+      return []
     }
 
-    flushPart(data, commits, partID)
+    const flushed = flushPart(data, partID)
 
-    if (!MutableHashSet.has(data.end, partID)) {
-      continue
+    if (MutableHashSet.has(data.end, partID)) {
+      MutableHashSet.add(data.ids, partID)
+      drop(data, partID)
     }
 
-    MutableHashSet.add(data.ids, partID)
-    drop(data, partID)
-  }
+    return flushed
+  })
 }
 
 function toolCommit(
@@ -753,10 +759,10 @@ function failTool(part: ToolPart, text: string): SessionCommit {
 }
 
 // Emits "interrupted" final entries for all in-flight parts. Called when a turn is aborted.
-export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
-  for (const partID of MutableHashMap.keys(data.part)) {
+export function flushInterrupted(data: SessionData): SessionCommit[] {
+  return [...MutableHashMap.keys(data.part)].flatMap((partID) => {
     if (MutableHashSet.has(data.ids, partID)) {
-      continue
+      return []
     }
 
     const user = lookupID(data.msg, partID).pipe(
@@ -766,12 +772,31 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
     if (user && !data.includeUserText) {
       MutableHashSet.add(data.ids, partID)
       drop(data, partID)
-      continue
+      return []
     }
 
-    flushPart(data, commits, partID, true)
+    const flushed = flushPart(data, partID, true)
     MutableHashSet.add(data.ids, partID)
     drop(data, partID)
+    return flushed
+  })
+}
+
+// Records a message role and flushes the parts that waited on it.
+function learnRole(data: SessionData, messageID: string, role: MessageRole, thinking: boolean) {
+  MutableHashMap.set(data.role, messageID, role)
+  return replay(data, messageID, role, thinking)
+}
+
+// Marks the message error as committed and builds its scrollback entry.
+function messageError(data: SessionData, messageID: string, error: Parameters<typeof formatError>[0]): SessionCommit {
+  MutableHashSet.add(data.ids, msgErr(messageID))
+  return {
+    kind: "error",
+    text: formatError(error),
+    phase: "start",
+    source: "system",
+    messageID,
   }
 }
 
@@ -786,38 +811,40 @@ export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
 //   question.*           → manage the question queue, drive footer view
 //   session.error        → emit error scrollback entry
 export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
-  const commits: SessionCommit[] = []
   const data = input.data
   const event = input.event
 
   if (event.type === "session.next.shell.started") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const shell = claimShell(data, event.properties.callID, "shell", event.properties.command)
     if (shell.source !== "shell") {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const partID = shellPartID(event.properties.callID)
     if (MutableHashSet.has(data.ids, partID) || MutableHashSet.has(data.tools, partID)) {
-      return out(data, commits, patch({ status: "running shell" }))
+      return out(data, [], patch({ status: "running shell" }))
     }
 
     MutableHashSet.add(data.tools, partID)
-    commits.push(startShell(event.properties.callID, shell.command ?? event.properties.command))
-    return out(data, commits, patch({ status: "running shell" }))
+    return out(
+      data,
+      [startShell(event.properties.callID, shell.command ?? event.properties.command)],
+      patch({ status: "running shell" }),
+    )
   }
 
   if (event.type === "session.next.shell.ended") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const shell = claimShell(data, event.properties.callID, "shell")
     if (shell.source !== "shell") {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const partID = shellPartID(event.properties.callID)
@@ -825,31 +852,26 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     const command = shell.command ?? ""
     MutableHashSet.remove(data.tools, partID)
     if (MutableHashSet.has(data.ids, partID)) {
-      return out(data, commits)
-    }
-
-    if (!seen && command) {
-      commits.push(startShell(event.properties.callID, command))
+      return out(data, [])
     }
 
     MutableHashSet.add(data.ids, partID)
-    commits.push(doneShell(event.properties.callID, command, event.properties.output))
-    return out(data, commits)
+    return out(data, [
+      ...(!seen && command ? [startShell(event.properties.callID, command)] : []),
+      doneShell(event.properties.callID, command, event.properties.output),
+    ])
   }
 
   if (event.type === "message.updated") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const info = event.properties.info
-    if (typeof info.id === "string") {
-      MutableHashMap.set(data.role, info.id, info.role)
-      replay(data, commits, info.id, info.role, input.thinking)
-    }
+    const replayed = typeof info.id === "string" ? learnRole(data, info.id, info.role, input.thinking) : []
 
     if (info.role !== "assistant") {
-      return out(data, commits)
+      return out(data, replayed)
     }
 
     let next: FooterPatch | undefined
@@ -870,28 +892,20 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
     }
 
-    if (
+    const failed =
       typeof info.id === "string" &&
       info.error &&
       !isAbort(info.error) &&
       !MutableHashSet.has(data.ids, msgErr(info.id))
-    ) {
-      MutableHashSet.add(data.ids, msgErr(info.id))
-      commits.push({
-        kind: "error",
-        text: formatError(info.error),
-        phase: "start",
-        source: "system",
-        messageID: info.id,
-      })
-    }
+        ? [messageError(data, info.id, info.error)]
+        : []
 
-    return out(data, commits, patch(next))
+    return out(data, [...replayed, ...failed], patch(next))
   }
 
   if (event.type === "message.part.delta") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (
@@ -899,16 +913,16 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       typeof event.properties.field !== "string" ||
       typeof event.properties.delta !== "string"
     ) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (event.properties.field !== "text") {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const partID = event.properties.partID
     if (MutableHashSet.has(data.ids, partID)) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (typeof event.properties.messageID === "string") {
@@ -920,48 +934,44 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
     const found = MutableHashMap.get(data.part, partID)
     if (Option.isNone(found)) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const kind = found.value
 
     if (kind === "reasoning" && !input.thinking) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (!ready(data, partID)) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    flushPart(data, commits, partID)
-    return out(data, commits)
+    return out(data, flushPart(data, partID))
   }
 
   if (event.type === "message.part.updated") {
     const part = event.properties.part
     if (part.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (part.type === "tool") {
       const view = syncPermission(data, part) ?? syncQuestion(data, part)
       if (part.tool === "bash" && part.callID) {
         if (claimShell(data, part.callID, "tool", bashCommand(part)).source === "shell") {
-          return out(data, commits, view)
+          return out(data, [], view)
         }
       }
 
       if (part.state.status === "running") {
         if (MutableHashSet.has(data.ids, part.id)) {
-          return out(data, commits, view)
+          return out(data, [], view)
         }
 
-        if (!MutableHashSet.has(data.tools, part.id)) {
-          MutableHashSet.add(data.tools, part.id)
-          commits.push(startTool(part))
-        }
-
-        return out(data, commits, view ?? patch({ status: toolStatus(part) }))
+        const started = !MutableHashSet.has(data.tools, part.id)
+        MutableHashSet.add(data.tools, part.id)
+        return out(data, started ? [startTool(part)] : [], view ?? patch({ status: toolStatus(part) }))
       }
 
       if (part.state.status === "completed") {
@@ -969,63 +979,58 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         const mode = toolView(part.tool)
         MutableHashSet.remove(data.tools, part.id)
         if (MutableHashSet.has(data.ids, part.id)) {
-          return out(data, commits, view)
-        }
-
-        if (!seen) {
-          commits.push(startTool(part))
+          return out(data, [], view)
         }
 
         MutableHashSet.add(data.ids, part.id)
         stashEcho(data, part)
 
         const output = part.state.output
-        if (mode.output && typeof output === "string" && output.trim()) {
-          commits.push({
-            kind: "tool",
-            text: output,
-            phase: "progress",
-            source: "tool",
-            messageID: part.messageID,
-            partID: part.id,
-            tool: part.tool,
-            part,
-            toolState: "completed",
-          })
-        }
-
-        if (mode.final) {
-          commits.push(doneTool(part))
-        }
-
-        return out(data, commits, view)
+        return out(
+          data,
+          [
+            ...(seen ? [] : [startTool(part)]),
+            ...(mode.output && typeof output === "string" && output.trim()
+              ? [
+                  {
+                    kind: "tool",
+                    text: output,
+                    phase: "progress",
+                    source: "tool",
+                    messageID: part.messageID,
+                    partID: part.id,
+                    tool: part.tool,
+                    part,
+                    toolState: "completed",
+                  } satisfies SessionCommit,
+                ]
+              : []),
+            ...(mode.final ? [doneTool(part)] : []),
+          ],
+          view,
+        )
       }
 
       if (part.state.status === "error") {
         const seen = MutableHashSet.has(data.tools, part.id)
         MutableHashSet.remove(data.tools, part.id)
         if (MutableHashSet.has(data.ids, part.id)) {
-          return out(data, commits, view)
-        }
-
-        if (!seen) {
-          commits.push(startTool(part))
+          return out(data, [], view)
         }
 
         MutableHashSet.add(data.ids, part.id)
         const text =
           typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
-        commits.push(failTool(part, text))
-        return out(data, commits, view)
+        return out(data, [...(seen ? [] : [startTool(part)]), failTool(part, text)], view)
       }
     }
 
     if (part.type !== "text" && part.type !== "reasoning") {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (MutableHashSet.has(data.ids, part.id)) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     const kind = part.type === "text" ? "assistant" : "reasoning"
@@ -1038,7 +1043,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     if (role === "user" && part.type === "text" && !data.includeUserText) {
       MutableHashSet.add(data.ids, part.id)
       drop(data, part.id)
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (kind === "reasoning" && !input.thinking) {
@@ -1046,7 +1051,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         MutableHashSet.add(data.ids, part.id)
       }
       drop(data, part.id)
-      return out(data, commits)
+      return out(data, [])
     }
 
     MutableHashMap.set(data.part, part.id, role === "user" && kind === "assistant" ? "user" : kind)
@@ -1057,79 +1062,84 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     if (msg && !role) {
-      return out(data, commits)
+      return out(data, [])
     }
 
     if (!ready(data, part.id)) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    flushPart(data, commits, part.id)
+    const flushed = flushPart(data, part.id)
 
     if (!part.time?.end) {
-      return out(data, commits)
+      return out(data, flushed)
     }
 
     MutableHashSet.add(data.ids, part.id)
     drop(data, part.id)
-    return out(data, commits)
+    return out(data, flushed)
   }
 
   if (event.type === "permission.asked") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    upsert(data.permissions, enrichPermission(data, event.properties))
-    return queueOut(data, commits)
+    data.permissions = upsert(data.permissions, enrichPermission(data, event.properties))
+    return queueOut(data, [])
   }
 
   if (event.type === "permission.replied") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    if (!remove(data.permissions, event.properties.requestID)) {
-      return out(data, commits)
+    const permissions = remove(data.permissions, event.properties.requestID)
+    if (Option.isNone(permissions)) {
+      return out(data, [])
     }
 
-    return queueOut(data, commits)
+    data.permissions = permissions.value
+    return queueOut(data, [])
   }
 
   if (event.type === "question.asked") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    upsert(data.questions, event.properties)
-    return queueOut(data, commits)
+    data.questions = upsert(data.questions, event.properties)
+    return queueOut(data, [])
   }
 
   if (event.type === "question.replied" || event.type === "question.rejected") {
     if (event.properties.sessionID !== input.sessionID) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    if (!remove(data.questions, event.properties.requestID)) {
-      return out(data, commits)
+    const questions = remove(data.questions, event.properties.requestID)
+    if (Option.isNone(questions)) {
+      return out(data, [])
     }
 
-    return queueOut(data, commits)
+    data.questions = questions.value
+    return queueOut(data, [])
   }
 
   if (event.type === "session.error") {
     if (event.properties.sessionID !== input.sessionID || !event.properties.error) {
-      return out(data, commits)
+      return out(data, [])
     }
 
-    commits.push({
-      kind: "error",
-      text: formatError(event.properties.error),
-      phase: "start",
-      source: "system",
-    })
-    return out(data, commits)
+    return out(data, [
+      {
+        kind: "error",
+        text: formatError(event.properties.error),
+        phase: "start",
+        source: "system",
+      },
+    ])
   }
 
-  return out(data, commits)
+  return out(data, [])
 }

@@ -887,9 +887,7 @@ function createLayer(input: StreamInput) {
         })
 
         const flush = (type: "turn.abort" | "turn.cancel") => {
-          const commits: StreamCommit[] = []
-          flushInterrupted(state.data, commits)
-          syncFooter(commits)
+          syncFooter(flushInterrupted(state.data))
           input.trace?.write(type, {
             sessionID: input.sessionID,
           })

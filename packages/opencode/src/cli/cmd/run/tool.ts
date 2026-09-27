@@ -740,10 +740,7 @@ function scrollPatchFinal(p: ToolProps<typeof ApplyPatchTool>): string {
 
   const show_updates = !files.some((file) => file?.type && file.type !== "update")
   const shown = files.filter((file) => show_updates || file.type !== "update")
-  const rows = shown.slice(0, 6).map(patchLine)
-  if (shown.length > 6) {
-    rows.push(`... and ${shown.length - 6} more`)
-  }
+  const rows = [...shown.slice(0, 6).map(patchLine), ...(shown.length > 6 ? [`... and ${shown.length - 6} more`] : [])]
 
   if (rows.length > 0) {
     return rows.join("\n")
@@ -840,19 +837,12 @@ function scrollQuestionFinal(p: ToolProps<typeof QuestionTool>): string {
     return `0 questions · ${time}`
   }
 
-  const rows: string[] = []
-  for (const [i, item] of q.slice(0, 4).entries()) {
-    const prompt = item.question
+  const rows = q.slice(0, 4).flatMap((item, i) => {
     const reply = a[i] ?? []
-    rows.push(`? ${prompt || `Question ${i + 1}`}`)
-    rows.push(`  ${reply.length > 0 ? reply.join(", ") : "(no answer)"}`)
-  }
+    return [`? ${item.question || `Question ${i + 1}`}`, `  ${reply.length > 0 ? reply.join(", ") : "(no answer)"}`]
+  })
 
-  if (q.length > 4) {
-    rows.push(`... and ${q.length - 4} more`)
-  }
-
-  return rows.join("\n")
+  return [...rows, ...(q.length > 4 ? [`... and ${q.length - 4} more`] : [])].join("\n")
 }
 
 function scrollLspStart(p: ToolProps<typeof LspTool>): string {

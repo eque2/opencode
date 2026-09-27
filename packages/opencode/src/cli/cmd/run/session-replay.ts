@@ -43,19 +43,14 @@ function apply(data: SessionData, event: Event, sessionID: string, thinking: boo
   })
 }
 
-function mergePatch(left: FooterPatch | undefined, right: FooterPatch | undefined) {
-  if (!left) {
-    return right
+// Later patches override earlier ones; a lone patch passes through unchanged.
+function mergePatches(patches: ReadonlyArray<FooterPatch | undefined>): FooterPatch | undefined {
+  const defined = patches.filter((item): item is FooterPatch => !!item)
+  if (defined.length === 0) {
+    return undefined
   }
 
-  if (!right) {
-    return left
-  }
-
-  return {
-    ...left,
-    ...right,
-  }
+  return defined.reduce((left, right) => ({ ...left, ...right }))
 }
 
 function active(data: SessionData) {
@@ -178,9 +173,6 @@ function replayMessage(
     }
   }
 
-  const commits: StreamCommit[] = []
-  let patch: FooterPatch | undefined
-
   const info = apply(
     data,
     {
@@ -195,11 +187,9 @@ function replayMessage(
     thinking,
     config.limits,
   )
-  commits.push(...info.commits)
-  patch = mergePatch(patch, info.footer?.patch)
-
-  for (const part of message.parts) {
-    const next = apply(
+  // apply() mutates `data`, so the parts reduce in message order.
+  const parts = message.parts.map((part) =>
+    apply(
       data,
       {
         id: `bootstrap:part:${part.id}`,
@@ -213,28 +203,22 @@ function replayMessage(
       message.info.sessionID,
       thinking,
       config.limits,
-    )
-    patch = mergePatch(patch, next.footer?.patch)
-    commits.push(...next.commits)
-  }
+    ),
+  )
+  const outputs = [info, ...parts]
 
   const summary = HashSet.has(config.summaries, message.info.id)
-    ? messageTurnSummaryCommit(message, config.providers)
-    : undefined
-  if (summary) {
-    commits.push(summary)
-  }
+    ? Option.fromNullishOr(messageTurnSummaryCommit(message, config.providers))
+    : Option.none()
 
   return {
-    commits,
-    patch,
+    commits: [...outputs.flatMap((item) => item.commits), ...Option.toArray(summary)],
+    patch: mergePatches(outputs.map((item) => item.footer?.patch)),
   }
 }
 
 export function replaySession(input: ReplayInput): SessionReplay {
   const data = createSessionData()
-  const commits: StreamCommit[] = []
-  let patch: FooterPatch | undefined
   const summaries = summaryMessageIDs(input.messages)
 
   bootstrapSessionData({
@@ -244,20 +228,19 @@ export function replaySession(input: ReplayInput): SessionReplay {
     questions: input.questions,
   })
 
-  for (const message of input.messages) {
-    const next = replayMessage(data, message, input.thinking, {
+  // replayMessage() mutates `data`, so the messages replay in order.
+  const replayed = input.messages.map((message) =>
+    replayMessage(data, message, input.thinking, {
       limits: input.limits,
       providers: input.providers,
       summaries,
-    })
-    commits.push(...next.commits)
-    patch = mergePatch(patch, next.patch)
-  }
+    }),
+  )
 
   return {
     data,
-    commits,
-    patch: replayPatch(data, patch),
+    commits: replayed.flatMap((item) => item.commits),
+    patch: replayPatch(data, mergePatches(replayed.map((item) => item.patch))),
   }
 }
 
