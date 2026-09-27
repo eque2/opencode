@@ -1,4 +1,4 @@
-import type { ModelMessage, ToolResultPart } from "ai"
+import type { ImagePart, ModelMessage, ToolResultPart } from "ai"
 import { mergeDeep, unique } from "remeda"
 import type { JSONSchema7 } from "@ai-sdk/provider"
 import type * as Provider from "./provider"
@@ -414,6 +414,14 @@ function applyCaching(msgs: ModelMessage[], model: Provider.Model): ModelMessage
   return msgs
 }
 
+// Only a string or URL image can carry a data URL or a media type prefix.
+// Binary image content has no text form to inspect, so it maps to "".
+function imageText(image: ImagePart["image"]) {
+  if (typeof image === "string") return image
+  if (image instanceof URL) return image.href
+  return ""
+}
+
 function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMessage[] {
   return msgs.map((msg) => {
     if (msg.role !== "user" || !Array.isArray(msg.content)) return msg
@@ -423,7 +431,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
 
       // Check for empty base64 image data
       if (part.type === "image") {
-        const imageStr = String(part.image)
+        const imageStr = imageText(part.image)
         if (imageStr.startsWith("data:")) {
           const match = imageStr.match(/^data:([^;]+);base64,(.*)$/)
           if (match && (!match[2] || match[2].length === 0)) {
@@ -435,7 +443,7 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
         }
       }
 
-      const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
+      const mime = part.type === "image" ? imageText(part.image).split(";")[0].replace("data:", "") : part.mediaType
       const modality = mimeToModality(mime)
       if (!modality) return part
       if (model.capabilities.input[modality]) return part
