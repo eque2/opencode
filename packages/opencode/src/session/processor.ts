@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Deferred, Effect, Exit, Layer, Context, Option, Scope, Schema } from "effect"
+import { Cause, Clock, Deferred, Effect, Exit, Layer, Context, Option, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -179,7 +179,7 @@ const layer = Layer.effect(
             output: output.output,
             metadata: output.metadata,
             title: output.title,
-            time: { start: match.part.state.time.start, end: Date.now() },
+            time: { start: match.part.state.time.start, end: yield* Clock.currentTimeMillis },
             attachments: output.attachments,
           },
         })
@@ -197,7 +197,7 @@ const layer = Layer.effect(
             error: errorMessage(error),
             // Keep metadata streamed while running so failures retain progress detail (e.g. execute's child calls).
             metadata: match.part.state.metadata,
-            time: { start: match.part.state.time.start, end: Date.now() },
+            time: { start: match.part.state.time.start, end: yield* Clock.currentTimeMillis },
           },
         })
         if (error instanceof PermissionV1.RejectedError || error instanceof Question.RejectedError) {
@@ -211,7 +211,10 @@ const layer = Layer.effect(
         if (!(reasoningID in ctx.reasoningMap)) return
         // oxlint-disable-next-line no-self-assign -- reactivity trigger
         ctx.reasoningMap[reasoningID].text = ctx.reasoningMap[reasoningID].text
-        ctx.reasoningMap[reasoningID].time = { ...ctx.reasoningMap[reasoningID].time, end: Date.now() }
+        ctx.reasoningMap[reasoningID].time = {
+          ...ctx.reasoningMap[reasoningID].time,
+          end: yield* Clock.currentTimeMillis,
+        }
         yield* session.updatePart(ctx.reasoningMap[reasoningID])
         delete ctx.reasoningMap[reasoningID]
       })
@@ -288,7 +291,7 @@ const layer = Layer.effect(
               sessionID: ctx.assistantMessage.sessionID,
               type: "reasoning",
               text: "",
-              time: { start: Date.now() },
+              time: { start: yield* Clock.currentTimeMillis },
               metadata: value.providerMetadata,
             }
             yield* session.updatePart(ctx.reasoningMap[value.id])
@@ -337,6 +340,7 @@ const layer = Layer.effect(
             }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
+            const now = yield* Clock.currentTimeMillis
             yield* updateToolCall(value.id, (match) => ({
               ...match,
               tool: value.name,
@@ -346,7 +350,7 @@ const layer = Layer.effect(
                   : {
                       status: "running",
                       input,
-                      time: { start: Date.now() },
+                      time: { start: now },
                     },
               metadata: match.metadata?.providerExecuted
                 ? { ...value.providerMetadata, providerExecuted: true }
@@ -506,7 +510,7 @@ const layer = Layer.effect(
               sessionID: ctx.assistantMessage.sessionID,
               type: "text",
               text: "",
-              time: { start: Date.now() },
+              time: { start: yield* Clock.currentTimeMillis },
               metadata: value.providerMetadata,
             }
             ctx.currentText = Option.some(currentText)
@@ -544,7 +548,7 @@ const layer = Layer.effect(
               { text: currentText.text },
             )).text
             {
-              const end = Date.now()
+              const end = yield* Clock.currentTimeMillis
               currentText.time = { start: currentText.time?.start ?? end, end }
             }
             if (value.providerMetadata) currentText.metadata = value.providerMetadata
@@ -576,14 +580,14 @@ const layer = Layer.effect(
 
         if (Option.isSome(ctx.currentText)) {
           const currentText = ctx.currentText.value
-          const end = Date.now()
+          const end = yield* Clock.currentTimeMillis
           currentText.time = { start: currentText.time?.start ?? end, end }
           yield* session.updatePart(currentText)
           ctx.currentText = Option.none()
         }
 
         for (const part of Object.values(ctx.reasoningMap)) {
-          const end = Date.now()
+          const end = yield* Clock.currentTimeMillis
           yield* session.updatePart({
             ...part,
             time: { start: part.time.start ?? end, end },
@@ -601,7 +605,7 @@ const layer = Layer.effect(
           const match = yield* readToolCall(toolCallID)
           if (!match) continue
           const part = match.part
-          const end = Date.now()
+          const end = yield* Clock.currentTimeMillis
           const metadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {}
           yield* session.updatePart({
             ...part,
@@ -615,7 +619,7 @@ const layer = Layer.effect(
           })
         }
         ctx.toolcalls = {}
-        ctx.assistantMessage.time.completed = Date.now()
+        ctx.assistantMessage.time.completed = yield* Clock.currentTimeMillis
         yield* session.updateMessage(ctx.assistantMessage)
       })
 
