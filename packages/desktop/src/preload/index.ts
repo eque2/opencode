@@ -38,6 +38,7 @@ const api: ElectronAPI = {
     startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
   },
   updater: {
+    // eslint-disable-next-line effect/no-async-await-use-effect -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; ElectronAPI.updater.subscribe returns a Promise
     subscribe: async (cb) => {
       updaterCallbacks.add(cb)
       if (updaterState) cb(updaterState)
@@ -45,6 +46,7 @@ const api: ElectronAPI = {
         ipcRenderer.on("updater-state", updaterHandler)
         updaterSubscription = ipcRenderer.invoke("updater-subscribe")
       }
+      // eslint-disable-next-line effect/no-async-await-use-effect -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; the subscribe Promise waits for the updater-subscribe IPC reply
       await updaterSubscription
       return () => {
         updaterCallbacks.delete(cb)
