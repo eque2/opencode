@@ -433,12 +433,11 @@ function unsupportedParts(msgs: ModelMessage[], model: Provider.Model): ModelMes
       }
 
       const mime = part.type === "image" ? String(part.image).split(";")[0].replace("data:", "") : part.mediaType
-      const filename = part.type === "file" ? part.filename : undefined
       const modality = mimeToModality(mime)
       if (!modality) return part
       if (model.capabilities.input[modality]) return part
 
-      const name = filename ? `"${filename}"` : modality
+      const name = part.type === "file" && part.filename ? `"${part.filename}"` : modality
       return {
         type: "text" as const,
         text: `ERROR: Cannot read ${name} (this model does not support ${modality} input). Inform the user.`,
@@ -533,8 +532,10 @@ export function temperature(model: Provider.Model) {
   const id = model.api.id.toLowerCase()
   if (id.includes("north-mini-code")) return 1.0
   if (id.includes("claude")) return undefined
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 1.0 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 1.0
+    return undefined
+  }
   if (id.includes("glm-4.6")) return 1.0
   if (id.includes("glm-4.7")) return 1.0
   if (id.includes("minimax-m2")) return 1.0
@@ -550,8 +551,10 @@ export function temperature(model: Provider.Model) {
 
 export function topP(model: Provider.Model) {
   const id = model.api.id.toLowerCase()
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 0.95 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 0.95
+    return undefined
+  }
   if (["minimax-m2", "kimi-k2.5", "kimi-k2p5", "kimi-k2-5"].some((s) => id.includes(s))) {
     return 0.95
   }
@@ -570,8 +573,10 @@ export function topK(model: Provider.Model) {
     if (["m2.", "m25", "m21"].some((s) => id.includes(s))) return 40
     return 20
   }
-  if (id.includes("gemini"))
-    return GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id)) ? 64 : undefined
+  if (id.includes("gemini")) {
+    if (GEMINI_MODELS_WITH_SAMPLING_DEFAULTS.some((model) => model.test(id))) return 64
+    return undefined
+  }
   return undefined
 }
 
@@ -602,7 +607,10 @@ const GPT5_PRO_RE = /(?:^|\/)gpt-5[.-]?pro(?:[.-]|$)/
 const GPT5_VERSIONED_PRO_RE = /(?:^|\/)gpt-5[.-]\d+[.-]pro(?:[.-]|$)/
 
 function gpt5Version(apiId: string) {
-  return Number(GPT5_VERSION_RE.exec(apiId)?.[1]) || undefined
+  const version = Number(GPT5_VERSION_RE.exec(apiId)?.[1])
+  // NaN (no match) and 0 both mean "no version".
+  if (!version) return undefined
+  return version
 }
 
 function versionedGpt5ReasoningEfforts(apiId: string) {
@@ -710,9 +718,15 @@ function anthropicBindsThinking(apiId: string) {
 // The patched AI SDK adds the thinking-binding-controls beta whenever it is set.
 const ANTHROPIC_BLOCK_BINDING = { prefixMismatchBehavior: "drop_block" }
 
+function blockBindingKey(sdk: string | undefined) {
+  if (sdk === "bedrock") return "reasoningConfig"
+  if (sdk === "anthropic") return "thinking"
+  return undefined
+}
+
 function anthropicBlockBinding(model: Provider.Model, options: { [x: string]: any }) {
   const sdk = sdkKey(model.api.npm)
-  const key = sdk === "bedrock" ? "reasoningConfig" : sdk === "anthropic" ? "thinking" : undefined
+  const key = blockBindingKey(sdk)
   // Consume the OpenCode-only opt-out even on models outside the default scope.
   if (key && options[key]?.blockBinding === false) {
     const result = { ...options, [key]: { ...options[key] } }
@@ -1428,8 +1442,8 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     // We keep `gateway` as-is and route every other top-level option under the
     // model-derived upstream slug.
     const i = model.api.id.indexOf("/")
-    const rawSlug = i > 0 ? model.api.id.slice(0, i) : undefined
-    const slug = rawSlug ? (SLUG_OVERRIDES[rawSlug] ?? rawSlug) : undefined
+    const slug =
+      i > 0 ? Option.some(model.api.id.slice(0, i)).pipe(Option.map((raw) => SLUG_OVERRIDES[raw] ?? raw)) : Option.none()
     const gateway = normalized.gateway
     const rest = Object.fromEntries(Object.entries(normalized).filter(([k]) => k !== "gateway"))
     const has = Object.keys(rest).length > 0
@@ -1438,9 +1452,9 @@ export function providerOptions(model: Provider.Model, options: { [x: string]: a
     if (gateway !== undefined) result.gateway = gateway
 
     if (has) {
-      if (slug) {
+      if (Option.isSome(slug)) {
         // Route model-specific options under the provider slug
-        result[slug] = rest
+        result[slug.value] = rest
       } else if (gateway && typeof gateway === "object" && !Array.isArray(gateway)) {
         result.gateway = { ...gateway, ...rest }
       } else {
@@ -1714,7 +1728,10 @@ export function reasoningVariants(model: ModelsDev.Model, target: Provider.Model
 
   const toggle = options.some((option) => option.type === "toggle")
   const budget = options.find((option) => option.type === "budget_tokens")
-  if (!budget) return toggle ? nonEmptyVariants(reasoningToggle(target)) : undefined
+  if (!budget) {
+    if (toggle) return nonEmptyVariants(reasoningToggle(target))
+    return undefined
+  }
 
   return nonEmptyVariants({
     ...(toggle ? reasoningToggle(target) : {}),
@@ -1752,7 +1769,8 @@ function budgetVariants(model: Provider.Model, min?: number, max?: number) {
 }
 
 function nonEmptyVariants(variants: NonNullable<Provider.Model["variants"]>): Provider.Model["variants"] {
-  return Object.keys(variants).length > 0 ? variants : undefined
+  if (Object.keys(variants).length > 0) return variants
+  return undefined
 }
 
 function reasoningToggle(model: Provider.Model): NonNullable<Provider.Model["variants"]> {
