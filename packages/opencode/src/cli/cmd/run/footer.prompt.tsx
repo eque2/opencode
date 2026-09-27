@@ -12,7 +12,7 @@ import { normalizePromptContent } from "@opencode-ai/tui/editor"
 import fuzzysort from "fuzzysort"
 import path from "path"
 import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
-import { Effect } from "effect"
+import { Array as Arr, Effect, HashSet, MutableHashMap, Option } from "effect"
 import * as Locale from "@/util/locale"
 import {
   createPromptHistory,
@@ -307,7 +307,8 @@ export function createPromptState(input: PromptInput): PromptState {
   let prev = input.view()
   let type = 0
   let parts: Mention[] = []
-  let marks = new Map<number, number>()
+  // Extmark ID to the index of its part in `parts`.
+  let marks = MutableHashMap.empty<number, number>()
 
   const [mode, setMode] = createSignal<MenuMode>(false)
   const [at, setAt] = createSignal(0)
@@ -432,11 +433,8 @@ export function createPromptState(input: PromptInput): PromptState {
       { kind: "slash", name: "new", display: "/new", description: "start a new session" } satisfies SlashOption,
       { kind: "slash", name: "exit", display: "/exit", description: "close OpenCode" } satisfies SlashOption,
     ]
-    const hidden = new Set(builtins.map((item) => item.name))
     const showSkillMenu = !shell() && skillCommands().length > 0 && !hasSkillsCommand()
-    if (showSkillMenu) {
-      hidden.add("skills")
-    }
+    const hidden = HashSet.fromIterable([...builtins.map((item) => item.name), ...(showSkillMenu ? ["skills"] : [])])
 
     return [
       ...(showSkillMenu
@@ -451,7 +449,7 @@ export function createPromptState(input: PromptInput): PromptState {
           ]
         : []),
       ...(input.commands() ?? [])
-        .filter((item) => item.source !== "skill" && !hidden.has(item.name))
+        .filter((item) => item.source !== "skill" && !HashSet.has(hidden, item.name))
         .map(
           (item) =>
             ({
@@ -522,14 +520,14 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     const next: Mention[] = []
-    const map = new Map<number, number>()
+    const map = MutableHashMap.empty<number, number>()
     for (const item of area.extmarks.getAllForTypeId(type)) {
-      const idx = marks.get(item.id)
-      if (idx === undefined) {
+      const idx = MutableHashMap.get(marks, item.id)
+      if (Option.isNone(idx)) {
         continue
       }
 
-      const part = parts[idx]
+      const part = parts[idx.value]
       if (!part) {
         continue
       }
@@ -557,11 +555,11 @@ export function createPromptState(input: PromptInput): PromptState {
         copy.source.text.value = text
       }
 
-      map.set(item.id, next.length)
+      MutableHashMap.set(map, item.id, next.length)
       next.push(copy)
     }
 
-    const stale = map.size !== marks.size
+    const stale = MutableHashMap.size(map) !== MutableHashMap.size(marks)
     parts = next
     marks = map
     if (stale) {
@@ -574,7 +572,7 @@ export function createPromptState(input: PromptInput): PromptState {
       area.extmarks.clear()
     }
     parts = []
-    marks = new Map()
+    marks = MutableHashMap.empty()
   }
 
   const restoreParts = (value: RunPromptPart[]) => {
@@ -600,7 +598,7 @@ export function createPromptState(input: PromptInput): PromptState {
         virtual: true,
         typeId: type,
       })
-      marks.set(id, idx)
+      MutableHashMap.set(marks, id, idx)
     })
   }
 
@@ -948,15 +946,15 @@ export function createPromptState(input: PromptInput): PromptState {
     if (part.type === "file") {
       const prev = parts.findIndex((item) => item.type === "file" && item.url === part.url)
       if (prev !== -1) {
-        const mark = [...marks.entries()].find((item) => item[1] === prev)?.[0]
-        if (mark !== undefined) {
-          area.extmarks.delete(mark)
+        const mark = Arr.findFirst(Arr.fromIterable(marks), ([, idx]) => idx === prev).pipe(Option.map(([id]) => id))
+        if (Option.isSome(mark)) {
+          area.extmarks.delete(mark.value)
         }
         parts = parts.filter((_, idx) => idx !== prev)
-        marks = new Map(
-          [...marks.entries()]
-            .filter((item) => item[0] !== mark)
-            .map((item) => [item[0], item[1] > prev ? item[1] - 1 : item[1]]),
+        marks = MutableHashMap.fromIterable(
+          Arr.fromIterable(marks)
+            .filter(([id]) => !Option.contains(mark, id))
+            .map(([id, idx]): [number, number] => [id, idx > prev ? idx - 1 : idx]),
         )
       }
     }
@@ -967,7 +965,7 @@ export function createPromptState(input: PromptInput): PromptState {
       virtual: true,
       typeId: type,
     })
-    marks.set(id, parts.length)
+    MutableHashMap.set(marks, id, parts.length)
     parts.push(part)
     hide()
     syncDraft()

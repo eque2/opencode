@@ -29,7 +29,7 @@ import type { Keymap } from "@opentui/keymap"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { Duration, Effect, Fiber, Option } from "effect"
+import { Array as Arr, Duration, Effect, Fiber, MutableHashSet, Option } from "effect"
 import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
@@ -178,9 +178,9 @@ function eventPatch(next: FooterEvent): FooterPatch | undefined {
 export class RunFooter implements FooterApi {
   private closed = false
   private destroyed = false
-  private prompts = new Set<(input: RunPrompt) => void>()
-  private queuedRemoves = new Set<(messageID: string) => boolean | Promise<boolean>>()
-  private closes = new Set<() => void>()
+  private prompts = MutableHashSet.empty<(input: RunPrompt) => void>()
+  private queuedRemoves = MutableHashSet.empty<(messageID: string) => boolean | Promise<boolean>>()
+  private closes = MutableHashSet.empty<() => void>()
   // Microtask-coalesced commit queue. Flushed on next microtask or on close/destroy.
   private queue: StreamCommit[] = []
   private pending = false
@@ -387,16 +387,16 @@ export class RunFooter implements FooterApi {
   }
 
   public onPrompt(fn: (input: RunPrompt) => void): () => void {
-    this.prompts.add(fn)
+    MutableHashSet.add(this.prompts, fn)
     return () => {
-      this.prompts.delete(fn)
+      MutableHashSet.remove(this.prompts, fn)
     }
   }
 
   public onQueuedRemove(fn: (messageID: string) => boolean | Promise<boolean>): () => void {
-    this.queuedRemoves.add(fn)
+    MutableHashSet.add(this.queuedRemoves, fn)
     return () => {
-      this.queuedRemoves.delete(fn)
+      MutableHashSet.remove(this.queuedRemoves, fn)
     }
   }
 
@@ -406,9 +406,9 @@ export class RunFooter implements FooterApi {
       return () => {}
     }
 
-    this.closes.add(fn)
+    MutableHashSet.add(this.closes, fn)
     return () => {
-      this.closes.delete(fn)
+      MutableHashSet.remove(this.closes, fn)
     }
   }
 
@@ -686,7 +686,8 @@ export class RunFooter implements FooterApi {
     }
 
     this.closed = true
-    for (const fn of [...this.closes]) {
+    // Iterate a snapshot: a listener may unsubscribe while the loop runs.
+    for (const fn of Arr.fromIterable(this.closes)) {
       fn()
     }
   }
@@ -727,8 +728,10 @@ export class RunFooter implements FooterApi {
   }
 
   private handleQueuedRemove = (messageID: string): Effect.Effect<boolean, FooterCallbackError> => {
-    const fn = [...this.queuedRemoves][0]
-    return fn ? fromCallback("queued.remove", () => fn(messageID)) : Effect.succeed(false)
+    return Option.match(Arr.head(Arr.fromIterable(this.queuedRemoves)), {
+      onNone: () => Effect.succeed(false),
+      onSome: (fn) => fromCallback("queued.remove", () => fn(messageID)),
+    })
   }
 
   private handleInputClear = (): void => {
@@ -805,12 +808,12 @@ export class RunFooter implements FooterApi {
       this.patch({ first: false })
     }
 
-    if (this.prompts.size === 0) {
+    if (MutableHashSet.size(this.prompts) === 0) {
       this.setNotice("input queue unavailable")
       return false
     }
 
-    for (const fn of [...this.prompts]) {
+    for (const fn of Arr.fromIterable(this.prompts)) {
       fn(input)
     }
 
@@ -1139,11 +1142,12 @@ export class RunFooter implements FooterApi {
     this.renderer.removeInputHandler(this.handleThemeNotification)
     process.off("SIGUSR2", this.handleThemeSignal)
     this.themeRefreshTimer.interrupt()
-    this.prompts.clear()
-    this.queuedRemoves.clear()
-    this.closes.clear()
+    MutableHashSet.clear(this.prompts)
+    MutableHashSet.clear(this.queuedRemoves)
+    MutableHashSet.clear(this.closes)
     this.scrollback.destroy()
-    for (const theme of [...this.themes]) this.destroyTheme(theme)
+    // destroyTheme removes each theme from the list, so it walks a copy.
+    for (const theme of Arr.copy(this.themes)) this.destroyTheme(theme)
   }
 
   // Drains the commit queue to scrollback. The surface manager owns grouping,
