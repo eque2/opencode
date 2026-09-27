@@ -18,7 +18,7 @@ import { iife } from "@/util/iife"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Effect, Layer, Context, Schema, Types } from "effect"
+import { Config as EffectConfig, ConfigProvider, Effect, Layer, Context, Option, Schema, Types } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectPromise } from "@/effect/promise"
@@ -103,6 +103,13 @@ function googleVertexEndpoint(location: string) {
   if (location === "eu" || location === "us") return `aiplatform.${location}.rep.googleapis.com`
   return `${location}-aiplatform.googleapis.com`
 }
+
+// Reads a variable from the live process environment on each run. The AWS and SAP SDKs read
+// process.env themselves, so their loaders read and seed it there rather than the Env service copy.
+const processEnv = (key: string) =>
+  Effect.suspend(() =>
+    EffectConfig.option(EffectConfig.String(key)).parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  ).pipe(Effect.orDie)
 
 type BundledSDK = {
   languageModel(modelId: string): LanguageModelV3
@@ -318,10 +325,11 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       // TODO: Using process.env directly because Env.set only updates a process.env shallow copy,
       // until the scope of the Env API is clarified (test only or runtime?)
+      const envToken = yield* processEnv("AWS_BEARER_TOKEN_BEDROCK")
       const awsBearerToken = iife(() => {
-        const envToken = process.env.AWS_BEARER_TOKEN_BEDROCK
-        if (envToken) return envToken
+        if (Option.isSome(envToken) && envToken.value) return envToken.value
         if (auth?.type === "api") {
+          // eslint-disable-next-line effect/no-process-env-use-config -- (a) external boundary: the Bedrock SDK reads AWS_BEARER_TOKEN_BEDROCK from process.env itself, so the stored key must be seeded there
           process.env.AWS_BEARER_TOKEN_BEDROCK = auth.key
           return auth.key
         }
@@ -330,9 +338,10 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       const awsWebIdentityTokenFile = env["AWS_WEB_IDENTITY_TOKEN_FILE"]
 
-      const containerCreds = Boolean(
-        process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI || process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI,
-      )
+      const containerCreds = [
+        yield* processEnv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"),
+        yield* processEnv("AWS_CONTAINER_CREDENTIALS_FULL_URI"),
+      ].some((value) => Option.isSome(value) && value.value !== "")
 
       if (
         !profile &&
@@ -581,17 +590,19 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const auth = yield* dep.auth("sap-ai-core")
       // TODO: Using process.env directly because Env.set only updates a shallow copy (not process.env),
       // until the scope of the Env API is clarified (test only or runtime?)
+      const envAICoreServiceKey = yield* processEnv("AICORE_SERVICE_KEY")
       const envServiceKey = iife(() => {
-        const envAICoreServiceKey = process.env.AICORE_SERVICE_KEY
-        if (envAICoreServiceKey) return envAICoreServiceKey
+        if (Option.isSome(envAICoreServiceKey) && envAICoreServiceKey.value) return envAICoreServiceKey.value
         if (auth?.type === "api") {
+          // eslint-disable-next-line effect/no-process-env-use-config -- (a) external boundary: the SAP AI Core SDK reads AICORE_SERVICE_KEY from process.env itself, so the stored key must be seeded there
           process.env.AICORE_SERVICE_KEY = auth.key
           return auth.key
         }
         return undefined
       })
-      const deploymentId = process.env.AICORE_DEPLOYMENT_ID
-      const resourceGroup = process.env.AICORE_RESOURCE_GROUP
+      // The SAP provider factory takes plain optional strings, so absence becomes undefined here.
+      const deploymentId = Option.getOrUndefined(yield* processEnv("AICORE_DEPLOYMENT_ID"))
+      const resourceGroup = Option.getOrUndefined(yield* processEnv("AICORE_RESOURCE_GROUP"))
 
       return {
         autoload: !!envServiceKey,
