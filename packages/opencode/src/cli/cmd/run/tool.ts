@@ -334,11 +334,11 @@ function runList(p: ToolProps): ToolInline {
 
 function runRead(p: ToolProps<typeof ReadTool>): ToolInline {
   const file = toolPath(p.input.filePath)
-  const description = info(p.frame.input, ["filePath"]) || undefined
+  const description = info(p.frame.input, ["filePath"])
   return {
     icon: "→",
     title: `Read ${file}`,
-    ...(description && { description }),
+    ...(description ? { description } : {}),
   }
 }
 
@@ -347,7 +347,7 @@ function runWrite(p: ToolProps<typeof WriteTool>): ToolInline {
     icon: "←",
     title: `Write ${toolPath(p.input.filePath)}`,
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -383,7 +383,7 @@ function runTask(p: ToolProps<typeof TaskTool>): ToolInline {
   return {
     icon,
     title: desc || `${kind} Task`,
-    description: desc ? `${kind} Agent` : undefined,
+    ...(desc ? { description: `${kind} Agent` } : {}),
   }
 }
 
@@ -441,7 +441,7 @@ function runInvalid(p: ToolProps<typeof InvalidTool>): ToolInline {
     icon: "✗",
     title: text(p.frame.state.title) || "Invalid Tool",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -451,7 +451,7 @@ function runBatch(p: ToolProps): ToolInline {
     icon: "#",
     title: text(p.frame.state.title) || (calls > 0 ? `Batch ${calls} tool${calls === 1 ? "" : "s"}` : "Batch"),
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -466,9 +466,8 @@ function lspTitle(
 ): string {
   const op = input.operation || "request"
   const file = input.filePath ? toolPath(input.filePath, opts) : ""
-  const line = typeof input.line === "number" ? input.line : undefined
-  const char = typeof input.character === "number" ? input.character : undefined
-  const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : ""
+  const pos =
+    typeof input.line === "number" && typeof input.character === "number" ? `:${input.line}:${input.character}` : ""
   if (!file) {
     return `LSP ${op}`
   }
@@ -488,7 +487,7 @@ function runPlanExit(p: ToolProps<typeof PlanExitTool>): ToolInline {
     icon: "→",
     title: text(p.frame.state.title) || "Switching to build agent",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output) } : {}),
   }
 }
 
@@ -766,22 +765,20 @@ function scrollTaskStart(_: ToolProps<typeof TaskTool>): string {
   return ""
 }
 
-function taskResult(output: string): string | undefined {
+function taskResult(output: string): Option.Option<string> {
   if (!output.trim()) {
-    return undefined
+    return Option.none()
   }
 
   const match = output.match(/<task_result>\s*([\s\S]*?)\s*<\/task_result>/)
-  if (match) {
-    return match[1].trim() || undefined
-  }
-
-  const next = output
-    .split("\n")
-    .filter((line) => !line.startsWith("task_id:"))
-    .join("\n")
-    .trim()
-  return next || undefined
+  const next = match
+    ? match[1].trim()
+    : output
+        .split("\n")
+        .filter((line) => !line.startsWith("task_id:"))
+        .join("\n")
+        .trim()
+  return next ? Option.some(next) : Option.none()
 }
 
 function scrollTaskFinal(p: ToolProps<typeof TaskTool>): string {
@@ -1008,9 +1005,10 @@ function permWebSearch(p: ToolPermissionProps<typeof WebSearchTool>): ToolPermis
 
 function permLsp(p: ToolPermissionProps<typeof LspTool>): ToolPermissionInfo {
   const file = p.input.filePath || ""
-  const line = typeof p.input.line === "number" ? p.input.line : undefined
-  const char = typeof p.input.character === "number" ? p.input.character : undefined
-  const pos = line !== undefined && char !== undefined ? `${line}:${char}` : undefined
+  const pos =
+    typeof p.input.line === "number" && typeof p.input.character === "number"
+      ? `${p.input.line}:${p.input.character}`
+      : ""
   return {
     icon: "→",
     title: lspTitle(p.input, { home: true }),
@@ -1277,7 +1275,7 @@ function runBash(p: ToolProps<typeof BashTool>): ToolInline {
     icon: "$",
     title: p.input.command || "",
     mode: "block",
-    body: p.frame.status === "completed" ? text(p.frame.state.output).trim() : undefined,
+    ...(p.frame.status === "completed" ? { body: text(p.frame.state.output).trim() } : {}),
   }
 }
 
@@ -1425,8 +1423,8 @@ export function toolEntryBody(commit: StreamCommit, raw: string): RunEntryBody |
 
     if (commit.phase === "final" && ctx.status === "completed") {
       const result = taskResult(text(ctx.state.output))
-      if (result) {
-        return markdownBody(result)
+      if (Option.isSome(result)) {
+        return markdownBody(result.value)
       }
     }
   }
