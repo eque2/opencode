@@ -1085,9 +1085,11 @@ export const Model = Schema.Struct({
   cost: ProviderCost,
   limit: ProviderLimit,
   status: ModelStatus,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (a) external boundary: these are AI SDK provider factory options, forwarded verbatim and holding functions such as fetch, so no Schema can describe them
   options: Schema.Record(Schema.String, Schema.Any),
   headers: Schema.Record(Schema.String, Schema.String),
   release_date: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (a) external boundary: each variant is a bag of AI SDK provider options, forwarded verbatim and holding functions such as fetch, so no Schema can describe them
   variants: optional(Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.Any))),
 }).annotate({ identifier: "Model" })
 export type Model = Types.DeepMutable<Schema.Schema.Type<typeof Model>>
@@ -1098,6 +1100,7 @@ export const Info = Schema.Struct({
   source: Schema.Literals(["env", "config", "custom", "api"]),
   env: Schema.Array(Schema.String),
   key: optional(Schema.String),
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (a) external boundary: these are AI SDK provider factory options, forwarded verbatim and holding functions such as fetch, so no Schema can describe them
   options: Schema.Record(Schema.String, Schema.Any),
   models: Schema.Record(Schema.String, Model),
 }).annotate({ identifier: "Provider" })
