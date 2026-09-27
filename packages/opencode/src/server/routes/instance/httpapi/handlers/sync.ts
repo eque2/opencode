@@ -70,15 +70,16 @@ export const syncHandlers = HttpApiBuilder.group(InstanceHttpApi, "sync", (handl
     })
 
     const history = Effect.fn("SyncHttpApi.history")(function* (ctx: { payload: typeof HistoryPayload.Type }) {
-      const exclude = Object.entries(ctx.payload)
+      // `or()` of no conditions is undefined, so an empty payload reads the whole history.
+      const excluded = or(
+        ...Object.entries(ctx.payload).map(([id, seq]) =>
+          and(eq(EventTable.aggregate_id, id), lte(EventTable.seq, seq)),
+        ),
+      )
       return yield* db
         .select()
         .from(EventTable)
-        .where(
-          exclude.length > 0
-            ? not(or(...exclude.map(([id, seq]) => and(eq(EventTable.aggregate_id, id), lte(EventTable.seq, seq))))!)
-            : undefined,
-        )
+        .where(excluded && not(excluded))
         .orderBy(asc(EventTable.seq))
         .all()
         .pipe(Effect.orDie)

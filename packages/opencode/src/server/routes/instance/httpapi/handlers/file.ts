@@ -45,7 +45,8 @@ export const fileHandlers = HttpApiBuilder.group(InstanceHttpApi, "file", (handl
     }) {
       const directory = (yield* InstanceState.context).directory
       const limit = ctx.query.limit ?? 10
-      const type = ctx.query.type ?? (ctx.query.dirs === "false" ? "file" : undefined)
+      const filesOnly = ctx.query.dirs === "false" ? Option.some("file" as const) : Option.none<"file">()
+      const type = ctx.query.type ?? Option.getOrUndefined(filesOnly)
       const started = performance.now()
       const found = yield* filesystem(FileSystem.Service.use((fs) => fs.find({ query: ctx.query.query, limit, type })))
       yield* Effect.logInfo("find file", {

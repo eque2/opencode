@@ -39,11 +39,7 @@ import {
 import { PermissionNotFoundError } from "../errors"
 import * as SessionError from "./session-errors"
 
-const tryParseJson = (text: string) =>
-  Effect.try({
-    try: () => JSON.parse(text) as unknown,
-    catch: () => new HttpApiError.BadRequest({}),
-  })
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
 
 export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", (handlers) =>
   Effect.gen(function* () {
@@ -62,9 +58,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const scope = yield* Scope.Scope
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
-      const directory = ctx.query.directory ? yield* InstanceState.directory : undefined
+      const directory = ctx.query.directory ? Option.some(yield* InstanceState.directory) : Option.none<string>()
       return yield* session.list({
-        directory: ctx.query.scope === "project" ? undefined : directory,
+        directory: Option.getOrUndefined(Option.filter(directory, () => ctx.query.scope !== "project")),
         scope: ctx.query.scope,
         path: ctx.query.path,
         roots: ctx.query.roots,
@@ -162,14 +158,15 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const body = yield* Effect.orDie(ctx.request.text)
       if (body.trim().length === 0) return yield* create({})
 
-      const json = yield* tryParseJson(body)
-      const decoded = yield* Schema.decodeUnknownEffect(Session.CreateInput)(json).pipe(
+      const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Session.CreateInput))(body).pipe(
         Effect.mapError(() => new HttpApiError.BadRequest({})),
       )
       const payload = decoded
         ? {
             ...decoded,
-            permission: decoded.permission ? [...decoded.permission] : undefined,
+            permission: Option.getOrUndefined(
+              Option.map(Option.fromNullishOr(decoded.permission), (rules) => [...rules]),
+            ),
           }
         : decoded
       return yield* create({ payload })
@@ -222,8 +219,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       const body = yield* Effect.orDie(ctx.request.text)
       if (body.trim().length === 0) return yield* fork({ params: ctx.params })
 
-      const json = yield* tryParseJson(body)
-      const payload = yield* Schema.decodeUnknownEffect(ForkPayload)(json).pipe(
+      const payload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ForkPayload))(body).pipe(
         Effect.mapError(() => new HttpApiError.BadRequest({})),
       )
       return yield* fork({ params: ctx.params, payload })
@@ -303,7 +299,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
           sessionID: ctx.params.sessionID,
         })
         .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
-      return HttpServerResponse.stream(Stream.make(JSON.stringify(message)).pipe(Stream.encodeText), {
+      const json = yield* encodeJson(message).pipe(Effect.orDie)
+      return HttpServerResponse.stream(Stream.make(json).pipe(Stream.encodeText), {
         contentType: "application/json",
       })
     })

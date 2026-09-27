@@ -1,4 +1,5 @@
 import { SessionID } from "@/session/schema"
+import { Option } from "effect"
 
 type Rule = { method?: string; path: string; exact?: boolean; action: "local" | "forward" }
 
@@ -17,15 +18,17 @@ export function isLocalWorkspaceRoute(method: string, path: string) {
   return false
 }
 
+// The routing middleware and its tests read "no session in this path" as null.
 export function getWorkspaceRouteSessionID(url: URL) {
-  if (url.pathname === "/session/status") return null
+  return Option.getOrNull(routeSessionID(url))
+}
 
-  const id =
+function routeSessionID(url: URL) {
+  if (url.pathname === "/session/status") return Option.none<SessionID>()
+  return Option.fromNullishOr(
     url.pathname.match(/^\/session\/([^/]+)(?:\/|$)/)?.[1] ??
-    url.pathname.match(/^\/experimental\/session\/([^/]+)\/background$/)?.[1]
-  if (!id) return null
-
-  return SessionID.make(id)
+      url.pathname.match(/^\/experimental\/session\/([^/]+)\/background$/)?.[1],
+  ).pipe(Option.map((id) => SessionID.make(id)))
 }
 
 export function workspaceProxyURL(target: string | URL, requestURL: URL) {

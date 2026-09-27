@@ -4,6 +4,8 @@ import { OpenApi } from "effect/unstable/httpapi"
 import { OpenCodeHttpApi } from "./api"
 import { QueryBooleanOpenApi } from "./groups/query"
 
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))
+
 type OpenApiParameter = {
   name: string
   in: string
@@ -325,7 +327,7 @@ function applyLegacySchemaOverrides(spec: OpenApiSpec) {
   const providerOptions = schemas.ProviderConfig?.properties?.options
   if (providerOptions) providerOptions.additionalProperties = {}
   const model = schemas.ProviderConfig?.properties?.models?.additionalProperties
-  const variants = typeof model === "object" ? model.properties?.variants?.additionalProperties : undefined
+  const variants = typeof model === "object" && model.properties?.variants?.additionalProperties
   if (variants && typeof variants === "object") variants.additionalProperties = {}
   const syncInfo = schemas.SyncEventSessionUpdated?.properties?.data?.properties?.info
   if (syncInfo?.properties) makePropertiesNullable(syncInfo.properties)
@@ -362,7 +364,7 @@ function nullable(schema: OpenApiSchema): OpenApiSchema {
 }
 
 function stableSchema(input: unknown, schemas: Record<string, OpenApiSchema>): string {
-  return JSON.stringify(canonicalizeSchema(input, schemas))
+  return encodeJson(canonicalizeSchema(input, schemas))
 }
 
 function canonicalizeSchema(input: unknown, schemas: Record<string, OpenApiSchema>): unknown {

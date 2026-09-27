@@ -91,7 +91,7 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       // result (e.g. no further redirect), serialize as JSON `null` instead
       // of an empty body so clients can `.json()` parse the response.
       const result = yield* authorize({ params: ctx.params, payload })
-      return HttpServerResponse.jsonUnsafe(result ?? null)
+      return HttpServerResponse.jsonUnsafe(Option.getOrNull(Option.fromNullishOr(result)))
     })
 
     const callback = Effect.fn("ProviderHttpApi.callback")(function* (ctx: {
