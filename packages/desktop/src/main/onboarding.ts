@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { app } from "electron"
+import { Data, Effect, Option } from "effect"
 import { getStore } from "./store"
 import { FIRST_LAUNCH_ONBOARDING_COMPLETE_KEY, OLD_LAYOUT_ELIGIBLE_KEY } from "./store-keys"
 import { write as writeLog } from "./logging"
@@ -30,16 +31,35 @@ export function isFirstLaunchOnboardingPending() {
   return pending
 }
 
-export async function finishFirstLaunchOnboarding(createDefaultProject: boolean) {
+class OnboardingError extends Data.TaggedError("OnboardingError")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
+export function finishFirstLaunchOnboarding(createDefaultProject: boolean) {
+  return Effect.runPromise(finishOnboarding(createDefaultProject).pipe(Effect.map(Option.getOrNull)))
+}
+
+const finishOnboarding = Effect.fnUntraced(function* (createDefaultProject: boolean) {
   if (!isFirstLaunchOnboardingPending()) {
     writeLog("onboarding", "first launch onboarding already completed")
-    return null
+    return Option.none<string>()
   }
 
-  const defaultProject = createDefaultProject ? join(app.getPath("documents"), DEFAULT_PROJECT_DIR) : null
-  if (defaultProject) await mkdir(defaultProject, { recursive: true })
+  const defaultProject = createDefaultProject
+    ? Option.some(join(app.getPath("documents"), DEFAULT_PROJECT_DIR))
+    : Option.none<string>()
+  if (Option.isSome(defaultProject)) {
+    yield* Effect.tryPromise({
+      try: () => mkdir(defaultProject.value, { recursive: true }),
+      catch: (cause) => new OnboardingError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+    })
+  }
 
   getStore().set(FIRST_LAUNCH_ONBOARDING_COMPLETE_KEY, true)
-  writeLog("onboarding", "first launch onboarding completed", { createDefaultProject, defaultProject })
+  writeLog("onboarding", "first launch onboarding completed", {
+    createDefaultProject,
+    defaultProject: Option.getOrNull(defaultProject),
+  })
   return defaultProject
-}
+})
