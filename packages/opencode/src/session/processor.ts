@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Image } from "@/image/image"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Clock, Deferred, Effect, Exit, Layer, Context, Option, Scope, Schema } from "effect"
+import { Cause, Clock, Deferred, Effect, Equal, Exit, Layer, Context, Option, Scope, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Config } from "@/config/config"
@@ -75,6 +75,10 @@ interface ProcessorContext extends Input {
 }
 
 type StreamEvent = LLMEvent
+
+// JSON text of a tool result or tool input. A value that JSON cannot encode
+// (undefined, a function) is None, as JSON.stringify returned undefined for it.
+const encodeJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 // A snapshot hash is present only when it is a non-empty string.
 const snapshotHash = (hash: string | undefined) => Option.filter(Option.fromUndefinedOr(hash), (value) => value !== "")
@@ -277,7 +281,9 @@ const layer = Layer.effect(
           title: value.name,
           metadata: value.result.type === "json" && isRecord(value.result.value) ? value.result.value : {},
           output:
-            typeof value.result.value === "string" ? value.result.value : (JSON.stringify(value.result.value) ?? ""),
+            typeof value.result.value === "string"
+              ? value.result.value
+              : Option.getOrElse(encodeJson(value.result.value), () => ""),
         }
       }
 
@@ -361,6 +367,7 @@ const layer = Layer.effect(
               Effect.provideService(Database.Service, database),
             )
             const recentParts = parts.slice(-DOOM_LOOP_THRESHOLD)
+            const inputJson = encodeJson(input)
 
             if (
               recentParts.length !== DOOM_LOOP_THRESHOLD ||
@@ -369,7 +376,7 @@ const layer = Layer.effect(
                   part.type === "tool" &&
                   part.tool === value.name &&
                   part.state.status !== "pending" &&
-                  JSON.stringify(part.state.input) === JSON.stringify(input),
+                  Equal.equals(encodeJson(part.state.input), inputJson),
               )
             ) {
               return
@@ -452,7 +459,7 @@ const layer = Layer.effect(
                 sessionID: ctx.sessionID,
                 messageID: ctx.assistantMessage.id,
                 model: ctx.model.id,
-                transformations: JSON.stringify(dropped),
+                transformations: Option.getOrElse(encodeJson(dropped), () => String(dropped)),
               })
             }
             const usage = Session.getUsage({
