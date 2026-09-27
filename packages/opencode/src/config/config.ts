@@ -18,7 +18,7 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
-import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
+import { Array as Arr, Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
@@ -429,7 +429,7 @@ const layer = Layer.effect(
           yield* Effect.logDebug("loading config from OPENCODE_CONFIG_DIR", { path: customDirectory.value })
         }
 
-        const deps: Fiber.Fiber<void>[] = []
+        let deps: Fiber.Fiber<void>[] = []
 
         for (const dir of directories) {
           if (dir.endsWith(".opencode") || Option.contains(customDirectory, dir)) {
@@ -464,7 +464,7 @@ const layer = Layer.effect(
               Effect.asVoid,
               Effect.forkDetach,
             )
-          deps.push(dep)
+          deps = Arr.append(deps, dep)
 
           result.command = mergeDeep(result.command ?? {}, yield* ConfigCommand.load(dir))
           result.agent = mergeDeep(result.agent ?? {}, yield* ConfigAgent.load(dir))

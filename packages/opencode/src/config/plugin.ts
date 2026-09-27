@@ -62,17 +62,16 @@ export const resolvePluginSpec = Effect.fn("ConfigPlugin.resolvePluginSpec")(fun
 // full Origin so downstream code still knows which config file won and where follow-up writes should go.
 export function deduplicatePluginOrigins(plugins: Origin[]): Origin[] {
   const seen = new Set<string>()
-  const list: Origin[] = []
-
-  for (const plugin of plugins.toReversed()) {
-    const spec = pluginSpecifier(plugin.spec)
-    const name = spec.startsWith("file://") ? spec : parsePluginSpecifier(spec).pkg
-    if (seen.has(name)) continue
-    seen.add(name)
-    list.push(plugin)
-  }
-
-  return list.toReversed()
+  return plugins
+    .toReversed()
+    .filter((plugin) => {
+      const spec = pluginSpecifier(plugin.spec)
+      const name = spec.startsWith("file://") ? spec : parsePluginSpecifier(spec).pkg
+      if (seen.has(name)) return false
+      seen.add(name)
+      return true
+    })
+    .toReversed()
 }
 
 export * as ConfigPlugin from "./plugin"
