@@ -536,18 +536,24 @@ const jsonNullReason =
   "(b) JSON null: typeof null is object, so this guard over unknown wire JSON must exclude null before property access"
 const queryNullReason =
   "(b) JavaScript null in caller query values typed unknown: null is skipped like undefined, because Object.entries(null) throws"
+const promiseAssertionReason =
+  "(c) zero-Effect Promise root of @opencode-ai/client: by contract it returns parsed wire JSON as the declared output type without a runtime decoder, because import-boundaries.test.ts forbids Schema in this bundle"
 const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
 const tryCatchRule = "effect/no-try-catch-use-effect"
 const jsonParseRule = "effect/no-json-parse-use-schema"
 const jsonStringifyRule = "effect/no-json-stringify-use-schema"
 const nullRule = "effect/no-null-use-option"
+const unsafeAssertionRule = "typescript/no-unsafe-type-assertion"
 const classExtendsErrorRule = "effect/no-class-extends-error"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
   `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
 
 const runtimeDirective = (...rules: ReadonlyArray<string>) => eslintDirective(rules, promiseRuntimeReason)
+
+const oxlintDirective = (rules: ReadonlyArray<string>, reason: string) =>
+  `// oxlint-disable-next-line ${rules.join(", ")} -- ${reason}`
 
 function renderPromiseTypes(
   groups: ReadonlyArray<Group>,
@@ -775,6 +781,7 @@ export function make(options: ClientOptions) {
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
     ${runtimeDirective(asyncAwaitRule)}
     const body = await json(response)
+    ${oxlintDirective([unsafeAssertionRule], promiseAssertionReason)}
     return body as A
   }
 
@@ -844,6 +851,7 @@ export function make(options: ClientOptions) {
               try {
                 ${runtimeDirective(jsonParseRule)}
                 const value: unknown = JSON.parse(data)
+                ${oxlintDirective([unsafeAssertionRule], promiseAssertionReason)}
                 yield value as A
               } catch (cause) {
                 ${runtimeDirective(throwRule)}

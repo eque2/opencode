@@ -193,6 +193,7 @@ export function make(options: ClientOptions) {
     if (response.status !== descriptor.successStatus) return responseError(response, descriptor)
     // eslint-disable-next-line effect/no-async-await-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
     const body = await json(response)
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (c) zero-Effect Promise root of @opencode-ai/client: by contract it returns parsed wire JSON as the declared output type without a runtime decoder, because import-boundaries.test.ts forbids Schema in this bundle
     return body as A
   }
 
@@ -265,6 +266,7 @@ export function make(options: ClientOptions) {
               try {
                 // eslint-disable-next-line effect/no-json-parse-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
                 const value: unknown = JSON.parse(data)
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (c) zero-Effect Promise root of @opencode-ai/client: by contract it returns parsed wire JSON as the declared output type without a runtime decoder, because import-boundaries.test.ts forbids Schema in this bundle
                 yield value as A
               } catch (cause) {
                 // eslint-disable-next-line effect/no-throw-use-effect -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
