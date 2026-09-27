@@ -137,18 +137,25 @@ function dict(v: unknown): ToolDict {
   return { ...v }
 }
 
+// Copies untrusted tool input into a prototype-less record, so a renderer never
+// reads an inherited Object.prototype member as a tool argument.
+function bare(value: ToolDict) {
+  // eslint-disable-next-line effect/no-null-use-option -- (a) Object.create takes a null prototype argument to build a prototype-less object; no Option form exists for it
+  return Object.assign(Object.create(null), value)
+}
+
 function props<T = Tool.Info>(frame: ToolFrame): ToolProps<T> {
   return {
-    input: Object.assign(Object.create(null), frame.input),
-    metadata: Object.assign(Object.create(null), frame.meta),
+    input: bare(frame.input),
+    metadata: bare(frame.meta),
     frame,
   }
 }
 
 function permission<T = Tool.Info>(ctx: ToolPermissionCtx): ToolPermissionProps<T> {
   return {
-    input: Object.assign(Object.create(null), ctx.input),
-    metadata: Object.assign(Object.create(null), ctx.meta),
+    input: bare(ctx.input),
+    metadata: bare(ctx.meta),
     patterns: ctx.patterns,
   }
 }
