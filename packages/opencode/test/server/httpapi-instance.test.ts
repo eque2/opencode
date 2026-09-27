@@ -103,7 +103,7 @@ describe("instance HttpApi", () => {
   it.live("rejects malformed permission and question request ids", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
-      const request = (path: string, init?: RequestInit) =>
+      const request = (path: string, init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }) =>
         Effect.promise(() =>
           HttpApiApp.webHandler().handler(
             new Request(`http://localhost${path}`, {
@@ -137,7 +137,7 @@ describe("instance HttpApi", () => {
   it.live("returns typed not found bodies for missing permission and question requests", () =>
     Effect.gen(function* () {
       const dir = yield* tmpdirScoped({ git: true })
-      const request = (path: string, init?: RequestInit) =>
+      const request = (path: string, init?: Omit<RequestInit, "headers"> & { headers?: Record<string, string> }) =>
         Effect.promise(() =>
           HttpApiApp.webHandler().handler(
             new Request(`http://localhost${path}`, {

@@ -5,10 +5,10 @@ export const worktree = "/tmp/opencode"
 export const directory = `${worktree}/packages/opencode`
 
 export function json(data: unknown, init?: ResponseInit) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-  })
+  // HeadersInit may be a record, a tuple list or a Headers; the caller's content-type wins.
+  const headers = new Headers(init?.headers)
+  if (!headers.has("content-type")) headers.set("content-type", "application/json")
+  return new Response(JSON.stringify(data), { ...init, headers })
 }
 
 export function eventSource(): EventSource {
