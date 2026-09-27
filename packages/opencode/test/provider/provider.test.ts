@@ -3,7 +3,7 @@ import { mkdir, unlink } from "fs/promises"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -82,7 +82,10 @@ const paid = (providers: Record<string, { models: Record<string, { cost: { input
   return Object.values(item.models).filter((model) => model.cost.input > 0).length
 }
 
-const languageBaseURL = (language: unknown) => (language as { config: { baseURL: string } }).config.baseURL
+// AI SDK language models keep their resolved settings on `config`.
+const LanguageConfig = Schema.Struct({ config: Schema.Struct({ baseURL: Schema.String }) })
+const languageBaseURL = (language: unknown) => Schema.decodeUnknownSync(LanguageConfig)(language).config.baseURL
+const modelsDevProvider = Schema.decodeUnknownSync(ModelsDev.Provider)
 
 const it = testEffect(LayerNode.compile(LayerNode.group([Provider.node, Env.node, Plugin.node])))
 const experimentalModels = testEffect(providerLayer({ enableExperimentalModels: true }))
@@ -837,7 +840,7 @@ test("provider.sort prioritizes preferred models", () => {
     { id: "claude-sonnet-4-latest", name: "Claude Sonnet 4" },
     { id: "gpt-5-turbo", name: "GPT-5 Turbo" },
     { id: "other-model", name: "Other" },
-  ] as any[]
+  ]
 
   const sorted = Provider.sort(models)
   expect(sorted[0].id).toContain("sonnet-4")
@@ -1381,7 +1384,7 @@ it.instance(
 )
 
 test("mode options and cost are derived from the base model", () => {
-  const provider = {
+  const provider = modelsDevProvider({
     id: "openai",
     name: "OpenAI",
     env: [],
@@ -1438,7 +1441,7 @@ test("mode options and cost are derived from the base model", () => {
         },
       },
     },
-  } as unknown as ModelsDev.Provider
+  })
 
   const model = Provider.fromModelsDevProvider(provider).models["gpt-5.6-sol-fast"]
   expect(model.cost.input).toEqual(5)
@@ -1484,7 +1487,7 @@ test("models.dev normalization fills required response fields", () => {
 })
 
 test("models.dev reasoning options replace generated variants and unsupported toggles fall back", () => {
-  const provider = {
+  const provider = modelsDevProvider({
     id: "reasoning",
     name: "Reasoning",
     env: [],
@@ -1494,6 +1497,9 @@ test("models.dev reasoning options replace generated variants and unsupported to
         id: "gpt-5.4",
         name: "Explicit",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [{ type: "effort", values: ["low"] }],
         limit: { context: 128_000, output: 64_000 },
       },
@@ -1501,6 +1507,9 @@ test("models.dev reasoning options replace generated variants and unsupported to
         id: "gpt-5.4",
         name: "Empty",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [],
         limit: { context: 128_000, output: 64_000 },
       },
@@ -1508,6 +1517,9 @@ test("models.dev reasoning options replace generated variants and unsupported to
         id: "gpt-5.4",
         name: "Fallback",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [{ type: "toggle" }],
         limit: { context: 128_000, output: 64_000 },
       },
@@ -1515,6 +1527,9 @@ test("models.dev reasoning options replace generated variants and unsupported to
         id: "gemini-3-pro",
         name: "Override",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [{ type: "effort", values: ["high"] }],
         provider: { npm: "@ai-sdk/google" },
         limit: { context: 128_000, output: 64_000 },
@@ -1524,12 +1539,15 @@ test("models.dev reasoning options replace generated variants and unsupported to
         id: "k3",
         name: "Anthropic Compatible",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [{ type: "effort", values: ["max"] }],
         provider: { npm: "@ai-sdk/anthropic" },
         limit: { context: 1_048_576, output: 131_072 },
       },
     },
-  } as unknown as ModelsDev.Provider
+  })
 
   const models = Provider.fromModelsDevProvider(provider).models
   expect(models.explicit.variants).toEqual({
@@ -1549,7 +1567,7 @@ test("models.dev reasoning options replace generated variants and unsupported to
 })
 
 test("MERGE Gateway exposes declared effort variants without model-specific handling", () => {
-  const provider = {
+  const provider = modelsDevProvider({
     id: "merge-gateway",
     name: "MERGE Gateway",
     env: ["MERGE_GATEWAY_API_KEY"],
@@ -1559,11 +1577,14 @@ test("MERGE Gateway exposes declared effort variants without model-specific hand
         id: "openai/gpt-5.6-sol",
         name: "GPT-5.6 Sol",
         reasoning: true,
+        attachment: false,
+        tool_call: true,
+        release_date: "",
         reasoning_options: [{ type: "effort", values: ["none", "low", "medium", "high", "xhigh", "max"] }],
         limit: { context: 128_000, output: 64_000 },
       },
     },
-  } as unknown as ModelsDev.Provider
+  })
 
   expect(Provider.fromModelsDevProvider(provider).models["openai/gpt-5.6-sol"].variants).toEqual({
     none: { reasoningEffort: "none" },
@@ -1576,19 +1597,25 @@ test("MERGE Gateway exposes declared effort variants without model-specific hand
 })
 
 test("public provider info omits invalid models", () => {
-  const provider = Provider.fromModelsDevProvider({
-    id: "test",
-    name: "Test",
-    env: [],
-    models: {
-      valid: {
-        id: "valid",
-        name: "Valid",
-        cost: { input: 1, output: 1 },
-        limit: { context: 128_000, output: 16_000 },
+  const provider = Provider.fromModelsDevProvider(
+    modelsDevProvider({
+      id: "test",
+      name: "Test",
+      env: [],
+      models: {
+        valid: {
+          id: "valid",
+          name: "Valid",
+          release_date: "",
+          attachment: false,
+          reasoning: false,
+          tool_call: true,
+          cost: { input: 1, output: 1 },
+          limit: { context: 128_000, output: 16_000 },
+        },
       },
-    },
-  } as unknown as ModelsDev.Provider)
+    }),
+  )
   provider.models.invalid = {
     ...provider.models.valid,
     id: ModelV2.ID.make("invalid"),
