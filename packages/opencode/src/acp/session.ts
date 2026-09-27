@@ -3,7 +3,7 @@ import type { Message, Part } from "@opencode-ai/sdk/v2"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, DateTime, Effect, HashMap, Layer, Option, Ref } from "effect"
 import * as ACPError from "./error"
 
 export type SelectedModel = {
@@ -25,18 +25,18 @@ export type Info = {
   id: string
   cwd: string
   mcpServers: readonly McpServer[]
-  createdAt: Date
+  createdAt: DateTime.Utc
   model?: SelectedModel
   variant?: string
   modeId?: string
-  knownParts: ReadonlyMap<string, KnownMessagePartMetadata>
+  knownParts: HashMap.HashMap<string, KnownMessagePartMetadata>
 }
 
 export type StoreInput = {
   id: string
   cwd: string
   mcpServers?: readonly McpServer[]
-  createdAt?: Date
+  createdAt?: DateTime.Utc
   model?: SelectedModel
   variant?: string
   modeId?: string
@@ -65,7 +65,7 @@ export type Interface = {
   readonly list: (cwd?: string) => Effect.Effect<readonly Info[]>
   readonly get: (sessionId: string) => Effect.Effect<Info, ACPError.SessionNotFoundError>
   readonly tryGet: (sessionId: string) => Effect.Effect<Info | undefined>
-  readonly remove: (sessionId: string) => Effect.Effect<Info | undefined>
+  readonly remove: (sessionId: string) => Effect.Effect<Option.Option<Info>>
   readonly setModel: (
     sessionId: string,
     model: SelectedModel | undefined,
@@ -92,50 +92,50 @@ export type Interface = {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ACP/Session") {}
 
-type State = Map<string, Info>
-
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const sessions = yield* Ref.make<State>(new Map())
+    const sessions = yield* Ref.make(HashMap.empty<string, Info>())
 
     const store = Effect.fn("ACP.Session.store")(function* (input: StoreInput) {
-      const session = makeSession(input)
-      yield* Ref.update(sessions, (state) => new Map(state).set(session.id, session))
+      const session = makeSession(input, input.createdAt ?? (yield* DateTime.now))
+      yield* Ref.update(sessions, HashMap.set(session.id, session))
       return snapshot(session)
+    })
+
+    const find = Effect.fn("ACP.Session.find")(function* (sessionId: string) {
+      return Option.map(HashMap.get(yield* Ref.get(sessions), sessionId), snapshot)
     })
 
     const tryGet = Effect.fn("ACP.Session.tryGet")(function* (sessionId: string) {
-      const session = (yield* Ref.get(sessions)).get(sessionId)
-      if (!session) return
-      return snapshot(session)
+      return Option.getOrUndefined(yield* find(sessionId))
     })
 
     const get = Effect.fn("ACP.Session.get")(function* (sessionId: string) {
-      const session = yield* tryGet(sessionId)
-      if (session) return session
+      const session = yield* find(sessionId)
+      if (Option.isSome(session)) return session.value
       return yield* new ACPError.SessionNotFoundError({ sessionId })
     })
 
     const update = Effect.fn("ACP.Session.update")(function* (sessionId: string, fn: (session: Info) => Info) {
-      const result = yield* Ref.modify(sessions, (state) => {
-        const session = state.get(sessionId)
-        if (!session) return [undefined, state] as const
-        const next = fn(session)
-        return [snapshot(next), new Map(state).set(sessionId, next)] as const
-      })
-      if (result) return result
+      const result = yield* Ref.modify(sessions, (state) =>
+        Option.match(HashMap.get(state, sessionId), {
+          onNone: () => [Option.none<Info>(), state] as const,
+          onSome: (session) => {
+            const next = fn(session)
+            return [Option.some(snapshot(next)), HashMap.set(state, sessionId, next)] as const
+          },
+        }),
+      )
+      if (Option.isSome(result)) return result.value
       return yield* new ACPError.SessionNotFoundError({ sessionId })
     })
 
     const remove = Effect.fn("ACP.Session.remove")(function* (sessionId: string) {
-      return yield* Ref.modify(sessions, (state) => {
-        const session = state.get(sessionId)
-        if (!session) return [undefined, state] as const
-        const next = new Map(state)
-        next.delete(sessionId)
-        return [snapshot(session), next] as const
-      })
+      return yield* Ref.modify(sessions, (state) => [
+        Option.map(HashMap.get(state, sessionId), snapshot),
+        HashMap.remove(state, sessionId),
+      ])
     })
 
     const setModel: Interface["setModel"] = Effect.fn("ACP.Session.setModel")((sessionId, model) =>
@@ -162,7 +162,7 @@ const layer = Layer.effect(
       }
       return update(input.sessionId, (session) => ({
         ...session,
-        knownParts: new Map(session.knownParts).set(partMetadataKey(input), metadata),
+        knownParts: HashMap.set(session.knownParts, partMetadataKey(input), metadata),
       })).pipe(Effect.as(metadata))
     })
 
@@ -170,10 +170,10 @@ const layer = Layer.effect(
       create: store,
       load: store,
       list: Effect.fn("ACP.Session.list")(function* (cwd?: string) {
-        return [...(yield* Ref.get(sessions)).values()]
+        return HashMap.toValues(yield* Ref.get(sessions))
           .filter((session) => !cwd || session.cwd === cwd)
           .map(snapshot)
-          .toSorted((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .toSorted((a, b) => DateTime.toEpochMillis(b.createdAt) - DateTime.toEpochMillis(a.createdAt))
       }),
       get,
       tryGet,
@@ -192,10 +192,13 @@ const layer = Layer.effect(
       }),
       recordPartMetadata,
       getPartMetadata: Effect.fn("ACP.Session.getPartMetadata")(function* (input) {
-        return (yield* get(input.sessionId)).knownParts.get(partMetadataKey(input))
+        return Option.getOrUndefined(HashMap.get((yield* get(input.sessionId)).knownParts, partMetadataKey(input)))
       }),
       tryGetPartMetadata: Effect.fn("ACP.Session.tryGetPartMetadata")(function* (input) {
-        return (yield* tryGet(input.sessionId))?.knownParts.get(partMetadataKey(input))
+        const session = yield* find(input.sessionId)
+        return Option.getOrUndefined(
+          Option.flatMap(session, (current) => HashMap.get(current.knownParts, partMetadataKey(input))),
+        )
       }),
     })
   }),
@@ -203,16 +206,16 @@ const layer = Layer.effect(
 
 export const node = LayerNode.make({ service: Service, layer, deps: [] })
 
-function makeSession(input: StoreInput): Info {
+function makeSession(input: StoreInput, createdAt: DateTime.Utc): Info {
   return {
     id: input.id,
     cwd: input.cwd,
     mcpServers: [...(input.mcpServers ?? [])],
-    createdAt: input.createdAt ? new Date(input.createdAt) : new Date(),
+    createdAt,
     model: input.model,
     variant: input.variant,
     modeId: input.modeId,
-    knownParts: new Map(),
+    knownParts: HashMap.empty(),
   }
 }
 
@@ -220,8 +223,6 @@ function snapshot(session: Info): Info {
   return {
     ...session,
     mcpServers: [...session.mcpServers],
-    createdAt: new Date(session.createdAt),
-    knownParts: new Map(session.knownParts),
   }
 }
 

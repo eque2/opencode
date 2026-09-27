@@ -32,7 +32,7 @@ import {
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import type { AssistantMessage, Message, OpencodeClient, Session, SessionMessageResponse } from "@opencode-ai/sdk/v2"
-import { Context, Effect, Layer, ManagedRuntime } from "effect"
+import { Context, DateTime, Effect, Layer, ManagedRuntime, Option } from "effect"
 import * as ACPError from "./error"
 import { buildConfigOptions, DEFAULT_VARIANT_VALUE, parseModelSelection } from "./config-option"
 import { promptContentToParts } from "./content"
@@ -274,7 +274,7 @@ export function make(input: {
         (item): SessionInfo => ({
           sessionId: item.id,
           cwd: item.cwd,
-          updatedAt: item.createdAt.toISOString(),
+          updatedAt: DateTime.formatIso(item.createdAt),
         }),
       )
     const sorted = [...liveEntries, ...serverEntries].toSorted(
@@ -348,9 +348,9 @@ export function make(input: {
     const removed = yield* session.remove(params.sessionId)
     registeredMcp.delete(params.sessionId)
     sessionSnapshots.delete(params.sessionId)
-    if (!removed) return {}
+    if (Option.isNone(removed)) return {}
 
-    yield* abortBackingSession(removed)
+    yield* abortBackingSession(removed.value)
     return {}
   })
 
