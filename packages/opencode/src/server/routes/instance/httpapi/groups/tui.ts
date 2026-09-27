@@ -184,6 +184,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("controlResponse", TuiPaths.controlResponse, {
           query: WorkspaceRoutingQuery,
+          // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an opaque TUI response relayed as is; an empty body decodes to undefined
           payload: Schema.Unknown,
           success: described(Schema.Boolean, "Response submitted successfully"),
         }).annotateMerge(

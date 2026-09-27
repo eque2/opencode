@@ -23,7 +23,7 @@ export const LogInput = Schema.Struct({
     Schema.Literal("warn"),
   ]).annotate({ description: "Log level" }),
   message: Schema.String.annotate({ description: "Log message" }),
-  extra: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)).annotate({
+  extra: Schema.optional(Schema.Record(Schema.String, Schema.Json)).annotate({
     description: "Additional metadata for the log entry",
   }),
 })

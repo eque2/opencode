@@ -51,6 +51,7 @@ const ToolIDs = Schema.Array(Schema.String).annotate({ identifier: "ToolIDs" })
 const ToolListItem = Schema.Struct({
   id: Schema.String,
   description: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an arbitrary JSON Schema document (JSONSchema7) for the tool parameters
   parameters: Schema.Unknown,
 }).annotate({ identifier: "ToolListItem" })
 const ToolList = Schema.Array(ToolListItem).annotate({ identifier: "ToolList" })

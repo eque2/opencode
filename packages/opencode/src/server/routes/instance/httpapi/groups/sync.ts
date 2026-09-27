@@ -14,7 +14,7 @@ export const ReplayEvent = Schema.Struct({
   aggregateID: Schema.String,
   seq: NonNegativeInt,
   type: Schema.String,
-  data: Schema.Record(Schema.String, Schema.Unknown),
+  data: Schema.Record(Schema.String, Schema.Json),
 }).annotate({ description: "Sync event to replay" })
 export const ReplayPayload = Schema.Struct({
   directory: Schema.String,
@@ -32,6 +32,7 @@ export const HistoryEvent = Schema.Struct({
   aggregate_id: Schema.String,
   seq: NonNegativeInt,
   type: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: stored event payloads from the json `data` column, which is typed Record<string, unknown>
   data: Schema.Record(Schema.String, Schema.Unknown),
 }).annotate({ description: "Sync event in the history" })
 

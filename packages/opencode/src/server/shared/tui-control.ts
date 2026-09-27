@@ -3,6 +3,7 @@ import { Schema } from "effect"
 
 export const TuiRequest = Schema.Struct({
   path: Schema.String,
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (b) foreign value domain: an opaque request body relayed to the TUI as is
   body: Schema.Unknown,
 }).annotate({ description: "Request that the server sends to the TUI" })
 
