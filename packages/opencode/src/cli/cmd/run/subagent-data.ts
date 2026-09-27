@@ -121,13 +121,11 @@ function sameCommit(left: StreamCommit, right: StreamCommit) {
   )
 }
 
-function text(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined
-  }
-
-  const next = value.trim()
-  return next || undefined
+// A trimmed, non-empty string, or none.
+function text(value: unknown): Option.Option<string> {
+  return typeof value === "string"
+    ? Option.some(value.trim()).pipe(Option.filter((next) => next !== ""))
+    : Option.none()
 }
 
 function num(value: unknown): number | undefined {
@@ -138,52 +136,22 @@ function num(value: unknown): number | undefined {
   return undefined
 }
 
-function inputLabel(input: Record<string, unknown>): string | undefined {
-  const description = text(input.description)
-  if (description) {
-    return description
-  }
-
-  const command = text(input.command)
-  if (command) {
-    return command
-  }
-
-  const filePath = text(input.filePath) ?? text(input.filepath)
-  if (filePath) {
-    return filePath
-  }
-
-  const pattern = text(input.pattern)
-  if (pattern) {
-    return pattern
-  }
-
-  const query = text(input.query)
-  if (query) {
-    return query
-  }
-
-  const url = text(input.url)
-  if (url) {
-    return url
-  }
-
-  const path = text(input.path)
-  if (path) {
-    return path
-  }
-
-  const prompt = text(input.prompt)
-  if (prompt) {
-    return prompt
-  }
-
-  return undefined
+function inputLabel(input: Record<string, unknown>): Option.Option<string> {
+  return Option.firstSomeOf([
+    text(input.description),
+    text(input.command),
+    text(input.filePath),
+    text(input.filepath),
+    text(input.pattern),
+    text(input.query),
+    text(input.url),
+    text(input.path),
+    text(input.prompt),
+  ])
 }
 
-function stateTitle(part: ToolPart) {
-  return text("title" in part.state ? part.state.title : undefined)
+function stateTitle(part: ToolPart): Option.Option<string> {
+  return "title" in part.state ? text(part.state.title) : Option.none()
 }
 
 function callKey(messageID: string | undefined, callID: string | undefined): string | undefined {
@@ -281,7 +249,11 @@ function stateUpdatedAt(part: ToolPart, now: number) {
 }
 
 function metadata(part: ToolPart, key: string) {
-  return ("metadata" in part.state ? part.state.metadata?.[key] : undefined) ?? part.metadata?.[key]
+  if ("metadata" in part.state) {
+    return part.state.metadata?.[key] ?? part.metadata?.[key]
+  }
+
+  return part.metadata?.[key]
 }
 
 function taskStatus(part: ToolPart): FooterSubagentTab["status"] {
@@ -290,7 +262,7 @@ function taskStatus(part: ToolPart): FooterSubagentTab["status"] {
   }
 
   if (part.state.status === "error") {
-    if (metadata(part, "interrupted") === true || text(part.state.error) === "Tool execution aborted") {
+    if (metadata(part, "interrupted") === true || Option.contains(text(part.state.error), "Tool execution aborted")) {
       return "cancelled"
     }
 
@@ -301,8 +273,12 @@ function taskStatus(part: ToolPart): FooterSubagentTab["status"] {
 }
 
 function taskTab(part: ToolPart, sessionID: string, now: number): FooterSubagentTab {
-  const label = Locale.titlecase(text(part.state.input.subagent_type) ?? "general")
-  const description = text(part.state.input.description) ?? stateTitle(part) ?? inputLabel(part.state.input) ?? ""
+  const label = Locale.titlecase(Option.getOrElse(text(part.state.input.subagent_type), () => "general"))
+  const description = Option.firstSomeOf([
+    text(part.state.input.description),
+    stateTitle(part),
+    inputLabel(part.state.input),
+  ]).pipe(Option.getOrElse(() => ""))
 
   return {
     sessionID,
@@ -312,14 +288,15 @@ function taskTab(part: ToolPart, sessionID: string, now: number): FooterSubagent
     description,
     status: taskStatus(part),
     background: metadata(part, "background") === true,
-    title: stateTitle(part),
+    // FooterSubagentTab.title is an optional string field of the footer contract.
+    title: Option.getOrUndefined(stateTitle(part)),
     toolCalls: num(metadata(part, "toolcalls")) ?? num(metadata(part, "toolCalls")) ?? num(metadata(part, "calls")),
     lastUpdatedAt: stateUpdatedAt(part, now),
   }
 }
 
 function taskSessionID(part: ToolPart) {
-  return text(metadata(part, "sessionId")) ?? text(metadata(part, "sessionID"))
+  return Option.firstSomeOf([text(metadata(part, "sessionId")), text(metadata(part, "sessionID"))])
 }
 
 function syncTaskTab(data: SubagentData, part: ToolPart, now: number, children?: HashSet.HashSet<string>) {
@@ -327,11 +304,12 @@ function syncTaskTab(data: SubagentData, part: ToolPart, now: number, children?:
     return false
   }
 
-  const sessionID = taskSessionID(part)
-  if (!sessionID) {
+  const found = taskSessionID(part)
+  if (Option.isNone(found)) {
     return false
   }
 
+  const sessionID = found.value
   if (children && HashSet.size(children) > 0 && !HashSet.has(children, sessionID)) {
     return false
   }
@@ -457,7 +435,7 @@ function ensureBlockerTab(
     sessionID,
     partID: `bootstrap:${sessionID}`,
     callID: `bootstrap:${sessionID}`,
-    label: text(title) ?? Locale.titlecase(kind),
+    label: Option.getOrElse(text(title), () => Locale.titlecase(kind)),
     description: kind === "permission" ? "Pending permission" : "Pending question",
     status: "running",
     lastUpdatedAt: now,
@@ -799,6 +777,28 @@ export function bootstrapSubagentCalls(input: {
   return changed || beforeCallCount !== MutableHashMap.size(detail.data.call) || queueChanged(detail.data, before)
 }
 
+function eventSessionID(event: Event): Option.Option<string> {
+  if (
+    event.type === "message.updated" ||
+    event.type === "message.part.delta" ||
+    event.type === "permission.asked" ||
+    event.type === "permission.replied" ||
+    event.type === "question.asked" ||
+    event.type === "question.replied" ||
+    event.type === "question.rejected" ||
+    event.type === "session.error" ||
+    event.type === "session.status"
+  ) {
+    return Option.fromNullishOr(event.properties.sessionID)
+  }
+
+  if (event.type === "message.part.updated") {
+    return Option.some(event.properties.part.sessionID)
+  }
+
+  return Option.none()
+}
+
 export function reduceSubagentData(input: {
   data: SubagentData
   event: Event
@@ -821,25 +821,14 @@ export function reduceSubagentData(input: {
     }
   }
 
-  const sessionID =
-    event.type === "message.updated" ||
-    event.type === "message.part.delta" ||
-    event.type === "permission.asked" ||
-    event.type === "permission.replied" ||
-    event.type === "question.asked" ||
-    event.type === "question.replied" ||
-    event.type === "question.rejected" ||
-    event.type === "session.error" ||
-    event.type === "session.status"
-      ? event.properties.sessionID
-      : event.type === "message.part.updated"
-        ? event.properties.part.sessionID
-        : undefined
-
-  if (!sessionID || !knownSession(input.data, sessionID)) {
+  const found = eventSessionID(event).pipe(
+    Option.filter((sessionID) => sessionID !== "" && knownSession(input.data, sessionID)),
+  )
+  if (Option.isNone(found)) {
     return false
   }
 
+  const sessionID = found.value
   const detail = ensureDetail(input.data, sessionID)
   const cancelled =
     event.type === "message.updated" && isAbortedAssistantMessage(event.properties.info)
