@@ -163,7 +163,6 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
   const width = Math.max(1, ctx.width)
   const meta = splashMeta(input)
   const left = input.theme.left
-  const right = input.theme.right
   const mark = go.right.slice(1)
   const top = 1
   const body_left = (mark[0]?.length ?? 0) + 2
