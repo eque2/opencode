@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { app, utilityProcess } from "electron"
-import { Option, Predicate } from "effect"
+import { Data, Deferred, Effect, Option, Predicate } from "effect"
 import type { Details } from "electron"
 import { getLogger } from "./logging"
 import { getUserShell, loadShellEnv } from "./shell-env"
@@ -54,186 +54,187 @@ export function preferAppEnv(userDataPath: string) {
   return Option.getOrNull(shellEnv)
 }
 
-export async function spawnLocalServer(
-  hostname: string,
-  port: number,
-  password: string,
-  options: SpawnLocalServerOptions,
-) {
-  const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
-  const child = utilityProcess.fork(sidecar, [], {
-    cwd: process.cwd(),
-    env: createSidecarEnv(),
-    serviceName: SIDECAR_SERVICE_NAME,
-    stdio: "pipe",
-  })
-  let exited = false
-  const exit = defer<number>()
+export function spawnLocalServer(hostname: string, port: number, password: string, options: SpawnLocalServerOptions) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const sidecar = join(dirname(fileURLToPath(import.meta.url)), "sidecar.js")
+      const child = utilityProcess.fork(sidecar, [], {
+        cwd: process.cwd(),
+        env: createSidecarEnv(),
+        serviceName: SIDECAR_SERVICE_NAME,
+        stdio: "pipe",
+      })
+      let exited = false
+      const exit = yield* Deferred.make<number>()
 
-  const onProcessGone = (_event: unknown, details: Details) => {
-    if (details.type !== "Utility" || details.name !== SIDECAR_SERVICE_NAME) return
-    options.onStderr?.(`utility process gone reason=${details.reason} exitCode=${details.exitCode}`)
-  }
-
-  app.on("child-process-gone", onProcessGone)
-  child.once("exit", (code) => {
-    exited = true
-    app.off("child-process-gone", onProcessGone)
-    options.onExit?.(code)
-    exit.resolve(code)
-  })
-  child.on("error", (error) => options.onStderr?.(`utility process error: ${serializeError(error).message}`))
-
-  child.stdout?.on("data", (chunk: Buffer) => options.onStdout?.(chunk.toString("utf8").trimEnd()))
-  child.stderr?.on("data", (chunk: Buffer) => options.onStderr?.(chunk.toString("utf8").trimEnd()))
-
-  await new Promise<void>((resolve, reject) => {
-    let done = false
-    let timeout: NodeJS.Timeout
-
-    const fail = (error: Error) => {
-      if (done) return
-      done = true
-      cleanup()
-      reject(error)
-    }
-
-    const refreshTimeout = () => {
-      clearTimeout(timeout)
-      timeout = setTimeout(() => {
-        fail(new Error(`Sidecar did not become ready within ${SIDECAR_START_STALL_TIMEOUT}ms: ${sidecar}`))
-      }, SIDECAR_START_STALL_TIMEOUT)
-    }
-
-    const onMessage = (message: SidecarMessage) => {
-      if (message.type === "ready") {
-        if (done) return
-        done = true
-        cleanup()
-        resolve()
-        return
+      const onProcessGone = (_event: unknown, details: Details) => {
+        if (details.type !== "Utility" || details.name !== SIDECAR_SERVICE_NAME) return
+        options.onStderr?.(`utility process gone reason=${details.reason} exitCode=${details.exitCode}`)
       }
-      if (message.type === "error") {
-        fail(Object.assign(new Error(message.error.message), { stack: message.error.stack }))
-      }
-    }
-    const onExit = (code: number) => {
-      fail(new Error(`Sidecar exited before ready with code ${code}`))
-    }
-    const cleanup = () => {
-      clearTimeout(timeout)
-      child.off("message", onMessage)
-      child.off("exit", onExit)
-    }
 
-    child.on("message", onMessage)
-    child.on("exit", onExit)
-    refreshTimeout()
-    child.postMessage({
-      type: "start",
-      hostname,
-      port,
-      password,
-      userDataPath: options.userDataPath,
-    })
-  }).catch((error) => {
-    if (!exited) child.kill()
-    throw error
-  })
+      app.on("child-process-gone", onProcessGone)
+      child.once("exit", (code) => {
+        exited = true
+        app.off("child-process-gone", onProcessGone)
+        options.onExit?.(code)
+        Deferred.doneUnsafe(exit, Effect.succeed(code))
+      })
+      child.on("error", (error) => options.onStderr?.(`utility process error: ${serializeError(error).message}`))
 
-  const wait = (async () => {
-    const url = `http://${hostname}:${port}`
-    let healthy = false
-    const gone = exit.promise.then((code) => {
-      if (healthy) return
-      throw new Error(`Sidecar exited before health check passed with code ${code}`)
-    })
+      child.stdout?.on("data", (chunk: Buffer) => options.onStdout?.(chunk.toString("utf8").trimEnd()))
+      child.stderr?.on("data", (chunk: Buffer) => options.onStderr?.(chunk.toString("utf8").trimEnd()))
 
-    const ready = async () => {
-      while (true) {
-        await new Promise((resolve) => setTimeout(resolve, 100))
-        if (await checkHealth(url, password)) {
-          healthy = true
-          return
+      yield* Effect.callback<void, SidecarStartError>((resume) => {
+        const cleanup = () => {
+          child.off("message", onMessage)
+          child.off("exit", onExit)
         }
-      }
-    }
+        const settle = (result: Effect.Effect<void, SidecarStartError>) => {
+          cleanup()
+          resume(result)
+        }
+        const onMessage = (message: SidecarMessage) => {
+          if (message.type === "ready") {
+            settle(Effect.void)
+            return
+          }
+          if (message.type === "error") {
+            settle(Effect.fail(new SidecarStartError({ message: message.error.message, stack: message.error.stack })))
+          }
+        }
+        const onExit = (code: number) => {
+          settle(Effect.fail(new SidecarStartError({ message: `Sidecar exited before ready with code ${code}` })))
+        }
 
-    await Promise.race([ready(), gone])
-  })()
-
-  let stopping: Promise<void> | undefined
-
-  return {
-    listener: {
-      stop: () => {
-        if (stopping) return stopping
-        if (exited) return Promise.resolve()
-        child.postMessage({ type: "stop" })
-        stopping = Promise.race([
-          exit.promise.then(() => undefined),
-          delay(SIDECAR_STOP_TIMEOUT).then(() => {
+        child.on("message", onMessage)
+        child.on("exit", onExit)
+        child.postMessage({
+          type: "start",
+          hostname,
+          port,
+          password,
+          userDataPath: options.userDataPath,
+        })
+        // Runs only when the stall timeout interrupts the wait.
+        return Effect.sync(cleanup)
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: SIDECAR_START_STALL_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new SidecarStartError({
+                message: `Sidecar did not become ready within ${SIDECAR_START_STALL_TIMEOUT}ms: ${sidecar}`,
+              }),
+            ),
+        }),
+        Effect.tapError(() =>
+          Effect.sync(() => {
             if (!exited) child.kill()
           }),
-        ])
-        return stopping
-      },
-    },
-    health: { wait },
-  }
+        ),
+      )
+
+      const url = `http://${hostname}:${port}`
+      const ready = Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("100 millis")
+          if (yield* healthy(url, password)) return
+        }
+      })
+      const gone = Deferred.await(exit).pipe(
+        Effect.flatMap((code) =>
+          Effect.fail(new SidecarExitError({ message: `Sidecar exited before health check passed with code ${code}` })),
+        ),
+      )
+      const wait = Effect.runPromise(Effect.raceFirst(ready, gone))
+
+      let stopping: Promise<void> | undefined
+
+      return {
+        listener: {
+          stop: () => {
+            if (stopping) return stopping
+            if (exited) return Effect.runPromise(Effect.void)
+            child.postMessage({ type: "stop" })
+            stopping = Effect.runPromise(
+              Effect.raceFirst(
+                Deferred.await(exit).pipe(Effect.asVoid),
+                Effect.sleep(SIDECAR_STOP_TIMEOUT).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      if (!exited) child.kill()
+                    }),
+                  ),
+                ),
+              ),
+            )
+            return stopping
+          },
+        },
+        health: { wait },
+      }
+    }),
+  )
 }
 
-export async function checkHealth(url: string, password?: string | null): Promise<boolean> {
-  let healthUrls: URL[]
-  try {
-    healthUrls = [new URL("/api/health", url), new URL("/global/health", url)]
-  } catch {
+export function checkHealth(url: string, password?: string | null): Promise<boolean> {
+  return Effect.runPromise(healthy(url, password))
+}
+
+class SidecarStartError extends Data.TaggedError("SidecarStartError")<{
+  readonly message: string
+  readonly stack?: string
+}> {}
+
+class SidecarExitError extends Data.TaggedError("SidecarExitError")<{ readonly message: string }> {}
+
+class HealthCheckError extends Data.TaggedError("HealthCheckError")<{ readonly cause: unknown }> {}
+
+function healthy(url: string, password?: string | null) {
+  return Effect.gen(function* () {
+    const healthUrls = yield* Effect.try({
+      try: () => [new URL("/api/health", url), new URL("/global/health", url)],
+      catch: (cause) => new HealthCheckError({ cause }),
+    }).pipe(Effect.option)
+    if (Option.isNone(healthUrls)) return false
+
+    const headers = new Headers()
+    if (password) {
+      const auth = Buffer.from(`opencode:${password}`).toString("base64")
+      headers.set("authorization", `Basic ${auth}`)
+    }
+
+    for (const healthUrl of healthUrls.value) {
+      const ok = yield* Effect.tryPromise({
+        try: () =>
+          fetch(healthUrl, {
+            method: "GET",
+            headers,
+            signal: AbortSignal.timeout(3000),
+          }),
+        catch: (cause) => new HealthCheckError({ cause }),
+      }).pipe(
+        Effect.map((res) => res.ok),
+        Effect.orElseSucceed(() => false),
+      )
+      if (ok) return true
+    }
     return false
-  }
-
-  const headers = new Headers()
-  if (password) {
-    const auth = Buffer.from(`opencode:${password}`).toString("base64")
-    headers.set("authorization", `Basic ${auth}`)
-  }
-
-  for (const healthUrl of healthUrls) {
-    try {
-      const res = await fetch(healthUrl, {
-        method: "GET",
-        headers,
-        signal: AbortSignal.timeout(3000),
-      })
-      if (res.ok) return true
-    } catch {}
-  }
-  return false
+  })
 }
 
 function createSidecarEnv(): Record<string, string> {
   const env = Object.fromEntries(
-    Object.entries(process.env).flatMap(([key, value]) => (value === undefined ? [] : [[key, String(value)]])),
+    Object.entries(process.env).flatMap(([key, value]): Array<[string, string]> =>
+      value === undefined ? [] : [[key, value]],
+    ),
   )
   delete env.DEBUG
   if (process.platform === "linux") delete env.LD_PRELOAD
   return env
 }
 
-function delay(ms: number) {
-  return new Promise<void>((resolve) => setTimeout(resolve, ms))
-}
-
 function serializeError(error: unknown) {
   if (error instanceof Error) return { message: error.message, stack: error.stack }
   return { message: String(error) }
-}
-
-function defer<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res
-    reject = rej
-  })
-  return { promise, resolve, reject }
 }
