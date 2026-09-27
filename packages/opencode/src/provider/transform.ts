@@ -163,6 +163,9 @@ function normalizeMessages(
           })
         }
         return msg
+
+      default:
+        return msg
     }
   })
 
@@ -1721,7 +1724,7 @@ export function schema(model: Provider.Model, schema: JSONSchema7): JSONSchema7 
 
 export function reasoningVariants(model: ModelsDev.Model, target: Provider.Model): Provider.Model["variants"] {
   const options = model.reasoning_options
-  if (options === undefined) return
+  if (options === undefined) return undefined
   if (options.length === 0) return {}
 
   const effort = options.find((option) => option.type === "effort")
@@ -1746,6 +1749,7 @@ function effortVariants(model: Provider.Model, values: readonly unknown[]) {
       const id = (() => {
         if (Predicate.isNull(value)) return "none"
         if (typeof value === "string") return value
+        return undefined
       })()
       if (id === undefined) return []
       const settings = reasoningEffort(model, id)
@@ -1815,7 +1819,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
             maxReasoningEffort: effort,
           },
         }
-      if (model.api.id.includes("anthropic")) return
+      if (model.api.id.includes("anthropic")) return undefined
       return { reasoningConfig: { type: "enabled", maxReasoningEffort: effort } }
     case "@ai-sdk/gateway":
       if (model.id.includes("anthropic")) return { thinking: { type: "adaptive", display: "summarized" }, effort }
@@ -1823,7 +1827,7 @@ function reasoningEffort(model: Provider.Model, effort: string) {
       return { reasoningEffort: effort }
     case "@ai-sdk/github-copilot":
       // OAuth discovery replaces these with variants from Copilot's /models capabilities.
-      if (model.id.includes("gemini")) return
+      if (model.id.includes("gemini")) return undefined
       if (model.id.includes("claude")) return { reasoningEffort: effort }
       return { reasoningEffort: effort, reasoningSummary: "auto", include: INCLUDE_ENCRYPTED_REASONING }
     case "@ai-sdk/openai":
@@ -1849,20 +1853,21 @@ function reasoningEffort(model: Provider.Model, effort: string) {
     case "gitlab-ai-provider":
       if (model.family?.startsWith("gpt")) return { reasoningEffort: effort }
       if (model.family?.startsWith("claude")) return { thinking: { type: "adaptive", effort } }
-      return
+      return undefined
     case "@ai-sdk/cohere":
     case "@ai-sdk/perplexity":
     case "@ai-sdk/vercel":
     case "@ai-sdk/alibaba":
-      return
+      return undefined
   }
+  return undefined
 }
 
 function anthropicEffort(model: Provider.Model, effort: string) {
   if (anthropicOpus45(model.api.id)) return anthropicOpus45Effort(model, effort)
   // Kimi defaults to omitting adaptive thinking text unless summarized display is requested.
   if (isKimiFamily(model)) return { thinking: { type: "adaptive", display: "summarized" }, effort }
-  if (Option.isNone(anthropicAdaptiveEfforts(model.api.id))) return
+  if (Option.isNone(anthropicAdaptiveEfforts(model.api.id))) return undefined
   return {
     thinking: {
       type: "adaptive",
@@ -1897,7 +1902,7 @@ function reasoningBudget(model: Provider.Model, budget: number) {
     case "@ai-sdk/gateway":
       if (model.id.includes("anthropic")) return { thinking: { type: "enabled", budgetTokens: budget } }
       if (model.id.includes("google")) return { thinkingConfig: { includeThoughts: true, thinkingBudget: budget } }
-      return
+      return undefined
     case "@ai-sdk/cohere":
       return { thinking: { type: "enabled", tokenBudget: budget } }
     case "@ai-sdk/alibaba":
@@ -1907,7 +1912,7 @@ function reasoningBudget(model: Provider.Model, budget: number) {
         return { modelParams: { thinking: { type: "enabled", budget_tokens: budget } } }
       if (model.id.includes("gemini"))
         return { modelParams: { thinkingConfig: { includeThoughts: true, thinkingBudget: budget } } }
-      return
+      return undefined
     case "@ai-sdk/amazon-bedrock/mantle":
     case "@ai-sdk/azure":
     case "@ai-sdk/cerebras":
@@ -1924,8 +1929,9 @@ function reasoningBudget(model: Provider.Model, budget: number) {
     case "ai-gateway-provider":
     case "gitlab-ai-provider":
     case "venice-ai-sdk-provider":
-      return
+      return undefined
   }
+  return undefined
 }
 
 export * as ProviderTransform from "./transform"
