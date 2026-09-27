@@ -135,7 +135,7 @@ const layer = Layer.effect(
       sessionID: string,
       model: RunInput["model"],
     ) {
-      const session = yield* Effect.tryPromise(() => resolveSession(sdk, sessionID)).pipe(Effect.option)
+      const session = yield* resolveSession(sdk, sessionID).pipe(Effect.option)
       return Option.match(session, {
         onNone: emptySessionInfo,
         onSome: (value): SessionInfo => ({
