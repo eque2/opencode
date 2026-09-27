@@ -26,6 +26,7 @@ import {
   MutableHashMap,
   MutableHashSet,
   Option,
+  Schema,
   Scope,
   Stream,
 } from "effect"
@@ -78,6 +79,12 @@ type Trace = {
 }
 
 const StreamClosed = undefined as never
+
+// Transport-level failure: a lost event stream, a disposed instance, or a rejected turn.
+export class StreamTransportError extends Schema.TaggedError<StreamTransportError>()("StreamTransportError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 type StreamInput = {
   sdk: OpencodeClient
@@ -574,7 +581,7 @@ function createLayer(input: StreamInput) {
             return next
           }
 
-          return yield* Effect.fail(new Error("no primary agent available for shell mode"))
+          return yield* new StreamTransportError({ message: "no primary agent available for shell mode" })
         })
 
         const recoverQuestion = Effect.fn("RunStreamTransport.recoverQuestion")(function* (partID: string) {
@@ -1081,7 +1088,7 @@ function createLayer(input: StreamInput) {
                     : history,
               }
             },
-            catch: (error) => error,
+            catch: (cause) => new StreamTransportError({ message: "resize replay snapshot failed", cause }),
           }).pipe(Effect.exit)
           if (Exit.isFailure(snapshot)) {
             input.trace?.write("replay.resize.abort", {
@@ -1156,7 +1163,7 @@ function createLayer(input: StreamInput) {
 
         const watch = Effect.fn("RunStreamTransport.watch")(() =>
           Stream.fromAsyncIterable(events.stream, (error) =>
-            error instanceof Error ? error : new Error(String(error)),
+            error instanceof Error ? error : new StreamTransportError({ message: String(error), cause: error }),
           ).pipe(
             Stream.takeUntil(() => input.footer.isClosed || abort.signal.aborted),
             Stream.runForEach(
@@ -1167,7 +1174,7 @@ function createLayer(input: StreamInput) {
                 }
 
                 if (isMatchingDisposeEvent(item, input.directory)) {
-                  yield* fail(new Error("instance disposed"))
+                  yield* fail(new StreamTransportError({ message: "instance disposed" }))
                   yield* closeScope()
                   return
                 }
@@ -1203,7 +1210,7 @@ function createLayer(input: StreamInput) {
             Effect.ensuring(
               Effect.gen(function* () {
                 if (!abort.signal.aborted && !state.fault) {
-                  yield* fail(new Error("global event stream closed"))
+                  yield* fail(new StreamTransportError({ message: "global event stream closed" }))
                 }
                 closeStream()
               }),
@@ -1225,7 +1232,7 @@ function createLayer(input: StreamInput) {
           }
 
           if (state.wait) {
-            yield* Effect.fail(new Error("prompt already running"))
+            yield* new StreamTransportError({ message: "prompt already running" })
             return
           }
 
