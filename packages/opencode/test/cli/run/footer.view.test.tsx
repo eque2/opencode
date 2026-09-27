@@ -137,7 +137,7 @@ function subagent(input: {
 }
 
 function footerState(input: Partial<FooterState> = {}) {
-  return createSignal<FooterState>({
+  const state: FooterState = {
     phase: "idle",
     status: "",
     queue: 0,
@@ -148,7 +148,8 @@ function footerState(input: Partial<FooterState> = {}) {
     interrupt: 0,
     exit: 0,
     ...input,
-  })[0]
+  }
+  return createSignal(state)[0]
 }
 
 async function renderFooter(
@@ -169,7 +170,7 @@ async function renderFooter(
   } = {},
 ) {
   const [view] = createSignal<FooterView>({ type: "prompt" })
-  const [subagents] = createSignal<FooterSubagentState>(
+  const [subagents] = createSignal(
     input.subagents ?? { tabs: [], details: {}, permissions: [], questions: [] },
   )
   const state = footerState(input.state)
