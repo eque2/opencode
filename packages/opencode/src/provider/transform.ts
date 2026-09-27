@@ -649,11 +649,12 @@ function openaiReasoningEfforts(apiId: string, releaseDate: string) {
   // GPT-5.1 replaced GPT-5's `minimal` effort with `none`; GPT-5.2+
   // additionally accepts `xhigh`. Model pages list the supported subset.
   if (versionedEfforts) return versionedEfforts
-  const efforts = [...WIDELY_SUPPORTED_EFFORTS]
-  if (GPT5_FAMILY_RE.test(id)) efforts.unshift("minimal")
-  if (releaseDate >= OPENAI_NONE_EFFORT_RELEASE_DATE) efforts.unshift("none")
-  if (releaseDate >= OPENAI_XHIGH_EFFORT_RELEASE_DATE) efforts.push("xhigh")
-  return efforts
+  return [
+    ...(releaseDate >= OPENAI_NONE_EFFORT_RELEASE_DATE ? ["none"] : []),
+    ...(GPT5_FAMILY_RE.test(id) ? ["minimal"] : []),
+    ...WIDELY_SUPPORTED_EFFORTS,
+    ...(releaseDate >= OPENAI_XHIGH_EFFORT_RELEASE_DATE ? ["xhigh"] : []),
+  ]
 }
 
 function openaiCompatibleReasoningEfforts(id: string) {
@@ -1001,10 +1002,10 @@ export function variants(model: Provider.Model): Record<string, Record<string, a
       if (model.api.id.toLowerCase().includes("north-mini-code")) {
         return Object.fromEntries(["none", "high"].map((effort) => [effort, { reasoningEffort: effort }]))
       }
-      const efforts = [...WIDELY_SUPPORTED_EFFORTS]
-      if (model.api.id.toLowerCase().includes("deepseek-v4")) {
-        efforts.push("max")
-      }
+      const efforts = [
+        ...WIDELY_SUPPORTED_EFFORTS,
+        ...(model.api.id.toLowerCase().includes("deepseek-v4") ? ["max"] : []),
+      ]
       return Object.fromEntries(efforts.map((effort) => [effort, { reasoningEffort: effort }]))
 
     case "@ai-sdk/azure":
