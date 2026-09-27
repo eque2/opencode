@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import type { Configuration } from "electron-builder"
+
+type ConfigModule = typeof import("./electron-builder.config")
 
 const legacyDesktopEntry = "resources/linux/opencode-desktop.desktop"
 
@@ -14,8 +15,8 @@ for (const channel of channels) {
     const previous = process.env.OPENCODE_CHANNEL
     process.env.OPENCODE_CHANNEL = channel.channel
 
-    const module = await import(`./electron-builder.config.ts?channel=${channel.channel}`)
-    const config = module.default as Configuration
+    const module: ConfigModule = await import(`./electron-builder.config.ts?channel=${channel.channel}`)
+    const config = module.default
 
     if (previous === undefined) delete process.env.OPENCODE_CHANNEL
     else process.env.OPENCODE_CHANNEL = previous
@@ -33,8 +34,8 @@ test("keeps a hidden prod launcher for old Linux pins", async () => {
   const previous = process.env.OPENCODE_CHANNEL
   process.env.OPENCODE_CHANNEL = "prod"
 
-  const module = await import("./electron-builder.config.ts?compat=prod")
-  const config = module.default as Configuration
+  const module: ConfigModule = await import("./electron-builder.config.ts?compat=prod")
+  const config = module.default
 
   if (previous === undefined) delete process.env.OPENCODE_CHANNEL
   else process.env.OPENCODE_CHANNEL = previous
@@ -60,8 +61,8 @@ test("keeps a hidden prod launcher for old Linux pins", async () => {
 test("bundles the CLI outside the dev app archive", async () => {
   const previous = process.env.OPENCODE_CHANNEL
   process.env.OPENCODE_CHANNEL = "dev"
-  const module = await import("./electron-builder.config.ts?cli-resource")
-  const config = module.default as Configuration
+  const module: ConfigModule = await import("./electron-builder.config.ts?cli-resource")
+  const config = module.default
   if (previous === undefined) delete process.env.OPENCODE_CHANNEL
   else process.env.OPENCODE_CHANNEL = previous
 
@@ -77,8 +78,8 @@ for (const channel of ["beta", "prod"] as const) {
   test(`does not bundle the CLI in ${channel} builds`, async () => {
     const previous = process.env.OPENCODE_CHANNEL
     process.env.OPENCODE_CHANNEL = channel
-    const module = await import(`./electron-builder.config.ts?no-cli-resource=${channel}`)
-    const config = module.default as Configuration
+    const module: ConfigModule = await import(`./electron-builder.config.ts?no-cli-resource=${channel}`)
+    const config = module.default
     if (previous === undefined) delete process.env.OPENCODE_CHANNEL
     else process.env.OPENCODE_CHANNEL = previous
 
