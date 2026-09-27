@@ -1,7 +1,7 @@
 import { afterEach, describe, expect } from "bun:test"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Deferred, Effect, Layer } from "effect"
+import { Deferred, Effect, Layer, Schema } from "effect"
 import type * as Scope from "effect/Scope"
 import { HttpServer } from "effect/unstable/http"
 import { ChildProcessSpawner } from "effect/unstable/process"
@@ -440,8 +440,9 @@ describe("HttpApi SDK", () => {
         // server's message, with the original parsed body preserved under
         // `.cause.body`.
         expect(thrown).toBeInstanceOf(Error)
-        expect((thrown as Error).message).toBe(expected.data.message)
-        expect(((thrown as Error).cause as { body: unknown }).body).toEqual(expected)
+        const error = thrown instanceof Error ? thrown : new Error("the SDK did not throw an Error")
+        expect(error.message).toBe(expected.data.message)
+        expect(Schema.decodeUnknownSync(Schema.Struct({ body: Schema.Unknown }))(error.cause).body).toEqual(expected)
         return {
           status: missing.status,
           error: missing.error,

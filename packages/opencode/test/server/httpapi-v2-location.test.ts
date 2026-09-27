@@ -7,6 +7,12 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 
 const context = HttpApiApp.context
+const decodeSnapshot = Schema.decodeUnknownSync(
+  Schema.Struct({
+    location: Schema.Struct({ directory: Schema.String, project: Schema.Struct({ id: Schema.String }) }),
+    data: Schema.Unknown,
+  }),
+)
 
 function request(route: string, directory: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers)
@@ -95,10 +101,7 @@ describe("v2 location HttpApi", () => {
     for (const route of ["/api/command", "/api/skill"]) {
       const response = await request(route, tmp.path)
       expect(response.status).toBe(200)
-      const body = (await response.json()) as {
-        location: { directory: string; project: { id: string } }
-        data: unknown
-      }
+      const body = decodeSnapshot(await response.json())
       expect(body.data).toBeArray()
       expect(body.location.directory).toBe(tmp.path)
       expect(body.location.project.id).toBeTruthy()
