@@ -19,14 +19,18 @@ import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
 import {
+  Array as Arr,
   Config as EffectConfig,
   ConfigProvider,
+  Duration,
   Effect,
+  Fiber,
   HashSet,
   Layer,
   Context,
   MutableHashMap,
   Option,
+  Predicate,
   Schema,
   Types,
 } from "effect"
@@ -51,38 +55,27 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   if (!res.headers.get("content-type")?.includes("text/event-stream")) return res
 
   const reader = res.body.getReader()
+  // A stalled chunk aborts the request, cancels the reader without waiting, and errors the stream.
+  const timedOut = Effect.suspend(() => {
+    const err = new ProviderError.ResponseStreamError("SSE read timed out")
+    ctl.abort(err)
+    return Effect.tryPromise({ try: () => reader.cancel(err), catch: (cause) => cause }).pipe(
+      Effect.ignore,
+      Effect.forkDetach,
+      Effect.andThen(Effect.fail(err)),
+    )
+  })
   const body = new ReadableStream<Uint8Array>({
-    async pull(ctrl) {
-      const part = await new Promise<Awaited<ReturnType<typeof reader.read>>>((resolve, reject) => {
-        const id = setTimeout(() => {
-          const err = new ProviderError.ResponseStreamError("SSE read timed out")
-          ctl.abort(err)
-          reader.cancel(err).catch(() => {})
-          reject(err)
-        }, ms)
-
-        reader.read().then(
-          (part) => {
-            clearTimeout(id)
-            resolve(part)
-          },
-          (err) => {
-            clearTimeout(id)
-            reject(err)
-          },
-        )
-      })
-
-      if (part.done) {
-        ctrl.close()
-        return
-      }
-
-      ctrl.enqueue(part.value)
-    },
-    async cancel(reason) {
+    pull: (ctrl) =>
+      Effect.runPromise(
+        Effect.tryPromise({ try: () => reader.read(), catch: (cause) => cause }).pipe(
+          Effect.timeoutOrElse({ duration: Duration.millis(ms), orElse: () => timedOut }),
+          Effect.map((part) => (part.done ? ctrl.close() : ctrl.enqueue(part.value))),
+        ),
+      ),
+    cancel: (reason) => {
       ctl.abort(reason)
-      await reader.cancel(reason)
+      return reader.cancel(reason)
     },
   })
 
@@ -93,12 +86,61 @@ function wrapSSE(res: Response, ms: number, ctl: AbortController) {
   })
 }
 
-function timeoutController(ms: number) {
-  const ctl = new AbortController()
-  const id = setTimeout(() => ctl.abort(new ProviderError.HeaderTimeoutError(ms)), ms)
-  return {
-    signal: ctl.signal,
-    clear: () => clearTimeout(id),
+type RequestTimer = { ms: number; ctl: AbortController }
+
+// Wraps a provider fetch with the request, header, and SSE chunk timeouts from the provider options.
+// The AI SDK calls it as a Promise-returning fetch, so each call runs its Effect at this edge.
+function timeoutFetch(input: {
+  fetch?: (request: any, init?: BunFetchRequestInit) => Promise<Response>
+  chunkTimeout: unknown
+  headerTimeout: unknown
+  timeout: unknown
+}) {
+  const timer = (ms: unknown, enabled: (ms: number) => boolean) =>
+    typeof ms === "number" && enabled(ms)
+      ? Option.some({ ms, ctl: new AbortController() })
+      : Option.none<RequestTimer>()
+  return (request: any, init?: BunFetchRequestInit) => {
+    const fetchFn = input.fetch ?? fetch
+    const opts = init ?? {}
+    const chunk = timer(input.chunkTimeout, (ms) => ms > 0)
+    const header = timer(input.headerTimeout, () => true)
+    const signals = Arr.getSomes([
+      Option.fromNullishOr(opts.signal),
+      Option.map(chunk, (item) => item.ctl.signal),
+      Option.map(header, (item) => item.ctl.signal),
+      Predicate.isNotNullish(input.timeout) && input.timeout !== false
+        ? Option.some(AbortSignal.timeout(Number(input.timeout)))
+        : Option.none<AbortSignal>(),
+    ])
+    if (signals.length > 0) opts.signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+
+    // Bun applies its own fetch timeout unless it is disabled: https://github.com/oven-sh/bun/issues/16682
+    const bunInit = { ...opts, timeout: false }
+    const fetched = Effect.tryPromise({ try: () => fetchFn(request, bunInit), catch: (cause) => cause })
+    // The header timeout aborts the request signal, so the fetch itself rejects with HeaderTimeoutError.
+    const response = Option.match(header, {
+      onNone: () => fetched,
+      onSome: ({ ms, ctl }) =>
+        Effect.gen(function* () {
+          const timer = yield* Effect.forkChild(
+            Effect.sleep(Duration.millis(ms)).pipe(
+              Effect.andThen(Effect.sync(() => ctl.abort(new ProviderError.HeaderTimeoutError(ms)))),
+            ),
+          )
+          return yield* fetched.pipe(Effect.ensuring(Fiber.interrupt(timer)))
+        }),
+    })
+    return Effect.runPromise(
+      response.pipe(
+        Effect.map((res) =>
+          Option.match(chunk, {
+            onNone: () => res,
+            onSome: ({ ms, ctl }) => wrapSSE(res, ms, ctl),
+          }),
+        ),
+      ),
+    )
   }
 }
 
@@ -1827,32 +1869,7 @@ const layer = Layer.effect(
         delete options["chunkTimeout"]
         delete options["headerTimeout"]
 
-        options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
-          const fetchFn = customFetch ?? fetch
-          const opts = init ?? {}
-          const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
-          const headerTimeoutMs = headerTimeout === false ? undefined : headerTimeout
-          const headerTimeoutCtl = typeof headerTimeoutMs === "number" ? timeoutController(headerTimeoutMs) : undefined
-          const signals: AbortSignal[] = []
-
-          if (opts.signal) signals.push(opts.signal)
-          if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
-          if (headerTimeoutCtl) signals.push(headerTimeoutCtl.signal)
-          if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
-            signals.push(AbortSignal.timeout(options["timeout"]))
-
-          const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
-          if (combined) opts.signal = combined
-
-          const res = await fetchFn(input, {
-            ...opts,
-            // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
-            timeout: false,
-          }).finally(() => headerTimeoutCtl?.clear())
-
-          if (!chunkAbortCtl) return res
-          return wrapSSE(res, chunkTimeout, chunkAbortCtl)
-        }
+        options["fetch"] = timeoutFetch({ fetch: customFetch, chunkTimeout, headerTimeout, timeout: options["timeout"] })
 
         const bundledLoader = BUNDLED_PROVIDERS[model.api.npm]
         if (bundledLoader) {
