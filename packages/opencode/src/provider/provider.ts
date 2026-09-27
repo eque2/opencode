@@ -341,6 +341,18 @@ type CustomDep = {
   get: (key: string) => Effect.Effect<string | undefined>
 }
 
+// The stored credential of one auth kind, if the stored auth is of that kind.
+const apiAuth = (auth: Auth.Info | undefined) => (auth?.type === "api" ? Option.some(auth) : Option.none<Auth.Api>())
+const oauthAuth = (auth: Auth.Info | undefined) =>
+  auth?.type === "oauth" ? Option.some(auth) : Option.none<Auth.Oauth>()
+
+// Settings count as absent when they are missing or empty, like the `||` fallbacks they replace.
+const nonEmpty = (value: string) => value !== ""
+const setting = (value: string | undefined) => Option.filter(Option.fromNullishOr(value), nonEmpty)
+// The first present setting, for an `a || b || c` chain of settings.
+const firstSetting = (values: ReadonlyArray<Option.Option<string>>) =>
+  Option.firstSomeOf(values.map((value) => Option.filter(value, nonEmpty)))
+
 function selectAzureLanguageModel(sdk: any, modelID: string, useChat: boolean) {
   if (useChat && sdk.chat) return sdk.chat(modelID)
   if (sdk.responses) return sdk.responses(modelID)
@@ -425,14 +437,12 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
     azure: Effect.fnUntraced(function* (provider: Info) {
       const env = yield* dep.env()
       const auth = yield* dep.auth(provider.id)
-      const resource = iife(() => {
-        return [
-          provider.options?.resourceName,
-          auth?.type === "api" ? auth.metadata?.resourceName : undefined,
-          auth?.type === "oauth" ? auth.accountId : undefined,
-          env["AZURE_RESOURCE_NAME"],
-        ].find((name) => typeof name === "string" && name.trim() !== "")
-      })
+      const resource = [
+        provider.options?.resourceName,
+        ...Option.toArray(Option.flatMapNullishOr(apiAuth(auth), (item) => item.metadata?.resourceName)),
+        ...Option.toArray(Option.flatMapNullishOr(oauthAuth(auth), (item) => item.accountId)),
+        env["AZURE_RESOURCE_NAME"],
+      ].find((name) => typeof name === "string" && name.trim() !== "")
 
       if (!resource && !provider.options?.baseURL) {
         return {
@@ -472,9 +482,14 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         getModel: (sdk: any, modelID: string, options?: Record<string, any>) =>
           languageModel(() => selectAzureLanguageModel(sdk, modelID, Boolean(options?.["useCompletionUrls"]))),
         options: {
-          baseURL: resourceName
-            ? `https://${resourceName}.cognitiveservices.azure.com/openai${provider.options?.useDeploymentBasedUrls ? "" : "/v1"}`
-            : undefined,
+          // Provider factory options take plain optional values, so an absent URL stays undefined.
+          baseURL: Option.getOrUndefined(
+            Option.map(
+              setting(resourceName),
+              (name) =>
+                `https://${name}.cognitiveservices.azure.com/openai${provider.options?.useDeploymentBasedUrls ? "" : "/v1"}`,
+            ),
+          ),
         },
       }
     }),
@@ -788,8 +803,11 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const instanceUrl = (yield* dep.get("GITLAB_INSTANCE_URL")) || "https://gitlab.com"
 
       const auth = yield* dep.auth(input.id)
-      const apiKey = auth?.type === "oauth" ? auth.access : auth?.type === "api" ? auth.key : undefined
-      const token = apiKey ?? (yield* dep.get("GITLAB_TOKEN"))
+      const apiKey = Option.orElse(
+        Option.map(oauthAuth(auth), (item) => item.access),
+        () => Option.map(apiAuth(auth), (item) => item.key),
+      )
+      const token = Option.isSome(apiKey) ? apiKey.value : yield* dep.get("GITLAB_TOKEN")
 
       const providerConfig = (yield* dep.config()).provider?.["gitlab"]
       const directory = yield* InstanceState.directory
@@ -817,16 +835,17 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         getModel: (sdk: any, modelID: string, options?: Record<string, any>) =>
           languageModel(() => {
             if (modelID.startsWith("duo-workflow-")) {
-              const workflowRef = typeof options?.workflowRef === "string" ? options.workflowRef : undefined
+              const workflowRef = options?.workflowRef
               // Use the static mapping if it exists, otherwise use duo-workflow with selectedModelRef
               const sdkModelID = isWorkflowModel(modelID) ? modelID : "duo-workflow"
-              const workflowDefinition =
-                typeof options?.workflowDefinition === "string" ? options.workflowDefinition : undefined
               const model = sdk.workflowChat(sdkModelID, {
                 featureFlags,
-                workflowDefinition,
+                // The GitLab SDK option takes a plain optional string.
+                workflowDefinition: Option.getOrUndefined(
+                  Option.filter(Option.fromNullishOr(options?.workflowDefinition), Predicate.isString),
+                ),
               })
-              if (workflowRef) {
+              if (typeof workflowRef === "string" && workflowRef) {
                 model.selectedModelRef = workflowRef
               }
               return model
@@ -837,8 +856,8 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             })
           }),
         discoverModels: (): Effect.Effect<Record<string, Model>> => {
-          if (!apiKey) return Effect.succeed({})
-          const token = apiKey
+          if (Option.isNone(apiKey) || apiKey.value === "") return Effect.succeed({})
+          const token = apiKey.value
           const getHeaders = (): Record<string, string> =>
             auth?.type === "api" ? { "PRIVATE-TOKEN": token } : { Authorization: `Bearer ${token}` }
 
@@ -906,8 +925,11 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       const auth = yield* dep.auth(input.id)
       const env = yield* dep.env()
-      const accountId = env["CLOUDFLARE_ACCOUNT_ID"] || (auth?.type === "api" ? auth.metadata?.accountId : undefined)
-      if (!accountId)
+      const accountSetting = firstSetting([
+        Option.fromNullishOr(env["CLOUDFLARE_ACCOUNT_ID"]),
+        Option.flatMapNullishOr(apiAuth(auth), (item) => item.metadata?.accountId),
+      ])
+      if (Option.isNone(accountSetting))
         return {
           autoload: false,
           getModel: () =>
@@ -919,12 +941,17 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             ),
         }
 
-      const apiKey = env["CLOUDFLARE_API_KEY"] || (auth?.type === "api" ? auth.key : undefined)
+      const accountId = accountSetting.value
+      const apiKey = firstSetting([
+        Option.fromNullishOr(env["CLOUDFLARE_API_KEY"]),
+        Option.map(apiAuth(auth), (item) => item.key),
+      ])
 
       return {
-        autoload: !!apiKey,
+        autoload: Option.isSome(apiKey),
         options: {
-          apiKey,
+          // Provider factory options take plain optional values, so an absent key stays undefined.
+          apiKey: Option.getOrUndefined(apiKey),
           headers: {
             "User-Agent": `opencode/${InstallationVersion} cloudflare-workers-ai (${os.platform()} ${os.release()}; ${os.arch()})`,
           },
@@ -943,15 +970,21 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
 
       const auth = yield* dep.auth(input.id)
       const env = yield* dep.env()
-      const accountId = env["CLOUDFLARE_ACCOUNT_ID"] || (auth?.type === "api" ? auth.metadata?.accountId : undefined)
+      const accountSetting = firstSetting([
+        Option.fromNullishOr(env["CLOUDFLARE_ACCOUNT_ID"]),
+        Option.flatMapNullishOr(apiAuth(auth), (item) => item.metadata?.accountId),
+      ])
       // The Cloudflare auth prompt stores this value as gatewayId metadata.
-      const gateway = env["CLOUDFLARE_GATEWAY_ID"] || (auth?.type === "api" ? auth.metadata?.gatewayId : undefined)
+      const gatewaySetting = firstSetting([
+        Option.fromNullishOr(env["CLOUDFLARE_GATEWAY_ID"]),
+        Option.flatMapNullishOr(apiAuth(auth), (item) => item.metadata?.gatewayId),
+      ])
 
-      if (!accountId || !gateway) {
+      if (Option.isNone(accountSetting) || Option.isNone(gatewaySetting)) {
         const missing = [
-          !accountId ? "CLOUDFLARE_ACCOUNT_ID" : undefined,
-          !gateway ? "CLOUDFLARE_GATEWAY_ID" : undefined,
-        ].filter((x): x is string => Boolean(x))
+          ...(Option.isNone(accountSetting) ? ["CLOUDFLARE_ACCOUNT_ID"] : []),
+          ...(Option.isNone(gatewaySetting) ? ["CLOUDFLARE_GATEWAY_ID"] : []),
+        ]
         return {
           autoload: false,
           getModel: () =>
@@ -964,11 +997,16 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         }
       }
 
+      const accountId = accountSetting.value
+      const gateway = gatewaySetting.value
       // Get API token from env or auth - required for authenticated gateways
-      const apiToken =
-        env["CLOUDFLARE_API_TOKEN"] || env["CF_AIG_TOKEN"] || (auth?.type === "api" ? auth.key : undefined)
+      const tokenSetting = firstSetting([
+        Option.fromNullishOr(env["CLOUDFLARE_API_TOKEN"]),
+        Option.fromNullishOr(env["CF_AIG_TOKEN"]),
+        Option.map(apiAuth(auth), (item) => item.key),
+      ])
 
-      if (!apiToken) {
+      if (Option.isNone(tokenSetting)) {
         return yield* new LoaderError({
           providerID: input.id,
           message:
@@ -976,6 +1014,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             "Set it via environment variable or run `opencode auth cloudflare-ai-gateway`.",
         })
       }
+      const apiToken = tokenSetting.value
 
       const { createAiGateway } = yield* Effect.promise(() => import("ai-gateway-provider"))
       const { createUnified } = yield* Effect.promise(() => import("ai-gateway-provider/providers/unified"))
@@ -1069,21 +1108,31 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const env = yield* dep.env()
       const auth = yield* dep.auth(input.id)
 
-      const account =
-        env["SNOWFLAKE_ACCOUNT"] ??
-        (auth?.type === "api" ? auth.metadata?.account : undefined) ??
-        (auth?.type === "oauth" ? auth.accountId : undefined) ??
-        input.options?.account
+      // Each value takes the first source that is set (a `??` chain); an empty result counts as missing.
+      const accountSetting = Option.firstSomeOf([
+        Option.fromNullishOr(env["SNOWFLAKE_ACCOUNT"]),
+        Option.flatMapNullishOr(apiAuth(auth), (item) => item.metadata?.account),
+        Option.flatMapNullishOr(oauthAuth(auth), (item) => item.accountId),
+        Option.fromNullishOr(input.options?.account),
+      ]).pipe(Option.filter(Boolean))
 
       const envToken = env["SNOWFLAKE_CORTEX_TOKEN"] ?? env["SNOWFLAKE_CORTEX_PAT"]
-      const apiKeyToken = auth?.type === "api" ? auth.key : undefined
-      const oauthToken = auth?.type === "oauth" ? auth.access : undefined
+      const apiKeyToken = Option.map(apiAuth(auth), (item) => item.key)
+      const oauthToken = Option.map(oauthAuth(auth), (item) => item.access)
       const configToken = input.options?.token ?? input.options?.apiKey
 
-      const token = envToken ?? apiKeyToken ?? oauthToken ?? configToken
+      const tokenSetting = Option.firstSomeOf([
+        Option.fromNullishOr(envToken),
+        apiKeyToken,
+        oauthToken,
+        Option.fromNullishOr(configToken),
+      ]).pipe(Option.filter(Boolean))
 
-      if (!account || !token) {
-        const missing = [!account && "SNOWFLAKE_ACCOUNT", !token && "SNOWFLAKE_CORTEX_TOKEN"].filter(Boolean).join(", ")
+      if (Option.isNone(accountSetting) || Option.isNone(tokenSetting)) {
+        const missing = [
+          ...(Option.isNone(accountSetting) ? ["SNOWFLAKE_ACCOUNT"] : []),
+          ...(Option.isNone(tokenSetting) ? ["SNOWFLAKE_CORTEX_TOKEN"] : []),
+        ].join(", ")
         return {
           autoload: false,
           getModel: () =>
@@ -1096,9 +1145,9 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         }
       }
 
-      const baseURL = `https://${account}.snowflakecomputing.com/api/v2/cortex/v1`
+      const baseURL = `https://${accountSetting.value}.snowflakecomputing.com/api/v2/cortex/v1`
 
-      const options: Record<string, any> = { baseURL, apiKey: token }
+      const options: Record<string, any> = { baseURL, apiKey: tokenSetting.value }
 
       // Only skip provider-level fetch when the token is from OAuth with no override.
       // For OAuth tokens, the plugin auth loader's combined fetch handles
@@ -1106,7 +1155,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       // For env/config/API-key tokens, the provider fetch applies snowflake
       // transformations directly.
       const useOAuthHandler =
-        oauthToken !== undefined && envToken === undefined && apiKeyToken === undefined && configToken === undefined
+        Option.isSome(oauthToken) && envToken === undefined && Option.isNone(apiKeyToken) && configToken === undefined
       if (!useOAuthHandler) {
         options.fetch = snowflakeFetch
       }
@@ -1722,7 +1771,7 @@ const layer = Layer.effect(
           if (!apiKey) continue
           mergeProvider(providerID, {
             source: "env",
-            key: provider.env.length === 1 ? apiKey : undefined,
+            ...(provider.env.length === 1 ? { key: apiKey } : {}),
           })
         }
 
@@ -2038,9 +2087,10 @@ const layer = Layer.effect(
 
       if (cfg.small_model) {
         const parsed = parseModel(cfg.small_model)
-        return yield* getModel(parsed.providerID, parsed.modelID).pipe(
-          Effect.catchTag("ProviderModelNotFoundError", () => Effect.succeed(undefined)),
-        )
+        // getModel fails only with ModelNotFoundError, which means no small model.
+        const configured = yield* Effect.option(getModel(parsed.providerID, parsed.modelID))
+        if (Option.isSome(configured)) return configured.value
+        return undefined
       }
 
       const s = yield* InstanceState.get(state)
@@ -2050,7 +2100,7 @@ const layer = Layer.effect(
       const experimental = yield* plugin.trigger<"experimental.provider.small_model">(
         "experimental.provider.small_model",
         { provider: toPublicInfo(provider) },
-        { model: undefined },
+        {},
       )
       if (experimental.model) {
         return {
