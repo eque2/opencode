@@ -281,7 +281,8 @@ function addV2EventComponents(spec: OpenApiSpec) {
   const document = Schema.toJsonSchemaDocument(OpenCodeEvent, { onExcessProperty: "error" })
   for (const [name, schema] of Object.entries(document.definitions)) {
     if (schemas[name] || schemas[`${name}Encoded`]) continue
-    schemas[name] = rewriteJsonSchemaDefinitionRefs(structuredClone(schema)) as OpenApiSchema
+    const rewritten = rewriteJsonSchemaDefinitionRefs(schema)
+    if (isOpenApiSchema(rewritten)) schemas[name] = rewritten
   }
   const stream = schemas.V2EventStreamEncoded ?? schemas.V2EventStream
   if (stream) {
@@ -290,15 +291,23 @@ function addV2EventComponents(spec: OpenApiSpec) {
   }
 }
 
+/** Copy a JSON Schema definition and point its `#/$defs/` refs at the OpenAPI components. */
 function rewriteJsonSchemaDefinitionRefs(input: unknown): unknown {
   if (Array.isArray(input)) return input.map(rewriteJsonSchemaDefinitionRefs)
   if (!input || typeof input !== "object") return input
-  const output = input as Record<string, unknown>
-  if (typeof output.$ref === "string" && output.$ref.startsWith("#/$defs/")) {
-    output.$ref = output.$ref.replace("#/$defs/", "#/components/schemas/")
-  }
-  for (const [key, value] of Object.entries(output)) output[key] = rewriteJsonSchemaDefinitionRefs(value)
-  return output
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [
+      key,
+      key === "$ref" && typeof value === "string" && value.startsWith("#/$defs/")
+        ? value.replace("#/$defs/", "#/components/schemas/")
+        : rewriteJsonSchemaDefinitionRefs(value),
+    ]),
+  )
+}
+
+// Every OpenApiSchema field is optional, so any plain object is a structurally valid OpenApiSchema.
+function isOpenApiSchema(input: unknown): input is OpenApiSchema {
+  return typeof input === "object" && input !== null && !Array.isArray(input)
 }
 
 function applyLegacySchemaOverrides(spec: OpenApiSpec) {

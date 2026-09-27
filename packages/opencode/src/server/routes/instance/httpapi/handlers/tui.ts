@@ -1,35 +1,37 @@
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { TuiEvent } from "@/server/tui-event"
 import { Session } from "@/session/session"
-import { Effect } from "effect"
+import { Effect, HashMap, Option } from "effect"
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { nextTuiRequest, submitTuiResponse } from "@/server/shared/tui-control"
 import { InstanceHttpApi } from "../api"
 import { CommandPayload, TuiPublishPayload } from "../groups/tui"
 import * as SessionError from "./session-errors"
 
-const commandAliases = {
-  session_new: "session.new",
-  session_share: "session.share",
-  session_interrupt: "session.interrupt",
-  session_compact: "session.compact",
-  messages_page_up: "session.page.up",
-  messages_page_down: "session.page.down",
-  messages_line_up: "session.line.up",
-  messages_line_down: "session.line.down",
-  messages_half_page_up: "session.half.page.up",
-  messages_half_page_down: "session.half.page.down",
-  messages_first: "session.first",
-  messages_last: "session.last",
-  agent_cycle: "agent.cycle",
-} as const
+const commandAliases = HashMap.fromIterable(
+  Object.entries({
+    session_new: "session.new",
+    session_share: "session.share",
+    session_interrupt: "session.interrupt",
+    session_compact: "session.compact",
+    messages_page_up: "session.page.up",
+    messages_page_down: "session.page.down",
+    messages_line_up: "session.line.up",
+    messages_line_down: "session.line.down",
+    messages_half_page_up: "session.half.page.up",
+    messages_half_page_down: "session.half.page.down",
+    messages_first: "session.first",
+    messages_last: "session.last",
+    agent_cycle: "agent.cycle",
+  }),
+)
 
 export const tuiHandlers = HttpApiBuilder.group(InstanceHttpApi, "tui", (handlers) =>
   Effect.gen(function* () {
     const events = yield* EventV2Bridge.Service
     const session = yield* Session.Service
-    const publishCommand = (command: typeof TuiEvent.CommandExecute.data.Type.command | undefined) =>
-      events.publish(TuiEvent.CommandExecute, { command } as typeof TuiEvent.CommandExecute.data.Type)
+    const publishCommand = (command: typeof TuiEvent.CommandExecute.data.Type.command) =>
+      events.publish(TuiEvent.CommandExecute, { command })
 
     const appendPrompt = Effect.fn("TuiHttpApi.appendPrompt")(function* (ctx: {
       payload: typeof TuiEvent.PromptAppend.data.Type
@@ -71,8 +73,16 @@ export const tuiHandlers = HttpApiBuilder.group(InstanceHttpApi, "tui", (handler
     const executeCommand = Effect.fn("TuiHttpApi.executeCommand")(function* (ctx: {
       payload: typeof CommandPayload.Type
     }) {
-      // Legacy only publishes known aliases; unknown commands become undefined.
-      yield* publishCommand(commandAliases[ctx.payload.command as keyof typeof commandAliases])
+      // Legacy only publishes known aliases; an unknown command publishes the event without a command.
+      yield* Option.match(HashMap.get(commandAliases, ctx.payload.command), {
+        onSome: publishCommand,
+        onNone: () =>
+          events.publish(
+            TuiEvent.CommandExecute,
+            // oxlint-disable-next-line typescript-eslint(no-unsafe-type-assertion) -- (b) legacy wire payload: the CommandExecute schema requires a command, but the legacy TUI API publishes `{}` for an unknown alias
+            {} as typeof TuiEvent.CommandExecute.data.Type,
+          ),
+      })
       return true
     })
 

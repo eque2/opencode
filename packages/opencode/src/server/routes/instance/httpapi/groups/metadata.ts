@@ -3,8 +3,8 @@ import { HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 
 export const NoContentPayload = Schema.Undefined.pipe(Schema.decodeTo(HttpApiSchema.NoContent))
 
-export function described<S extends Schema.Top>(schema: S, description: string): S {
-  return schema.annotate({ description }) as S
+export function described<S extends Schema.Top>(schema: S, description: string): S["Rebuild"] {
+  return schema.annotate({ description })
 }
 
 export function responseDescription(description: string) {

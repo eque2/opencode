@@ -20,7 +20,7 @@ function sanitize(out: Headers) {
 
 export function headers(input: Request | HeadersInit | Record<string, string>, extra?: HeadersInit) {
   const raw = input instanceof Request ? input.headers : input
-  const out = new Headers(raw instanceof Headers ? raw : Object.entries(raw as Record<string, string>))
+  const out = new Headers(raw instanceof Headers ? raw : Object.entries(raw))
   sanitize(out)
   if (!extra) return out
   for (const [key, value] of new Headers(extra).entries()) {
