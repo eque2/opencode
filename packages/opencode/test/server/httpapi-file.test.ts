@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { Context, Effect } from "effect"
+import { Effect } from "effect"
 import path from "path"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import { FilePaths } from "../../src/server/routes/instance/httpapi/groups/file"
@@ -7,7 +7,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, tmpdir } from "../fixture/fixture"
 import { pollWithTimeout } from "../lib/effect"
 
-const context = Context.empty() as Context.Context<unknown>
+const context = HttpApiApp.context
 
 function request(route: string, directory: string, query?: Record<string, string>) {
   const url = new URL(`http://localhost${route}`)

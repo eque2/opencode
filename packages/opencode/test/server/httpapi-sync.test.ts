@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Context, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { SyncPaths } from "../../src/server/routes/instance/httpapi/groups/sync"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import { Session } from "@/session/session"
@@ -9,7 +9,7 @@ import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
-const context = Context.empty() as Context.Context<unknown>
+const context = HttpApiApp.context
 const it = testEffect(Layer.mergeAll(LayerNode.compile(Session.node), httpApiLayer))
 
 afterEach(async () => {

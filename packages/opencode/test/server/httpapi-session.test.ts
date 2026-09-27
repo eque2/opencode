@@ -30,7 +30,7 @@ import { SessionMessage } from "@opencode-ai/core/session/message"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import * as DateTime from "effect/DateTime"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, provideInstanceEffect, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { TestLLMServer } from "../lib/llm-server"
@@ -165,7 +165,8 @@ const insertCorruptV2Message = (sessionID: SessionIDType, time = 1) =>
           type: "assistant",
           seq: time,
           time_created: time,
-          data: {} as NonNullable<(typeof SessionMessageTable.$inferInsert)["data"]>,
+          // Raw SQL, so the corrupt empty object bypasses the column type as the test intends.
+          data: sql`${"{}"}`,
         },
       ])
       .run()
@@ -676,8 +677,8 @@ describe("session HttpApi", () => {
         expect(messagesBody).toMatchObject({
           _tag: "UnknownError",
           message: "Unexpected server error. Check server logs for details.",
+          ref: expect.stringMatching(/^err_[0-9a-f-]{8}$/),
         })
-        expect((messagesBody as { ref?: unknown }).ref).toMatch(/^err_[0-9a-f-]{8}$/)
         expect(JSON.stringify(messagesBody)).not.toContain("assistant")
 
         const context = yield* request(`/api/session/${session.id}/context`, {
@@ -688,8 +689,8 @@ describe("session HttpApi", () => {
         expect(contextBody).toMatchObject({
           _tag: "UnknownError",
           message: "Unexpected server error. Check server logs for details.",
+          ref: expect.stringMatching(/^err_[0-9a-f-]{8}$/),
         })
-        expect((contextBody as { ref?: unknown }).ref).toMatch(/^err_[0-9a-f-]{8}$/)
         expect(JSON.stringify(contextBody)).not.toContain("assistant")
       }),
     { git: true, config: { formatter: false, lsp: false } },

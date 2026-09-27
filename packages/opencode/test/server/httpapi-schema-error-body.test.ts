@@ -2,7 +2,7 @@ import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Effect, Layer } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { Database } from "@opencode-ai/core/database/database"
 
 import { Session } from "@/session/session"
@@ -53,12 +53,13 @@ const seedCorruptStepFinishPart = Effect.gen(function* () {
   yield* db
     .update(PartTable)
     .set({
-      data: {
+      // Raw SQL text, as the JSON column would store it: JSON.stringify writes NaN as null.
+      data: sql`${JSON.stringify({
         type: "step-finish",
         reason: "stop",
         cost: 0,
         tokens: { input: 0, output: NaN, reasoning: 0, cache: { read: 0, write: 0 } },
-      } as never, // drizzle's .set() can't narrow the discriminated union
+      })}`,
     })
     .where(eq(PartTable.id, partID))
     .run()

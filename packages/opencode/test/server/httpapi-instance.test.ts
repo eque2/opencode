@@ -1,7 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { describe, expect } from "bun:test"
-import { Config, Context, Effect, FileSystem, Layer, Path } from "effect"
+import { Config, Effect, FileSystem, Layer, Path } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
@@ -47,7 +47,7 @@ const it = testEffect(Layer.mergeAll(testStateLayer, httpApiServerLayer))
 const fixedWorkspaceIt = testEffect(
   Layer.mergeAll(testStateLayer, httpApiServerLayer.pipe(Layer.provide(fixedWorkspaceIDLayer(WorkspaceV2.ID.ascending())))),
 )
-const handlerContext = Context.empty() as Context.Context<unknown>
+const handlerContext = HttpApiApp.context
 
 const directoryHeader = (dir: string) => HttpClientRequest.setHeader("x-opencode-directory", dir)
 
