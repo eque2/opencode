@@ -77,6 +77,7 @@ function registerUnavailableWslIpcHandlers() {
   const state = (): WslServersState => ({
     runtime: {
       available: false,
+      // eslint-disable-next-line effect/no-null-use-option -- (a) WslServersState from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types a missing runtime version as null
       version: null,
       error: nativeT("desktop.wsl.error.windowsOnly"),
     },
@@ -86,6 +87,7 @@ function registerUnavailableWslIpcHandlers() {
     opencodeChecks: {},
     pendingRestart: false,
     servers: [],
+    // eslint-disable-next-line effect/no-null-use-option -- (a) WslServersState from @opencode-ai/app/wsl/types is the IPC wire type the renderer reads; it types "no running job" as null
     job: null,
   })
 
