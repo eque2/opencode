@@ -40,7 +40,7 @@ describe("WSL desktop connections", () => {
 
   test("does not block desktop startup on a configured WSL default", () => {
     const key = "wsl:Debian"
-    expect(availableStartupServer(key, undefined)).toBe("sidecar")
+    expect(availableStartupServer(key)).toBe("sidecar")
     expect(availableStartupServer(key, state("starting"))).toBe("sidecar")
     expect(availableStartupServer(key, state("ready"))).toBe(key)
   })
