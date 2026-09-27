@@ -68,10 +68,6 @@ export function loadAppEnv(userDataPath: string) {
   )
 }
 
-export function preferAppEnv(userDataPath: string) {
-  return Effect.runSync(loadAppEnv(userDataPath))
-}
-
 export function spawnLocalServer(hostname: string, port: number, password: string, options: SpawnLocalServerOptions) {
   return Effect.runPromise(
     Effect.gen(function* () {

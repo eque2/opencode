@@ -26,7 +26,7 @@ import {
 } from "./onboarding"
 import {
   getDefaultServerUrl,
-  preferAppEnv,
+  loadAppEnv,
   setDefaultServerUrl,
   spawnLocalServer,
   type SidecarListener,
@@ -104,7 +104,7 @@ const killSidecar = Effect.suspend(() => {
 })
 
 // Reads one environment variable when the Effect runs. The default ConfigProvider keeps a
-// copy of process.env, but startup writes process.env (preferAppEnv, ensureLoopbackNoProxy).
+// copy of process.env, but startup writes process.env (loadAppEnv, ensureLoopbackNoProxy).
 // The provider reads process.env itself, which keeps Windows case-insensitive lookups.
 const readEnv = (name: string) =>
   Config.option(Config.String(name)).parse(ConfigProvider.fromEnvRecord(process.env)).pipe(Effect.orDie)
@@ -234,7 +234,7 @@ const main = Effect.gen(function* () {
     return
   }
 
-  const shellEnv = preferAppEnv(app.getPath("userData"))
+  const shellEnv = yield* loadAppEnv(app.getPath("userData"))
 
   app.on("second-instance", (_event: Event, argv: string[]) => {
     const urls = argv.filter((arg: string) => arg.startsWith("opencode://"))
