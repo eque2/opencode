@@ -2,119 +2,133 @@ import { execFile } from "node:child_process"
 import { access, readFile, readdir } from "node:fs/promises"
 import { dirname, extname, join } from "node:path"
 import util from "node:util"
+import { Array as Arr, Config, Data, Effect, Option } from "effect"
 
 const execFilePromise = util.promisify(execFile)
 
-const exists = (path: string) =>
-  access(path)
-    .then(() => true)
-    .catch(() => false)
+class AppLookupError extends Data.TaggedError("AppLookupError")<{ readonly cause: unknown }> {}
+
+const attempt = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => new AppLookupError({ cause }) })
+
+const exists = (path: string) => attempt(() => access(path)).pipe(Effect.as(true), Effect.orElseSucceed(() => false))
+
+// Returns the first candidate path that exists, checking in order and stopping at the first hit.
+const firstExisting = (paths: ReadonlyArray<string>) => Effect.findFirst(paths, (path) => exists(path))
 
 export function checkAppExists(appName: string) {
   if (process.platform === "win32") return true
   if (process.platform === "linux") return true
-  return checkMacosApp(appName)
+  return Effect.runPromise(checkMacosApp(appName))
 }
 
+// Answers synchronously off Windows. On Windows the Promise resolves to null when no path is found,
+// which is the IPC reply type in preload/types.ts.
 export function resolveAppPath(appName: string) {
   if (process.platform !== "win32") return appName
-  return resolveWindowsAppPath(appName)
+  return Effect.runPromise(resolveWindowsAppPath(appName).pipe(Effect.map(Option.getOrNull)))
 }
 
-async function checkMacosApp(appName: string) {
-  const locations = [`/Applications/${appName}.app`, `/System/Applications/${appName}.app`]
+function checkMacosApp(appName: string) {
+  return Effect.gen(function* () {
+    const home = yield* Config.option(Config.String("HOME")).pipe(Effect.orDie)
+    const locations = [
+      `/Applications/${appName}.app`,
+      `/System/Applications/${appName}.app`,
+      ...Option.toArray(Option.map(home, (home) => `${home}/Applications/${appName}.app`)),
+    ]
 
-  const home = process.env.HOME
-  if (home) locations.push(`${home}/Applications/${appName}.app`)
+    if (Option.isSome(yield* firstExisting(locations))) return true
 
-  for (const location of locations) {
-    if (await exists(location)) return true
-  }
-
-  return execFilePromise("which", [appName])
-    .then(() => true)
-    .catch(() => false)
+    return yield* attempt(() => execFilePromise("which", [appName])).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    )
+  })
 }
 
-async function resolveWindowsAppPath(appName: string): Promise<string | null> {
-  let output: string
-  try {
-    output = await execFilePromise("where", [appName]).then((r) => r.stdout.toString())
-  } catch {
-    return null
-  }
+function resolveWindowsAppPath(appName: string) {
+  return Effect.gen(function* () {
+    const output = yield* attempt(() => execFilePromise("where", [appName])).pipe(
+      Effect.map((result) => result.stdout),
+      Effect.option,
+    )
+    if (Option.isNone(output)) return Option.none<string>()
 
-  const paths = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+    const paths = output.value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
 
-  const hasExt = (path: string, ext: string) => extname(path).toLowerCase() === `.${ext}`
+    const hasExt = (path: string, ext: string) => extname(path).toLowerCase() === `.${ext}`
 
-  const exe = paths.find((path) => hasExt(path, "exe"))
-  if (exe) return exe
+    const exe = paths.find((path) => hasExt(path, "exe"))
+    if (exe) return Option.some(exe)
 
-  const resolveCmd = async (path: string) => {
-    const content = await readFile(path, "utf8")
-    for (const token of content.split('"').map((value: string) => value.trim())) {
-      const lower = token.toLowerCase()
-      if (!lower.includes(".exe")) continue
+    // A read failure fails the whole lookup, as the rejected readFile did before.
+    const resolveCmd = (path: string) =>
+      Effect.gen(function* () {
+        const content = yield* attempt(() => readFile(path, "utf8"))
+        for (const token of content.split('"').map((value: string) => value.trim())) {
+          const lower = token.toLowerCase()
+          if (!lower.includes(".exe")) continue
 
-      const index = lower.indexOf("%~dp0")
-      if (index >= 0) {
-        const base = dirname(path)
-        const suffix = token.slice(index + 5)
-        const resolved = suffix
-          .replace(/\//g, "\\")
-          .split("\\")
-          .filter((part: string) => part && part !== ".")
-          .reduce((current: string, part: string) => {
-            if (part === "..") return dirname(current)
-            return join(current, part)
-          }, base)
+          const index = lower.indexOf("%~dp0")
+          if (index >= 0) {
+            const base = dirname(path)
+            const suffix = token.slice(index + 5)
+            const resolved = suffix
+              .replace(/\//g, "\\")
+              .split("\\")
+              .filter((part: string) => part && part !== ".")
+              .reduce((current: string, part: string) => {
+                if (part === "..") return dirname(current)
+                return join(current, part)
+              }, base)
 
-        if (await exists(resolved)) return resolved
-      }
+            if (yield* exists(resolved)) return Option.some(resolved)
+          }
 
-      if (await exists(token)) return token
-    }
+          if (yield* exists(token)) return Option.some(token)
+        }
 
-    return null
-  }
+        return Option.none<string>()
+      })
 
-  for (const path of paths) {
-    if (hasExt(path, "cmd") || hasExt(path, "bat")) {
-      const resolved = await resolveCmd(path)
-      if (resolved) return resolved
-    }
-
-    if (!extname(path)) {
-      const cmd = `${path}.cmd`
-      if (await exists(cmd)) {
-        const resolved = await resolveCmd(cmd)
-        if (resolved) return resolved
-      }
-
-      const bat = `${path}.bat`
-      if (await exists(bat)) {
-        const resolved = await resolveCmd(bat)
-        if (resolved) return resolved
-      }
-    }
-  }
-
-  const key = appName
-    .split("")
-    .filter((value: string) => /[a-z0-9]/i.test(value))
-    .map((value: string) => value.toLowerCase())
-    .join("")
-
-  if (key) {
     for (const path of paths) {
-      const dirs = [dirname(path), dirname(dirname(path)), dirname(dirname(dirname(path)))]
-      for (const dir of dirs) {
-        try {
-          for (const entry of await readdir(dir)) {
+      if (hasExt(path, "cmd") || hasExt(path, "bat")) {
+        const resolved = yield* resolveCmd(path)
+        if (Option.isSome(resolved)) return resolved
+      }
+
+      if (!extname(path)) {
+        const cmd = `${path}.cmd`
+        if (yield* exists(cmd)) {
+          const resolved = yield* resolveCmd(cmd)
+          if (Option.isSome(resolved)) return resolved
+        }
+
+        const bat = `${path}.bat`
+        if (yield* exists(bat)) {
+          const resolved = yield* resolveCmd(bat)
+          if (Option.isSome(resolved)) return resolved
+        }
+      }
+    }
+
+    const key = appName
+      .split("")
+      .filter((value: string) => /[a-z0-9]/i.test(value))
+      .map((value: string) => value.toLowerCase())
+      .join("")
+
+    if (key) {
+      for (const path of paths) {
+        const dirs = [dirname(path), dirname(dirname(path)), dirname(dirname(dirname(path)))]
+        for (const dir of dirs) {
+          // An unreadable directory is skipped.
+          const entries = yield* attempt(() => readdir(dir)).pipe(Effect.orElseSucceed((): string[] => []))
+          for (const entry of entries) {
             const candidate = join(dir, entry)
             if (!hasExt(candidate, "exe")) continue
             const stem = entry.replace(/\.exe$/i, "")
@@ -123,14 +137,12 @@ async function resolveWindowsAppPath(appName: string): Promise<string | null> {
               .filter((value: string) => /[a-z0-9]/i.test(value))
               .map((value: string) => value.toLowerCase())
               .join("")
-            if (name.includes(key) || key.includes(name)) return candidate
+            if (name.includes(key) || key.includes(name)) return Option.some(candidate)
           }
-        } catch {
-          continue
         }
       }
     }
-  }
 
-  return paths[0] ?? null
+    return Arr.head(paths)
+  })
 }
