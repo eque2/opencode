@@ -726,7 +726,7 @@ export function createServerSession(
       const normalized = normalizeSessionMessages(sessionID, source)
       return {
         session: normalized.messages.sort(compareMessages),
-        part: [...normalized.parts.entries()]
+        part: [...normalized.parts]
           .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
           .sort((a, b) => cmp(a.id, b.id)),
         source,
@@ -768,7 +768,7 @@ export function createServerSession(
       const normalized = normalizeSessionMessages(sessionID, [response])
       const message = normalized.messages[0]
       if (!message) return yield* new MessageNotFoundError({ message: `Message not found: ${messageID}` })
-      return { message, parts: normalized.parts.get(messageID) ?? [] }
+      return { message, parts: Option.getOrElse(MutableHashMap.get(normalized.parts, messageID), (): Part[] => []) }
     }
     const response = yield* attempt(() =>
       retryRequest(() => {
@@ -878,7 +878,7 @@ export function createServerSession(
             return {
               ...page,
               session: normalized.messages.sort(compareMessages),
-              part: [...normalized.parts.entries()]
+              part: [...normalized.parts]
                 .map(([id, part]) => ({ id, part: part.sort((a, b) => cmp(a.id, b.id)) }))
                 .sort((a, b) => cmp(a.id, b.id)),
             }
@@ -1154,7 +1154,7 @@ export function createServerSession(
         applyMessageUpdated(message)
       }
       for (const messageID of touched) {
-        const next = normalized.parts.get(messageID) ?? []
+        const next = Option.getOrElse(MutableHashMap.get(normalized.parts, messageID), (): Part[] => [])
         const nextIDs = MutableHashSet.fromIterable(next.map((part) => part.id))
         for (const part of next) {
           observeSession(reduction.sessionID)

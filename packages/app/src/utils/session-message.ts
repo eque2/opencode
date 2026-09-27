@@ -6,7 +6,7 @@ import type {
   SessionMessageUser,
 } from "@opencode-ai/client/promise"
 import type { AssistantMessage, FilePart, Message, Part, ToolPart, UserMessage } from "@opencode-ai/sdk/v2"
-import { Option, Schema } from "effect"
+import { MutableHashMap, Option, Schema } from "effect"
 
 const emptyTokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
 const emptyModel: { id: string; providerID: string; variant?: string } = { id: "", providerID: "" }
@@ -47,7 +47,7 @@ function normalizeToolMetadata(name: string, metadata: Record<string, unknown>) 
 }
 
 export function normalizeSessionMessages(sessionID: string, source: readonly SessionMessageInfo[]) {
-  const parts = new Map<string, Part[]>()
+  const parts = MutableHashMap.empty<string, Part[]>()
   let agent = ""
   let model = emptyModel
   // The latest user or synthetic message. A later assistant reply sets its agent and model.
@@ -66,7 +66,7 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
     if (message.type === "user") {
       const user = userMessage(sessionID, message, agent, model)
       parent = Option.some(user)
-      parts.set(message.id, userParts(sessionID, message))
+      MutableHashMap.set(parts, message.id, userParts(sessionID, message))
       return user
     }
     if (message.type === "synthetic" && message.description?.trim()) {
@@ -79,12 +79,12 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
         model: { providerID: model.providerID, modelID: model.id, variant: model.variant },
       }
       parent = Option.some(user)
-      parts.set(message.id, [textPart(sessionID, message.id, 0, message.description, true)])
+      MutableHashMap.set(parts, message.id, [textPart(sessionID, message.id, 0, message.description, true)])
       return user
     }
     if (message.type === "shell") {
-      parts.set(message.id, [textPart(sessionID, message.id, 0, message.command)])
-      parts.set(`${message.id}:assistant`, [shellPart(sessionID, message)])
+      MutableHashMap.set(parts, message.id, [textPart(sessionID, message.id, 0, message.command)])
+      MutableHashMap.set(parts, `${message.id}:assistant`, [shellPart(sessionID, message)])
       parent = Option.none()
       return shellMessages(sessionID, message, agent, model)
     }
@@ -99,13 +99,13 @@ export function normalizeSessionMessages(sessionID: string, source: readonly Ses
         modelID: message.model.id,
         variant: message.model.variant,
       }
-      parts.set(message.id, assistantParts(sessionID, message))
+      MutableHashMap.set(parts, message.id, assistantParts(sessionID, message))
       return assistantMessage(sessionID, user.id, message)
     }
     if (message.type !== "compaction" || Option.isNone(parent)) return noMessages
     const parentID = parent.value.id
-    parts.set(parentID, [
-      ...(parts.get(parentID) ?? []),
+    MutableHashMap.set(parts, parentID, [
+      ...Option.getOrElse(MutableHashMap.get(parts, parentID), (): Part[] => []),
       {
         id: `${message.id}:compaction`,
         sessionID,

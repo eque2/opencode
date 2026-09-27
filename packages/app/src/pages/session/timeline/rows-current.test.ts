@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
-import { Effect, HashMap, Option } from "effect"
+import { Effect, HashMap, MutableHashMap, Option } from "effect"
 import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { normalizeSessionMessages } from "@/utils/session-message"
 
@@ -55,7 +55,7 @@ describe("current session timeline rows", () => {
     const result = Timeline.constructSessionMessageRows(
       source,
       (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "busy",
       true,
@@ -91,7 +91,7 @@ describe("current session timeline rows", () => {
     const result = Timeline.constructSessionMessageRows(
       source,
       (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "idle",
       true,
@@ -132,7 +132,7 @@ describe("current session timeline rows", () => {
     const result = Timeline.constructSessionMessageRows(
       source.slice(1),
       (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "idle",
       true,
@@ -208,7 +208,7 @@ describe("current session timeline rows", () => {
     const result = Timeline.constructSessionMessageRows(
       source,
       (messageID) => Option.getOrUndefined(HashMap.get(messages, messageID)),
-      (messageID) => normalized.parts.get(messageID) ?? [],
+      (messageID) => Option.getOrUndefined(MutableHashMap.get(normalized.parts, messageID)) ?? [],
       true,
       "busy",
       true,
