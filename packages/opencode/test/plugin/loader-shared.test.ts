@@ -1022,9 +1022,9 @@ export default {
                 ],
                 kind: "tui",
                 missing: async (item) => {
-                  if (!item.pkg) return
+                  if (!item.pkg) return undefined
                   const themes = readPackageThemes(item.spec, item.pkg)
-                  if (!themes.length) return
+                  if (!themes.length) return undefined
                   return {
                     spec: item.spec,
                     target: item.target,
@@ -1095,7 +1095,7 @@ export default {
                 ],
                 kind: "tui",
                 finish: async (item) => {
-                  if (!item.pkg) return
+                  if (!item.pkg) return undefined
                   return {
                     spec: item.spec,
                     themes: readPackageThemes(item.spec, item.pkg),
