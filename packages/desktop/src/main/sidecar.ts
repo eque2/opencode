@@ -44,9 +44,16 @@ const main = Effect.gen(function* () {
     Effect.runFork(command.value.type === "stop" ? stop(parentPort) : start(parentPort, command.value))
   })
 }).pipe(
-  // A missing parent port means this file ran outside an Electron utility process.
+  // A missing parent port means this file ran outside an Electron utility process. Nothing
+  // else keeps the process alive, so it ends with exit code 1.
   Effect.catchCause((cause) =>
-    Effect.logError("sidecar failed to start", cause).pipe(Effect.andThen(Effect.sync(() => process.exit(1)))),
+    Effect.logError("sidecar failed to start", cause).pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          process.exitCode = 1
+        }),
+      ),
+    ),
   ),
 )
 
