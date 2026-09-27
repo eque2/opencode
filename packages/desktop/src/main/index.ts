@@ -68,7 +68,7 @@ class StartupStepError extends Data.TaggedError("StartupStepError")<{ readonly c
 let logger: ReturnType<typeof initLogging>
 let server: Option.Option<SidecarListener> = Option.none()
 
-const pendingDeepLinks: string[] = []
+let pendingDeepLinks: ReadonlyArray<string> = []
 
 // Electron 41.2 runs Node 24.14.1, which has http.setGlobalProxyFromEnv; latest @types/node@24
 // is 24.12.2 and does not declare it.
@@ -91,7 +91,7 @@ const useEnvProxy = Effect.suspend(() => {
 
 function emitDeepLinks(urls: string[]) {
   if (urls.length === 0) return
-  pendingDeepLinks.push(...urls)
+  pendingDeepLinks = [...pendingDeepLinks, ...urls]
   const win = getLastFocusedWindow()
   if (win) sendDeepLinks(win, urls)
 }
@@ -121,13 +121,9 @@ const ensureLoopbackNoProxy = Effect.forEach(
           .split(",")
           .map((value: string) => value.trim())
           .filter((value: string) => Boolean(value))
+        const missing = loopback.filter((host) => !items.some((value: string) => value.toLowerCase() === host))
 
-        for (const host of loopback) {
-          if (items.some((value: string) => value.toLowerCase() === host)) continue
-          items.push(host)
-        }
-
-        Object.assign(process.env, { [key]: items.join(",") })
+        Object.assign(process.env, { [key]: [...items, ...missing].join(",") })
       }),
     ),
   { discard: true },
@@ -328,7 +324,11 @@ const main = Effect.gen(function* () {
       },
       (e) => Effect.runPromise(e),
     ),
-    consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
+    consumeInitialDeepLinks: () => {
+      const links = [...pendingDeepLinks]
+      pendingDeepLinks = []
+      return links
+    },
     getDefaultServerUrl: () => getDefaultServerUrl(),
     setDefaultServerUrl: (url) => setDefaultServerUrl(url),
     isFirstLaunchOnboardingPending,
