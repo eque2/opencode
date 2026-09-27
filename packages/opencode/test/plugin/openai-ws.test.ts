@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer } from "n
 import net, { type AddressInfo, type Socket } from "node:net"
 import WebSocket, { WebSocketServer } from "ws"
 import { APICallError } from "ai"
+import { Effect } from "effect"
 import { ProviderError } from "../../src/provider/error"
 import { OpenAIWebSocket } from "../../src/plugin/openai/ws"
 import { OpenAIWebSocketPool, TITLE_HEADER } from "../../src/plugin/openai/ws-pool"
@@ -15,14 +16,16 @@ describe("plugin.openai.ws", () => {
       headers = request.headers
     })
 
-    const socket = await OpenAIWebSocket.connectResponsesWebSocket({
-      url: server.wsUrl,
-      headers: {
-        authorization: "Bearer test",
-        "content-length": "123",
-        "x-openai-internal-codex-residency": "eu",
-      },
-    })
+    const socket = await Effect.runPromise(
+      OpenAIWebSocket.connectResponsesWebSocket({
+        url: server.wsUrl,
+        headers: {
+          authorization: "Bearer test",
+          "content-length": "123",
+          "x-openai-internal-codex-residency": "eu",
+        },
+      }),
+    )
 
     expect(OpenAIWebSocket.toWebSocketUrl("http://example.com/v1/responses")).toBe("ws://example.com/v1/responses")
     expect(OpenAIWebSocket.toWebSocketUrl("https://example.com/v1/responses")).toBe("wss://example.com/v1/responses")
@@ -36,30 +39,40 @@ describe("plugin.openai.ws", () => {
   test("enforces websocket connect timeout", async () => {
     await using server = await createHangingTcpServer()
 
-    await expect(
-      OpenAIWebSocket.connectResponsesWebSocket({
-        url: server.wsUrl,
-        headers: {},
-        timeout: 20,
-      }),
-    ).rejects.toThrow("WebSocket connect timed out")
+    const error = await Effect.runPromise(
+      Effect.flip(
+        OpenAIWebSocket.connectResponsesWebSocket({
+          url: server.wsUrl,
+          headers: {},
+          timeout: 20,
+        }),
+      ),
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain("WebSocket connect timed out")
   })
 
   test("surfaces websocket upgrade rejection messages", async () => {
     await using server = await createRejectingWebSocketServer(() => {})
 
-    await expect(
-      OpenAIWebSocket.connectResponsesWebSocket({
-        url: server.wsUrl,
-        headers: {},
-      }),
-    ).rejects.toThrow("Expected 101 status code")
+    const error = await Effect.runPromise(
+      Effect.flip(
+        OpenAIWebSocket.connectResponsesWebSocket({
+          url: server.wsUrl,
+          headers: {},
+        }),
+      ),
+    )
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toContain("Expected 101 status code")
   })
 
   test("enforces websocket send idle timeout", async () => {
     const socket = new (class extends EventEmitter {
+      readonly url = "ws://127.0.0.1/v1/responses"
       send(_data: string, _callback: (error?: Error) => void) {}
-    })() as unknown as WebSocket
+      terminate() {}
+    })()
     const invalid: string[] = []
     const response = OpenAIWebSocket.streamResponsesWebSocket({
       socket,
@@ -76,17 +89,19 @@ describe("plugin.openai.ws", () => {
     let requestBody: unknown
     await using server = await createWebSocketServer((socket) => {
       socket.once("message", (data) => {
-        requestBody = JSON.parse(data.toString())
+        requestBody = JSON.parse(OpenAIWebSocket.messageText(data))
         socket.send(JSON.stringify({ type: "response.output_text.delta", delta: "hello" }))
         socket.send(JSON.stringify({ type: "response.done", response: { id: "resp_123" } }))
         socket.close(1000, "done")
       })
     })
 
-    const socket = await OpenAIWebSocket.connectResponsesWebSocket({
-      url: server.wsUrl,
-      headers: { authorization: "Bearer test", "content-length": "123" },
-    })
+    const socket = await Effect.runPromise(
+      OpenAIWebSocket.connectResponsesWebSocket({
+        url: server.wsUrl,
+        headers: { authorization: "Bearer test", "content-length": "123" },
+      }),
+    )
     const completed: Record<string, unknown>[] = []
     const response = OpenAIWebSocket.streamResponsesWebSocket({
       socket,
@@ -110,7 +125,9 @@ describe("plugin.openai.ws", () => {
       })
     })
 
-    const socket = await OpenAIWebSocket.connectResponsesWebSocket({ url: server.wsUrl, headers: {} })
+    const socket = await Effect.runPromise(
+      OpenAIWebSocket.connectResponsesWebSocket({ url: server.wsUrl, headers: {} }),
+    )
     const response = OpenAIWebSocket.streamResponsesWebSocket({
       socket,
       body: { stream: true, input: "hi" },
@@ -134,7 +151,9 @@ describe("plugin.openai.ws", () => {
       })
     })
 
-    const socket = await OpenAIWebSocket.connectResponsesWebSocket({ url: server.wsUrl, headers: {} })
+    const socket = await Effect.runPromise(
+      OpenAIWebSocket.connectResponsesWebSocket({ url: server.wsUrl, headers: {} }),
+    )
     const response = OpenAIWebSocket.streamResponsesWebSocket({
       socket,
       body: { stream: true, input: "hi" },
@@ -817,9 +836,10 @@ async function readTextError(promise: Promise<string>) {
     () => {
       throw new Error("Expected response text to reject")
     },
-    (error) => {
+    (error: unknown) => {
       expect(error).toBeInstanceOf(Error)
-      return error as Error
+      if (!(error instanceof Error)) throw new Error("Expected response text to reject with an Error")
+      return error
     },
   )
 }
@@ -840,7 +860,7 @@ async function createHangingTcpServer() {
     socket.on("close", () => sockets.delete(socket))
   })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  const address = server.address() as AddressInfo
+  const address = tcpAddress(server.address())
   return {
     url: `http://127.0.0.1:${address.port}/v1/responses`,
     wsUrl: `ws://127.0.0.1:${address.port}/v1/responses`,
@@ -872,7 +892,7 @@ async function createHttpServer() {
     response.end("http")
   })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  const address = server.address() as AddressInfo
+  const address = tcpAddress(server.address())
   return {
     server,
     httpRequests,
@@ -906,4 +926,9 @@ async function waitFor(predicate: () => boolean, message: string) {
     if (Date.now() - started > 1_000) throw new Error(message)
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
+}
+
+function tcpAddress(address: string | AddressInfo | null) {
+  if (!address || typeof address === "string") throw new Error("Expected a TCP server address")
+  return address
 }
