@@ -1,5 +1,6 @@
 import { app, ipcMain } from "electron"
 import type { IpcMainInvokeEvent } from "electron"
+import { MutableHashMap, Option } from "effect"
 import type { WslServersController } from "./servers"
 import { requireWslIpcString, requireWslIpcStrings } from "./policy"
 import type { WslServersState } from "../../preload/types"
@@ -11,23 +12,24 @@ export function registerWslIpcHandlers(controller: WslServersController) {
     return
   }
 
-  const subscriptions = new Map<number, () => void>()
+  const subscriptions = MutableHashMap.empty<number, () => void>()
   const unsubscribe = (id: number) => {
-    const off = subscriptions.get(id)
-    if (!off) return
-    off()
-    subscriptions.delete(id)
+    const off = MutableHashMap.get(subscriptions, id)
+    if (Option.isNone(off)) return
+    off.value()
+    MutableHashMap.remove(subscriptions, id)
   }
 
   app.once("will-quit", () => {
-    subscriptions.forEach((off) => off())
-    subscriptions.clear()
+    MutableHashMap.forEach(subscriptions, (off) => off())
+    MutableHashMap.clear(subscriptions)
   })
 
   ipcMain.handle("wsl-servers-subscribe", (event) => {
     const id = event.sender.id
-    if (subscriptions.has(id)) return
-    subscriptions.set(
+    if (MutableHashMap.has(subscriptions, id)) return
+    MutableHashMap.set(
+      subscriptions,
       id,
       controller.subscribe((payload) => {
         if (event.sender.isDestroyed()) {
