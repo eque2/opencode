@@ -8,6 +8,7 @@
 // and tracks per-turn wall-clock duration for the footer status line.
 //
 // Resolves when the footer closes and all in-flight work finishes.
+import { Clock, Deferred, Effect, FiberSet, Option, Predicate } from "effect"
 import * as Locale from "@/util/locale"
 import { MessageID, PartID } from "@/session/schema"
 import { isExitCommand, isNewCommand } from "./prompt.shared"
@@ -15,12 +16,6 @@ import type { FooterApi, FooterEvent, FooterQueuedPrompt, RunPrompt } from "./ty
 
 type Trace = {
   write(type: string, data?: unknown): void
-}
-
-type Deferred<T = void> = {
-  promise: Promise<T>
-  resolve: (value: T | PromiseLike<T>) => void
-  reject: (error?: unknown) => void
 }
 
 export type QueueInput = {
@@ -35,36 +30,44 @@ export type QueueInput = {
 type State = {
   queue: RunPrompt[]
   queued: FooterQueuedPrompt[]
-  active?: RunPrompt
-  ctrl?: AbortController
+  active: Option.Option<RunPrompt>
+  ctrl: Option.Option<AbortController>
   closed: boolean
 }
 
-function defer<T = void>(): Deferred<T> {
-  let resolve!: (value: T | PromiseLike<T>) => void
-  let reject!: (error?: unknown) => void
-  const promise = new Promise<T>((next, fail) => {
-    resolve = next
-    reject = fail
-  })
-
-  return { promise, resolve, reject }
-}
+// How one turn ended: it ran to the end, or the queue closed while it ran.
+type TurnOutcome = "done" | "closed"
 
 // Runs the prompt queue until the footer closes.
 //
 // Subscribes to footer prompt events and drains operations through input.run().
 // Ordinary prompts submitted during an ordinary active turn remain local and
 // are exposed by the footer for edit/removal until their turn begins.
-export async function runPromptQueue(input: QueueInput): Promise<void> {
-  const stop = defer<{ type: "closed" }>()
-  const done = defer()
+export function runPromptQueue(input: QueueInput): Promise<void> {
+  return Effect.runPromise(promptQueue(input))
+}
+
+// Runs a callback that may return a Promise, and waits for that Promise.
+function settleCallback(run: () => void | Promise<void>) {
+  return Effect.suspend(() => {
+    const result = run()
+    return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.void
+  })
+}
+
+const promptQueue = Effect.fnUntraced(function* (input: QueueInput) {
+  const stop = yield* Deferred.make<void>()
+  const done = yield* Deferred.make<void>()
+  const drains = yield* FiberSet.make<void>()
+  const runDrain = yield* FiberSet.runtime(drains)()
   const state: State = {
     queue: [],
     queued: [],
+    active: Option.none(),
+    ctrl: Option.none(),
     closed: input.footer.isClosed,
   }
-  let draining: Promise<void> | undefined
+  let draining = false
 
   const emit = (next: FooterEvent, row: Record<string, unknown>) => {
     input.trace?.write("ui.patch", row)
@@ -94,7 +97,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       return
     }
 
-    done.resolve()
+    Deferred.doneUnsafe(done, Effect.void)
   }
 
   const close = () => {
@@ -105,149 +108,161 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     state.closed = true
     state.queue.length = 0
     state.queued.length = 0
-    state.ctrl?.abort()
-    stop.resolve({ type: "closed" })
+    if (Option.isSome(state.ctrl)) {
+      state.ctrl.value.abort()
+    }
+    Deferred.doneUnsafe(stop, Effect.void)
     finish()
   }
 
-  const drain = () => {
-    if (draining || state.closed || state.queue.length === 0) {
-      return
-    }
+  const recordDuration = (start: number) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      const duration = Locale.duration(Math.max(0, now - start))
+      emit(
+        {
+          type: "turn.duration",
+          duration,
+        },
+        {
+          duration,
+        },
+      )
+    })
 
-    draining = (async () => {
-      try {
-        while (!state.closed && state.queue.length > 0) {
-          const prompt = state.queue.shift()
-          if (!prompt) {
-            continue
-          }
+  // Runs one prompt. The turn stops early when the queue closes.
+  const runTurn = (sent: RunPrompt, ctrl: AbortController) =>
+    Effect.gen(function* () {
+      yield* Effect.promise(() => input.footer.idle())
+      if (state.closed) {
+        return "closed" satisfies TurnOutcome
+      }
 
-          const queued = state.queued.find((item) => item.prompt === prompt)
-          if (queued) removeLocalQueued(queued)
+      if (sent.mode !== "shell") {
+        const commit = {
+          kind: "user",
+          text: sent.text,
+          phase: "start",
+          source: "system",
+          messageID: sent.messageID,
+        } as const
+        input.trace?.write("ui.commit", commit)
+        input.footer.append(commit)
+      }
+      input.onSend?.(sent)
 
-          if (prompt.mode !== "shell" && isNewCommand(prompt.text)) {
-            syncQueue()
-            if (!input.onNewSession) {
-              emit(
-                {
-                  type: "stream.patch",
-                  patch: {
-                    status: "new sessions unavailable",
-                  },
-                },
-                {
-                  status: "new sessions unavailable",
-                },
-              )
-              continue
-            }
+      if (state.closed) {
+        return "closed" satisfies TurnOutcome
+      }
 
-            emit(
-              {
-                type: "stream.patch",
-                patch: {
-                  phase: "running",
-                  status: "starting new session",
-                  queue: state.queue.length,
-                },
-              },
-              {
-                phase: "running",
-                status: "starting new session",
-                queue: state.queue.length,
-              },
-            )
-            await input.onNewSession()
-            continue
-          }
+      const next = yield* Effect.raceFirst(
+        Effect.promise(() => input.run(sent, ctrl.signal)).pipe(Effect.as<TurnOutcome>("done")),
+        Deferred.await(stop).pipe(Effect.as<TurnOutcome>("closed")),
+      )
+      if (next === "closed") {
+        ctrl.abort()
+      }
 
-          const sent =
-            prompt.mode === "shell"
-              ? prompt
-              : {
-                  ...prompt,
-                  messageID: prompt.messageID ?? queued?.messageID ?? MessageID.ascending(),
-                }
-          state.active = sent
+      return next
+    })
 
+  const drainQueue = Effect.gen(function* () {
+    while (!state.closed && state.queue.length > 0) {
+      const prompt = state.queue.shift()
+      if (!prompt) {
+        continue
+      }
+
+      const queued = state.queued.find((item) => item.prompt === prompt)
+      if (queued) removeLocalQueued(queued)
+
+      if (prompt.mode !== "shell" && isNewCommand(prompt.text)) {
+        syncQueue()
+        if (!input.onNewSession) {
           emit(
             {
-              type: "turn.send",
-              queue: state.queue.length,
+              type: "stream.patch",
+              patch: {
+                status: "new sessions unavailable",
+              },
             },
             {
-              phase: "running",
-              status: "sending prompt",
-              queue: state.queue.length,
+              status: "new sessions unavailable",
             },
           )
-          const start = Date.now()
-          const ctrl = new AbortController()
-          state.ctrl = ctrl
-
-          try {
-            await input.footer.idle()
-            if (state.closed) {
-              break
-            }
-
-            if (sent.mode !== "shell") {
-              const commit = {
-                kind: "user",
-                text: sent.text,
-                phase: "start",
-                source: "system",
-                messageID: sent.messageID,
-              } as const
-              input.trace?.write("ui.commit", commit)
-              input.footer.append(commit)
-            }
-            input.onSend?.(sent)
-
-            if (state.closed) {
-              break
-            }
-
-            const task = input.run(sent, ctrl.signal).then(
-              () => ({ type: "done" as const }),
-              (error) => ({ type: "error" as const, error }),
-            )
-
-            const next = await Promise.race([task, stop.promise])
-            if (next.type === "closed") {
-              ctrl.abort()
-              break
-            }
-
-            if (next.type === "error") {
-              throw next.error
-            }
-          } finally {
-            if (state.ctrl === ctrl) {
-              state.ctrl = undefined
-            }
-
-            if (sent.mode !== "shell") {
-              const duration = Locale.duration(Math.max(0, Date.now() - start))
-              emit(
-                {
-                  type: "turn.duration",
-                  duration,
-                },
-                {
-                  duration,
-                },
-              )
-            }
-            state.active = undefined
-          }
+          continue
         }
-      } catch (error) {
-        done.reject(error)
-        return
-      } finally {
-        draining = undefined
+
+        emit(
+          {
+            type: "stream.patch",
+            patch: {
+              phase: "running",
+              status: "starting new session",
+              queue: state.queue.length,
+            },
+          },
+          {
+            phase: "running",
+            status: "starting new session",
+            queue: state.queue.length,
+          },
+        )
+        yield* settleCallback(input.onNewSession)
+        continue
+      }
+
+      const sent =
+        prompt.mode === "shell"
+          ? prompt
+          : {
+              ...prompt,
+              messageID: prompt.messageID ?? queued?.messageID ?? MessageID.ascending(),
+            }
+      state.active = Option.some(sent)
+
+      emit(
+        {
+          type: "turn.send",
+          queue: state.queue.length,
+        },
+        {
+          phase: "running",
+          status: "sending prompt",
+          queue: state.queue.length,
+        },
+      )
+      const start = yield* Clock.currentTimeMillis
+      const ctrl = new AbortController()
+      state.ctrl = Option.some(ctrl)
+
+      const outcome = yield* runTurn(sent, ctrl).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            if (Option.isSome(state.ctrl) && state.ctrl.value === ctrl) {
+              state.ctrl = Option.none()
+            }
+
+            if (sent.mode !== "shell") {
+              yield* recordDuration(start)
+            }
+            state.active = Option.none()
+          }),
+        ),
+      )
+      if (outcome === "closed") {
+        break
+      }
+    }
+  })
+
+  // A failed turn fails the whole queue, and a later finish() cannot undo it.
+  const drainOnce = drainQueue.pipe(
+    Effect.catchCause((cause) => Deferred.failCause(done, cause)),
+    Effect.asVoid,
+    Effect.ensuring(
+      Effect.sync(() => {
+        draining = false
         emit(
           {
             type: "turn.idle",
@@ -259,10 +274,18 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
             queue: state.queue.length,
           },
         )
-      }
+        finish()
+      }),
+    ),
+  )
 
-      finish()
-    })()
+  const drain = () => {
+    if (draining || state.closed || state.queue.length === 0) {
+      return
+    }
+
+    draining = true
+    runDrain(drainOnce)
   }
 
   const submit = (prompt: RunPrompt) => {
@@ -275,15 +298,8 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       return
     }
 
-    const active = state.active
-    if (
-      active &&
-      active.mode !== "shell" &&
-      !active.command &&
-      prompt.mode !== "shell" &&
-      !prompt.command &&
-      !isNewCommand(prompt.text)
-    ) {
+    const activeTurn = Option.exists(state.active, (active) => active.mode !== "shell" && !active.command)
+    if (activeTurn && prompt.mode !== "shell" && !prompt.command && !isNewCommand(prompt.text)) {
       const queued: FooterQueuedPrompt = {
         messageID: MessageID.ascending(),
         partID: PartID.ascending(),
@@ -328,7 +344,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     return true
   })
 
-  try {
+  yield* Effect.gen(function* () {
     if (state.closed) {
       return
     }
@@ -338,12 +354,16 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       parts: [],
     })
     finish()
-    await done.promise
-  } finally {
-    offPrompt()
-    offClose()
-    offRemoveQueued()
-    close()
-    await draining?.catch(() => {})
-  }
-}
+    yield* Deferred.await(done)
+  }).pipe(
+    Effect.ensuring(
+      Effect.gen(function* () {
+        offPrompt()
+        offClose()
+        offRemoveQueued()
+        close()
+        yield* FiberSet.awaitEmpty(drains)
+      }),
+    ),
+  )
+}, Effect.scoped)
