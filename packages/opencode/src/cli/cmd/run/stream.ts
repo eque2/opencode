@@ -63,28 +63,32 @@ function summarize(value: unknown): unknown {
   }
 }
 
+// The trace is JSON text, so an absent key and an undefined key write the same line.
 function traceCommit(commit: StreamCommit) {
+  const { part, ...rest } = commit
   return {
-    ...commit,
+    ...rest,
     text: summarize(commit.text),
     textLength: commit.text.length,
-    part: commit.part
+    ...(part
       ? {
-          id: commit.part.id,
-          sessionID: commit.part.sessionID,
-          messageID: commit.part.messageID,
-          callID: commit.part.callID,
-          tool: commit.part.tool,
-          state: {
-            status: commit.part.state.status,
-            title: "title" in commit.part.state ? summarize(commit.part.state.title) : undefined,
-            error: "error" in commit.part.state ? summarize(commit.part.state.error) : undefined,
-            time: "time" in commit.part.state ? summarize(commit.part.state.time) : undefined,
-            input: summarize(commit.part.state.input),
-            metadata: "metadata" in commit.part.state ? summarize(commit.part.state.metadata) : undefined,
+          part: {
+            id: part.id,
+            sessionID: part.sessionID,
+            messageID: part.messageID,
+            callID: part.callID,
+            tool: part.tool,
+            state: {
+              status: part.state.status,
+              ...("title" in part.state ? { title: summarize(part.state.title) } : {}),
+              ...("error" in part.state ? { error: summarize(part.state.error) } : {}),
+              ...("time" in part.state ? { time: summarize(part.state.time) } : {}),
+              input: summarize(part.state.input),
+              ...("metadata" in part.state ? { metadata: summarize(part.state.metadata) } : {}),
+            },
           },
         }
-      : undefined,
+      : {}),
   }
 }
 
@@ -106,12 +110,14 @@ export function traceSubagentState(state: FooterSubagentState) {
       permission: item.permission,
       patterns: item.patterns,
       tool: item.tool,
-      metadata: item.metadata
+      ...(item.metadata
         ? {
-            keys: Object.keys(item.metadata),
-            input: summarize(item.metadata.input),
+            metadata: {
+              keys: Object.keys(item.metadata),
+              input: summarize(item.metadata.input),
+            },
           }
-        : undefined,
+        : {}),
     })),
     questions: state.questions.map((item) => ({
       id: item.id,
