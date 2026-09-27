@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test"
-import { RGBA, type CliRenderer, type TerminalColors } from "@opentui/core"
+import { RGBA, type TerminalColors } from "@opentui/core"
+import { Result } from "effect"
 import { RUN_THEME_FALLBACK, generateSystem, resolveRunTheme, resolveTheme } from "@/cli/cmd/run/theme"
 
 const palette = ["#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5"] as const
 
 function terminalColors(input: Partial<TerminalColors> = {}): TerminalColors {
   return {
-    palette: Array.from({ length: 256 }, (_, index) => input.palette?.[index] ?? palette[index % palette.length]!),
+    palette: Array.from({ length: 256 }, (_, index) => input.palette?.[index] ?? palette[index % palette.length]),
     defaultBackground: input.defaultBackground ?? "#1a1b26",
     defaultForeground: input.defaultForeground ?? "#c0caf5",
     cursorColor: input.cursorColor ?? "#ff9e64",
@@ -27,7 +28,8 @@ function renderer(
   } = {},
 ) {
   return {
-    themeMode: input.themeMode,
+    // The renderer reports an unknown mode as null.
+    themeMode: input.themeMode ?? null,
     getPalette: async () => {
       if (input.fail) {
         throw new Error("boom")
@@ -35,7 +37,7 @@ function renderer(
 
       return input.colors ?? terminalColors()
     },
-  } as CliRenderer
+  }
 }
 
 function expectRgba(color: unknown) {
@@ -92,7 +94,7 @@ test("keeps footer surfaces exact while scrollback stays palette matched", async
     defaultForeground: "#e2e8f0",
   })
   const theme = await resolveRunTheme(renderer({ themeMode: "dark", colors }))
-  const exact = resolveTheme(generateSystem(colors, "dark"), "dark")
+  const exact = Result.getOrThrow(resolveTheme(generateSystem(colors, "dark"), "dark"))
 
   try {
     expect(expectRgba(theme.footer.selected).toInts()).toEqual(expectRgba(exact.backgroundElement).toInts())
@@ -145,15 +147,17 @@ test("keeps renderer mode when refreshed default background is unavailable", asy
 })
 
 test("keeps dark surfaces neutral on saturated backgrounds", () => {
-  const theme = resolveTheme(
-    generateSystem(
-      terminalColors({
-        defaultBackground: "#0000ff",
-        defaultForeground: "#ffffff",
-      }),
+  const theme = Result.getOrThrow(
+    resolveTheme(
+      generateSystem(
+        terminalColors({
+          defaultBackground: "#0000ff",
+          defaultForeground: "#ffffff",
+        }),
+        "dark",
+      ),
       "dark",
     ),
-    "dark",
   )
 
   expect(spread(theme.backgroundPanel)).toBeLessThan(10)
@@ -161,15 +165,17 @@ test("keeps dark surfaces neutral on saturated backgrounds", () => {
 })
 
 test("keeps light surfaces close to neutral on warm backgrounds", () => {
-  const theme = resolveTheme(
-    generateSystem(
-      terminalColors({
-        defaultBackground: "#fbf1c7",
-        defaultForeground: "#3c3836",
-      }),
+  const theme = Result.getOrThrow(
+    resolveTheme(
+      generateSystem(
+        terminalColors({
+          defaultBackground: "#fbf1c7",
+          defaultForeground: "#3c3836",
+        }),
+        "light",
+      ),
       "light",
     ),
-    "light",
   )
 
   expect(spread(theme.backgroundPanel)).toBeLessThan(60)
