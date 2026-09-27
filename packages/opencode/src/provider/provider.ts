@@ -22,6 +22,7 @@ import {
   Config as EffectConfig,
   ConfigProvider,
   Effect,
+  HashSet,
   Layer,
   Context,
   MutableHashMap,
@@ -1467,12 +1468,12 @@ const layer = Layer.effect(
 
         // now read config providers - includes any modifications from plugin config() hook
         const configProviders = Object.entries(cfg.provider ?? {})
-        const disabled = new Set(cfg.disabled_providers ?? [])
-        const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
+        const disabled = HashSet.fromIterable<string>(cfg.disabled_providers ?? [])
+        const enabled = Option.map(Option.fromNullishOr(cfg.enabled_providers), (ids) => HashSet.fromIterable<string>(ids))
 
         function isProviderAllowed(providerID: ProviderV2.ID): boolean {
-          if (enabled && !enabled.has(providerID)) return false
-          if (disabled.has(providerID)) return false
+          if (Option.isSome(enabled) && !HashSet.has(enabled.value, providerID)) return false
+          if (HashSet.has(disabled, providerID)) return false
           return true
         }
 
@@ -1482,7 +1483,7 @@ const layer = Layer.effect(
           if (!p || !models) continue
 
           const providerID = ProviderV2.ID.make(p.id)
-          if (disabled.has(providerID)) continue
+          if (HashSet.has(disabled, providerID)) continue
 
           const provider = database[providerID]
           if (!provider) continue
@@ -1608,7 +1609,7 @@ const layer = Layer.effect(
         const envs = yield* env.all()
         for (const [id, provider] of Object.entries(database)) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          if (HashSet.has(disabled, providerID)) continue
           const apiKey = provider.env.map((item) => envs[item]).find(Boolean)
           if (!apiKey) continue
           mergeProvider(providerID, {
@@ -1621,7 +1622,7 @@ const layer = Layer.effect(
         const auths = yield* auth.all().pipe(Effect.orDie)
         for (const [id, provider] of Object.entries(auths)) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          if (HashSet.has(disabled, providerID)) continue
           if (provider.type === "api") {
             mergeProvider(providerID, {
               source: "api",
@@ -1634,7 +1635,7 @@ const layer = Layer.effect(
         for (const plugin of plugins) {
           if (!plugin.auth) continue
           const providerID = ProviderV2.ID.make(plugin.auth.provider)
-          if (disabled.has(providerID)) continue
+          if (HashSet.has(disabled, providerID)) continue
 
           const stored = yield* auth.get(providerID).pipe(Effect.orDie)
           if (!stored) continue
@@ -1653,7 +1654,7 @@ const layer = Layer.effect(
 
         for (const [id, fn] of Object.entries(custom(dep))) {
           const providerID = ProviderV2.ID.make(id)
-          if (disabled.has(providerID)) continue
+          if (HashSet.has(disabled, providerID)) continue
           const data = database[providerID]
           if (!data) {
             continue
