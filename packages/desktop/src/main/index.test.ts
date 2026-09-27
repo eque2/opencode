@@ -10,28 +10,24 @@ describe("desktop initialization", () => {
     expect(Cause.squash(exit.cause)).toBe(failure)
   }
 
-  test("forwards loading task failures before renderer initialization", () => {
-    const exit = Effect.runSync(
+  test("forwards loading task failures before renderer initialization", () =>
+    Effect.runPromise(
       Effect.gen(function* () {
         const initialization = yield* Deferred.make<never, unknown>()
         yield* forwardInitializationFailure(initialization)(Effect.die(failure)).pipe(Effect.exit)
-        return yield* Deferred.await(initialization).pipe(Effect.exit)
+        const exit = yield* Deferred.await(initialization).pipe(Effect.exit)
+        expectFailure(exit)
       }),
-    )
+    ))
 
-    expectFailure(exit)
-  })
-
-  test("forwards loading task failures while renderer initialization waits", () => {
-    const exit = Effect.runSync(
+  test("forwards loading task failures while renderer initialization waits", () =>
+    Effect.runPromise(
       Effect.gen(function* () {
         const initialization = yield* Deferred.make<never, unknown>()
         const waiting = yield* Deferred.await(initialization).pipe(Effect.exit, Effect.forkChild)
         yield* forwardInitializationFailure(initialization)(Effect.die(failure)).pipe(Effect.exit)
-        return yield* Fiber.join(waiting)
+        const exit = yield* Fiber.join(waiting)
+        expectFailure(exit)
       }),
-    )
-
-    expectFailure(exit)
-  })
+    ))
 })
