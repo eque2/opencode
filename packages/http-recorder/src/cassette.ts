@@ -13,7 +13,7 @@ import {
   Schema,
   Semaphore,
 } from "effect"
-// eslint-disable-next-line effect/no-fs-use-effect-fs -- hasCassetteSync is a public synchronous API used at test-declaration time; effect/FileSystem only offers async Effects (NodeFileSystem.access is callback-based, so Effect.runSync cannot run it)
+// eslint-disable-next-line effect/no-fs-use-effect-fs -- (c) hasCassetteSync is a public synchronous API used at test-declaration time; effect/FileSystem only offers async Effects (NodeFileSystem.access is callback-based, so Effect.runSync cannot run it)
 import { existsSync } from "node:fs"
 import * as path from "node:path"
 import { encodeJson } from "./matching.js"

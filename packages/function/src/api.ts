@@ -96,7 +96,7 @@ export class SyncServer extends DurableObject<Env> {
           { discard: true },
         )
 
-        // eslint-disable-next-line effect/no-null-use-option -- Workers Response constructor requires a null body for a 101 WebSocket upgrade (webSocket init)
+        // eslint-disable-next-line effect/no-null-use-option -- (a) Workers Response constructor requires a null body for a 101 WebSocket upgrade (webSocket init)
         return new Response(null, {
           status: 101,
           webSocket: client,

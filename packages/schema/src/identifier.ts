@@ -27,7 +27,7 @@ export function create(descending: boolean, timestamp = DateTime.toEpochMillis(D
       .toString(16)
       .padStart(2, "0"),
   ).join("")
-  // eslint-disable-next-line effect/no-crypto-random-use-random -- Web Crypto getRandomValues is the synchronous CSPRNG that the synchronous ID constructors require; Effect Random is effectful and not cryptographic
+  // eslint-disable-next-line effect/no-crypto-random-use-random -- (c) Web Crypto getRandomValues is the synchronous CSPRNG that the synchronous ID constructors require; Effect Random is effectful and not cryptographic
   const bytes = crypto.getRandomValues(new Uint8Array(length - 12))
   return time + Array.from(bytes, (byte) => chars[byte % 62]).join("")
 }

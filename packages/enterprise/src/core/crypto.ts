@@ -22,7 +22,7 @@ export namespace WebCrypto {
   export const layer = Layer.succeed(
     Crypto.Crypto,
     Crypto.make({
-      // eslint-disable-next-line effect/no-crypto-random-use-random -- Crypto.make needs a sync CSPRNG; Web Crypto getRandomValues is the only one on Cloudflare Workers
+      // eslint-disable-next-line effect/no-crypto-random-use-random -- (a) Crypto.make needs a sync CSPRNG; Web Crypto getRandomValues is the only one on Cloudflare Workers
       randomBytes: (size) => crypto.getRandomValues(new Uint8Array(size)),
       digest,
     }),

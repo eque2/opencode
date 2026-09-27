@@ -95,7 +95,7 @@ export const createClient = (config: Config = {}): Client => {
 
       for (const fn of interceptors.error.fns) {
         if (fn) {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined
           finalError = await fn(error, undefined as any, request, opts)
         }
       }
@@ -252,13 +252,13 @@ export const createClient = (config: Config = {}): Client => {
         }
         return request
       },
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- fetch() RequestInit.body (platform API) requires BodyInit, while the @hey-api/openapi-ts BodySerializer returns any and the raw body is unknown; a guard would change which bodies reach fetch
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) fetch() RequestInit.body (platform API) requires BodyInit, while the @hey-api/openapi-ts BodySerializer returns any and the raw body is unknown; a guard would change which bodies reach fetch
       serializedBody: getValidRequestBody(opts) as BodyInit | null | undefined,
       url,
     })
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts Client declares generic MethodFn and SseFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts Client declares generic MethodFn and SseFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail
   return {
     buildUrl,
     connect: makeMethodFn("CONNECT"),

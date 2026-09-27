@@ -307,7 +307,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     rule: "typescript/no-unsafe-type-assertion",
     search: "                yield data as any\n",
     replace: lines(
-      "                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts SSE boundary: JSON.parse output becomes the caller's generic TData, and the client has no typed validator",
+      "                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts SSE boundary: JSON.parse output becomes the caller's generic TData, and the client has no typed validator",
       "                yield data as StreamItem",
       "",
     ),
@@ -385,7 +385,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     ),
     replace: lines(
       "        if (fn) {",
-      "          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined",
+      "          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts ErrInterceptor requires a Response, but a fetch that throws has none, so the error interceptors receive undefined",
       "          finalError = (await fn(error, undefined as any, request, opts)) as unknown",
     ),
   },
@@ -431,7 +431,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     rule: "typescript/no-unsafe-type-assertion",
     search: "      serializedBody: getValidRequestBody(opts) as BodyInit | null | undefined,\n",
     replace: lines(
-      "      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- fetch() RequestInit.body (platform API) requires BodyInit, while the @hey-api/openapi-ts BodySerializer returns any and the raw body is unknown; a guard would change which bodies reach fetch",
+      "      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) fetch() RequestInit.body (platform API) requires BodyInit, while the @hey-api/openapi-ts BodySerializer returns any and the raw body is unknown; a guard would change which bodies reach fetch",
       "      serializedBody: getValidRequestBody(opts) as BodyInit | null | undefined,",
       "",
     ),
@@ -441,7 +441,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     rule: "typescript/no-unsafe-type-assertion",
     search: lines("  return {", "    buildUrl,"),
     replace: lines(
-      "  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts Client declares generic MethodFn and SseFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail",
+      "  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts Client declares generic MethodFn and SseFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail",
       "  return {",
       "    buildUrl,",
     ),
@@ -532,7 +532,7 @@ export const runtimePatches: ReadonlyArray<RuntimePatch> = [
     replace: lines(
       "type SseFn = <",
       "  TData = unknown,",
-      "  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- positional type parameter required by the @hey-api/openapi-ts generated sdk.gen.ts calls sse.get<Responses, Errors, ThrowOnError> and the public Client['sse'] signature; the SseFn patch in build.ts removed its only use",
+      "  // oxlint-disable-next-line typescript/no-unnecessary-type-parameters -- (a) positional type parameter required by the @hey-api/openapi-ts generated sdk.gen.ts calls sse.get<Responses, Errors, ThrowOnError> and the public Client['sse'] signature; the SseFn patch in build.ts removed its only use",
       "  _TError = unknown,",
     ),
   },

@@ -311,7 +311,7 @@ export function createTuiApiAdapters(input: Input): Omit<TuiPluginApi, "lifecycl
     renderer: input.renderer,
     slots: {
       register() {
-        // eslint-disable-next-line effect/no-throw-use-effect -- TuiSlots.register (@opencode-ai/plugin/tui) returns the slot id synchronously; the host API has no slot registry, so it has no id to return and throws
+        // eslint-disable-next-line effect/no-throw-use-effect -- (c) TuiSlots.register (@opencode-ai/plugin/tui) returns the slot id synchronously; the host API has no slot registry, so it has no id to return and throws
         throw new PluginContextError({ message: "slots.register is only available in plugin context" })
       },
     },

@@ -111,7 +111,7 @@ const program = Effect.gen(function* () {
   return resolved
 })
 
-// eslint-disable-next-line effect/no-async-await-use-effect -- ES module top-level await: consumers read Script getters synchronously at import, so module evaluation must wait for the async registry, file and git lookups
+// eslint-disable-next-line effect/no-async-await-use-effect -- (c) ES module top-level await: consumers read Script getters synchronously at import, so module evaluation must wait for the async registry, file and git lookups
 const info = await Effect.runPromise(program.pipe(Effect.provide(FetchHttpClient.layer)))
 
 export const Script = {

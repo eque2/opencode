@@ -184,7 +184,7 @@ export const createClient = (config: Config = {}): Client => {
       const { opts, url } = await beforeRequest(options)
       return createSseClient({
         ...opts,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- fetch() RequestInit.body (platform API) requires BodyInit, while @hey-api/openapi-ts RequestOptions.body is unknown and relies on fetch to convert it; a guard would change which bodies reach fetch
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) fetch() RequestInit.body (platform API) requires BodyInit, while @hey-api/openapi-ts RequestOptions.body is unknown and relies on fetch to convert it; a guard would change which bodies reach fetch
         body: opts.body as BodyInit | null | undefined,
         headers: opts.headers,
         method,
@@ -194,7 +194,7 @@ export const createClient = (config: Config = {}): Client => {
     return fn
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts Client declares generic MethodFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts Client declares generic MethodFn signatures whose onSseEvent callback expects StreamEvent<TData>; the untyped runtime methods cannot satisfy that variance, so annotation and satisfies both fail
   return {
     buildUrl,
     connect: makeMethod("CONNECT"),

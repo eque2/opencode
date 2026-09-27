@@ -261,9 +261,9 @@ export type StepFinishPart = Types.DeepMutable<Schema.Schema.Type<typeof StepFin
 // tool context metadata are typed `any`) and from in-process writers that leave
 // undefined-valued keys. The durable event commit encodes event data on the type
 // side, so Schema.Json would reject these legacy values.
-// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin tool.execute.before output.args is typed any; plugins and legacy writers store arbitrary values
+// eslint-disable-next-line effect/no-schema-any-unknown -- (c) @opencode-ai/plugin tool.execute.before output.args is typed any; plugins and legacy writers store arbitrary values
 const ToolInput = Schema.Record(Schema.String, Schema.Any)
-// eslint-disable-next-line effect/no-schema-any-unknown -- @opencode-ai/plugin ToolContext.metadata and tool.execute.after metadata are typed any
+// eslint-disable-next-line effect/no-schema-any-unknown -- (c) @opencode-ai/plugin ToolContext.metadata and tool.execute.after metadata are typed any
 const ToolMetadata = Schema.Record(Schema.String, Schema.Any)
 
 export const ToolStatePending = Schema.Struct({

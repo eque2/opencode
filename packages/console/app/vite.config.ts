@@ -4,7 +4,7 @@ import { nitro } from "nitro/vite"
 
 export default defineConfig({
   plugins: [
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- @solidjs/start/config solidStart() types its Plugin against the nested @solidjs/start/node_modules/vite copy, which the root vite PluginOption does not accept
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) @solidjs/start/config solidStart() types its Plugin against the nested @solidjs/start/node_modules/vite copy, which the root vite PluginOption does not accept
     solidStart({
       middleware: "./src/middleware.ts",
     }) as PluginOption,

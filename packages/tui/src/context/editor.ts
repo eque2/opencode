@@ -467,7 +467,7 @@ type HeaderWebSocketConstructor = new (url: string, options?: Bun.WebSocketOptio
 function openEditorSocket(connection: EditorConnection, WebSocketImpl: typeof WebSocket) {
   if (!connection.authToken) return new WebSocketImpl(connection.url)
 
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- bun-types WebSocket: with lib.dom loaded, the constructor type omits Bun's (url, Bun.WebSocketOptions) overload, which Bun accepts at run time
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) bun-types WebSocket: with lib.dom loaded, the constructor type omits Bun's (url, Bun.WebSocketOptions) overload, which Bun accepts at run time
   const HeaderWebSocket = WebSocketImpl as HeaderWebSocketConstructor
   return new HeaderWebSocket(connection.url, {
     headers: {

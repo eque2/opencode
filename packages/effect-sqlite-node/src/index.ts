@@ -176,7 +176,7 @@ export const make = (
     })
 
     return Object.assign(
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- effect/unstable/sql SqlClient.make returns a SqlClient whose updateValues the SQLite compiler cannot honour; SqliteClient hides it as never, and no value of type never exists
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) effect/unstable/sql SqlClient.make returns a SqlClient whose updateValues the SQLite compiler cannot honour; SqliteClient hides it as never, and no value of type never exists
       (yield* Client.make({
         acquirer,
         compiler,

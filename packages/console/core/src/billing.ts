@@ -372,7 +372,7 @@ export namespace Billing {
                     quantity: 1,
                   },
                 ],
-                // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- stripe 18.0.0 Checkout PaymentMethodType omits "upi", which the Stripe Checkout API accepts
+                // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) stripe 18.0.0 Checkout PaymentMethodType omits "upi", which the Stripe Checkout API accepts
                 payment_method_types: paymentMethodTypes as Stripe.Checkout.SessionCreateParams.PaymentMethodType[],
                 adaptive_pricing: {
                   enabled: false,

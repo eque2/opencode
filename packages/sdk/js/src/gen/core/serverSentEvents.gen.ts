@@ -178,7 +178,7 @@ export const createSseClient = <TData = unknown>({
               })
 
               if (dataLines.length) {
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- @hey-api/openapi-ts SSE boundary: JSON.parse output becomes the caller's generic TData, and the client has no typed validator
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- (a) @hey-api/openapi-ts SSE boundary: JSON.parse output becomes the caller's generic TData, and the client has no typed validator
                 yield data as StreamItem
               }
             }

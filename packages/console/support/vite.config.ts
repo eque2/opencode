@@ -4,7 +4,7 @@ import { nitro } from "nitro/vite"
 
 export default defineConfig({
   plugins: [
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- @solidjs/start types solidStart() against its nested vite copy, whose PluginOption is not assignable to the root vite PluginOption
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) @solidjs/start types solidStart() against its nested vite copy, whose PluginOption is not assignable to the root vite PluginOption
     solidStart() as PluginOption,
     nitro({
       compatibilityDate: "2024-09-19",

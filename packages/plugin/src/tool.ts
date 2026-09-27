@@ -1,4 +1,4 @@
-// eslint-disable-next-line effect/no-zod-use-schema -- public @opencode-ai/plugin tool() API exposes Zod shapes (tool.schema = z) to third-party plugins
+// eslint-disable-next-line effect/no-zod-use-schema -- (c) public @opencode-ai/plugin tool() API exposes Zod shapes (tool.schema = z) to third-party plugins
 import { z } from "zod"
 
 export type ToolContext = {
