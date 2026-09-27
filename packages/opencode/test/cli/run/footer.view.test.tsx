@@ -259,6 +259,7 @@ function boxPath(root: BoxRenderable | RootRenderable, name: string): BoxRendera
     const path = boxPath(item, name)
     if (path) return root instanceof BoxRenderable ? [root, ...path] : path
   }
+  return undefined
 }
 
 function footerComposerFrame(root: BoxRenderable | RootRenderable) {

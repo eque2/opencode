@@ -141,7 +141,7 @@ function extractLineRange(input: string) {
 
 function slashHead(text: string) {
   if (!text.startsWith("/")) {
-    return
+    return undefined
   }
 
   for (let i = 1; i < text.length; i++) {
@@ -159,7 +159,7 @@ function slashHead(text: string) {
 function slashQuery(text: string, cursor: number) {
   const head = slashHead(text.slice(0, cursor))
   if (!head || head.end !== cursor) {
-    return
+    return undefined
   }
 
   return head.name
@@ -184,12 +184,12 @@ function parseSlashCommand(text: string, commands: RunCommand[] | undefined) {
 
 function selectedCommand(text: string, command: RunPrompt["command"]) {
   if (!command) {
-    return
+    return undefined
   }
 
   const head = slashHead(text)
   if (!head || head.name !== command.name) {
-    return
+    return undefined
   }
 
   return {
@@ -763,7 +763,7 @@ export function createPromptState(input: PromptInput): PromptState {
   }
 
   const historyCommand = (dir: -1 | 1, event: KeyEvent) => {
-    if (move(dir, event)) return
+    if (move(dir, event)) return undefined
     if (!area || area.isDestroyed) return false
 
     const endOffset = Bun.stringWidth(area.plainText)
@@ -984,7 +984,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Clear prompt or exit",
         category: "Prompt",
         run() {
-          if (requestExit()) return
+          if (requestExit()) return undefined
           return false
         },
       },
@@ -1001,7 +1001,7 @@ export function createPromptState(input: PromptInput): PromptState {
         title: "Interrupt session",
         category: "Session",
         run() {
-          if (input.onInterrupt()) return
+          if (input.onInterrupt()) return undefined
           return false
         },
       },
@@ -1065,6 +1065,7 @@ export function createPromptState(input: PromptInput): PromptState {
           if (!area || area.isDestroyed) return false
           if (area.cursorOffset !== 0) return false
           setShellMode(true)
+          return undefined
         },
       },
     ],
@@ -1088,6 +1089,7 @@ export function createPromptState(input: PromptInput): PromptState {
           if (!area || area.isDestroyed) return false
           if (area.cursorOffset !== 0) return false
           setShellMode(false)
+          return undefined
         },
       },
     ],

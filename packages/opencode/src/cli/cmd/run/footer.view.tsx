@@ -246,7 +246,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const usage = createMemo(() => props.state().usage)
   const interruptLabel = createMemo(() => {
     if (!interrupt()) {
-      return
+      return undefined
     }
 
     return interrupt() === "escape" ? "esc" : interrupt()
@@ -426,7 +426,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const modelStatus = createMemo(() => {
     const current = props.currentModel()
     if (!prompt() || shell() || !current) {
-      return
+      return undefined
     }
 
     return {
@@ -476,7 +476,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const hasContextHints = createMemo(() => contextHints().length > 0)
   const commandHint = createMemo(() => {
     if (!prompt() || !responsive().statusline.showCommandHint) {
-      return
+      return undefined
     }
 
     if (shell()) {
@@ -486,6 +486,8 @@ export function RunFooterView(props: RunFooterViewProps) {
     if (command()) {
       return { key: command(), label: "cmd" }
     }
+
+    return undefined
   })
   const sectionSeparator = () => <span style={{ fg: theme().muted }}>· </span>
 

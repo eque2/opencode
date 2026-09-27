@@ -209,7 +209,7 @@ export function RunFooterMenu(props: {
   }
   const descriptionText = (item: RunFooterMenuItem) => {
     if (!item.description) {
-      return
+      return ""
     }
 
     const footerWidth = item.footer ? Bun.stringWidth(item.footer) + 1 : 0
