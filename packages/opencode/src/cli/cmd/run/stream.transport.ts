@@ -78,8 +78,6 @@ type Trace = {
   write(type: string, data?: unknown): void
 }
 
-const StreamClosed = undefined as never
-
 // Transport-level failure: a lost event stream, a disposed instance, or a rejected turn.
 export class StreamTransportError extends Schema.TaggedError<StreamTransportError>()("StreamTransportError", {
   message: Schema.String,
@@ -460,12 +458,12 @@ function createLayer(input: StreamInput) {
             ),
             (events) =>
               Effect.sync(() => {
-                void events.stream.return(StreamClosed).catch(() => {})
+                void events.stream.return().catch(() => {})
               }),
           ),
         )
         closeStream = () => {
-          void events.stream.return(StreamClosed).catch(() => {})
+          void events.stream.return().catch(() => {})
         }
         input.trace?.write("recv.subscribe", {
           sessionID: input.sessionID,
@@ -584,49 +582,56 @@ function createLayer(input: StreamInput) {
           return yield* new StreamTransportError({ message: "no primary agent available for shell mode" })
         })
 
+        // One polling step; succeeds with true when the recovery is finished.
+        const recoverQuestionStep = Effect.fn("RunStreamTransport.recoverQuestionStep")(function* (partID: string) {
+          if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
+            return true
+          }
+
+          const questions = yield* Effect.promise(() => input.sdk.question.list()).pipe(
+            Effect.map((item) => (item.data ?? []).filter((request) => request.sessionID === input.sessionID)),
+            Effect.orElseSucceed(() => []),
+          )
+          if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
+            return true
+          }
+
+          if (questions.length > 0) {
+            bootstrapSessionData({
+              data: state.data,
+              messages: [],
+              permissions: [],
+              questions,
+            })
+            for (const request of questions) {
+              seedBlocker(request.id)
+            }
+            input.trace?.write("question.recover", {
+              sessionID: input.sessionID,
+              requests: questions.map((request) => request.id),
+            })
+            syncFooter([])
+            return true
+          }
+
+          yield* Effect.sleep("250 millis")
+          return false
+        })
+
         const recoverQuestion = Effect.fn("RunStreamTransport.recoverQuestion")(function* (partID: string) {
           if (MutableHashSet.has(recovering, partID)) {
             return
           }
 
           MutableHashSet.add(recovering, partID)
-          try {
-            while (!closed && !abort.signal.aborted && !input.footer.isClosed) {
-              if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
-                return
-              }
-
-              const questions = yield* Effect.promise(() => input.sdk.question.list()).pipe(
-                Effect.map((item) => (item.data ?? []).filter((request) => request.sessionID === input.sessionID)),
-                Effect.orElseSucceed(() => []),
-              )
-              if (state.data.questions.length > 0 || !MutableHashSet.has(state.data.tools, partID)) {
-                return
-              }
-
-              if (questions.length > 0) {
-                bootstrapSessionData({
-                  data: state.data,
-                  messages: [],
-                  permissions: [],
-                  questions,
-                })
-                for (const request of questions) {
-                  seedBlocker(request.id)
-                }
-                input.trace?.write("question.recover", {
-                  sessionID: input.sessionID,
-                  requests: questions.map((request) => request.id),
-                })
-                syncFooter([])
-                return
-              }
-
-              yield* Effect.sleep("250 millis")
-            }
-          } finally {
-            MutableHashSet.remove(recovering, partID)
-          }
+          let finished = false
+          yield* Effect.whileLoop({
+            while: () => !finished && !closed && !abort.signal.aborted && !input.footer.isClosed,
+            body: () => recoverQuestionStep(partID),
+            step: (done) => {
+              finished = done
+            },
+          }).pipe(Effect.ensuring(Effect.sync(() => MutableHashSet.remove(recovering, partID))))
         })
 
         const messages = (sessionID: string, limit?: number) =>
@@ -900,10 +905,11 @@ function createLayer(input: StreamInput) {
         })
 
         const poll = Effect.fn("RunStreamTransport.poll")(function* (next: Wait, signal: AbortSignal) {
-          while (state.wait === next && !signal.aborted && !input.footer.isClosed && !closed) {
-            yield* Effect.sleep("250 millis")
-            yield* complete(next, false)
-          }
+          yield* Effect.whileLoop({
+            while: () => state.wait === next && !signal.aborted && !input.footer.isClosed && !closed,
+            body: () => Effect.sleep("250 millis").pipe(Effect.andThen(complete(next, false))),
+            step: () => {},
+          })
         })
 
         const flush = (type: "turn.abort" | "turn.cancel") => {
@@ -1222,18 +1228,17 @@ function createLayer(input: StreamInput) {
         yield* bootstrap()
 
         const runPromptTurn = Effect.fn("RunStreamTransport.runPromptTurn")(function* (next: SessionTurnInput) {
+          // Every exit returns an Effect result, so the failing guards can use `return yield*`.
           if (closed || next.signal?.aborted || input.footer.isClosed) {
-            return
+            return yield* Effect.void
           }
 
           if (state.fault) {
-            yield* Effect.fail(state.fault)
-            return
+            return yield* Effect.fail(state.fault)
           }
 
           if (state.wait) {
-            yield* new StreamTransportError({ message: "prompt already running" })
-            return
+            return yield* new StreamTransportError({ message: "prompt already running" })
           }
 
           const item: Wait = {
@@ -1371,7 +1376,7 @@ function createLayer(input: StreamInput) {
                     ),
                   )
 
-          yield* send.pipe(
+          return yield* send.pipe(
             Effect.flatMap(() => {
               if (turn.signal.aborted || next.signal?.aborted || input.footer.isClosed || closed) {
                 if (state.wait === item) {
@@ -1443,7 +1448,6 @@ function createLayer(input: StreamInput) {
               }),
             ),
           )
-          return
         })
 
         const selectSubagent = Effect.fn("RunStreamTransport.selectSubagent")((sessionID: string | undefined) =>
