@@ -17,6 +17,7 @@ import {
   type ScrollbackSnapshot,
   type ScrollbackWriter,
 } from "@opentui/core"
+import { Option } from "effect"
 import * as Locale from "@/util/locale"
 import { go } from "@/cli/logo"
 import type { RunSplashTheme } from "./theme"
@@ -45,28 +46,31 @@ type Cell = {
   mark: "text" | "full" | "mix" | "top"
 }
 
+type Line = {
+  left: number
+  top: number
+  text: string
+  fg: ColorInput
+  bg: Option.Option<ColorInput>
+  attrs: Option.Option<number>
+}
+
 function cells(line: string): Cell[] {
-  const list: Cell[] = []
-  for (const char of line) {
+  return Array.from(line, (char): Cell => {
     if (char === "_") {
-      list.push({ char: " ", mark: "full" })
-      continue
+      return { char: " ", mark: "full" }
     }
 
     if (char === "^") {
-      list.push({ char: "▀", mark: "mix" })
-      continue
+      return { char: "▀", mark: "mix" }
     }
 
     if (char === "~") {
-      list.push({ char: "▀", mark: "top" })
-      continue
+      return { char: "▀", mark: "top" }
     }
 
-    list.push({ char, mark: "text" })
-  }
-
-  return list
+    return { char, mark: "text" }
+  })
 }
 
 function title(text: string | undefined): string {
@@ -97,18 +101,9 @@ function title(text: string | undefined): string {
   return Locale.truncate(value, SPLASH_TITLE_LIMIT)
 }
 
-function write(
-  root: BoxRenderable,
-  ctx: ScrollbackRenderContext,
-  line: {
-    left: number
-    top: number
-    text: string
-    fg: ColorInput
-    bg?: ColorInput
-    attrs?: number
-  },
-): void {
+// The opentui renderable options mark a missing background or attribute set
+// as undefined, so the Options open here.
+function write(root: BoxRenderable, ctx: ScrollbackRenderContext, line: Line): void {
   if (line.left >= ctx.width) {
     return
   }
@@ -123,124 +118,69 @@ function write(
       wrapMode: "none",
       content: line.text,
       fg: line.fg,
-      bg: line.bg,
-      attributes: line.attrs,
+      bg: Option.getOrUndefined(line.bg),
+      attributes: Option.getOrUndefined(line.attrs),
     }),
   )
 }
 
-function push(
-  lines: Array<{ left: number; top: number; text: string; fg: ColorInput; bg?: ColorInput; attrs?: number }>,
-  left: number,
-  top: number,
-  text: string,
-  fg: ColorInput,
-  bg?: ColorInput,
-  attrs?: number,
-): void {
-  lines.push({ left, top, text, fg, bg, attrs })
-}
-
 function draw(
-  lines: Array<{ left: number; top: number; text: string; fg: ColorInput; bg?: ColorInput; attrs?: number }>,
   row: string,
   input: {
     left: number
     top: number
     fg: ColorInput
     shadow: ColorInput
-    attrs?: number
   },
-) {
-  let x = input.left
-  for (const cell of cells(row)) {
+): Line[] {
+  // Each cell takes one column.
+  return cells(row).map((cell, index): Line => {
+    const left = input.left + index
     if (cell.mark === "full" || cell.mark === "mix") {
-      push(lines, x, input.top, cell.char, input.fg, input.shadow, input.attrs)
-      x += 1
-      continue
+      return {
+        left,
+        top: input.top,
+        text: cell.char,
+        fg: input.fg,
+        bg: Option.some(input.shadow),
+        attrs: Option.none(),
+      }
     }
 
     if (cell.mark === "top") {
-      push(lines, x, input.top, cell.char, input.shadow, undefined, input.attrs)
-      x += 1
-      continue
+      return { left, top: input.top, text: cell.char, fg: input.shadow, bg: Option.none(), attrs: Option.none() }
     }
 
-    push(lines, x, input.top, cell.char, input.fg, undefined, input.attrs)
-    x += 1
-  }
+    return { left, top: input.top, text: cell.char, fg: input.fg, bg: Option.none(), attrs: Option.none() }
+  })
+}
+
+function text(left: number, top: number, content: string, fg: ColorInput, attrs: Option.Option<number>): Line {
+  return { left, top, text: content, fg, bg: Option.none(), attrs }
 }
 
 function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: ScrollbackRenderContext): ScrollbackSnapshot {
   const width = Math.max(1, ctx.width)
   const meta = splashMeta(input)
-  const lines: Array<{ left: number; top: number; text: string; fg: ColorInput; bg?: ColorInput; attrs?: number }> = []
   const left = input.theme.left
   const right = input.theme.right
-  const leftShadow = input.theme.leftShadow
-  let height = 1
+  const mark = go.right.slice(1)
+  const top = 1
+  const body_left = (mark[0]?.length ?? 0) + 2
+  const height = top + mark.length
+  const logo = mark.flatMap((row, index) =>
+    draw(row, {
+      left: 0,
+      top: top + index,
+      fg: left,
+      shadow: input.theme.leftShadow,
+    }),
+  )
 
-  if (kind === "entry") {
-    const mark = go.right.slice(1)
-    const top = 1
-    const body_left = (mark[0]?.length ?? 0) + 2
-
-    for (let i = 0; i < mark.length; i += 1) {
-      draw(lines, mark[i] ?? "", {
-        left: 0,
-        top: top + i,
-        fg: left,
-        shadow: leftShadow,
-      })
-    }
-
-    push(lines, body_left, top, "OpenCode", right, undefined, TextAttributes.BOLD)
-    if (input.detail) {
-      push(
-        lines,
-        body_left,
-        top + 1,
-        Locale.truncateMiddle(input.detail, Math.max(1, width - body_left)),
-        left,
-        undefined,
-      )
-    }
-    height = top + mark.length
-  }
-
-  if (kind === "exit") {
-    const mark = go.right.slice(1)
-    const top = 1
-    const body_left = (mark[0]?.length ?? 0) + 2
-    const session = "Session  "
-    const label = "Continue "
-
-    for (let i = 0; i < mark.length; i += 1) {
-      draw(lines, mark[i] ?? "", {
-        left: 0,
-        top: top + i,
-        fg: left,
-        shadow: leftShadow,
-      })
-    }
-
-    if (input.showSession !== false) {
-      push(lines, body_left, top, session, left, undefined, TextAttributes.DIM)
-      push(lines, body_left + session.length, top, meta.title, right, undefined, TextAttributes.BOLD)
-    }
-
-    push(lines, body_left, top + 1, label, left, undefined, TextAttributes.DIM)
-    push(
-      lines,
-      body_left + label.length,
-      top + 1,
-      `opencode --mini -s ${meta.session_id}`,
-      right,
-      undefined,
-      TextAttributes.BOLD,
-    )
-    height = top + mark.length
-  }
+  const lines =
+    kind === "entry"
+      ? [...logo, ...entryBody(input, body_left, top, width)]
+      : [...logo, ...exitBody(input, meta, body_left, top)]
 
   const root = new BoxRenderable(ctx.renderContext, {
     position: "absolute",
@@ -262,6 +202,44 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
     startOnNewLine: true,
     trailingNewline: false,
   }
+}
+
+function entryBody(input: SplashWriterInput, body_left: number, top: number, width: number): Line[] {
+  const head = text(body_left, top, "OpenCode", input.theme.right, Option.some(TextAttributes.BOLD))
+  if (!input.detail) {
+    return [head]
+  }
+
+  return [
+    head,
+    text(
+      body_left,
+      top + 1,
+      Locale.truncateMiddle(input.detail, Math.max(1, width - body_left)),
+      input.theme.left,
+      Option.none(),
+    ),
+  ]
+}
+
+function exitBody(input: SplashWriterInput, meta: SplashMeta, body_left: number, top: number): Line[] {
+  const session = "Session  "
+  const label = "Continue "
+  const dim = Option.some(TextAttributes.DIM)
+  const bold = Option.some(TextAttributes.BOLD)
+  const resume = [
+    text(body_left, top + 1, label, input.theme.left, dim),
+    text(body_left + label.length, top + 1, `opencode --mini -s ${meta.session_id}`, input.theme.right, bold),
+  ]
+  if (input.showSession === false) {
+    return resume
+  }
+
+  return [
+    text(body_left, top, session, input.theme.left, dim),
+    text(body_left + session.length, top, meta.title, input.theme.right, bold),
+    ...resume,
+  ]
 }
 
 export function splashMeta(input: SplashInput): SplashMeta {
