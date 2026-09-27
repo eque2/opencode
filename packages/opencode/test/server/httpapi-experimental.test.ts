@@ -125,9 +125,11 @@ function withCreatedWorktree(
           headers,
           body: JSON.stringify({ directory: info.directory }),
         })
-        if (removed.status !== 200) yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
+        if (removed.status !== 200)
+          return yield* new TestFailure({ message: `failed to remove worktree: ${removed.status}` })
         const ok = yield* HttpClientResponse.schemaBodyJson(Schema.Boolean)(removed)
-        if (!ok) yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
+        if (!ok) return yield* new TestFailure({ message: `failed to remove worktree ${info.directory}` })
+        return yield* Effect.void
       }),
   )
 }
