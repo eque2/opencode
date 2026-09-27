@@ -5,6 +5,7 @@ import oc2ThemeJson from "../../../ui/src/theme/themes/oc-2.json"
 import { randomUUID } from "node:crypto"
 import { rmSync } from "node:fs"
 import { app, BrowserWindow, dialog, net, nativeImage, nativeTheme, protocol, shell } from "electron"
+import { Option } from "effect"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import type { TitlebarTheme } from "../preload/types"
@@ -146,12 +147,12 @@ export function getWindowID(win: BrowserWindow) {
   return windowIDs.get(win)
 }
 
+// Returns null when no window is available, as main/index.ts and the IPC handlers expect.
 export function getLastFocusedWindow() {
-  const focused = BrowserWindow.getFocusedWindow()
-  if (focused) return focused
-  const win = registry.lastFocused()
-  if (!win || win.isDestroyed()) return null
-  return win
+  return Option.fromNullishOr(BrowserWindow.getFocusedWindow()).pipe(
+    Option.orElse(() => Option.filter(registry.lastFocused(), (win) => !win.isDestroyed())),
+    Option.getOrNull,
+  )
 }
 
 export function restoreMainWindows() {

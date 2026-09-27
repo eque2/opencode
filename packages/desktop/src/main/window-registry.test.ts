@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { Option } from "effect"
 import { createWindowRegistry } from "./window-registry"
 
 function setup(initial: unknown = []) {
@@ -18,7 +19,9 @@ describe("window registry", () => {
   test("restores persisted ids and ignores malformed entries", () => {
     expect(setup(["a", "", 42, "b"]).registry.persisted()).toEqual(["a", "b"])
     expect(setup("junk").registry.persisted()).toEqual([])
-    expect(setup(undefined).registry.persisted()).toEqual([])
+    // setup(undefined) falls back to the [] default, so read from a store with no value at all.
+    const empty = createWindowRegistry({ read: () => {}, write: () => {}, cleanup: () => {} })
+    expect(empty.persisted()).toEqual([])
   })
 
   test("registers windows and persists each id once", () => {
@@ -71,11 +74,11 @@ describe("window registry", () => {
     app.registry.register("a", { name: "a" })
     app.registry.register("b", { name: "b" })
     app.registry.focused("a")
-    expect(app.registry.lastFocused()).toEqual({ name: "a" })
+    expect(app.registry.lastFocused()).toEqual(Option.some({ name: "a" }))
     app.registry.closed("a")
-    expect(app.registry.lastFocused()).toEqual({ name: "b" })
+    expect(app.registry.lastFocused()).toEqual(Option.some({ name: "b" }))
     app.registry.closed("b")
-    expect(app.registry.lastFocused()).toBeUndefined()
+    expect(app.registry.lastFocused()).toEqual(Option.none())
   })
 
   test("resumes forgetting closed windows after the quit flag resets", () => {
