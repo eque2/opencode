@@ -19,10 +19,11 @@ export function createUnresponsiveSampler(win: BrowserWindow, name: string) {
     yield* Effect.sleep(sampleInterval)
     if (!active()) return false
     const stack = yield* Effect.tryPromise({
-      try: () => win.webContents.mainFrame.collectJavaScriptCallStack(),
+      // Electron types the result as Promise<string> | Promise<void>.
+      try: (): PromiseLike<string | void> => win.webContents.mainFrame.collectJavaScriptCallStack(),
       catch: (cause) => new SampleError({ cause }),
     }).pipe(
-      Effect.map((value) => Option.some(value).pipe(Option.filter((text) => text.length > 0))),
+      Effect.map((value) => (typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none<string>())),
       Effect.catch((error) =>
         Effect.sync(() => {
           writeLog("window", "failed to collect unresponsive sample", { window: name, error: error.cause }, "error")
