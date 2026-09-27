@@ -75,9 +75,13 @@ test("installs plugin without loading it", async () => {
       tui: true,
     })
 
-    await expect(fs.readFile(tmp.extra.marker, "utf8")).rejects.toThrow()
-    await expect(TuiPluginRuntime.addPlugin(tmp.extra.spec)).resolves.toBe(true)
-    await expect(fs.readFile(tmp.extra.marker, "utf8")).resolves.toBe("loaded")
+    const failure = await fs.readFile(tmp.extra.marker, "utf8").then(
+      () => "resolved",
+      (error) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect(await TuiPluginRuntime.addPlugin(tmp.extra.spec)).toBe(true)
+    expect(await fs.readFile(tmp.extra.marker, "utf8")).toBe("loaded")
   } finally {
     await TuiPluginRuntime.dispose()
     cwd.mockRestore()
