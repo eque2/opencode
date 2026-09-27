@@ -3,6 +3,7 @@
 // Fetches session messages from the SDK and extracts user turn text for
 // the prompt history ring. Also finds the most recently used variant for
 // the current model so the footer can pre-select it.
+import { Option } from "effect"
 import { promptCopy, promptSame } from "./prompt.shared"
 import type { RunInput, RunPrompt } from "./types"
 
@@ -22,24 +23,22 @@ export type RunSession = {
   turns: Turn[]
 }
 
+const parseUrl = Option.liftThrowable((url: string) => new URL(url))
+const decodeName = Option.liftThrowable(decodeURIComponent)
+
 function fileName(url: string, filename?: string) {
   if (filename) {
     return filename
   }
 
-  try {
-    const next = new URL(url)
-    if (next.protocol !== "file:") {
-      return url
-    }
-
-    const name = next.pathname.split("/").at(-1)
-    if (name) {
-      return decodeURIComponent(name)
-    }
-  } catch {}
-
-  return url
+  // A malformed URL or a malformed percent escape falls back to the raw URL.
+  return parseUrl(url).pipe(
+    Option.filter((next) => next.protocol === "file:"),
+    Option.flatMap((next) => Option.fromNullishOr(next.pathname.split("/").at(-1))),
+    Option.filter((name) => name.length > 0),
+    Option.flatMap((name) => decodeName(name)),
+    Option.getOrElse(() => url),
+  )
 }
 
 function fileSource(
