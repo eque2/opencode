@@ -64,20 +64,26 @@ export const Default = lazy(() => {
   return { app }
 })
 
-export async function openapi() {
-  return OpenApi.fromApi(PublicApi)
+export function openapi() {
+  return Effect.runPromise(Effect.sync(() => OpenApi.fromApi(PublicApi)))
 }
 
 export let url: URL | undefined
 
-export async function listen(opts: ListenOptions): Promise<Listener> {
-  const listener = await Effect.runPromise(listenEffect(opts))
-  return {
-    hostname: listener.hostname,
-    port: listener.port,
-    url: listener.url,
-    stop: (close?: boolean) => Effect.runPromiseExit(listener.stop(close)).then(() => undefined),
-  }
+export function listen(opts: ListenOptions): Promise<Listener> {
+  return Effect.runPromise(
+    listenEffect(opts).pipe(
+      Effect.map(
+        (listener): Listener => ({
+          hostname: listener.hostname,
+          port: listener.port,
+          url: listener.url,
+          // A failed stop still resolves, as the Promise API always did.
+          stop: (close?: boolean) => Effect.runPromise(listener.stop(close).pipe(Effect.exit, Effect.asVoid)),
+        }),
+      ),
+    ),
+  )
 }
 
 const listenEffect: (opts: ListenOptions) => Effect.Effect<EffectListener, unknown> = Effect.fn("Server.listen")(
@@ -159,8 +165,8 @@ function setupMdns(opts: ListenOptions, port: number, scope: Scope.Scope) {
     const publish =
       opts.mdns && port && opts.hostname !== "127.0.0.1" && opts.hostname !== "localhost" && opts.hostname !== "::1"
     if (publish) {
-      const unpublish = yield* Effect.cached(Effect.sync(() => MDNS.unpublish()))
-      yield* Effect.sync(() => MDNS.publish(port, opts.mdnsDomain))
+      const unpublish = yield* Effect.cached(MDNS.unpublish)
+      yield* MDNS.publish(port, opts.mdnsDomain)
       yield* Scope.addFinalizer(scope, unpublish)
       return unpublish
     }
@@ -179,6 +185,7 @@ function makeStop(state: ListenerState, unpublishMdns: Effect.Effect<void>, list
         Effect.ignore,
         Effect.ensuring(
           Effect.sync(() => {
+            // eslint-disable-next-line effect/no-undefined-use-option -- (c) public contract: `Server.url` is a `URL | undefined` export of the package entry (src/node.ts) that the plugin runtime reads with `??`
             if (url === listenerUrl) url = undefined
           }),
         ),
@@ -204,13 +211,12 @@ function serverLayer(opts: { port: number; hostname: string }) {
   const close = server.close.bind(server)
   // Keep shutdown owned by NodeHttpServer, but honor listener.stop(true) by
   // force-closing active HTTP sockets when its finalizer calls server.close().
-  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Node's overloads don't preserve a monkey-patched method assignment.
-  server.close = ((callback?: Parameters<typeof server.close>[0]) => {
+  server.close = (callback?: Parameters<typeof server.close>[0]) => {
     serverRef.closeStarted = true
     const result = close(callback)
     if (serverRef.forceStop) server.closeAllConnections()
     return result
-  }) as typeof server.close
+  }
 
   return Layer.mergeAll(
     NodeHttpServer.layer(() => server, { port: opts.port, host: opts.hostname, gracefulShutdownTimeout: "1 second" }),

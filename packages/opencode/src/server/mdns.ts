@@ -1,47 +1,51 @@
 import { Bonjour } from "bonjour-service"
+import { Effect, MutableRef, Option } from "effect"
 
-let bonjour: Bonjour | undefined
-let currentPort: number | undefined
+type Published = { readonly bonjour: Bonjour; readonly port: number }
 
-export function publish(port: number, domain?: string) {
-  if (currentPort === port) return
-  if (bonjour) unpublish()
+const current = MutableRef.make(Option.none<Published>())
 
-  try {
-    const host = domain ?? "opencode.local"
-    const name = `opencode-${port}`
-    bonjour = new Bonjour()
-    const service = bonjour.publish({
-      name,
-      type: "http",
-      host,
-      port,
-      txt: { path: "/" },
-    })
+export const unpublish = Effect.suspend(() =>
+  Option.match(MutableRef.getAndSet(current, Option.none()), {
+    onNone: () => Effect.void,
+    onSome: (published) =>
+      Effect.try(() => {
+        published.bonjour.unpublishAll()
+        published.bonjour.destroy()
+      }).pipe(Effect.ignore),
+  }),
+)
 
-    service.on("error", () => {})
+export const publish = Effect.fn("MDNS.publish")(function* (port: number, domain?: string) {
+  const published = MutableRef.get(current)
+  if (Option.isSome(published) && published.value.port === port) return
+  yield* unpublish
+  // mDNS is best effort: a failed publish leaves nothing published.
+  const bonjour = yield* start(port, domain ?? "opencode.local").pipe(Effect.option)
+  MutableRef.set(
+    current,
+    Option.map(bonjour, (instance) => ({ bonjour: instance, port })),
+  )
+})
 
-    currentPort = port
-  } catch {
-    if (bonjour) {
-      try {
-        bonjour.destroy()
-      } catch {}
-    }
-    bonjour = undefined
-    currentPort = undefined
-  }
-}
-
-export function unpublish() {
-  if (bonjour) {
-    try {
-      bonjour.unpublishAll()
-      bonjour.destroy()
-    } catch {}
-    bonjour = undefined
-    currentPort = undefined
-  }
+function start(port: number, host: string) {
+  return Effect.try(() => new Bonjour()).pipe(
+    Effect.flatMap((bonjour) =>
+      Effect.try(() => {
+        const service = bonjour.publish({
+          name: `opencode-${port}`,
+          type: "http",
+          host,
+          port,
+          txt: { path: "/" },
+        })
+        service.on("error", () => {})
+      }).pipe(
+        Effect.as(bonjour),
+        Effect.tapError(() => Effect.try(() => bonjour.destroy()).pipe(Effect.ignore)),
+      ),
+    ),
+  )
 }
 
 export * as MDNS from "./mdns"
