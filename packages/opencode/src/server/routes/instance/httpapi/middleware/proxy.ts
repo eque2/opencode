@@ -1,6 +1,13 @@
 import { ProxyUtil } from "@/server/proxy-util"
-import { Effect, Predicate, Stream } from "effect"
-import { HttpBody, HttpClient, HttpClientRequest, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { Effect, Option, Predicate, Stream } from "effect"
+import {
+  HttpBody,
+  HttpClient,
+  HttpClientRequest,
+  type HttpClientResponse,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
 import { WebSocketTracker } from "../websocket-tracker"
 
@@ -84,8 +91,11 @@ export function websocket(
   )
 }
 
-function statusText(response: unknown) {
-  return (response as { source?: Response }).source?.statusText
+// A fetch-backed client response keeps the web Response as its source; other clients have none.
+function statusText(response: HttpClientResponse.HttpClientResponse): Option.Option<string> {
+  return "source" in response && response.source instanceof Response
+    ? Option.some(response.source.statusText)
+    : Option.none()
 }
 
 export function http(
@@ -96,7 +106,7 @@ export function http(
 ): Effect.Effect<HttpServerResponse.HttpServerResponse> {
   return Effect.gen(function* () {
     const response = yield* client.execute(
-      HttpClientRequest.make(request.method as never)(url, {
+      HttpClientRequest.make(request.method)(url, {
         headers: ProxyUtil.headers(request.headers as HeadersInit, extra),
         body: requestBody(request),
       }),
@@ -122,7 +132,7 @@ export function http(
       })
       return HttpServerResponse.text(body, {
         status: response.status,
-        statusText: statusText(response),
+        statusText: Option.getOrUndefined(statusText(response)),
         headers,
         contentType,
       })
@@ -130,7 +140,7 @@ export function http(
 
     return HttpServerResponse.stream(response.stream.pipe(Stream.catchCause(() => Stream.empty)), {
       status: response.status,
-      statusText: statusText(response),
+      statusText: Option.getOrUndefined(statusText(response)),
       headers,
     })
   }).pipe(Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 500 }))))
