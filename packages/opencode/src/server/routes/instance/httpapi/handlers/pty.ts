@@ -73,7 +73,7 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
         Pty.Service.use((service) =>
           service.create({
             ...ctx.payload,
-            args: ctx.payload.args ? [...ctx.payload.args] : undefined,
+            args: ctx.payload.args?.slice(),
             cwd,
             env: { ...ctx.payload.env, ...shell.env },
           }),
@@ -111,7 +111,7 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
         Pty.Service.use((service) =>
           service.update(ctx.params.ptyID, {
             ...ctx.payload,
-            size: ctx.payload.size ? { ...ctx.payload.size } : undefined,
+            ...(ctx.payload.size ? { size: { ...ctx.payload.size } } : {}),
           }),
         ),
       ).pipe(
@@ -199,11 +199,10 @@ export const ptyConnectHandlers = HttpApiBuilder.group(PtyConnectApi, "pty-conne
             : false
           if (!valid) return HttpServerResponse.empty({ status: 403 })
         }
-        const parsedCursor = query.value.cursor === undefined ? undefined : Number(query.value.cursor)
-        const cursor =
-          parsedCursor !== undefined && Number.isSafeInteger(parsedCursor) && parsedCursor >= -1
-            ? parsedCursor
-            : undefined
+        const cursor = Option.fromNullishOr(query.value.cursor).pipe(
+          Option.map(Number),
+          Option.filter((value) => Number.isSafeInteger(value) && value >= -1),
+        )
         const socket = yield* Effect.orDie(ctx.request.upgrade)
         const { write } = yield* socket.writer
         const closeAccepted = (event: Socket.CloseEvent) =>
@@ -225,23 +224,25 @@ export const ptyConnectHandlers = HttpApiBuilder.group(PtyConnectApi, "pty-conne
         // Outbound frames flow through one queue drained by a single writer so replay, live
         // output, and the close frame keep their order.
         const outbox = yield* Queue.unbounded<string | Uint8Array | Socket.CloseEvent>()
-        const attachment = yield* pty(
+        const attached = yield* pty(
           Pty.Service.use((service) =>
             service.attach(ctx.params.ptyID, {
-              cursor,
+              cursor: Option.getOrUndefined(cursor),
               onData: (chunk) => Queue.offerUnsafe(outbox, chunk),
               onEnd: () => Queue.offerUnsafe(outbox, new Socket.CloseEvent(1000)),
             }),
           ),
         ).pipe(
+          Effect.map(Option.some),
           Effect.catchTags({
             "Pty.NotFoundError": () =>
-              closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(undefined)),
+              closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(Option.none())),
             "Pty.ExitedError": () =>
-              closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(undefined)),
+              closeAccepted(new Socket.CloseEvent(4404, "session not found")).pipe(Effect.as(Option.none())),
           }),
         )
-        if (!attachment) return HttpServerResponse.empty()
+        if (Option.isNone(attached)) return HttpServerResponse.empty()
+        const attachment = attached.value
 
         for (const chunk of PtyProtocol.chunks(attachment.replay)) Queue.offerUnsafe(outbox, chunk)
         Queue.offerUnsafe(outbox, PtyProtocol.metaFrame(attachment.cursor))

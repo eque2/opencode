@@ -4,7 +4,7 @@ import { LLM } from "@/session/llm"
 import { MessageID, SessionID } from "@/session/schema"
 import { Slug } from "@opencode-ai/core/util/slug"
 import { LLMEvent } from "@opencode-ai/llm"
-import { Effect, Stream } from "effect"
+import { Effect, Option, Stream } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
 
@@ -25,8 +25,9 @@ export const projectCopyHandlers = HttpApiBuilder.group(InstanceHttpApi, "projec
     const generateName = Effect.fn("ProjectCopyHttpApi.generateName")(function* (context: string | undefined) {
       const text = context?.trim()
       if (!text) return yield* Slug.make
-      const fallback = yield* provider.defaultModel().pipe(Effect.catch(() => Effect.succeed(undefined)))
-      if (!fallback) return yield* Slug.make
+      const defaultModel = yield* Effect.option(provider.defaultModel())
+      if (Option.isNone(defaultModel)) return yield* Slug.make
+      const fallback = defaultModel.value
       const model =
         (yield* provider.getSmallModel(fallback.providerID)) ??
         (yield* provider.getModel(fallback.providerID, fallback.modelID))
