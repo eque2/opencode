@@ -18,7 +18,17 @@ import { iife } from "@/util/iife"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { pathToFileURL } from "url"
-import { Config as EffectConfig, ConfigProvider, Effect, Layer, Context, Option, Schema, Types } from "effect"
+import {
+  Config as EffectConfig,
+  ConfigProvider,
+  Effect,
+  Layer,
+  Context,
+  MutableHashMap,
+  Option,
+  Schema,
+  Types,
+} from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { EffectPromise } from "@/effect/promise"
@@ -1221,10 +1231,10 @@ export interface Interface {
 }
 
 interface State {
-  models: Map<string, LanguageModelV3>
+  models: MutableHashMap.MutableHashMap<string, LanguageModelV3>
   providers: Record<ProviderV2.ID, Info>
   catalog: Record<ProviderV2.ID, Info>
-  sdk: Map<string, BundledSDK>
+  sdk: MutableHashMap.MutableHashMap<string, BundledSDK>
   modelLoaders: Record<string, CustomModelLoader>
   varsLoaders: Record<string, CustomVarsLoader>
 }
@@ -1421,14 +1431,14 @@ const layer = Layer.effect(
         const database = mapValues(catalog, toPublicInfo)
 
         const providers: Record<ProviderV2.ID, Info> = {} as Record<ProviderV2.ID, Info>
-        const languages = new Map<string, LanguageModelV3>()
+        const languages = MutableHashMap.empty<string, LanguageModelV3>()
         const modelLoaders: {
           [providerID: string]: CustomModelLoader
         } = {}
         const varsLoaders: {
           [providerID: string]: CustomVarsLoader
         } = {}
-        const sdk = new Map<string, BundledSDK>()
+        const sdk = MutableHashMap.empty<string, BundledSDK>()
         const discoveryLoaders: {
           [providerID: string]: CustomDiscoverModels
         } = {}
@@ -1807,8 +1817,8 @@ const layer = Layer.effect(
             options,
           }),
         )
-        const existing = s.sdk.get(key)
-        if (existing) return existing
+        const existing = MutableHashMap.get(s.sdk, key)
+        if (Option.isSome(existing)) return existing.value
 
         const customFetch = options["fetch"]
         const chunkTimeout = options["chunkTimeout"] ?? 300_000
@@ -1850,7 +1860,7 @@ const layer = Layer.effect(
             name: model.providerID,
             ...options,
           })
-          s.sdk.set(key, loaded)
+          MutableHashMap.set(s.sdk, key, loaded)
           return loaded as SDK
         }
 
@@ -1873,7 +1883,7 @@ const layer = Layer.effect(
           name: model.providerID,
           ...options,
         })
-        s.sdk.set(key, loaded)
+        MutableHashMap.set(s.sdk, key, loaded)
         return loaded as SDK
       } catch (e) {
         throw new InitError({ providerID: model.providerID, cause: e })
@@ -1912,7 +1922,8 @@ const layer = Layer.effect(
       const s = yield* InstanceState.get(state)
       const envs = yield* env.all()
       const key = `${model.providerID}/${model.id}`
-      if (s.models.has(key)) return s.models.get(key)!
+      const cached = MutableHashMap.get(s.models, key)
+      if (Option.isSome(cached)) return cached.value
 
       const provider = s.providers[model.providerID]
       return yield* EffectPromise.refineRejection(
@@ -1929,7 +1940,7 @@ const layer = Layer.effect(
                 model,
               )
             : sdk.languageModel(model.api.id)
-          s.models.set(key, language)
+          MutableHashMap.set(s.models, key, language)
           return language
         },
         (cause) =>
