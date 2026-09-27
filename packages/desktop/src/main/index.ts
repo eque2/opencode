@@ -8,7 +8,7 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls"
 import type { Event } from "electron"
 import { app, BrowserWindow } from "electron"
 
-import { Config, ConfigProvider, Data, Deferred, Effect, Fiber, Option } from "effect"
+import { Array as Arr, Config, ConfigProvider, Data, Deferred, Effect, Fiber, Option } from "effect"
 import contextMenu from "electron-context-menu"
 
 import type { ServerReadyData } from "../preload/types"
@@ -203,8 +203,7 @@ const main = Effect.gen(function* () {
   }
 
   yield* Effect.try({
-    try: () =>
-      setDefaultCACertificates([...new Set([...getCACertificates("default"), ...getCACertificates("system")])]),
+    try: () => setDefaultCACertificates(Arr.dedupe([...getCACertificates("default"), ...getCACertificates("system")])),
     catch: (cause) => new StartupStepError({ cause }),
   }).pipe(
     Effect.catch((error) =>
