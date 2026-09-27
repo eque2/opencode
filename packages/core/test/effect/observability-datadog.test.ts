@@ -49,6 +49,11 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
         headers: { authorization: "Bearer x" },
       }).pipe(Effect.annotateLogs({ category: "llm.request", sessionID: "ses_1" }), Effect.withSpan("llm")),
     )
+    yield* log(
+      Effect.logError("stream error", {
+        error: Object.assign(new Error("Bearer abc.def failed"), { requestBodyValues: "my secret plan" }),
+      }).pipe(Effect.annotateLogs({ category: "llm.error" })),
+    )
     yield* log(Effect.logInfo("chunk").pipe(Effect.annotateLogs({ category: "llm.stream" })))
     yield* log(Effect.logDebug("below level").pipe(Effect.annotateLogs({ category: "llm.request" })))
     yield* log(Effect.logWarning("other").pipe(Effect.annotateLogs({ category: "tool.call" })))
@@ -56,8 +61,9 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
 
   expect(requests).toHaveLength(1)
   expect(requests[0].key).toBe("test-key")
-  const [entry] = requests[0].body
-  expect(requests[0].body).toHaveLength(1)
+  const [entry, failure] = requests[0].body
+  expect(requests[0].body).toHaveLength(2)
+  expect(failure.error).toEqual({ name: "Error", message: "Bearer [REDACTED] failed" })
   expect(entry).toMatchObject({
     message: "llm request",
     status: "info",
@@ -70,6 +76,6 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
   })
   expect(entry.ddtags).toBe("env:test,version:1.2.3,team:platform")
   expect(entry.prompt).toMatch(/^sha256:[0-9a-f]{16}$/)
-  expect(JSON.stringify(entry)).not.toContain("my secret plan")
+  expect(JSON.stringify(requests[0].body)).not.toContain("my secret plan")
   expect(entry.dd.trace_id).toBe(BigInt(`0x${entry.trace_id.slice(-16)}`).toString())
 })

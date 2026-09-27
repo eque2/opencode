@@ -27,6 +27,7 @@ type Entry = Record<string, unknown>
 
 // Secrets are always redacted. Content keys follow the `content` switch because prompts and file bodies may hold personal data.
 const SECRET = /api[-_]?key|authorization|password|secret|token|cookie|credential/i
+const BEARER = /(bearer\s+)[\w.~+/=-]+/gi
 const CONTENT = new Set([
   "prompt",
   "system",
@@ -116,7 +117,7 @@ export function entry(
     category,
     run: runID,
     spans: structured.spans,
-    ...(structured.cause === undefined ? {} : { error: { stack: structured.cause } }),
+    ...(structured.cause === undefined ? {} : { error: { stack: redact(structured.cause, settings.content) } }),
     ...(span?._tag === "Span"
       ? {
           trace_id: span.traceId,
@@ -145,8 +146,12 @@ export function categoryFilter(value: string) {
 function redact(input: unknown, content: Settings["content"], key = ""): unknown {
   if (key && SECRET.test(key)) return "[REDACTED]"
   if (key && CONTENT.has(key) && content !== "full") return content === "omit" ? omitted(input) : hash(input)
+  if (typeof input === "string") return input.replace(BEARER, "$1[REDACTED]")
   if (Array.isArray(input)) return input.map((value) => redact(value, content))
-  if (!plain(input)) return input
+  if (input instanceof Date) return input.toISOString()
+  // Provider errors carry the request body in enumerable fields, so an error keeps only its name and message.
+  if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
+  if (input === null || typeof input !== "object") return input
   return Object.fromEntries(Object.entries(input).map(([name, value]) => [name, redact(value, content, name)]))
 }
 
