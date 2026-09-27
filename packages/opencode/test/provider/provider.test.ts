@@ -1971,8 +1971,9 @@ it.instance(
 const instanceStoreLayer = LayerNode.compile(InstanceStore.node, [
   [InstanceStore.bootstrapNode, InstanceBootstrap.node],
 ])
-const provideMultiInstance = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
-  eff.pipe(Effect.provide(instanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
+// The instance store comes last so that its services win, as when it was provided innermost.
+const multiInstanceLayer = () => Layer.mergeAll(AppNodeBuilder.build(CrossSpawnSpawner.node), instanceStoreLayer)
+const provideMultiInstance = <A, E, R>(eff: Effect.Effect<A, E, R>) => eff.pipe(Effect.provide(multiInstanceLayer()))
 
 it.effect("plugin config providers persist after instance dispose", () =>
   Effect.gen(function* () {
@@ -2072,10 +2073,7 @@ it.effect("opencode loader keeps paid models when config apiKey is present", () 
     })
 
     const listIn = (directory: string) =>
-      Provider.use
-        .list()
-        .pipe(provideInstanceEffect(directory))
-        .pipe(Effect.provide(instanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
+      Provider.use.list().pipe(provideInstanceEffect(directory), Effect.provide(multiInstanceLayer()))
 
     const none = paid(yield* listIn(noneDir))
     const keyedCount = paid(yield* listIn(keyedDir))
@@ -2091,10 +2089,7 @@ it.effect("opencode loader keeps paid models when auth exists", () =>
     const keyedDir = yield* tmpdirScoped()
 
     const listIn = (directory: string) =>
-      Provider.use
-        .list()
-        .pipe(provideInstanceEffect(directory))
-        .pipe(Effect.provide(instanceStoreLayer), Effect.provide(AppNodeBuilder.build(CrossSpawnSpawner.node)))
+      Provider.use.list().pipe(provideInstanceEffect(directory), Effect.provide(multiInstanceLayer()))
 
     const none = paid(yield* listIn(noneDir))
 
