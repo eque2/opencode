@@ -52,6 +52,7 @@ const api: ElectronAPI = {
         updaterCallbacks.delete(cb)
         if (updaterCallbacks.size > 0) return
         ipcRenderer.removeListener("updater-state", updaterHandler)
+        // eslint-disable-next-line effect/no-undefined-use-option -- (a) external boundary: this preload runs with sandbox: true, where require() reaches only Electron built-ins, and electron-vite externalizes effect, so Effect cannot load here; Option cannot load, so undefined marks the absent subscription
         updaterSubscription = undefined
         void ipcRenderer.invoke("updater-unsubscribe")
       }
