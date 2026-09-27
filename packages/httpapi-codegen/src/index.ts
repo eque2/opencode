@@ -332,7 +332,7 @@ function emitPromiseResult(
         { path: "types.ts", content: yield* renderPromiseTypes(groups, options) },
         {
           path: "client-error.ts",
-          content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  readonly reason: ClientErrorReason\n\n  constructor(reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n    this.reason = reason\n  }\n}\n`,
+          content: `export type ClientErrorReason = "Transport" | "UnexpectedStatus" | "UnsupportedContentType" | "MalformedResponse"\n\n${eslintDirective([classExtendsErrorRule], promiseErrorReason)}\nexport class ClientError extends Error {\n  override readonly name = "ClientError"\n  readonly reason: ClientErrorReason\n\n  constructor(reason: ClientErrorReason, options?: ErrorOptions) {\n    super(reason, options)\n    this.reason = reason\n  }\n}\n`,
         },
         {
           path: "client.ts",
@@ -528,10 +528,13 @@ function renderImportedProjection(
 // reason starts with its exception category.
 const promiseRuntimeReason =
   "(c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle"
+const promiseErrorReason =
+  "(c) public rejection class of the zero-Effect Promise root of @opencode-ai/client: consumers use instanceof, name, reason and cause, and promise.test.ts pins them"
 const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
 const tryCatchRule = "effect/no-try-catch-use-effect"
 const jsonParseRule = "effect/no-json-parse-use-schema"
+const classExtendsErrorRule = "effect/no-class-extends-error"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
   `// eslint-disable-next-line ${rules.join(", ")} -- ${reason}`
