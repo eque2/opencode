@@ -3,10 +3,29 @@ import { MutableHashSet } from "effect"
 import type { Event } from "@opencode-ai/sdk/v2"
 import { createSessionData, flushInterrupted, reduceSessionData } from "@/cli/cmd/run/session-data"
 
+// The fixtures build only the event fields the reducer reads, so they are
+// checked for the Event envelope (a string type and a properties object).
+function isEventFixture(value: unknown): value is Event {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const properties: unknown = Reflect.get(value, "properties")
+  return typeof Reflect.get(value, "type") === "string" && !!properties && typeof properties === "object"
+}
+
+function asEvent(value: unknown): Event {
+  if (!isEventFixture(value)) {
+    throw new Error("event fixture needs a type and a properties object")
+  }
+
+  return value
+}
+
 function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thinking = true) {
   return reduceSessionData({
     data,
-    event: event as Event,
+    event: asEvent(event),
     sessionID: "session-1",
     thinking,
     limits: {},
