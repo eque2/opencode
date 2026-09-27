@@ -3,12 +3,14 @@ import type { WslServersState } from "@opencode-ai/app/wsl/types"
 import { availableStartupServer, readyWslConnections } from "./connections"
 
 const state = (kind: "starting" | "ready" | "failed" | "stopped"): WslServersState => ({
+  // eslint-disable-next-line effect/no-null-use-option -- (b) wire-protocol literal: WslServersState is the main-to-renderer IPC payload, and it sends runtime: null before the first WSL probe
   runtime: null,
   installed: [],
   online: [],
   distroProbes: {},
   opencodeChecks: {},
   pendingRestart: false,
+  // eslint-disable-next-line effect/no-null-use-option -- (b) wire-protocol literal: WslServersState is the main-to-renderer IPC payload, and it sends job: null when no WSL job runs
   job: null,
   servers: [
     {
