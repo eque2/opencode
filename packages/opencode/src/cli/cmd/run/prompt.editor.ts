@@ -15,7 +15,7 @@ export function resolveEditorSlashValue(text: string) {
 export function realignEditorPromptParts(content: string, parts: RunPromptPart[]): RunPromptPart[] {
   const used: Array<{ start: number; end: number }> = []
 
-  return parts.flatMap((part) => {
+  return parts.flatMap((part): RunPromptPart[] => {
     if (part.type !== "file" && part.type !== "agent") {
       return [part]
     }
