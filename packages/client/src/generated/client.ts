@@ -154,6 +154,7 @@ export function make(options: ClientOptions) {
         method: descriptor.method,
         signal: requestOptions?.signal,
         headers,
+        // eslint-disable-next-line effect/no-json-stringify-use-schema -- (c) zero-Effect Promise root of @opencode-ai/client: public Promise API pinned by promise.test.ts; import-boundaries.test.ts forbids effect in this bundle
         ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),
       } satisfies RequestInit,
     }

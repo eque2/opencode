@@ -534,6 +534,7 @@ const asyncAwaitRule = "effect/no-async-await-use-effect"
 const throwRule = "effect/no-throw-use-effect"
 const tryCatchRule = "effect/no-try-catch-use-effect"
 const jsonParseRule = "effect/no-json-parse-use-schema"
+const jsonStringifyRule = "effect/no-json-stringify-use-schema"
 const classExtendsErrorRule = "effect/no-class-extends-error"
 
 const eslintDirective = (rules: ReadonlyArray<string>, reason: string) =>
@@ -728,6 +729,7 @@ export function make(options: ClientOptions) {
         method: descriptor.method,
         signal: requestOptions?.signal,
         headers,
+        ${runtimeDirective(jsonStringifyRule)}
         ...(descriptor.body === undefined ? {} : { body: JSON.stringify(descriptor.body) }),
       } satisfies RequestInit,
     }
