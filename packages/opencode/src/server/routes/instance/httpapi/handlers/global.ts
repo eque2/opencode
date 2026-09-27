@@ -5,7 +5,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Effect, Queue } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -13,14 +13,10 @@ import * as Sse from "effect/unstable/encoding/Sse"
 import { RootHttpApi } from "../api"
 import { GlobalUpgradeInput } from "../groups/global"
 
-function eventData(data: unknown): Sse.Event {
-  return {
-    _tag: "Event",
-    event: "message",
-    id: undefined,
-    data: JSON.stringify(data),
-  }
-}
+// Each SSE message carries one JSON value as its `data` line, with the default `message` event.
+const SseMessage = Schema.Struct({ data: Schema.fromJsonString(Schema.Unknown) }).annotate({
+  description: "SSE message",
+})
 
 function eventResponse() {
   return Effect.gen(function* () {
@@ -40,8 +36,8 @@ function eventResponse() {
     return HttpServerResponse.stream(
       Stream.make({ payload: { id: EventV2.ID.create(), type: "server.connected", properties: {} } }).pipe(
         Stream.concat(events.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
-        Stream.map(eventData),
-        Stream.pipeThroughChannel(Sse.encode()),
+        Stream.map((data) => ({ data })),
+        Stream.pipeThroughChannel(Sse.encodeSchema(SseMessage)),
         Stream.encodeText,
         Stream.ensuring(Effect.logInfo("global event disconnected")),
       ),
@@ -97,10 +93,10 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
       const target = ctx.payload.target
       const result = yield* installation.upgrade(method, target).pipe(
         Effect.as({ success: true as const, version: target }),
-        Effect.catch((err) =>
+        Effect.catchTag("UpgradeFailedError", (err) =>
           Effect.succeed({
             success: false as const,
-            error: err instanceof Error ? err.message : String(err),
+            error: err.message,
           }),
         ),
       )

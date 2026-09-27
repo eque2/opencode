@@ -2,21 +2,17 @@ import { EventV2Bridge } from "@/event-v2-bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { GlobalBus } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
-import { Effect, Queue } from "effect"
+import { Effect, Queue, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
 import { EventApi } from "../groups/event"
 
-function eventData(data: unknown): Sse.Event {
-  return {
-    _tag: "Event",
-    event: "message",
-    id: undefined,
-    data: JSON.stringify(data),
-  }
-}
+// Each SSE message carries one JSON value as its `data` line, with the default `message` event.
+const SseMessage = Schema.Struct({ data: Schema.fromJsonString(Schema.Unknown) }).annotate({
+  description: "SSE message",
+})
 
 function eventID() {
   return EventV2.ID.create()
@@ -69,8 +65,8 @@ function eventResponse(events: EventV2.Interface) {
     return HttpServerResponse.stream(
       Stream.make({ id: eventID(), type: "server.connected", properties: {} }).pipe(
         Stream.concat(output.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }))),
-        Stream.map(eventData),
-        Stream.pipeThroughChannel(Sse.encode()),
+        Stream.map((data) => ({ data })),
+        Stream.pipeThroughChannel(Sse.encodeSchema(SseMessage)),
         Stream.encodeText,
         Stream.ensuring(Effect.logInfo("event disconnected")),
       ),
