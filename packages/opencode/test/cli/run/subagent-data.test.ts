@@ -46,6 +46,7 @@ function reduce(data: ReturnType<typeof createSubagentData>, event: unknown) {
     sessionID: "parent-1",
     thinking: true,
     limits: {},
+    now: Date.now(),
   })
 }
 
@@ -216,6 +217,7 @@ describe("run subagent data", () => {
     expect(
       bootstrapSubagentData({
         data,
+        now: Date.now(),
         messages: [taskMessage("child-1")],
         children: [{ id: "child-1" }, { id: "child-2" }],
         permissions: [
@@ -267,6 +269,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "interrupted")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -286,6 +289,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "running")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -422,6 +426,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "completed")],
       children: [{ id: "child-1" }],
       permissions: [],
@@ -489,6 +494,7 @@ describe("run subagent data", () => {
 
     bootstrapSubagentData({
       data,
+      now: Date.now(),
       messages: [taskMessage("child-1", "running")],
       children: [{ id: "child-1" }],
       permissions: [],

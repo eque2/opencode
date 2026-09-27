@@ -16,7 +16,19 @@
 // We also re-check live session status before resolving an idle event so a
 // delayed idle from an older turn cannot complete a newer busy turn.
 import type { Event, GlobalEvent, OpencodeClient } from "@opencode-ai/sdk/v2"
-import { Context, Deferred, Effect, Exit, Layer, MutableHashMap, MutableHashSet, Option, Scope, Stream } from "effect"
+import {
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Scope,
+  Stream,
+} from "effect"
 import { makeRuntime } from "@/effect/run-service"
 import {
   blockerStatus,
@@ -765,6 +777,7 @@ function createLayer(input: StreamInput) {
             children,
             permissions,
             questions,
+            now: yield* Clock.currentTimeMillis,
           })
 
           for (const request of [
@@ -954,6 +967,7 @@ function createLayer(input: StreamInput) {
             sessionID: input.sessionID,
             thinking: input.thinking,
             limits: input.limits(),
+            now: yield* Clock.currentTimeMillis,
           })
           if (changed && prev) {
             traceTabs(input.trace, prev, listSubagentTabs(state.subagent))

@@ -49,6 +49,8 @@ export type BootstrapSubagentInput = {
   children: Array<{ id: string; title?: string }>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
+  // Clock reading in epoch milliseconds for tabs that carry no timestamp of their own.
+  now: number
 }
 
 function createDetail(sessionID: string): DetailState {
@@ -264,17 +266,18 @@ function compactCommit(commit: StreamCommit): StreamCommit {
   }
 }
 
-function stateUpdatedAt(part: ToolPart) {
+// `now` is the reducer's clock reading, used when the part state has no timestamp.
+function stateUpdatedAt(part: ToolPart, now: number) {
   if (!("time" in part.state)) {
-    return Date.now()
+    return now
   }
 
   const time = part.state.time
   if (!("end" in time)) {
-    return time.start ?? Date.now()
+    return time.start ?? now
   }
 
-  return time.end ?? time.start ?? Date.now()
+  return time.end ?? time.start ?? now
 }
 
 function metadata(part: ToolPart, key: string) {
@@ -297,7 +300,7 @@ function taskStatus(part: ToolPart): FooterSubagentTab["status"] {
   return "running"
 }
 
-function taskTab(part: ToolPart, sessionID: string): FooterSubagentTab {
+function taskTab(part: ToolPart, sessionID: string, now: number): FooterSubagentTab {
   const label = Locale.titlecase(text(part.state.input.subagent_type) ?? "general")
   const description = text(part.state.input.description) ?? stateTitle(part) ?? inputLabel(part.state.input) ?? ""
 
@@ -311,7 +314,7 @@ function taskTab(part: ToolPart, sessionID: string): FooterSubagentTab {
     background: metadata(part, "background") === true,
     title: stateTitle(part),
     toolCalls: num(metadata(part, "toolcalls")) ?? num(metadata(part, "toolCalls")) ?? num(metadata(part, "calls")),
-    lastUpdatedAt: stateUpdatedAt(part),
+    lastUpdatedAt: stateUpdatedAt(part, now),
   }
 }
 
@@ -319,7 +322,7 @@ function taskSessionID(part: ToolPart) {
   return text(metadata(part, "sessionId")) ?? text(metadata(part, "sessionID"))
 }
 
-function syncTaskTab(data: SubagentData, part: ToolPart, children?: HashSet.HashSet<string>) {
+function syncTaskTab(data: SubagentData, part: ToolPart, now: number, children?: HashSet.HashSet<string>) {
   if (part.tool !== "task") {
     return false
   }
@@ -333,7 +336,7 @@ function syncTaskTab(data: SubagentData, part: ToolPart, children?: HashSet.Hash
     return false
   }
 
-  const next = taskTab(part, sessionID)
+  const next = taskTab(part, sessionID, now)
   if (Option.exists(MutableHashMap.get(data.tabs, sessionID), (current) => sameSubagentTab(current, next))) {
     ensureDetail(data, sessionID)
     return false
@@ -425,6 +428,7 @@ function ensureBlockerTab(
   sessionID: string,
   title: string | undefined,
   kind: "permission" | "question",
+  now: number,
 ) {
   const found = MutableHashMap.get(data.tabs, sessionID)
   if (Option.isSome(found)) {
@@ -439,7 +443,7 @@ function ensureBlockerTab(
       description: kind === "permission" ? "Pending permission" : "Pending question",
       status: "running" as const,
       title: current.title ?? title,
-      lastUpdatedAt: Date.now(),
+      lastUpdatedAt: now,
     }
     if (sameSubagentTab(current, next)) {
       return false
@@ -456,7 +460,7 @@ function ensureBlockerTab(
     label: text(title) ?? Locale.titlecase(kind),
     description: kind === "permission" ? "Pending permission" : "Pending question",
     status: "running",
-    lastUpdatedAt: Date.now(),
+    lastUpdatedAt: now,
   })
   ensureDetail(data, sessionID)
   return true
@@ -466,7 +470,7 @@ function isAbortedAssistantMessage(info: Message) {
   return info.role === "assistant" && info.error?.name === "MessageAbortedError"
 }
 
-function cancelSubagentTab(data: SubagentData, sessionID: string) {
+function cancelSubagentTab(data: SubagentData, sessionID: string, now: number) {
   const found = MutableHashMap.get(data.tabs, sessionID)
   if (Option.isNone(found) || found.value.status !== "running") {
     return false
@@ -476,7 +480,7 @@ function cancelSubagentTab(data: SubagentData, sessionID: string) {
   const next = {
     ...current,
     status: "cancelled" as const,
-    lastUpdatedAt: Date.now(),
+    lastUpdatedAt: now,
   }
   if (sameSubagentTab(current, next)) {
     return false
@@ -720,7 +724,7 @@ export function bootstrapSubagentData(input: BootstrapSubagentInput) {
         continue
       }
 
-      changed = syncTaskTab(input.data, part, children) || changed
+      changed = syncTaskTab(input.data, part, input.now, children) || changed
     }
   }
 
@@ -729,7 +733,9 @@ export function bootstrapSubagentData(input: BootstrapSubagentInput) {
       continue
     }
 
-    changed = ensureBlockerTab(input.data, item.sessionID, childTitle(child, item.sessionID), "permission") || changed
+    changed =
+      ensureBlockerTab(input.data, item.sessionID, childTitle(child, item.sessionID), "permission", input.now) ||
+      changed
   }
 
   for (const item of input.questions) {
@@ -737,7 +743,8 @@ export function bootstrapSubagentData(input: BootstrapSubagentInput) {
       continue
     }
 
-    changed = ensureBlockerTab(input.data, item.sessionID, childTitle(child, item.sessionID), "question") || changed
+    changed =
+      ensureBlockerTab(input.data, item.sessionID, childTitle(child, item.sessionID), "question", input.now) || changed
   }
 
   for (const sessionID of MutableHashMap.keys(input.data.tabs)) {
@@ -798,6 +805,8 @@ export function reduceSubagentData(input: {
   sessionID: string
   thinking: boolean
   limits: Record<string, number>
+  // Clock reading in epoch milliseconds for tabs that carry no timestamp of their own.
+  now: number
 }) {
   const event = input.event
 
@@ -808,7 +817,7 @@ export function reduceSubagentData(input: {
         return false
       }
 
-      return syncTaskTab(input.data, part)
+      return syncTaskTab(input.data, part, input.now)
     }
   }
 
@@ -834,7 +843,7 @@ export function reduceSubagentData(input: {
   const detail = ensureDetail(input.data, sessionID)
   const cancelled =
     event.type === "message.updated" && isAbortedAssistantMessage(event.properties.info)
-      ? cancelSubagentTab(input.data, sessionID)
+      ? cancelSubagentTab(input.data, sessionID, input.now)
       : false
   if (event.type === "session.status") {
     if (event.properties.status.type !== "retry") {
