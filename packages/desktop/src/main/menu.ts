@@ -36,12 +36,14 @@ export function createMenu(deps: Deps) {
 
 function nativeItem(entry: DesktopMenuEntry, deps: Deps): MenuItemConstructorOptions {
   if (entry.type === "separator") return { type: "separator" }
-  if (entry.role) return { role: nativeRole(entry.role), label: entry.labelKey ? nativeT(entry.labelKey) : undefined }
+  // Electron treats an omitted option as unset, so absent values leave the key out.
+  const label = entry.labelKey ? { label: nativeT(entry.labelKey) } : {}
+  if (entry.role) return { role: nativeRole(entry.role), ...label }
 
   const item: MenuItemConstructorOptions = {
-    label: entry.labelKey ? nativeT(entry.labelKey) : undefined,
+    ...label,
     accelerator: entry.accelerator?.macos,
-    enabled: entry.enabled === "updater" ? UPDATER_ENABLED : undefined,
+    ...(entry.enabled === "updater" ? { enabled: UPDATER_ENABLED } : {}),
   }
 
   if (entry.command) {
