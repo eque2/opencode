@@ -144,11 +144,13 @@ function timeoutFetch(input: {
   }
 }
 
-function googleVertexAnthropicBaseURL(project: string | undefined, location: string | undefined) {
-  if (!project) return
-  if (location !== "eu" && location !== "us") return
+function googleVertexAnthropicBaseURL(project: unknown, location: unknown) {
+  if (typeof project !== "string" || !project) return Option.none<string>()
+  if (location !== "eu" && location !== "us") return Option.none<string>()
   // Continental multi-regions require Regional Endpoint Platform domains.
-  return `https://aiplatform.${location}.rep.googleapis.com/v1/projects/${project}/locations/${location}/publishers/anthropic/models`
+  return Option.some(
+    `https://aiplatform.${location}.rep.googleapis.com/v1/projects/${project}/locations/${location}/publishers/anthropic/models`,
+  )
 }
 
 function googleVertexEndpoint(location: string) {
@@ -163,6 +165,100 @@ const processEnv = (key: string) =>
   Effect.suspend(() =>
     EffectConfig.option(EffectConfig.String(key)).parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
   ).pipe(Effect.orDie)
+
+const JsonText = Schema.fromJsonString(Schema.Unknown)
+const decodeJsonText = Schema.decodeUnknownOption(JsonText)
+const encodeJsonText = Schema.encodeUnknownOption(JsonText)
+
+// Runs a Promise API inside Effect and keeps its rejection value, so a fetch wrapper that runs
+// the Effect at the AI SDK edge rejects with the same error that the SDK and retry logic inspect.
+const passThrough = <A>(evaluate: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: evaluate, catch: (cause) => cause })
+
+// Adds a Google Cloud access token to each Vertex request. The AI SDK calls it as its fetch.
+function googleVertexFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const { GoogleAuth } = yield* passThrough(() => import("google-auth-library"))
+      const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
+      const client = yield* passThrough(() => auth.getClient())
+      const token = yield* passThrough(() => client.getAccessToken())
+
+      const headers = new Headers(init?.headers)
+      headers.set("Authorization", `Bearer ${token.token}`)
+
+      return yield* passThrough(() => fetch(input, { ...init, headers }))
+    }),
+  )
+}
+
+const SNOWFLAKE_COMPLETE_BODY = Schema.encodeSync(JsonText)({
+  choices: [{ finish_reason: "stop", message: { content: "", role: "assistant" } }],
+})
+
+// Snowflake Cortex takes max_completion_tokens where the OpenAI-compatible SDK sends max_tokens.
+function snowflakeRequest(init?: RequestInit) {
+  if (typeof init?.body !== "string" || init.body === "") return init
+  return decodeJsonText(init.body).pipe(
+    Option.filter(isRecord),
+    Option.filter((body) => "max_tokens" in body),
+    Option.flatMap(({ max_tokens, ...body }) => encodeJsonText({ ...body, max_completion_tokens: max_tokens })),
+    Option.match({ onNone: () => init, onSome: (body) => ({ ...init, body }) }),
+  )
+}
+
+// Snowflake streams deltas with an empty role, which the OpenAI-compatible SDK rejects.
+function snowflakeStream(response: Response, body: ReadableStream<Uint8Array>) {
+  const reader = body.getReader()
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
+  const stream = new ReadableStream<Uint8Array>({
+    pull: (ctrl) =>
+      Effect.runPromise(
+        passThrough(() => reader.read()).pipe(
+          Effect.map(({ done, value }) =>
+            done
+              ? ctrl.close()
+              : ctrl.enqueue(
+                  encoder.encode(decoder.decode(value, { stream: true }).replace(/"role"\s*:\s*""/g, '"role":"assistant"')),
+                ),
+          ),
+        ),
+      ),
+    cancel: () => reader.cancel(),
+  })
+  return new Response(stream, { headers: response.headers, status: response.status })
+}
+
+// Applies the Snowflake Cortex request and response fixes. The AI SDK calls it as its fetch.
+function snowflakeFetch(url: RequestInfo | URL, init?: RequestInit) {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const response = yield* passThrough(() => fetch(url, snowflakeRequest(init)))
+
+      if (!response.ok && response.status === 400) {
+        const errorData = yield* Effect.option(passThrough(() => response.clone().json()))
+        const errorMessage = errorData.pipe(
+          Option.filter(isRecord),
+          Option.map((data) => data.message || data.error),
+          Option.filter(Predicate.isString),
+        )
+        if (Option.isSome(errorMessage) && errorMessage.value.toLowerCase().includes("conversation complete")) {
+          return new Response(SNOWFLAKE_COMPLETE_BODY, {
+            status: 200,
+            headers: new Headers({ "content-type": "application/json" }),
+          })
+        }
+      }
+
+      if (response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
+        return snowflakeStream(response, response.body)
+      }
+
+      return response
+    }),
+  )
+}
 
 type BundledSDK = {
   languageModel(modelId: string): LanguageModelV3
@@ -601,17 +697,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         options: {
           project,
           location,
-          fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-            const { GoogleAuth } = await import("google-auth-library")
-            const auth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] })
-            const client = await auth.getClient()
-            const token = await client.getAccessToken()
-
-            const headers = new Headers(init?.headers)
-            headers.set("Authorization", `Bearer ${token.token}`)
-
-            return fetch(input, { ...init, headers })
-          },
+          fetch: googleVertexFetch,
         },
         async getModel(sdk: any, modelID: string) {
           const id = String(modelID).trim()
@@ -631,7 +717,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
         options: {
           project,
           location,
-          ...(baseURL && { baseURL }),
+          ...Option.match(baseURL, { onNone: () => ({}), onSome: (url) => ({ baseURL: url }) }),
         },
         async getModel(sdk: any, modelID) {
           const id = String(modelID).trim()
@@ -880,14 +966,10 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const { createAnthropic } = yield* Effect.promise(() => import("ai-gateway-provider/providers/anthropic"))
       const { createOpenAICompatible } = yield* Effect.promise(() => import("@ai-sdk/openai-compatible"))
 
-      const metadata = iife(() => {
-        if (input.options?.metadata) return input.options.metadata
-        try {
-          return JSON.parse(input.options?.headers?.["cf-aig-metadata"])
-        } catch {
-          return undefined
-        }
-      })
+      // The gateway factory takes plain optional values, so absent metadata becomes undefined here.
+      const metadata =
+        input.options?.metadata ||
+        Option.getOrUndefined(decodeJsonText(input.options?.headers?.["cf-aig-metadata"]))
       const opts = {
         metadata,
         cacheTtl: input.options?.cacheTtl,
@@ -1006,58 +1088,7 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       const useOAuthHandler =
         oauthToken !== undefined && envToken === undefined && apiKeyToken === undefined && configToken === undefined
       if (!useOAuthHandler) {
-        options.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
-          if (init?.body && typeof init.body === "string") {
-            try {
-              const body = JSON.parse(init.body)
-              if ("max_tokens" in body) {
-                body.max_completion_tokens = body.max_tokens
-                delete body.max_tokens
-                init = { ...init, body: JSON.stringify(body) }
-              }
-            } catch {}
-          }
-
-          const response = await fetch(url, init)
-
-          if (!response.ok && response.status === 400) {
-            try {
-              const errorData = await response.clone().json()
-              const errorMessage = String(errorData.message || errorData.error || "")
-              if (errorMessage.toLowerCase().includes("conversation complete")) {
-                return new Response(
-                  JSON.stringify({
-                    choices: [{ finish_reason: "stop", message: { content: "", role: "assistant" } }],
-                  }),
-                  { status: 200, headers: new Headers({ "content-type": "application/json" }) },
-                )
-              }
-            } catch {}
-          }
-
-          if (response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
-            const reader = response.body.getReader()
-            const encoder = new TextEncoder()
-            const decoder = new TextDecoder()
-            const stream = new ReadableStream({
-              async pull(ctrl) {
-                const { done, value } = await reader.read()
-                if (done) {
-                  ctrl.close()
-                  return
-                }
-                const text = decoder.decode(value, { stream: true })
-                ctrl.enqueue(encoder.encode(text.replace(/"role"\s*:\s*""/g, '"role":"assistant"')))
-              },
-              cancel() {
-                reader.cancel()
-              },
-            })
-            return new Response(stream, { headers: response.headers, status: response.status })
-          }
-
-          return response
-        }
+        options.fetch = snowflakeFetch
       }
 
       return {
@@ -1809,11 +1840,8 @@ const layer = Layer.effect(
           model.api.npm === "@ai-sdk/google-vertex/anthropic" &&
           !options.baseURL
         ) {
-          const baseURL = googleVertexAnthropicBaseURL(
-            typeof options.project === "string" ? options.project : undefined,
-            typeof options.location === "string" ? options.location : undefined,
-          )
-          if (baseURL) options.baseURL = baseURL
+          const baseURL = googleVertexAnthropicBaseURL(options.project, options.location)
+          if (Option.isSome(baseURL)) options.baseURL = baseURL.value
         }
 
         if (model.providerID === "google-vertex" && !model.api.npm.includes("@ai-sdk/openai-compatible")) {
