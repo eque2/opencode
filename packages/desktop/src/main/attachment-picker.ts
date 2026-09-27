@@ -1,57 +1,86 @@
 import { randomUUID } from "node:crypto"
 import { open } from "node:fs/promises"
+import { Data, Effect, MutableHashMap, MutableHashSet, Option } from "effect"
 import { nativeT } from "./native-translations"
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
+export class AttachmentPickerError extends Data.TaggedError("AttachmentPickerError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
 export function createPickedFileAuthorizations(
-  read: (path: string, maxBytes: number) => Promise<ArrayBuffer> = readAttachment,
+  read: (path: string, maxBytes: number) => Effect.Effect<ArrayBuffer, AttachmentPickerError> = readAttachment,
   budget = MAX_ATTACHMENT_BYTES,
 ) {
-  const selections = new Map<string, { sender: number; paths: Set<string>; remaining: number }>()
+  const selections = MutableHashMap.empty<
+    string,
+    { sender: number; paths: MutableHashSet.MutableHashSet<string>; remaining: number }
+  >()
 
   return {
     add(sender: number, paths: string[]) {
       const token = randomUUID()
-      selections.set(token, { sender, paths: new Set(paths), remaining: budget })
+      MutableHashMap.set(selections, token, {
+        sender,
+        paths: MutableHashSet.fromIterable(paths),
+        remaining: budget,
+      })
       return token
     },
-    async read(sender: number, token: string, path: string) {
-      const selection = selections.get(token)
-      if (selection?.sender !== sender || !selection.paths.delete(path))
-        throw new Error(nativeT("desktop.picker.error.notSelected"))
-      const bytes = await read(path, selection.remaining)
-      selection.remaining -= bytes.byteLength
-      if (selection.paths.size === 0) selections.delete(token)
-      return bytes
-    },
+    read: (sender: number, token: string, path: string) =>
+      Effect.gen(function* () {
+        const selection = Option.filter(
+          MutableHashMap.get(selections, token),
+          (item) => item.sender === sender && MutableHashSet.has(item.paths, path),
+        )
+        if (Option.isNone(selection))
+          return yield* new AttachmentPickerError({ message: nativeT("desktop.picker.error.notSelected") })
+        MutableHashSet.remove(selection.value.paths, path)
+        const bytes = yield* read(path, selection.value.remaining)
+        selection.value.remaining -= bytes.byteLength
+        if (MutableHashSet.size(selection.value.paths) === 0) MutableHashMap.remove(selections, token)
+        return bytes
+      }),
     release(sender: number, token: string) {
-      if (selections.get(token)?.sender === sender) selections.delete(token)
+      const selection = MutableHashMap.get(selections, token)
+      if (Option.isSome(selection) && selection.value.sender === sender) MutableHashMap.remove(selections, token)
     },
   }
 }
 
-export function assertAttachmentBudget(files: { size: number }[]) {
-  const total = files.reduce((sum, file) => sum + file.size, 0)
-  if (total <= MAX_ATTACHMENT_BYTES) return
-  throw new Error(nativeT("desktop.picker.error.sizeLimit", { limit: MAX_ATTACHMENT_BYTES / 1024 / 1024 }))
-}
+const sizeLimitError = () =>
+  new AttachmentPickerError({
+    message: nativeT("desktop.picker.error.sizeLimit", { limit: MAX_ATTACHMENT_BYTES / 1024 / 1024 }),
+  })
 
-export async function readAttachment(filePath: string, maxBytes = MAX_ATTACHMENT_BYTES) {
-  const file = await open(filePath, "r")
-  try {
-    const info = await file.stat()
-    if (info.size > maxBytes)
-      throw new Error(nativeT("desktop.picker.error.sizeLimit", { limit: MAX_ATTACHMENT_BYTES / 1024 / 1024 }))
-    const bytes = Buffer.allocUnsafe(info.size)
-    let offset = 0
-    while (offset < info.size) {
-      const result = await file.read(bytes, offset, info.size - offset, offset)
-      if (result.bytesRead === 0) break
-      offset += result.bytesRead
-    }
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + offset) as ArrayBuffer
-  } finally {
-    await file.close()
-  }
-}
+export const assertAttachmentBudget = (files: { size: number }[]) =>
+  files.reduce((sum, file) => sum + file.size, 0) <= MAX_ATTACHMENT_BYTES ? Effect.void : Effect.fail(sizeLimitError())
+
+export const readAttachment = (filePath: string, maxBytes = MAX_ATTACHMENT_BYTES) =>
+  Effect.acquireUseRelease(
+    fileOperation(() => open(filePath, "r")),
+    (file) =>
+      Effect.gen(function* () {
+        const info = yield* fileOperation(() => file.stat())
+        if (info.size > maxBytes) return yield* sizeLimitError()
+        const bytes = Buffer.allocUnsafe(info.size)
+        let offset = 0
+        while (offset < info.size) {
+          const result = yield* fileOperation(() => file.read(bytes, offset, info.size - offset, offset))
+          if (result.bytesRead === 0) break
+          offset += result.bytesRead
+        }
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + offset)
+      }),
+    (file) => fileOperation(() => file.close()),
+  )
+
+// The IPC boundary forwards the message to the renderer, so a filesystem failure keeps the Node.js message text.
+const fileOperation = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      new AttachmentPickerError({ message: cause instanceof Error ? cause.message : String(cause), cause }),
+  })

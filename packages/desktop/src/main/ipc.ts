@@ -2,6 +2,7 @@ import { execFile } from "node:child_process"
 import { stat } from "node:fs/promises"
 import { basename, join } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron"
+import { Data, Effect, Option, Schema } from "effect"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 import type { DesktopMenuAction } from "@opencode-ai/app/desktop-menu"
 import { parseDesktopNativeBundle, type DesktopNativeBundle } from "@opencode-ai/app/i18n/desktop-native"
@@ -32,6 +33,18 @@ const pickerFilters = (ext?: string[]) => {
 
 const pickedFiles = createPickedFileAuthorizations()
 
+class IpcHandlerError extends Data.TaggedError("IpcHandlerError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+// Electron sends a rejected handler to the renderer as `String(error)`. A plain Error keeps the
+// "Error: <message>" text that the renderer has always received, whatever the tagged error name is.
+const runIpcHandler = <A, E extends { readonly message: string }>(effect: Effect.Effect<A, E>) =>
+  Effect.runPromise(effect.pipe(Effect.catch((error) => Effect.die(new Error(error.message)))))
+
+const encodeStoreValue = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 type Deps = {
   killSidecar: () => Promise<void> | void
   relaunch: () => void
@@ -57,7 +70,7 @@ type Deps = {
 export function registerIpcHandlers(deps: Deps) {
   const drafts = createDesktopDraftStore(join(app.getPath("userData"), "drafts.sqlite"))
   const updaterSubscriptions = createUpdaterSubscriptions()
-  app.once("will-quit", updaterSubscriptions.clear)
+  app.once("will-quit", () => updaterSubscriptions.clear())
   app.on("before-quit", () => drafts.flush())
   app.once("will-quit", () => drafts.close())
   app.on("browser-window-created", (_event, win) => win.on("session-end", () => drafts.flush()))
@@ -97,30 +110,38 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
   ipcMain.handle("export-debug-logs", () => deps.exportDebugLogs())
   ipcMain.handle("set-force-focus", (event: IpcMainInvokeEvent, enabled: boolean) =>
-    setForceFocus(event.sender, enabled),
+    runIpcHandler(setForceFocus(event.sender, enabled)),
   )
   ipcMain.handle("record-fatal-renderer-error", (_event: IpcMainInvokeEvent, error: FatalRendererError) =>
     deps.recordFatalRendererError(error),
   )
-  ipcMain.handle("set-native-translations", (event: IpcMainInvokeEvent, value: unknown) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed() || win.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame) {
-      throw new Error("Invalid native translation sender")
-    }
-    const bundle = parseDesktopNativeBundle(value)
-    if (!bundle) throw new Error("Invalid native translation bundle")
-    deps.setNativeTranslations(bundle)
-  })
-  ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
-    try {
-      const store = getStore(name)
-      const value = store.get(key)
-      if (value === undefined || value === null) return null
-      return typeof value === "string" ? value : JSON.stringify(value)
-    } catch {
-      return null
-    }
-  })
+  ipcMain.handle("set-native-translations", (event: IpcMainInvokeEvent, value: unknown) =>
+    runIpcHandler(
+      Effect.gen(function* () {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        if (
+          !win ||
+          win.isDestroyed() ||
+          win.webContents !== event.sender ||
+          event.senderFrame !== event.sender.mainFrame
+        ) {
+          return yield* new IpcHandlerError({ message: "Invalid native translation sender" })
+        }
+        const bundle = parseDesktopNativeBundle(value)
+        if (!bundle) return yield* new IpcHandlerError({ message: "Invalid native translation bundle" })
+        return deps.setNativeTranslations(bundle)
+      }),
+    ),
+  )
+  // A missing key, an unreadable store, and a value that does not encode to JSON all read as absent.
+  ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) =>
+    Option.getOrNull(
+      Option.liftThrowable(() => getStore(name).get(key))().pipe(
+        Option.flatMap(Option.fromNullishOr),
+        Option.flatMap((value) => (typeof value === "string" ? Option.some(value) : encodeStoreValue(value))),
+      ),
+    ),
+  )
   ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
     getStore(name).set(key, value)
   })
@@ -144,68 +165,90 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("draft-set", (_event, key: string, value: string) => drafts.set(key, value))
   ipcMain.handle("draft-delete", (_event, key: string) => drafts.set(key, null))
   ipcMain.handle("draft-blob-put", (_event, data: ArrayBuffer) => drafts.putBlob(new Uint8Array(data)))
-  ipcMain.handle("draft-blob-get", (_event, id: string) => {
-    const data = drafts.getBlob(id)
-    return data ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : null
-  })
+  ipcMain.handle("draft-blob-get", (_event, id: string) =>
+    Option.fromNullishOr(drafts.getBlob(id)).pipe(
+      Option.map((data) => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)),
+      Option.getOrNull,
+    ),
+  )
 
   ipcMain.handle(
     "open-directory-picker",
-    async (_event: IpcMainInvokeEvent, opts?: { multiple?: boolean; title?: string; defaultPath?: string }) => {
-      const result = await dialog.showOpenDialog({
-        properties: ["openDirectory", ...(opts?.multiple ? ["multiSelections" as const] : []), "createDirectory"],
-        title: opts?.title ?? nativeT("desktop.dialog.chooseFolder"),
-        defaultPath: opts?.defaultPath,
-      })
-      if (result.canceled) return null
-      return opts?.multiple ? result.filePaths : result.filePaths[0]
-    },
+    (_event: IpcMainInvokeEvent, opts?: { multiple?: boolean; title?: string; defaultPath?: string }) =>
+      Effect.runPromise(
+        Effect.promise(() =>
+          dialog.showOpenDialog({
+            properties: ["openDirectory", ...(opts?.multiple ? ["multiSelections" as const] : []), "createDirectory"],
+            title: opts?.title ?? nativeT("desktop.dialog.chooseFolder"),
+            defaultPath: opts?.defaultPath,
+          }),
+        ).pipe(
+          Effect.map((result) =>
+            Option.liftPredicate(result, (picked) => !picked.canceled).pipe(
+              Option.map((picked) => (opts?.multiple ? picked.filePaths : picked.filePaths[0])),
+              Option.getOrNull,
+            ),
+          ),
+        ),
+      ),
   )
 
   ipcMain.handle(
     "open-file-picker",
-    async (
+    (
       event: IpcMainInvokeEvent,
       opts?: { multiple?: boolean; title?: string; defaultPath?: string; extensions?: string[] },
-    ) => {
-      const result = await dialog.showOpenDialog({
-        properties: ["openFile", ...(opts?.multiple ? ["multiSelections" as const] : [])],
-        title: opts?.title ?? nativeT("desktop.dialog.chooseFile"),
-        defaultPath: opts?.defaultPath,
-        filters: pickerFilters(opts?.extensions),
-      })
-      if (result.canceled) return null
-      const files = await Promise.all(
-        result.filePaths.map(async (filePath) => ({
-          path: filePath,
-          name: basename(filePath),
-          size: (await stat(filePath)).size,
-        })),
-      )
-      assertAttachmentBudget(files)
-      const token = pickedFiles.add(event.sender.id, result.filePaths)
-      return { token, files }
-    },
+    ) =>
+      runIpcHandler(
+        Effect.gen(function* () {
+          const result = yield* Effect.promise(() =>
+            dialog.showOpenDialog({
+              properties: ["openFile", ...(opts?.multiple ? ["multiSelections" as const] : [])],
+              title: opts?.title ?? nativeT("desktop.dialog.chooseFile"),
+              defaultPath: opts?.defaultPath,
+              filters: pickerFilters(opts?.extensions),
+            }),
+          )
+          if (result.canceled) return Option.none()
+          const files = yield* Effect.forEach(
+            result.filePaths,
+            (filePath) =>
+              Effect.tryPromise({ try: () => stat(filePath), catch: toIpcHandlerError }).pipe(
+                Effect.map((info) => ({ path: filePath, name: basename(filePath), size: info.size })),
+              ),
+            { concurrency: "unbounded" },
+          )
+          yield* assertAttachmentBudget(files)
+          const token = pickedFiles.add(event.sender.id, result.filePaths)
+          return Option.some({ token, files })
+        }).pipe(Effect.map(Option.getOrNull)),
+      ),
   )
 
-  ipcMain.handle("read-picked-file", async (event: IpcMainInvokeEvent, token: string, filePath: string) => {
-    return pickedFiles.read(event.sender.id, token, filePath)
-  })
+  ipcMain.handle("read-picked-file", (event: IpcMainInvokeEvent, token: string, filePath: string) =>
+    runIpcHandler(pickedFiles.read(event.sender.id, token, filePath)),
+  )
 
   ipcMain.handle("release-picked-files", (event: IpcMainInvokeEvent, token: string) => {
     pickedFiles.release(event.sender.id, token)
   })
 
-  ipcMain.handle(
-    "save-file-picker",
-    async (_event: IpcMainInvokeEvent, opts?: { title?: string; defaultPath?: string }) => {
-      const result = await dialog.showSaveDialog({
-        title: opts?.title ?? nativeT("desktop.dialog.saveFile"),
-        defaultPath: opts?.defaultPath,
-      })
-      if (result.canceled) return null
-      return result.filePath ?? null
-    },
+  ipcMain.handle("save-file-picker", (_event: IpcMainInvokeEvent, opts?: { title?: string; defaultPath?: string }) =>
+    Effect.runPromise(
+      Effect.promise(() =>
+        dialog.showSaveDialog({
+          title: opts?.title ?? nativeT("desktop.dialog.saveFile"),
+          defaultPath: opts?.defaultPath,
+        }),
+      ).pipe(
+        Effect.map((result) =>
+          Option.fromNullishOr(result.filePath).pipe(
+            Option.filter(() => !result.canceled),
+            Option.getOrNull,
+          ),
+        ),
+      ),
+    ),
   )
 
   ipcMain.on("open-external", (_event: IpcMainEvent, url: string) => {
@@ -216,40 +259,39 @@ export function registerIpcHandlers(deps: Deps) {
     openLocalFileURL(url)
   })
 
-  ipcMain.handle("open-path", async (_event: IpcMainInvokeEvent, path: string, app?: string) => {
-    if (!app) return shell.openPath(path)
-    await new Promise<void>((resolve, reject) => {
-      const [cmd, args] =
-        process.platform === "darwin" ? (["open", ["-a", app, path]] as const) : ([app, [path]] as const)
-      execFile(cmd, args, (err) => (err ? reject(err) : resolve()))
-    })
-  })
+  ipcMain.handle("open-path", (_event: IpcMainInvokeEvent, path: string, app?: string) =>
+    runIpcHandler(app ? openWithApp(path, app) : Effect.promise(() => shell.openPath(path))),
+  )
 
-  ipcMain.handle("reveal-path", async (_event: IpcMainInvokeEvent, path: string) => {
-    const exists = await stat(path).then(
-      () => true,
-      () => false,
-    )
-    if (!exists) return false
-    shell.showItemInFolder(path)
-    return true
-  })
+  ipcMain.handle("reveal-path", (_event: IpcMainInvokeEvent, path: string) =>
+    Effect.runPromise(
+      Effect.isSuccess(Effect.tryPromise(() => stat(path))).pipe(
+        Effect.tap((exists) => (exists ? Effect.sync(() => shell.showItemInFolder(path)) : Effect.void)),
+      ),
+    ),
+  )
 
-  ipcMain.handle("read-clipboard-image", () => {
-    const image = clipboard.readImage()
-    if (image.isEmpty()) return null
-    const buffer = image.toPNG().buffer
-    const size = image.getSize()
-    return { buffer, width: size.width, height: size.height }
-  })
+  ipcMain.handle("read-clipboard-image", () =>
+    Option.liftPredicate(clipboard.readImage(), (image) => !image.isEmpty()).pipe(
+      Option.map((image) => {
+        const size = image.getSize()
+        return { buffer: image.toPNG().buffer, width: size.width, height: size.height }
+      }),
+      Option.getOrNull,
+    ),
+  )
 
-  ipcMain.handle("get-window-id", (event: IpcMainInvokeEvent) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) throw new Error("Window not found")
-    const id = getWindowID(win)
-    if (!id) throw new Error("Window ID not found")
-    return id
-  })
+  ipcMain.handle("get-window-id", (event: IpcMainInvokeEvent) =>
+    runIpcHandler(
+      Effect.gen(function* () {
+        const win = BrowserWindow.fromWebContents(event.sender)
+        if (!win) return yield* new IpcHandlerError({ message: "Window not found" })
+        const id = getWindowID(win)
+        if (!id) return yield* new IpcHandlerError({ message: "Window ID not found" })
+        return id
+      }),
+    ),
+  )
 
   ipcMain.handle("get-window-focused", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -298,6 +340,16 @@ export function registerIpcHandlers(deps: Deps) {
     })
   })
 }
+
+const openWithApp = (path: string, app: string) =>
+  Effect.callback<void, IpcHandlerError>((resume) => {
+    const [cmd, args] =
+      process.platform === "darwin" ? (["open", ["-a", app, path]] as const) : ([app, [path]] as const)
+    execFile(cmd, args, (err) => resume(err ? Effect.fail(toIpcHandlerError(err)) : Effect.void))
+  })
+
+const toIpcHandlerError = (cause: unknown) =>
+  new IpcHandlerError({ message: cause instanceof Error ? cause.message : String(cause), cause })
 
 export function sendMenuCommand(win: BrowserWindow, id: string) {
   win.webContents.send("menu-command", id)
