@@ -312,7 +312,7 @@ export function RunPermissionBody(props: {
               alignItems={narrow() ? "flex-start" : "center"}
               gap={1}
             >
-              <box width={narrow() ? "100%" : undefined} flexGrow={1} flexShrink={1}>
+              <box {...(narrow() ? { width: "100%" } : {})} flexGrow={1} flexShrink={1}>
                 <RejectField
                   theme={props.theme}
                   text={state().message}

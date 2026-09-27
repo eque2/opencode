@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { BoxRenderable, RGBA, parseColor, type RootRenderable } from "@opentui/core"
 import { testRender, useRenderer } from "@opentui/solid"
 import { createSignal } from "solid-js"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import type { QuestionRequest } from "@opencode-ai/sdk/v2"
 import { OpencodeKeymapProvider, registerOpencodeKeymap } from "@opencode-ai/tui/keymap"
@@ -194,7 +194,7 @@ async function renderFooter(
           providers={() => input.providers}
           currentModel={() => input.currentModel}
           variants={() => []}
-          currentVariant={() => input.currentVariant}
+          currentVariant={() => Option.fromNullishOr(input.currentVariant)}
           state={state}
           view={view}
           subagent={subagents}
@@ -608,7 +608,7 @@ test("direct subagent panel renders active subagents", async () => {
     subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow" }),
     subagent({ sessionID: "s-2", label: "General", description: "Write migration plan", status: "completed" }),
   ])
-  const [current] = createSignal<string | undefined>("s-1")
+  const [current] = createSignal(Option.some("s-1"))
   let rows = 0
 
   const app = await testRender(
@@ -655,7 +655,7 @@ test("direct subagent panel closes when moving up from the first item", async ()
     subagent({ sessionID: "s-1", label: "Explore", description: "Inspect auth flow" }),
     subagent({ sessionID: "s-2", label: "General", description: "Write migration plan" }),
   ])
-  const [current] = createSignal<string | undefined>()
+  const [current] = createSignal(Option.none<string>())
   let closed = 0
 
   const app = await testRender(
@@ -986,7 +986,7 @@ test("direct footer shows editable prompts and additional queued work while runn
             modelID: "a-model-name-long-enough-to-force-responsive-truncation",
           })}
           variants={() => []}
-          currentVariant={() => undefined}
+          currentVariant={() => Option.none()}
           state={state}
           view={view}
           subagent={subagents}
@@ -1384,7 +1384,7 @@ test("direct model panel renders current model selector", async () => {
 
 test("direct variant panel renders current variant selector", async () => {
   const [variants] = createSignal(["high", "minimal"])
-  const [current] = createSignal<string | undefined>("high")
+  const [current] = createSignal(Option.some("high"))
 
   const app = await testRender(
     () => (

@@ -29,7 +29,7 @@ import type { Keymap } from "@opentui/keymap"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { Array as Arr, Duration, Effect, Fiber, MutableHashSet, Option } from "effect"
+import { Array as Arr, Duration, Effect, Equivalence, Fiber, MutableHashSet, Option } from "effect"
 import { OpencodeKeymapProvider } from "@opencode-ai/tui/keymap"
 import { RUN_COMMAND_PANEL_ROWS, RUN_SUBAGENT_PANEL_ROWS } from "./footer.command"
 import { SUBAGENT_INSPECTOR_ROWS } from "./footer.subagent"
@@ -203,8 +203,9 @@ export class RunFooter implements FooterApi {
   private setCurrentModel: Setter<RunInput["model"]>
   private variants: Accessor<string[]>
   private setVariants: Setter<string[]>
-  private currentVariant: Accessor<string | undefined>
-  private setCurrentVariant: Setter<string | undefined>
+  // None means the model's default variant.
+  private currentVariant: Accessor<Option.Option<string>>
+  private setCurrentVariant: Setter<Option.Option<string>>
   private theme: Accessor<RunTheme>
   private setTheme: Setter<RunTheme>
   private state: Accessor<FooterState>
@@ -225,7 +226,7 @@ export class RunFooter implements FooterApi {
   // notice timer is pending.
   private noticeRestore: Option.Option<string> = Option.none()
   private statusVersion = 0
-  private requestExitHandler: (() => boolean) | undefined
+  private requestExitHandler: Option.Option<() => boolean> = Option.none()
   private scrollback: RunScrollbackStream
   private themes: RunTheme[]
   private paletteRefreshRunning = false
@@ -282,7 +283,10 @@ export class RunFooter implements FooterApi {
     const [variants, setVariants] = createSignal<string[]>([])
     this.variants = variants
     this.setVariants = setVariants
-    const [currentVariant, setCurrentVariant] = createSignal(options.variant)
+    // An equal variant does not notify, as the plain string signal did.
+    const [currentVariant, setCurrentVariant] = createSignal(Option.fromNullishOr(options.variant), {
+      equals: Option.makeEquivalence(Equivalence.String),
+    })
     this.currentVariant = currentVariant
     this.setCurrentVariant = setCurrentVariant
     const [theme, setTheme] = createSignal(options.theme)
@@ -349,7 +353,9 @@ export class RunFooter implements FooterApi {
         onRows: this.syncRows,
         onLayout: this.syncLayout,
         onStatus: this.setStatus,
-        onSubagentSelect: options.onSubagentSelect,
+        // The runtime callback takes undefined for "no subagent".
+        onSubagentSelect: (sessionID: Option.Option<string>) =>
+          options.onSubagentSelect?.(Option.getOrUndefined(sessionID)),
         onQueuedRemove: this.handleQueuedRemove,
       })
     Effect.runFork(
@@ -456,7 +462,7 @@ export class RunFooter implements FooterApi {
       }
 
       this.setVariants(next.variants)
-      this.setCurrentVariant(next.current)
+      this.setCurrentVariant(Option.fromNullishOr(next.current))
       return
     }
 
@@ -673,7 +679,7 @@ export class RunFooter implements FooterApi {
   }
 
   public requestExit(): boolean {
-    return this.requestExitHandler?.() ?? this.handleExit()
+    return Option.match(this.requestExitHandler, { onNone: () => this.handleExit(), onSome: (fn) => fn() })
   }
 
   public destroy(): void {
@@ -723,7 +729,7 @@ export class RunFooter implements FooterApi {
     )
   }
 
-  private setRequestExitHandler = (fn?: () => boolean): void => {
+  private setRequestExitHandler = (fn: Option.Option<() => boolean>): void => {
     this.requestExitHandler = fn
   }
 
@@ -849,7 +855,7 @@ export class RunFooter implements FooterApi {
     }
 
     if ("variant" in result) {
-      this.setCurrentVariant(result.variant)
+      this.setCurrentVariant(Option.fromNullishOr(result.variant))
     }
 
     if (result.modelLabel) {
@@ -868,7 +874,7 @@ export class RunFooter implements FooterApi {
     const previous = this.currentModel()
     this.setCurrentModel(model)
     if (!previous || previous.providerID !== model.providerID || previous.modelID !== model.modelID) {
-      this.setCurrentVariant(undefined)
+      this.setCurrentVariant(Option.none())
     }
     Effect.runFork(
       fromCallback("model.select", () => this.options.onModelSelect?.(model)).pipe(
@@ -893,14 +899,15 @@ export class RunFooter implements FooterApi {
     )
   }
 
-  private handleVariantSelect = (variant: string | undefined): void => {
+  private handleVariantSelect = (variant: Option.Option<string>): void => {
     if (this.isClosed) {
       return
     }
 
     const model = this.currentModel()
     Effect.runFork(
-      fromCallback("variant.select", () => this.options.onVariantSelect?.(variant)).pipe(
+      // The runtime callback takes undefined for the default variant.
+      fromCallback("variant.select", () => this.options.onVariantSelect?.(Option.getOrUndefined(variant))).pipe(
         Effect.andThen((result) =>
           Effect.sync(() => {
             const current = this.currentModel()
@@ -928,7 +935,7 @@ export class RunFooter implements FooterApi {
     }
 
     if ("variant" in result) {
-      this.setCurrentVariant(result.variant)
+      this.setCurrentVariant(Option.fromNullishOr(result.variant))
     }
 
     const patch: FooterPatch = {}

@@ -396,10 +396,10 @@ export function RunQuestionBody(props: {
                           }}
                         >
                           <box flexDirection="row">
-                            <box backgroundColor={active() ? props.theme.line : undefined} paddingRight={1}>
+                            <box backgroundColor={active() ? props.theme.line : "transparent"} paddingRight={1}>
                               <text fg={active() ? props.theme.highlight : props.theme.muted}>{`${index() + 1}.`}</text>
                             </box>
-                            <box backgroundColor={active() ? props.theme.line : undefined}>
+                            <box backgroundColor={active() ? props.theme.line : "transparent"}>
                               <text
                                 fg={active() ? props.theme.highlight : hit() ? props.theme.success : props.theme.text}
                               >
@@ -441,12 +441,12 @@ export function RunQuestionBody(props: {
                       }}
                     >
                       <box flexDirection="row">
-                        <box backgroundColor={other() ? props.theme.line : undefined} paddingRight={1}>
+                        <box backgroundColor={other() ? props.theme.line : "transparent"} paddingRight={1}>
                           <text
                             fg={other() ? props.theme.highlight : props.theme.muted}
                           >{`${(info()?.options.length ?? 0) + 1}.`}</text>
                         </box>
-                        <box backgroundColor={other() ? props.theme.line : undefined}>
+                        <box backgroundColor={other() ? props.theme.line : "transparent"}>
                           <text
                             fg={other() ? props.theme.highlight : picked() ? props.theme.success : props.theme.text}
                           >
@@ -531,7 +531,7 @@ export function RunQuestionBody(props: {
             flexDirection={narrow() ? "column" : "row"}
             gap={narrow() ? 1 : 2}
             flexShrink={0}
-            width={narrow() ? "100%" : undefined}
+            {...(narrow() ? { width: "100%" } : {})}
           >
             <Show
               when={!state().editing}

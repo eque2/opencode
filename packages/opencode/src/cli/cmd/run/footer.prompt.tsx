@@ -98,7 +98,7 @@ export type PromptState = {
   onContentChange: () => void
   replaceDraft: (text: string) => void
   replacePrompt: (prompt: RunPrompt) => void
-  bind: (area?: TextareaRenderable) => void
+  bind: (area: Option.Option<TextareaRenderable>) => void
 }
 
 function clamp(rows: number): number {
@@ -137,8 +137,10 @@ function extractLineRange(input: string) {
   }
 
   const start = Number(match[1])
-  const end = match[2] && start < Number(match[2]) ? Number(match[2]) : undefined
-  return { base, line: { start, end } }
+  const end = Number(match[2])
+  // A range end counts only when it is present and after the start.
+  const hasEnd = Boolean(match[2]) && start < end
+  return { base, line: { start, ...(hasEnd ? { end } : {}) } }
 }
 
 function slashHead(text: string) {
@@ -186,18 +188,18 @@ function parseSlashCommand(text: string, commands: RunCommand[] | undefined) {
 
 function selectedCommand(text: string, command: RunPrompt["command"]) {
   if (!command) {
-    return undefined
+    return Option.none<NonNullable<RunPrompt["command"]>>()
   }
 
   const head = slashHead(text)
   if (!head || head.name !== command.name) {
-    return undefined
+    return Option.none<NonNullable<RunPrompt["command"]>>()
   }
 
-  return {
+  return Option.some({
     name: command.name,
     arguments: head.arguments,
-  }
+  })
 }
 
 export function RunPromptBody(props: {
@@ -207,7 +209,7 @@ export function RunPromptBody(props: {
   onSubmit: () => void
   onKeyDown: (event: KeyEvent) => void
   onContentChange: () => void
-  bind: (area?: TextareaRenderable) => void
+  bind: (area: Option.Option<TextareaRenderable>) => void
 }) {
   const renderer = useRenderer()
   let area: TextareaRenderable | undefined
@@ -248,11 +250,11 @@ export function RunPromptBody(props: {
   }
 
   onMount(() => {
-    props.bind(area)
+    props.bind(Option.fromNullishOr(area))
   })
 
   onCleanup(() => {
-    props.bind(undefined)
+    props.bind(Option.none())
   })
 
   return (
@@ -699,8 +701,11 @@ export function createPromptState(input: PromptInput): PromptState {
     }
   }
 
-  const bind = (next?: TextareaRenderable) => {
-    if (area === next) {
+  const bind = (next: Option.Option<TextareaRenderable>) => {
+    // `area` mirrors the textarea ref that opentui assigns, so it keeps the
+    // ref's nullable form.
+    const value = Option.getOrUndefined(next)
+    if (area === value) {
       return
     }
 
@@ -708,7 +713,7 @@ export function createPromptState(input: PromptInput): PromptState {
       area.off("line-info-change", scheduleRows)
     }
 
-    area = next
+    area = value
     if (!area || area.isDestroyed) {
       return
     }
@@ -733,7 +738,7 @@ export function createPromptState(input: PromptInput): PromptState {
     }
 
     syncParts()
-    const command = shell() ? undefined : selectedCommand(area.plainText, draft.command)
+    const command = shell() ? Option.none() : selectedCommand(area.plainText, draft.command)
     draft = shell()
       ? {
           text: area.plainText,
@@ -743,7 +748,7 @@ export function createPromptState(input: PromptInput): PromptState {
       : {
           text: area.plainText,
           parts: structuredClone(parts),
-          ...(command ? { command } : {}),
+          ...(Option.isSome(command) ? { command: command.value } : {}),
         }
   }
 
@@ -756,7 +761,7 @@ export function createPromptState(input: PromptInput): PromptState {
       return false
     }
 
-    if (history.index === null && dir === -1) {
+    if (typeof history.index !== "number" && dir === -1) {
       stash = clonePrompt(draft)
     }
 
@@ -767,7 +772,9 @@ export function createPromptState(input: PromptInput): PromptState {
 
     history = next.state
     const value =
-      next.state.index === null ? stash : (next.state.items[next.state.index] ?? { text: next.text, parts: [] })
+      typeof next.state.index === "number"
+        ? (next.state.items[next.state.index] ?? { text: next.text, parts: [] })
+        : stash
     restore(value, next.cursor)
     event.preventDefault()
     return true
@@ -1207,26 +1214,27 @@ export function createPromptState(input: PromptInput): PromptState {
       return
     }
 
-    const command = next.mode === "shell" ? undefined : selectedCommand(next.text, next.command)
-    if (!command && next.mode !== "shell" && isExitCommand(next.text)) {
+    const command = next.mode === "shell" ? Option.none() : selectedCommand(next.text, next.command)
+    if (Option.isNone(command) && next.mode !== "shell" && isExitCommand(next.text)) {
       input.onExit()
       return
     }
 
     const parsed =
-      command || next.mode === "shell" || isNewCommand(next.text)
-        ? undefined
-        : parseSlashCommand(next.text, input.commands())
-    if (parsed?.type === "pending") {
+      Option.isSome(command) || next.mode === "shell" || isNewCommand(next.text)
+        ? Option.none()
+        : Option.some(parseSlashCommand(next.text, input.commands()))
+    if (Option.exists(parsed, (item) => item.type === "pending")) {
       input.onStatus("loading commands")
       return
     }
 
-    const submit = command
-      ? { ...next, command }
-      : parsed?.type === "command"
-        ? { ...next, command: parsed.command }
-        : next
+    // A command the draft already carries wins over one parsed from the text.
+    const slash = Option.flatMap(parsed, (item) => (item.type === "command" ? Option.some(item.command) : Option.none()))
+    const submit = Option.match(Option.orElse(command, () => slash), {
+      onNone: () => next,
+      onSome: (selected) => ({ ...next, command: selected }),
+    })
     const shellMode = next.mode === "shell"
 
     resetDraft()

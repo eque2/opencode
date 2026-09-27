@@ -10,7 +10,7 @@
 /** @jsxImportSource @opentui/solid */
 import { useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { registerOpencodeSpinner } from "@opencode-ai/tui/component/register-spinner"
 import { createColors, createFrames } from "@opencode-ai/tui/ui/spinner"
 import {
@@ -83,7 +83,7 @@ type RunFooterViewProps = {
   providers: () => RunProvider[] | undefined
   currentModel: () => RunInput["model"]
   variants: () => string[]
-  currentVariant: () => string | undefined
+  currentVariant: () => Option.Option<string>
   state: () => FooterState
   view?: () => FooterView
   subagent?: () => FooterSubagentState
@@ -104,14 +104,14 @@ type RunFooterViewProps = {
   onEditorOpen: (input: { value: string }) => Promise<string | undefined>
   onInputClear: () => void
   onExitRequest?: () => boolean
-  onRequestExit?: (fn: (() => boolean) | undefined) => void
+  onRequestExit?: (fn: Option.Option<() => boolean>) => void
   onExit: () => void
   onModelSelect: (model: NonNullable<RunInput["model"]>) => void
-  onVariantSelect: (variant: string | undefined) => void
+  onVariantSelect: (variant: Option.Option<string>) => void
   onRows: (rows: number) => void
   onLayout: (input: { route: FooterPromptRoute; autocomplete: boolean; subagentRows: number }) => void
   onStatus: (text: string) => void
-  onSubagentSelect?: (sessionID: string | undefined) => void
+  onSubagentSelect?: (sessionID: Option.Option<string>) => void
   onQueuedRemove: (messageID: string) => Effect.Effect<boolean, FooterCallbackError>
 }
 
@@ -157,29 +157,29 @@ export function RunFooterView(props: RunFooterViewProps) {
   )
   const selected = createMemo(() => {
     const current = route()
-    return current.type === "subagent" ? current.sessionID : undefined
+    return current.type === "subagent" ? Option.some(current.sessionID) : Option.none<string>()
   })
   const tabs = createMemo(() => subagent().tabs)
   const activeTabs = createMemo(() => tabs().filter((item) => item.status === "running"))
-  const selectedTab = createMemo(() => tabs().find((item) => item.sessionID === selected()))
+  const selectedTab = createMemo(() => tabs().find((item) => Option.contains(selected(), item.sessionID)))
   const selectedIndex = createMemo(() => {
     const sessionID = selected()
-    if (!sessionID) {
+    if (Option.isNone(sessionID) || !sessionID.value) {
       return 0
     }
 
-    return tabs().findIndex((item) => item.sessionID === sessionID) + 1
+    return tabs().findIndex((item) => item.sessionID === sessionID.value) + 1
   })
   const foregroundSubagents = createMemo(
     () => props.backgroundSubagents && activeTabs().some((item) => !item.background),
   )
   const model = createMemo(() => {
     const current = props.currentModel()
-    return current ? modelInfo(props.providers(), current) : { model: props.state().model, provider: undefined }
+    return current ? modelInfo(props.providers(), current).model : props.state().model
   })
   const detail = createMemo(() => {
     const current = route()
-    return current.type === "subagent" ? subagent().details[current.sessionID] : undefined
+    return current.type === "subagent" ? Option.fromNullishOr(subagent().details[current.sessionID]) : Option.none()
   })
   const command = useKeymapSelector(
     (keymap: OpenTuiKeymap) =>
@@ -272,13 +272,13 @@ export function RunFooterView(props: RunFooterViewProps) {
       }),
     }
   })
-  const permission = createMemo<Extract<FooterView, { type: "permission" }> | undefined>(() => {
+  const permission = createMemo<Option.Option<Extract<FooterView, { type: "permission" }>>>(() => {
     const view = active()
-    return view.type === "permission" ? view : undefined
+    return view.type === "permission" ? Option.some(view) : Option.none()
   })
-  const question = createMemo<Extract<FooterView, { type: "question" }> | undefined>(() => {
+  const question = createMemo<Option.Option<Extract<FooterView, { type: "question" }>>>(() => {
     const view = active()
-    return view.type === "question" ? view : undefined
+    return view.type === "question" ? Option.some(view) : Option.none()
   })
   const promptView = createMemo(() => {
     if (active().type !== "prompt") {
@@ -291,12 +291,12 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   const openCommand = () => {
     setRoute({ type: "command" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const openModel = () => {
     setRoute({ type: "model" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const openSkillMenu = () => {
@@ -305,12 +305,12 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
 
     setRoute({ type: "skill" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const openVariant = () => {
     setRoute({ type: "variant" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const openSubagentMenu = () => {
@@ -319,13 +319,13 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
 
     setRoute({ type: "subagent-menu" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const openQueuedMenu = () => {
     if (queuedPrompts().length === 0) return
     setRoute({ type: "queued-menu" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const closePanel = () => {
@@ -334,12 +334,12 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   const openTab = (sessionID: string) => {
     setRoute({ type: "subagent", sessionID })
-    props.onSubagentSelect?.(sessionID)
+    props.onSubagentSelect?.(Option.some(sessionID))
   }
 
   const closeTab = () => {
     setRoute({ type: "composer" })
-    props.onSubagentSelect?.(undefined)
+    props.onSubagentSelect?.(Option.none())
   }
 
   const cycleTab = (dir: -1 | 1) => {
@@ -432,9 +432,9 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
 
     return {
-      model: model().model,
+      model: model(),
       variant: props.currentVariant(),
-      provider: undefined,
+      provider: Option.none<string>(),
       // Prefer without provider, but keep it on the shared width policy if we add it back.
     }
   })
@@ -495,11 +495,11 @@ export function RunFooterView(props: RunFooterViewProps) {
   const sectionSeparator = () => <span style={{ fg: theme().muted }}>· </span>
 
   createEffect(() => {
-    props.onRequestExit?.(composer.requestExit)
+    props.onRequestExit?.(Option.some(composer.requestExit))
   })
 
   onCleanup(() => {
-    props.onRequestExit?.(undefined)
+    props.onRequestExit?.(Option.none())
   })
 
   useBindings(() => ({
@@ -650,15 +650,15 @@ export function RunFooterView(props: RunFooterViewProps) {
                   width="100%"
                   flexShrink={0}
                   border={panel() || prompt() ? false : ["left"]}
-                  borderColor={panel() || prompt() ? undefined : theme().highlight}
-                  customBorderChars={
-                    panel() || prompt()
-                      ? undefined
-                      : {
+                  {...(panel() || prompt()
+                    ? {}
+                    : {
+                        borderColor: theme().highlight,
+                        customBorderChars: {
                           ...EMPTY_BORDER,
                           vertical: "█",
-                        }
-                  }
+                        },
+                      })}
                 >
                   <box
                     width="100%"
@@ -793,22 +793,26 @@ export function RunFooterView(props: RunFooterViewProps) {
                             }}
                           />
                         </Match>
-                        <Match when={active().type === "permission"}>
-                          <RunPermissionBody
-                            request={permission()!.request}
-                            theme={theme()}
-                            block={block()}
-                            diffStyle={props.diffStyle}
-                            onReply={props.onPermissionReply}
-                          />
+                        <Match when={Option.getOrUndefined(permission())}>
+                          {(view) => (
+                            <RunPermissionBody
+                              request={view().request}
+                              theme={theme()}
+                              block={block()}
+                              diffStyle={props.diffStyle}
+                              onReply={props.onPermissionReply}
+                            />
+                          )}
                         </Match>
-                        <Match when={active().type === "question"}>
-                          <RunQuestionBody
-                            request={question()!.request}
-                            theme={theme()}
-                            onReply={props.onQuestionReply}
-                            onReject={props.onQuestionReject}
-                          />
+                        <Match when={Option.getOrUndefined(question())}>
+                          {(view) => (
+                            <RunQuestionBody
+                              request={view().request}
+                              theme={theme()}
+                              onReply={props.onQuestionReply}
+                              onReject={props.onQuestionReject}
+                            />
+                          )}
                         </Match>
                       </Switch>
                     </box>
@@ -884,10 +888,10 @@ export function RunFooterView(props: RunFooterViewProps) {
                     <box paddingRight={1} backgroundColor="transparent" flexShrink={0}>
                       <text fg={theme().text} wrapMode="none">
                         {info().model}
-                        <Show when={info().provider}>
+                        <Show when={Option.getOrUndefined(info().provider)}>
                           {(provider) => <span style={{ fg: theme().muted }}> {provider()}</span>}
                         </Show>
-                        <Show when={info().variant}>
+                        <Show when={Option.getOrUndefined(info().variant)}>
                           {(variant) => (
                             <>
                               <span style={{ fg: theme().warning, bold: true }}> {variant()}</span>
