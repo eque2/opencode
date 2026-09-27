@@ -2,92 +2,128 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Array as Arr, DateTime, Effect, MutableHashSet, Order } from "effect"
 import { cleanupStoreFiles, deleteStoreFileIfEmpty } from "./store-cleanup"
 
-const roots: string[] = []
+const roots = MutableHashSet.empty<string>()
 
-async function tempRoot() {
-  const root = await mkdtemp(join(tmpdir(), "opencode-store-cleanup-"))
-  roots.push(root)
+const tempRoot = Effect.fnUntraced(function* () {
+  const root = yield* Effect.promise(() => mkdtemp(join(tmpdir(), "opencode-store-cleanup-")))
+  MutableHashSet.add(roots, root)
   return root
-}
+})
 
-async function writeStore(root: string, name: string, value: string, modified: Date) {
-  await writeFile(join(root, name), value)
-  await utimes(join(root, name), modified, modified)
-}
+const writeStore = Effect.fnUntraced(function* (
+  root: string,
+  name: string,
+  value: string,
+  modified: DateTime.DateTime,
+) {
+  yield* Effect.promise(() => writeFile(join(root, name), value))
+  yield* Effect.promise(() => utimes(join(root, name), DateTime.toDate(modified), DateTime.toDate(modified)))
+})
 
-afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+const listRoot = (root: string) => Effect.promise(() => readdir(root))
+
+afterEach(() => {
+  const pending = [...roots]
+  MutableHashSet.clear(roots)
+  return Effect.runPromise(
+    Effect.forEach(pending, (root) => Effect.promise(() => rm(root, { recursive: true, force: true })), {
+      concurrency: "unbounded",
+      discard: true,
+    }),
+  )
 })
 
 describe("store cleanup", () => {
-  test("removes empty scoped stores and leaves global stores alone", async () => {
-    const root = await tempRoot()
-    const now = new Date("2026-07-01T00:00:00.000Z")
-    await writeStore(root, "opencode.draft.empty.dat", "{}", now)
-    await writeStore(root, "opencode.workspace.empty.dat", "{\n}", now)
-    await writeStore(root, "opencode.global.dat", "{}", now)
-    await writeStore(root, "opencode.workspace.empty.dat.json", "{}", now)
+  test("removes empty scoped stores and leaves global stores alone", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const root = yield* tempRoot()
+        const now = DateTime.makeUnsafe("2026-07-01T00:00:00.000Z")
+        yield* writeStore(root, "opencode.draft.empty.dat", "{}", now)
+        yield* writeStore(root, "opencode.workspace.empty.dat", "{\n}", now)
+        yield* writeStore(root, "opencode.global.dat", "{}", now)
+        yield* writeStore(root, "opencode.workspace.empty.dat.json", "{}", now)
 
-    const result = await cleanupStoreFiles(root, now.getTime())
+        const result = yield* Effect.promise(() => cleanupStoreFiles(root, DateTime.toEpochMillis(now)))
 
-    expect(result.deleted.sort()).toEqual(["opencode.draft.empty.dat", "opencode.workspace.empty.dat"])
-    expect((await readdir(root)).sort()).toEqual(["opencode.global.dat", "opencode.workspace.empty.dat.json"])
-  })
+        expect(Arr.sort(result.deleted, Order.String)).toEqual([
+          "opencode.draft.empty.dat",
+          "opencode.workspace.empty.dat",
+        ])
+        expect((yield* listRoot(root)).sort()).toEqual(["opencode.global.dat", "opencode.workspace.empty.dat.json"])
+      }),
+    ))
 
-  test("removes stale drafts by age without removing non-empty workspace stores", async () => {
-    const root = await tempRoot()
-    const now = new Date("2026-07-01T00:00:00.000Z")
-    await writeStore(root, "opencode.draft.old.dat", '{"draft:prompt":"hello"}', new Date("2026-05-01T00:00:00.000Z"))
-    await writeStore(root, "opencode.draft.recent.dat", '{"draft:prompt":"hello"}', now)
-    await writeStore(
-      root,
-      "opencode.workspace.old.dat",
-      '{"workspace:layout":"wide"}',
-      new Date("2025-01-01T00:00:00.000Z"),
-    )
-    await writeStore(root, "opencode.workspace.recent.dat", '{"workspace:layout":"wide"}', now)
-
-    const result = await cleanupStoreFiles(root, now.getTime())
-
-    expect(result.deleted).toEqual(["opencode.draft.old.dat"])
-    expect((await readdir(root)).sort()).toEqual([
-      "opencode.draft.recent.dat",
-      "opencode.workspace.old.dat",
-      "opencode.workspace.recent.dat",
-    ])
-  })
-
-  test("caps scoped stores by recency", async () => {
-    const root = await tempRoot()
-    const now = new Date("2026-07-01T00:00:00.000Z")
-    await Promise.all(
-      Array.from({ length: 102 }, (_, index) =>
-        writeStore(
+  test("removes stale drafts by age without removing non-empty workspace stores", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const root = yield* tempRoot()
+        const now = DateTime.makeUnsafe("2026-07-01T00:00:00.000Z")
+        yield* writeStore(
           root,
-          `opencode.draft.${index}.dat`,
+          "opencode.draft.old.dat",
           '{"draft:prompt":"hello"}',
-          new Date(now.getTime() - index * 1000),
-        ),
-      ),
-    )
+          DateTime.makeUnsafe("2026-05-01T00:00:00.000Z"),
+        )
+        yield* writeStore(root, "opencode.draft.recent.dat", '{"draft:prompt":"hello"}', now)
+        yield* writeStore(
+          root,
+          "opencode.workspace.old.dat",
+          '{"workspace:layout":"wide"}',
+          DateTime.makeUnsafe("2025-01-01T00:00:00.000Z"),
+        )
+        yield* writeStore(root, "opencode.workspace.recent.dat", '{"workspace:layout":"wide"}', now)
 
-    const result = await cleanupStoreFiles(root, now.getTime())
+        const result = yield* Effect.promise(() => cleanupStoreFiles(root, DateTime.toEpochMillis(now)))
 
-    const remaining = await readdir(root)
+        expect(result.deleted).toEqual(["opencode.draft.old.dat"])
+        expect((yield* listRoot(root)).sort()).toEqual([
+          "opencode.draft.recent.dat",
+          "opencode.workspace.old.dat",
+          "opencode.workspace.recent.dat",
+        ])
+      }),
+    ))
 
-    expect(result.deleted.sort()).toEqual(["opencode.draft.100.dat", "opencode.draft.101.dat"])
-    expect(remaining).toHaveLength(100)
-  })
+  test("caps scoped stores by recency", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const root = yield* tempRoot()
+        const now = DateTime.makeUnsafe("2026-07-01T00:00:00.000Z")
+        yield* Effect.forEach(
+          Array.from({ length: 102 }, (_, index) => index),
+          (index) =>
+            writeStore(
+              root,
+              `opencode.draft.${index}.dat`,
+              '{"draft:prompt":"hello"}',
+              DateTime.subtract(now, { seconds: index }),
+            ),
+          { concurrency: "unbounded", discard: true },
+        )
 
-  test("removes a scoped store immediately when it becomes empty", async () => {
-    const root = await tempRoot()
-    await writeStore(root, "opencode.draft.empty.dat", "{}", new Date("2026-07-01T00:00:00.000Z"))
-    await writeStore(root, "opencode.global.dat", "{}", new Date("2026-07-01T00:00:00.000Z"))
+        const result = yield* Effect.promise(() => cleanupStoreFiles(root, DateTime.toEpochMillis(now)))
 
-    expect(await deleteStoreFileIfEmpty(root, "opencode.draft.empty.dat")).toBe(true)
-    expect(await deleteStoreFileIfEmpty(root, "opencode.global.dat")).toBe(false)
-    expect(await readdir(root)).toEqual(["opencode.global.dat"])
-  })
+        const remaining = yield* listRoot(root)
+
+        expect(Arr.sort(result.deleted, Order.String)).toEqual(["opencode.draft.100.dat", "opencode.draft.101.dat"])
+        expect(remaining).toHaveLength(100)
+      }),
+    ))
+
+  test("removes a scoped store immediately when it becomes empty", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const root = yield* tempRoot()
+        yield* writeStore(root, "opencode.draft.empty.dat", "{}", DateTime.makeUnsafe("2026-07-01T00:00:00.000Z"))
+        yield* writeStore(root, "opencode.global.dat", "{}", DateTime.makeUnsafe("2026-07-01T00:00:00.000Z"))
+
+        expect(yield* Effect.promise(() => deleteStoreFileIfEmpty(root, "opencode.draft.empty.dat"))).toBe(true)
+        expect(yield* Effect.promise(() => deleteStoreFileIfEmpty(root, "opencode.global.dat"))).toBe(false)
+        expect(yield* listRoot(root)).toEqual(["opencode.global.dat"])
+      }),
+    ))
 })
