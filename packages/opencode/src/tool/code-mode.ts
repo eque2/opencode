@@ -254,10 +254,13 @@ export const CodeModeTool = Tool.define(
         const callTool = (entry: CatalogEntry) => (input: unknown) =>
           Effect.gen(function* () {
             childCalls += 1
+            // JSON Schema tool inputs reach `run` unvalidated, and MCP arguments must be an object.
+            const args = Predicate.isNullish(input) ? {} : input
+            if (!Predicate.isObject(args)) return yield* toolError(`${entry.path} expects an object argument.`)
             const result = yield* invokeChildTool({
               plugin,
               entry,
-              args: (input ?? {}) as Record<string, unknown>,
+              args,
               callID: `${ctx.callID ?? entry.key}/${childCalls}`,
               ctx,
             })
