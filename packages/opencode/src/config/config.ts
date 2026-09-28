@@ -599,13 +599,12 @@ const layer = Layer.effect(
         }
 
         if (!result.username) {
-          result.username = yield* Effect.try({
-            try: () => os.userInfo().username || "user",
-            // Keep the raw error for the log, as the catch clause did.
-            catch: (err) => err,
-          }).pipe(
-            Effect.catch((err) =>
-              Effect.logWarning("failed to read system username, using fallback", { err }).pipe(Effect.as("user")),
+          result.username = yield* Effect.try(() => os.userInfo().username || "user").pipe(
+            Effect.catch((error) =>
+              // UnknownError keeps the thrown value as its cause; the log shows that raw value, as before.
+              Effect.logWarning("failed to read system username, using fallback", { err: error.cause }).pipe(
+                Effect.as("user"),
+              ),
             ),
           )
         }
