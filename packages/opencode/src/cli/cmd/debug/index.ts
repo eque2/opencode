@@ -2,7 +2,7 @@ import { Global } from "@opencode-ai/core/global"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import os from "os"
-import { Console, Duration, Effect } from "effect"
+import { Array as Arr, Config, Console, Duration, Effect, Option } from "effect"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 import { ConfigCommand } from "./config"
@@ -46,18 +46,24 @@ const WaitCommand = effectCmd({
   }),
 })
 
+// An empty variable counts as unset, as the old truthiness checks did.
+const envVar = (name: string) =>
+  Config.option(Config.String(name)).pipe(Effect.map(Option.filter((value) => value.length > 0)), Effect.orDie)
+
 const InfoCommand = effectCmd({
   command: "info",
   describe: "show debug information",
   handler: Effect.fn("Cli.debug.info")(function* () {
-    const { Config } = yield* Effect.promise(() => import("@/config/config"))
+    const configModule = yield* Effect.promise(() => import("@/config/config"))
     const { ConfigPlugin } = yield* Effect.promise(() => import("@/config/plugin"))
-    const config = yield* Config.Service.use((cfg) => cfg.get())
+    const config = yield* configModule.Config.Service.use((cfg) => cfg.get())
     const flags = yield* RuntimeFlags.Service
-    const termProgram = process.env.TERM_PROGRAM
-      ? `${process.env.TERM_PROGRAM}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ""}`
-      : undefined
-    const terminal = [termProgram, process.env.TERM].filter((item): item is string => Boolean(item)).join(" / ")
+    const program = yield* envVar("TERM_PROGRAM")
+    const programVersion = yield* envVar("TERM_PROGRAM_VERSION")
+    const termProgram = Option.map(program, (name) =>
+      Option.match(programVersion, { onNone: () => name, onSome: (version) => `${name} ${version}` }),
+    )
+    const terminal = Arr.getSomes([termProgram, yield* envVar("TERM")]).join(" / ")
 
     yield* Console.log(`opencode version: ${InstallationVersion}`)
     yield* Console.log(`os: ${os.type()} ${os.release()} ${os.arch()}`)
