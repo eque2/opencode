@@ -269,7 +269,7 @@ test.skip("AC-9 secret shapes anywhere in a record never reach the intake and th
   expect(entry.inputTokens).toBe(42)
 })
 
-test.skip("AC-10 a Question.reply-shaped record sends no answer text by default", async () => {
+test("AC-10 a Question.reply-shaped record sends no answer text by default", async () => {
   const target = intake()
   using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
@@ -279,4 +279,19 @@ test.skip("AC-10 a Question.reply-shaped record sends no answer text by default"
   const include = Datadog.categoryFilter(config.categories)
   expect(["question.asked", "pty.write"].filter(include)).toEqual([])
   expect(include("llm.request")).toBe(true)
+})
+
+test("AC-10b a Pty.create-shaped record sends no cmd or args text by default", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  // Same shape as packages/core/src/pty.ts:185, which sets no category.
+  await ship(
+    config,
+    Effect.logInfo("creating session", { id: "pty_1", cmd: "private-shell", args: ["--secret-flag"], cwd: "/tmp" }),
+  )
+  const payload = JSON.stringify(target.requests[0].body)
+  expect(payload).not.toContain("private-shell")
+  expect(payload).not.toContain("--secret-flag")
+  expect(target.requests[0].body[0].id).toBe("pty_1")
 })

@@ -18,6 +18,9 @@ import os from "os"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
 import { runID } from "./shared"
 
+// User answers and terminal sessions never leave the machine unless the env var re-includes them.
+const DEFAULT_CATEGORIES = "*,-question,-pty"
+
 // Every switch is an Effect Config, so any ConfigProvider (env, JSON file, test override) can supply it.
 export const config = Config.all({
   apiKey: Config.option(Config.Redacted("DD_API_KEY")),
@@ -30,7 +33,7 @@ export const config = Config.all({
   tags: Config.String("DD_TAGS").pipe(Config.withDefault("")),
   hostname: Config.String("DD_HOSTNAME").pipe(Config.withDefault(os.hostname())),
   level: Config.LogLevel("OPENCODE_DATADOG_LOG_LEVEL").pipe(Config.withDefault<LogLevel.LogLevel>("Info")),
-  categories: Config.String("OPENCODE_DATADOG_CATEGORIES").pipe(Config.withDefault("*")),
+  categories: Config.String("OPENCODE_DATADOG_CATEGORIES").pipe(Config.withDefault(DEFAULT_CATEGORIES)),
   content: Config.Literals(["omit", "hash", "full"], "OPENCODE_DATADOG_CONTENT").pipe(Config.withDefault("omit")),
   flushInterval: Config.Duration("OPENCODE_DATADOG_FLUSH_INTERVAL").pipe(Config.withDefault(Duration.seconds(5))),
 })
@@ -55,6 +58,8 @@ const CONTENT = HashSet.make(
   "result",
   "diff",
   "command",
+  "answers",
+  "cmd",
 )
 
 // Datadog intake limits: 1000 entries and 5 MB per request.
