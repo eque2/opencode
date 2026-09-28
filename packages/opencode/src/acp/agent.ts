@@ -16,7 +16,7 @@ import {
   type SetSessionModelRequest,
   type SetSessionModeRequest,
 } from "@agentclientprotocol/sdk"
-import { Effect } from "effect"
+import { Cause, Effect } from "effect"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import * as ACPError from "./error"
 import * as ACPService from "./service"
@@ -85,11 +85,19 @@ export class Agent implements ACPAgent {
   }
 }
 
+// The ACP SDK Agent interface is Promise-based; each method runs one Effect and rejects with a RequestError.
 function run<A>(effect: Effect.Effect<A, ACPService.Error>) {
-  return Effect.runPromise(effect.pipe(Effect.mapError(ACPError.toRequestError))).catch((defect: unknown) => {
-    if (defect instanceof RequestError) throw defect
-    throw ACPError.toRequestError(ACPError.fromUnknownDefect(defect))
-  })
+  return Effect.runPromise(
+    effect.pipe(
+      Effect.mapError(ACPError.toRequestError),
+      Effect.catchCause((cause) => Effect.fail(toClientError(Cause.squash(cause)))),
+    ),
+  )
+}
+
+function toClientError(error: unknown) {
+  if (error instanceof RequestError) return error
+  return ACPError.toRequestError(ACPError.fromUnknownDefect(error))
 }
 
 export * as ACP from "./agent"
