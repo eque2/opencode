@@ -8,7 +8,7 @@ import { ServerAuth } from "@/server/auth"
 import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
-import { Effect } from "effect"
+import { Effect, Stream } from "effect"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 
 // The heap monitor is a detached fiber; the TUI ends this worker with terminate().
@@ -21,10 +21,8 @@ const onUncaughtException = (_error: Error) => {}
 process.on("unhandledRejection", onUnhandledRejection)
 process.on("uncaughtException", onUncaughtException)
 
-// Subscribe to global events and forward them via RPC
-GlobalBus.on("event", (event) => {
-  Rpc.emit("global.event", event)
-})
+// Forward global events via RPC. runFork subscribes synchronously, and the fiber lives as long as the worker.
+Effect.runFork(GlobalBus.stream.pipe(Stream.runForEach((event) => Effect.sync(() => Rpc.emit("global.event", event)))))
 
 let server: Awaited<ReturnType<typeof Server.listen>> | undefined
 

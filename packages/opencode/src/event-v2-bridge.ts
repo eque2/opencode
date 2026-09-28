@@ -38,14 +38,14 @@ const layer = Layer.effect(
       Effect.gen(function* () {
         const ctx = Option.getOrUndefined(yield* InstanceRef)
         const workspaceID = Option.getOrElse(yield* WorkspaceRef, () => event.location?.workspaceID)
-        GlobalBus.emit("event", {
+        yield* GlobalBus.publish({
           directory: event.location?.directory ?? ctx?.directory,
           project: ctx?.project.id,
           workspace: workspaceID,
           payload: { id: event.id, type: event.type, properties: event.data },
         })
         if (event.durable === undefined) return
-        GlobalBus.emit("event", {
+        yield* GlobalBus.publish({
           directory: event.location?.directory ?? ctx?.directory,
           project: ctx?.project.id,
           workspace: workspaceID,

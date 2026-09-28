@@ -7,7 +7,7 @@ import { Installation } from "@/installation"
 import type { InstanceStore } from "@/project/instance-store"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { Effect, Queue, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import * as Stream from "effect/Stream"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -23,13 +23,7 @@ const SseMessage = Schema.Struct({ data: Schema.fromJsonString(Schema.Unknown) }
 function eventResponse() {
   return Effect.gen(function* () {
     yield* Effect.logInfo("global event connected")
-    const events = Stream.callback<GlobalBusEvent>((queue) => {
-      const handler = (event: GlobalBusEvent) => Queue.offerUnsafe(queue, event)
-      return Effect.acquireRelease(
-        Effect.sync(() => GlobalBus.on("event", handler)),
-        () => Effect.sync(() => GlobalBus.off("event", handler)),
-      )
-    })
+    const events: Stream.Stream<GlobalBusEvent> = GlobalBus.stream
     const heartbeat = Stream.tick("10 seconds").pipe(
       Stream.drop(1),
       Stream.map(() => ({ payload: { id: EventV2.ID.create(), type: "server.heartbeat", properties: {} } })),
@@ -105,7 +99,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
         ),
       )
       if (!result.success) return HttpServerResponse.jsonUnsafe(result, { status: 500 })
-      GlobalBus.emit("event", {
+      yield* GlobalBus.publish({
         directory: "global",
         payload: {
           type: Installation.Event.Updated.type,

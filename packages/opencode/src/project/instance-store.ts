@@ -80,8 +80,9 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       })
 
     const emitDisposed = (input: { directory: string; project?: string }) =>
-      Effect.sync(() =>
-        GlobalBus.emit("event", {
+      // Read the workspace context when the effect runs, not when it is built.
+      Effect.suspend(() =>
+        GlobalBus.publish({
           directory: input.directory,
           project: input.project,
           workspace: WorkspaceContext.workspaceID,

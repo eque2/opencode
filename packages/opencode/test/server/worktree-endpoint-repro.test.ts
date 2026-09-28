@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer, Queue, Schema } from "effect"
-import { GlobalBus, type GlobalEvent } from "@/bus/global"
+import { Effect, Layer, Schema } from "effect"
+import { GlobalBus } from "@/bus/global"
 import { Worktree } from "@/worktree"
 import { Server } from "../../src/server/server"
 import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
@@ -9,6 +9,7 @@ import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 import { TestFailure } from "../fixture/test-failure"
+import { takeGlobalBusEvent } from "./global-bus"
 
 const stateLayer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -51,21 +52,14 @@ const CreatedWorktree = Schema.StructWithRest(Schema.Struct({ directory: Schema.
 
 function readyWatcher() {
   return Effect.gen(function* () {
-    const events = yield* Queue.bounded<GlobalEvent>(1)
-    const on = (event: GlobalEvent) => {
-      if (event.payload.type === Worktree.Event.Ready.type) Queue.offerUnsafe(events, event)
-    }
-
-    GlobalBus.on("event", on)
-    yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
+    const subscription = yield* GlobalBus.subscribe
 
     return (directory: string) =>
-      Effect.gen(function* () {
-        while (true) {
-          const event = yield* Queue.take(events)
-          if (event.directory === directory) return
-        }
-      }).pipe(
+      takeGlobalBusEvent(
+        subscription,
+        (event) => event.payload.type === Worktree.Event.Ready.type && event.directory === directory,
+      ).pipe(
+        Effect.asVoid,
         Effect.timeoutOrElse({
           duration: "10 seconds",
           orElse: () => Effect.fail(new TestFailure({ message: `timed out waiting for worktree.ready: ${directory}` })),

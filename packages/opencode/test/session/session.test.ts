@@ -12,6 +12,7 @@ import { testEffect } from "../lib/effect"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { GlobalBus } from "@/bus/global"
+import { takeGlobalBusEvent } from "../server/global-bus"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { InstanceStore } from "@/project/instance-store"
@@ -118,12 +119,11 @@ describe("session.created event", () => {
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
       const received = yield* Deferred.make<{ syncEvent: EventV2.SerializedEvent }>()
-      const listener = (event: { payload: { type?: string; syncEvent?: EventV2.SerializedEvent } }) => {
-        if (event.payload.type === "sync" && event.payload.syncEvent)
-          Deferred.doneUnsafe(received, Effect.succeed({ syncEvent: event.payload.syncEvent }))
-      }
-      GlobalBus.on("event", listener)
-      yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", listener)))
+      const subscription = yield* GlobalBus.subscribe
+      yield* takeGlobalBusEvent(subscription, (event) => event.payload.type === "sync" && event.payload.syncEvent).pipe(
+        Effect.flatMap((event) => Deferred.succeed(received, { syncEvent: event.payload.syncEvent })),
+        Effect.forkScoped,
+      )
 
       const info = yield* session.create({})
       const event = yield* awaitDeferred(received, "timed out waiting for legacy global sync event")

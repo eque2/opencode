@@ -1,5 +1,5 @@
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
-import { Effect, Result, Schema } from "effect"
+import { Effect, PubSub, Schema } from "effect"
 
 export class WaitEventAbortedError extends Schema.TaggedError<WaitEventAbortedError>()("WaitEventAbortedError", {
   message: Schema.String,
@@ -32,31 +32,24 @@ export function waitEvent(input: {
 }): Effect.Effect<void, WaitEventError> {
   if (input.signal?.aborted) return Effect.fail(aborted(input.signal))
 
-  return Effect.callback<void, WaitEventAbortedError | WaitEventPredicateError>((resume) => {
-    const abort = () => {
-      cleanup()
-      resume(Effect.fail(aborted(input.signal)))
-    }
-
-    const handler = (event: GlobalEvent) => {
-      const matched = Result.try({
-        try: () => input.fn(event),
-        catch: (cause) => new WaitEventPredicateError({ message: "Global event predicate failed", cause }),
-      })
-      if (Result.isSuccess(matched) && !matched.success) return
-      cleanup()
-      resume(Result.isSuccess(matched) ? Effect.void : Effect.fail(matched.failure))
-    }
-
-    const cleanup = () => {
-      GlobalBus.off("event", handler)
-      input.signal?.removeEventListener("abort", abort)
-    }
-
-    GlobalBus.on("event", handler)
-    input.signal?.addEventListener("abort", abort, { once: true })
-    return Effect.sync(cleanup)
-  }).pipe(
+  return Effect.scoped(
+    Effect.gen(function* () {
+      // Subscribe before the first take, so no event published after this point is lost.
+      const subscription = yield* GlobalBus.subscribe
+      const matched = PubSub.take(subscription).pipe(
+        Effect.flatMap((event) =>
+          Effect.try({
+            try: () => input.fn(event),
+            catch: (cause) => new WaitEventPredicateError({ message: "Global event predicate failed", cause }),
+          }),
+        ),
+        Effect.repeat({ until: (done) => done }),
+        Effect.asVoid,
+      )
+      const signal = input.signal
+      return yield* signal ? Effect.raceFirst(matched, abortion(signal)) : matched
+    }),
+  ).pipe(
     Effect.timeoutOrElse({
       duration: input.timeout,
       orElse: () =>
@@ -66,3 +59,13 @@ export function waitEvent(input: {
     }),
   )
 }
+
+// Fails with the abort reason when the caller aborts the wait.
+const abortion = (signal: AbortSignal) =>
+  Effect.callback<never, WaitEventAbortedError>((resume) => {
+    const abort = () => resume(Effect.fail(aborted(signal)))
+    // The signal can abort between the eager check and the start of this fiber.
+    if (signal.aborted) return abort()
+    signal.addEventListener("abort", abort, { once: true })
+    return Effect.sync(() => signal.removeEventListener("abort", abort))
+  })

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect, Fiber, Layer, Schema } from "effect"
+import { Effect, Fiber, Layer, Schema } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/unstable/http"
 import { eq } from "drizzle-orm"
 import { GlobalBus, type GlobalEvent } from "@/bus/global"
@@ -14,6 +14,7 @@ import { Worktree } from "../../src/worktree"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { takeGlobalBusEvent } from "./global-bus"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 import { TestFailure } from "../fixture/test-failure"
 
@@ -34,18 +35,16 @@ function json(response: HttpClientResponse.HttpClientResponse) {
 
 function waitReady(input: { directory?: string; name?: string }) {
   return Effect.gen(function* () {
-    const ready = yield* Deferred.make<void>()
-    const on = (event: GlobalEvent) => {
-      if (event.payload.type !== Worktree.Event.Ready.type) return
-      if (input.directory && event.directory !== input.directory) return
-      if (input.name && event.payload.properties.name !== input.name) return
-      Deferred.doneUnsafe(ready, Effect.void)
+    const matches = (event: GlobalEvent) => {
+      if (event.payload.type !== Worktree.Event.Ready.type) return false
+      if (input.directory && event.directory !== input.directory) return false
+      if (input.name && event.payload.properties.name !== input.name) return false
+      return true
     }
 
-    GlobalBus.on("event", on)
-    yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
-
-    return yield* Deferred.await(ready).pipe(
+    const subscription = yield* GlobalBus.subscribe
+    return yield* takeGlobalBusEvent(subscription, matches).pipe(
+      Effect.asVoid,
       Effect.timeoutOrElse({
         duration: "10 seconds",
         orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for worktree.ready" })),
@@ -104,7 +103,7 @@ function withCreatedWorktree(
   const headers = { "content-type": "application/json" }
   return Effect.acquireUseRelease(
     Effect.gen(function* () {
-      const ready = yield* waitReady({ name }).pipe(Effect.forkScoped)
+      const ready = yield* waitReady({ name }).pipe(Effect.forkScoped({ startImmediately: true }))
       const created = yield* request(ExperimentalPaths.worktree, directory, {
         method: "POST",
         headers,
@@ -265,7 +264,11 @@ describe("experimental HttpApi", () => {
           tmp.directory,
         )
         expect(next.status).toBe(200)
-        expect((yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(next)).map((session) => session.id)).toContain(first.id)
+        expect(
+          (yield* HttpClientResponse.schemaBodyJson(Schema.Array(Session.GlobalInfo))(next)).map(
+            (session) => session.id,
+          ),
+        ).toContain(first.id)
       }),
     { git: true, config: { formatter: false, lsp: false } },
   )

@@ -8,11 +8,12 @@ import path from "path"
 import { InstanceRef } from "../../src/effect/instance-ref"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
-import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
+import { type GlobalEvent } from "../../src/bus/global"
 import { Snapshot } from "../../src/snapshot"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { collectGlobalBusEvents } from "./global-bus"
 import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 afterEach(async () => {
@@ -35,20 +36,6 @@ function json(response: HttpClientResponse.HttpClientResponse) {
   return response.json
 }
 
-function collectGlobalEvents() {
-  return Effect.acquireRelease(
-    Effect.sync(() => {
-      const seen: GlobalEvent[] = []
-      const on = (event: GlobalEvent) => {
-        seen.push(event)
-      }
-      GlobalBus.on("event", on)
-      return { seen, on }
-    }),
-    ({ on }) => Effect.sync(() => GlobalBus.off("event", on)),
-  )
-}
-
 const disposedEvents = (seen: GlobalEvent[], dir: string) =>
   seen.filter((evt) => evt.directory === dir && evt.payload.type === "server.instance.disposed").length
 
@@ -57,7 +44,7 @@ describe("project.initGit endpoint", () => {
     Effect.gen(function* () {
       const tmp = yield* TestInstance
       const fs = yield* FSUtil.Service
-      const events = yield* collectGlobalEvents()
+      const events = yield* collectGlobalBusEvents
 
       const init = yield* request(tmp.directory, "/project/git/init", {
         method: "POST",
@@ -70,7 +57,7 @@ describe("project.initGit endpoint", () => {
         worktree: tmp.directory,
       })
       // Reload behavior: bus emits exactly one server.instance.disposed for the directory.
-      expect(disposedEvents(events.seen, tmp.directory)).toBe(1)
+      expect(disposedEvents(yield* events, tmp.directory)).toBe(1)
       expect(yield* fs.exists(path.join(tmp.directory, ".git", "opencode"))).toBe(false)
 
       const current = yield* request(tmp.directory, "/project/current")
@@ -94,7 +81,7 @@ describe("project.initGit endpoint", () => {
     () =>
       Effect.gen(function* () {
         const tmp = yield* TestInstance
-        const events = yield* collectGlobalEvents()
+        const events = yield* collectGlobalBusEvents
 
         const init = yield* request(tmp.directory, "/project/git/init", {
           method: "POST",
@@ -104,7 +91,7 @@ describe("project.initGit endpoint", () => {
           vcs: "git",
           worktree: tmp.directory,
         })
-        expect(disposedEvents(events.seen, tmp.directory)).toBe(0)
+        expect(disposedEvents(yield* events, tmp.directory)).toBe(0)
 
         const current = yield* request(tmp.directory, "/project/current")
         expect(current.status).toBe(200)

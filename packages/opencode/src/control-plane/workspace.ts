@@ -121,10 +121,6 @@ export class SyncTimeoutError extends Schema.TaggedError<SyncTimeoutError>()("Wo
   state: Schema.Record(Schema.String, Schema.Number),
 }) {}
 
-class RemoteEventEmitError extends Schema.TaggedError<RemoteEventEmitError>()("WorkspaceRemoteEventEmitError", {
-  cause: Schema.Defect(),
-}) {}
-
 export class SyncAbortedError extends Schema.TaggedError<SyncAbortedError>()("WorkspaceSyncAbortedError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -185,7 +181,7 @@ const layer = Layer.effect(
       const next = { workspaceID: id, status }
       MutableHashMap.set(connections, id, next)
 
-      GlobalBus.emit("event", {
+      GlobalBus.publishUnsafe({
         directory: "global",
         workspace: id,
         payload: {
@@ -426,24 +422,13 @@ const layer = Layer.effect(
               }
 
               const envelope = Option.getOrElse(decodeRemoteEnvelope(evt), (): typeof RemoteEnvelope.Type => ({}))
-              // A GlobalBus listener can throw; that must not end the sync stream.
-              yield* Effect.try({
-                try: () =>
-                  GlobalBus.emit("event", {
-                    directory: envelope.directory,
-                    project: envelope.project,
-                    workspace: space.id,
-                    payload,
-                  }),
-                catch: (cause) => new RemoteEventEmitError({ cause }),
-              }).pipe(
-                Effect.catch((error) =>
-                  Effect.logWarning("failed to emit global event", {
-                    workspaceID: space.id,
-                    error: errorData(error.cause),
-                  }),
-                ),
-              )
+              // Subscribers take from their own queue, so they cannot end the sync stream.
+              yield* GlobalBus.publish({
+                directory: envelope.directory,
+                project: envelope.project,
+                workspace: space.id,
+                payload,
+              })
             }),
           )
 

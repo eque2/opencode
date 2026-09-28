@@ -2,8 +2,8 @@ import { afterEach, describe, expect } from "bun:test"
 import path from "path"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Cause, Deferred, Effect, Exit, Fiber } from "effect"
-import { GlobalBus, type GlobalEvent } from "../../src/bus/global"
+import { Cause, Effect, Exit, Fiber } from "effect"
+import { GlobalBus } from "../../src/bus/global"
 import { Git } from "../../src/git"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
@@ -11,6 +11,7 @@ import { Worktree } from "../../src/worktree"
 import { disposeAllInstances, provideInstance, TestInstance } from "../fixture/fixture"
 import { TestFailure } from "../fixture/test-failure"
 import { testEffect } from "../lib/effect"
+import { takeGlobalBusEvent } from "../server/global-bus"
 
 const it = testEffect(
   LayerNode.compile(LayerNode.group([Worktree.node, FSUtil.node, Git.node]), [
@@ -24,21 +25,15 @@ function normalize(input: string) {
 }
 
 const waitReady = Effect.fn("WorktreeTest.waitReady")(function* () {
-  const ready = yield* Deferred.make<{ name: string; branch?: string }>()
-  const on = (evt: GlobalEvent) => {
-    if (evt.payload.type !== Worktree.Event.Ready.type) return
-    Deferred.doneUnsafe(ready, Effect.succeed(evt.payload.properties))
-  }
-
-  GlobalBus.on("event", on)
-  yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", on)))
-
-  return yield* Deferred.await(ready).pipe(
+  const subscription = yield* GlobalBus.subscribe
+  const evt = yield* takeGlobalBusEvent(subscription, (evt) => evt.payload.type === Worktree.Event.Ready.type).pipe(
     Effect.timeoutOrElse({
       duration: "10 seconds",
       orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for worktree.ready" })),
     }),
   )
+  const ready: { name: string; branch?: string } = evt.payload.properties
+  return ready
 })
 
 const removeCreatedWorktree = (directory: string) =>
@@ -60,7 +55,7 @@ const withCreatedWorktree = <A, E, R>(
   Effect.acquireUseRelease(
     Effect.gen(function* () {
       const svc = yield* Worktree.Service
-      const ready = yield* waitReady().pipe(Effect.forkScoped)
+      const ready = yield* waitReady().pipe(Effect.forkScoped({ startImmediately: true }))
       const info = yield* svc.create(input)
       const props = yield* Fiber.join(ready)
       return { info, ready: props }
@@ -162,7 +157,7 @@ describe("Worktree", () => {
           const test = yield* TestInstance
           const svc = yield* Worktree.Service
           const info = yield* svc.makeWorktreeInfo({ name: "detached-test", detached: true })
-          const ready = yield* waitReady().pipe(Effect.forkScoped)
+          const ready = yield* waitReady().pipe(Effect.forkScoped({ startImmediately: true }))
           yield* svc.createFromInfo(info)
 
           const list = yield* git(test.directory, ["worktree", "list", "--porcelain"])
@@ -254,7 +249,7 @@ describe("Worktree", () => {
           const test = yield* TestInstance
           const svc = yield* Worktree.Service
           const info = yield* svc.makeWorktreeInfo({ name: "from-info-test" })
-          const ready = yield* waitReady().pipe(Effect.forkScoped)
+          const ready = yield* waitReady().pipe(Effect.forkScoped({ startImmediately: true }))
           yield* svc.createFromInfo(info)
 
           const list = yield* git(test.directory, ["worktree", "list", "--porcelain"])

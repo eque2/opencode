@@ -135,13 +135,11 @@ const layer = Layer.effect(
     )
 
     const emitUpdated = (data: Info) =>
-      Effect.sync(() =>
-        GlobalBus.emit("event", {
-          directory: "global",
-          project: data.id,
-          payload: { type: Event.Updated.type, properties: data },
-        }),
-      )
+      GlobalBus.publish({
+        directory: "global",
+        project: data.id,
+        payload: { type: Event.Updated.type, properties: data },
+      })
 
     const fakeVcs = Option.getOrUndefined(
       yield* FlagConfig.OPENCODE_FAKE_VCS.pipe(

@@ -7,7 +7,8 @@ import { NodeHttpServer } from "@effect/platform-node"
 import { Effect, Exit, Fiber, Layer, Schema } from "effect"
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { eq } from "drizzle-orm"
-import { GlobalBus, type GlobalEvent } from "@/bus/global"
+import { GlobalBus } from "@/bus/global"
+import { collectGlobalBusEvents } from "../server/global-bus"
 import { Project } from "@/project/project"
 import { Database } from "@opencode-ai/core/database/database"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -136,18 +137,6 @@ const startWorkspaceSyncingWithFlag = (projectID: ProjectV2.ID, experimentalWork
 
 const listWithFlag = (project: Project.Info, experimentalWorkspaces: boolean) =>
   Effect.runPromise(Workspace.use.list(project).pipe(Effect.provide(workspaceLayer(experimentalWorkspaces))))
-
-function captureGlobalEvents() {
-  const events: GlobalEvent[] = []
-  const handler = (event: GlobalEvent) => events.push(event)
-  GlobalBus.on("event", handler)
-  return {
-    events,
-    dispose() {
-      GlobalBus.off("event", handler)
-    },
-  }
-}
 
 function expectExitContains(exit: Exit.Exit<unknown, unknown>, ...messages: string[]) {
   expect(Exit.isFailure(exit)).toBe(true)
@@ -1183,8 +1172,7 @@ describe("workspace sync state", () => {
         const instance = yield* requireInstance
         const workspace = yield* Workspace.Service
         const sessionSvc = yield* SessionNs.Service
-        const captured = captureGlobalEvents()
-        yield* Effect.addFinalizer(() => Effect.sync(() => captured.dispose()))
+        const captured = yield* collectGlobalBusEvents
         const type = unique("dedupe-local")
         const info = workspaceInfo(instance.project.id, type)
         const target = path.join(dir, "dedupe-local")
@@ -1203,7 +1191,7 @@ describe("workspace sync state", () => {
           }),
         )
         expect(
-          captured.events.filter(
+          (yield* captured).filter(
             (event) => event.workspace === info.id && event.payload.type === Workspace.Event.Status.type,
           ),
         ).toHaveLength(1)
@@ -1239,39 +1227,35 @@ describe("workspace sync state", () => {
             const workspace = yield* Workspace.Service
             const sessionSvc = yield* SessionNs.Service
             const instance = yield* requireInstance
-            const captured = captureGlobalEvents()
-            try {
-              const type = unique("remote-start")
-              const info = workspaceInfo(instance.project.id, type)
-              yield* insertWorkspace(info)
-              registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sync`).adapter)
-              yield* attachSessionToWorkspace((yield* sessionSvc.create({})).id, info.id)
+            const captured = yield* collectGlobalBusEvents
+            const type = unique("remote-start")
+            const info = workspaceInfo(instance.project.id, type)
+            yield* insertWorkspace(info)
+            registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sync`).adapter)
+            yield* attachSessionToWorkspace((yield* sessionSvc.create({})).id, info.id)
 
-              yield* workspace.startWorkspaceSyncing(instance.project.id)
-              yield* eventuallyEffect(
-                Effect.gen(function* () {
-                  expect((yield* workspace.status()).find((item) => item.workspaceID === info.id)?.status).toBe(
-                    "connected",
-                  )
-                }),
-              )
-              yield* workspace.startWorkspaceSyncing(instance.project.id)
-              yield* Effect.sleep("25 millis")
+            yield* workspace.startWorkspaceSyncing(instance.project.id)
+            yield* eventuallyEffect(
+              Effect.gen(function* () {
+                expect((yield* workspace.status()).find((item) => item.workspaceID === info.id)?.status).toBe(
+                  "connected",
+                )
+              }),
+            )
+            yield* workspace.startWorkspaceSyncing(instance.project.id)
+            yield* Effect.sleep("25 millis")
 
-              expect(
-                captured.events
-                  .filter((event) => event.workspace === info.id && event.payload.type === Workspace.Event.Status.type)
-                  .map((event) => event.payload.properties.status),
-              ).toEqual(["disconnected", "connecting", "connected"])
-              expect(calls.filter((call) => call.url.pathname === "/sync/global/event")).toHaveLength(1)
-              expect(calls.filter((call) => call.url.pathname === "/sync/sync/history")).toHaveLength(1)
-              expect(yield* workspace.isSyncing(info.id)).toBe(true)
+            expect(
+              (yield* captured)
+                .filter((event) => event.workspace === info.id && event.payload.type === Workspace.Event.Status.type)
+                .map((event) => event.payload.properties.status),
+            ).toEqual(["disconnected", "connecting", "connected"])
+            expect(calls.filter((call) => call.url.pathname === "/sync/global/event")).toHaveLength(1)
+            expect(calls.filter((call) => call.url.pathname === "/sync/sync/history")).toHaveLength(1)
+            expect(yield* workspace.isSyncing(info.id)).toBe(true)
 
-              yield* workspace.remove(info.id)
-              expect(yield* workspace.isSyncing(info.id)).toBe(false)
-            } finally {
-              captured.dispose()
-            }
+            yield* workspace.remove(info.id)
+            expect(yield* workspace.isSyncing(info.id)).toBe(false)
           }),
         { git: true },
       )
@@ -1393,39 +1377,35 @@ describe("workspace sync state", () => {
             const workspace = yield* Workspace.Service
             const sessionSvc = yield* SessionNs.Service
             const instance = yield* requireInstance
-            const captured = captureGlobalEvents()
-            try {
-              const type = unique("history-replay")
-              const info = workspaceInfo(instance.project.id, type)
-              yield* insertWorkspace(info)
-              registerAdapter(instance.project.id, type, remoteAdapter(`${url}/history`).adapter)
-              const session = yield* sessionSvc.create({ title: "before history" })
-              yield* attachSessionToWorkspace(session.id, info.id)
-              historySessionID = session.id
-              historySession = { ...session, workspaceID: info.id, title: "from history" }
-              historyNextSeq = ((yield* sessionSequence(session.id)) ?? -1) + 1
+            const captured = yield* collectGlobalBusEvents
+            const type = unique("history-replay")
+            const info = workspaceInfo(instance.project.id, type)
+            yield* insertWorkspace(info)
+            registerAdapter(instance.project.id, type, remoteAdapter(`${url}/history`).adapter)
+            const session = yield* sessionSvc.create({ title: "before history" })
+            yield* attachSessionToWorkspace(session.id, info.id)
+            historySessionID = session.id
+            historySession = { ...session, workspaceID: info.id, title: "from history" }
+            historyNextSeq = ((yield* sessionSequence(session.id)) ?? -1) + 1
 
-              yield* workspace.startWorkspaceSyncing(instance.project.id)
+            yield* workspace.startWorkspaceSyncing(instance.project.id)
 
-              yield* eventuallyEffect(
-                Effect.gen(function* () {
-                  expect((yield* sessionSvc.get(session.id).pipe(Effect.orDie)).title).toBe("from history")
-                }),
-              )
-              expect(historyBodies).toEqual([{ [session.id]: historyNextSeq - 1 }])
-              expect(
-                captured.events.some(
-                  (event) =>
-                    event.workspace === info.id &&
-                    event.payload.type === "session.updated" &&
-                    event.payload.properties.sessionID === session.id &&
-                    event.payload.properties.info.title === "from history",
-                ),
-              ).toBe(true)
-              yield* workspace.remove(info.id)
-            } finally {
-              captured.dispose()
-            }
+            yield* eventuallyEffect(
+              Effect.gen(function* () {
+                expect((yield* sessionSvc.get(session.id).pipe(Effect.orDie)).title).toBe("from history")
+              }),
+            )
+            expect(historyBodies).toEqual([{ [session.id]: historyNextSeq - 1 }])
+            expect(
+              (yield* captured).some(
+                (event) =>
+                  event.workspace === info.id &&
+                  event.payload.type === "session.updated" &&
+                  event.payload.properties.sessionID === session.id &&
+                  event.payload.properties.info.title === "from history",
+              ),
+            ).toBe(true)
+            yield* workspace.remove(info.id)
           }),
         { git: true },
       )
@@ -1463,41 +1443,35 @@ describe("workspace sync state", () => {
             const workspace = yield* Workspace.Service
             const sessionSvc = yield* SessionNs.Service
             const instance = yield* requireInstance
-            const captured = captureGlobalEvents()
-            try {
-              const type = unique("sse-forward")
-              const info = workspaceInfo(instance.project.id, type)
-              yield* insertWorkspace(info)
-              registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sse-forward`).adapter)
-              yield* attachSessionToWorkspace((yield* sessionSvc.create({})).id, info.id)
+            const captured = yield* collectGlobalBusEvents
+            const type = unique("sse-forward")
+            const info = workspaceInfo(instance.project.id, type)
+            yield* insertWorkspace(info)
+            registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sse-forward`).adapter)
+            yield* attachSessionToWorkspace((yield* sessionSvc.create({})).id, info.id)
 
-              yield* workspace.startWorkspaceSyncing(instance.project.id)
+            yield* workspace.startWorkspaceSyncing(instance.project.id)
 
-              yield* eventuallyEffect(
-                Effect.sync(() =>
-                  expect(
-                    captured.events.some(
-                      (event) => event.workspace === info.id && event.payload.type === "custom.remote",
-                    ),
-                  ).toBe(true),
-                ),
-              )
-              expect(
-                captured.events.some(
-                  (event) => event.workspace === info.id && event.payload.type === "server.heartbeat",
-                ),
-              ).toBe(false)
-              expect(
-                captured.events.find((event) => event.workspace === info.id && event.payload.type === "custom.remote"),
-              ).toMatchObject({
-                directory: "remote-dir",
-                project: "remote-project",
-                payload: { properties: { ok: true } },
-              })
-              yield* workspace.remove(info.id)
-            } finally {
-              captured.dispose()
-            }
+            yield* eventuallyEffect(
+              Effect.map(captured, (events) =>
+                expect(
+                  events.some((event) => event.workspace === info.id && event.payload.type === "custom.remote"),
+                ).toBe(true),
+              ),
+            )
+            expect(
+              (yield* captured).some(
+                (event) => event.workspace === info.id && event.payload.type === "server.heartbeat",
+              ),
+            ).toBe(false)
+            expect(
+              (yield* captured).find((event) => event.workspace === info.id && event.payload.type === "custom.remote"),
+            ).toMatchObject({
+              directory: "remote-dir",
+              project: "remote-project",
+              payload: { properties: { ok: true } },
+            })
+            yield* workspace.remove(info.id)
           }),
         { git: true },
       )
@@ -1546,37 +1520,33 @@ describe("workspace sync state", () => {
             const workspace = yield* Workspace.Service
             const sessionSvc = yield* SessionNs.Service
             const instance = yield* requireInstance
-            const captured = captureGlobalEvents()
-            try {
-              const type = unique("sse-sync")
-              const info = workspaceInfo(instance.project.id, type)
-              yield* insertWorkspace(info)
-              registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sse-sync`).adapter)
-              const session = yield* sessionSvc.create({ title: "before sse" })
-              yield* attachSessionToWorkspace(session.id, info.id)
-              sseSessionID = session.id
-              sseSession = { ...session, workspaceID: info.id, title: "from sse" }
-              sseNextSeq = ((yield* sessionSequence(session.id)) ?? -1) + 1
+            const captured = yield* collectGlobalBusEvents
+            const type = unique("sse-sync")
+            const info = workspaceInfo(instance.project.id, type)
+            yield* insertWorkspace(info)
+            registerAdapter(instance.project.id, type, remoteAdapter(`${url}/sse-sync`).adapter)
+            const session = yield* sessionSvc.create({ title: "before sse" })
+            yield* attachSessionToWorkspace(session.id, info.id)
+            sseSessionID = session.id
+            sseSession = { ...session, workspaceID: info.id, title: "from sse" }
+            sseNextSeq = ((yield* sessionSequence(session.id)) ?? -1) + 1
 
-              yield* workspace.startWorkspaceSyncing(instance.project.id)
+            yield* workspace.startWorkspaceSyncing(instance.project.id)
 
-              yield* eventuallyEffect(
-                Effect.gen(function* () {
-                  expect((yield* sessionSvc.get(session.id).pipe(Effect.orDie)).title).toBe("from sse")
-                }),
-              )
-              expect(
-                captured.events.some(
-                  (event) =>
-                    event.workspace === info.id &&
-                    event.payload.type === "sync" &&
-                    event.payload.syncEvent.seq === sseNextSeq,
-                ),
-              ).toBe(true)
-              yield* workspace.remove(info.id)
-            } finally {
-              captured.dispose()
-            }
+            yield* eventuallyEffect(
+              Effect.gen(function* () {
+                expect((yield* sessionSvc.get(session.id).pipe(Effect.orDie)).title).toBe("from sse")
+              }),
+            )
+            expect(
+              (yield* captured).some(
+                (event) =>
+                  event.workspace === info.id &&
+                  event.payload.type === "sync" &&
+                  event.payload.syncEvent.seq === sseNextSeq,
+              ),
+            ).toBe(true)
+            yield* workspace.remove(info.id)
           }),
         { git: true },
       )
@@ -1635,7 +1605,7 @@ describe("workspace waitForSync", () => {
                 .where(eq(EventSequenceTable.aggregate_id, sessionID))
                 .run()
                 .pipe(Effect.orDie)
-              GlobalBus.emit("event", { workspace: workspaceID, payload: { type: "anything" } })
+              yield* GlobalBus.publish({ workspace: workspaceID, payload: { type: "anything" } })
             }),
           ],
           { concurrency: "unbounded" },
@@ -1665,7 +1635,7 @@ describe("workspace waitForSync", () => {
                 .where(eq(EventSequenceTable.aggregate_id, sessionID))
                 .run()
                 .pipe(Effect.orDie)
-              GlobalBus.emit("event", {
+              yield* GlobalBus.publish({
                 workspace: WorkspaceV2.ID.ascending("wrk_other_workspace"),
                 payload: { type: "sync" },
               })

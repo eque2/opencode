@@ -6,12 +6,10 @@ import { GlobalBus } from "@/bus/global"
 import { Effect } from "effect"
 
 const emitVersion = (type: string, version: string) =>
-  Effect.sync(() =>
-    GlobalBus.emit("event", {
-      directory: "global",
-      payload: { type, properties: { version } },
-    }),
-  )
+  GlobalBus.publish({
+    directory: "global",
+    payload: { type, properties: { version } },
+  })
 
 // Background auto-update check. Every lookup or upgrade failure is swallowed, so it never fails its caller.
 export const upgrade = Effect.fn("Cli.upgrade")(function* () {
