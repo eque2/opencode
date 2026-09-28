@@ -63,6 +63,8 @@ export function webSearchEnabled(providerID: ProviderV2.ID, flags = { exa: false
   )
 }
 
+type PluginArgs = Parameters<ToolDefinition["execute"]>[0]
+
 type TaskDef = Tool.InferDef<typeof TaskTool>
 type ReadDef = Tool.InferDef<typeof ReadTool>
 
@@ -135,10 +137,13 @@ const layer = Layer.effect(
           const jsonSchema = Option.isSome(zodParams)
             ? yield* Effect.fromResult(zodJsonSchema(zodParams.value)).pipe(Effect.orDie)
             : legacyJsonSchema(entries)
-          const parameters = Option.isSome(zodParams)
-            ? Schema.declare<unknown>((u): u is unknown => zodParams.value.safeParse(u).success)
-            : Schema.Unknown
-          const tool: Tool.Def = {
+          // Legacy JSON Schema args describe an object, so an object is the only shape to accept.
+          const parameters = Schema.declare<PluginArgs>(
+            Option.isSome(zodParams)
+              ? (u): u is PluginArgs => zodParams.value.safeParse(u).success
+              : (u): u is PluginArgs => Predicate.isObject(u),
+          )
+          const tool: Tool.Def<typeof parameters> = {
             id,
             parameters,
             jsonSchema,
@@ -154,7 +159,7 @@ const layer = Layer.effect(
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }
-                const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
+                const result = yield* Effect.promise(() => def.execute(args, pluginCtx))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
                 const info = yield* agent.get(toolCtx.agent)
@@ -387,11 +392,7 @@ function zodJsonSchema(schema: z.ZodType): Result.Result<JSONSchema7, PluginSche
     return Result.fail(new PluginSchemaError({ message: "plugin tool Zod schema produced a non-object JSON Schema" }))
   }
   const { $defs, ...rest } = result
-  return Result.succeed(
-    ($defs && isJsonSchemaObject($defs)
-      ? { ...rest, definitions: $defs as JSONSchema7["definitions"] }
-      : rest) as JSONSchema7,
-  )
+  return Result.succeed($defs && isJsonSchemaObject($defs) ? { ...rest, definitions: $defs } : rest)
 }
 
 function zodMetadataRegistry(schema: z.ZodType) {
@@ -432,7 +433,8 @@ function normalizeZodJsonSchema(value: unknown): unknown {
   )
 }
 
-function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
+// z.toJSONSchema builds the document; only its object root is checked here.
+function isJsonSchemaObject(value: unknown): value is JSONSchema7 {
   return Predicate.isObject(value)
 }
 
