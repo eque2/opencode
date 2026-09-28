@@ -15,7 +15,9 @@ import { ToolRegistry } from "@/tool/registry"
 import { Truncate } from "@/tool/truncate"
 import { Plugin } from "@/plugin"
 import { RuntimeFlags } from "@/effect/runtime-flags"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Logger, Schema } from "effect"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { CallToolResultSchema, type CallToolRequest } from "@modelcontextprotocol/sdk/types.js"
 import { testEffect } from "../lib/effect"
 import { ProviderTest } from "../fake/provider"
 import { ProjectV2 } from "@opencode-ai/core/project"
@@ -79,41 +81,86 @@ const fakeTruncate = Truncate.Service.of({
   limits: () => Effect.succeed({ maxLines: 2000, maxBytes: 50 * 1024 }),
 } satisfies Truncate.Interface)
 
-const layer = Layer.mergeAll(
-  Layer.succeed(Plugin.Service, fakePlugin),
-  Layer.succeed(Permission.Service, fakePermission),
-  Layer.mock(MCP.Service)({
-    tools: () => Effect.succeed({}),
-    clients: () => Effect.succeed({}),
-  }),
-  Layer.succeed(Truncate.Service, fakeTruncate),
-  RuntimeFlags.layer(),
-  Layer.succeed(
-    ToolRegistry.Service,
-    ToolRegistry.Service.of({
-      ids: () => Effect.succeed(["timing"]),
-      all: () => Effect.succeed([]),
-      named: () => Effect.die("unused"),
-      tools: () =>
-        Effect.succeed([
-          {
-            id: "timing",
-            description: "updates metadata more than once",
-            parameters: Schema.Struct({}),
-            jsonSchema: { type: "object", properties: {} },
-            execute: (_args, ctx) =>
-              Effect.gen(function* () {
-                yield* ctx.metadata({ metadata: { output: "first" } })
-                yield* ctx.metadata({ metadata: { output: "second" } })
-                return { title: "timing", metadata: {}, output: "done" }
-              }),
-          } satisfies Tool.Def,
-        ]),
-    }),
-  ),
-)
+// A real SDK Client that answers tools/call in-process.
+class StubClient extends Client {
+  constructor(private readonly handler: (args: Record<string, unknown>) => unknown) {
+    super({ name: "session-tools-test", version: "1.0.0" })
+  }
 
-const it = testEffect(layer)
+  override async callTool(params: CallToolRequest["params"]) {
+    return CallToolResultSchema.parse(await this.handler(params.arguments ?? {}))
+  }
+}
+
+const mcpTools: Record<string, MCP.McpTool> = {
+  weather_current: {
+    def: {
+      name: "current",
+      description: "current weather",
+      inputSchema: { type: "object", properties: { city: { type: "string" } } },
+    },
+    client: new StubClient(() => ({ content: [{ type: "text", text: "sunny" }] })),
+    server: "weather",
+  },
+  weather_broken: {
+    def: { name: "broken", description: "always fails", inputSchema: { type: "object", properties: {} } },
+    client: new StubClient(() => ({ content: [{ type: "text", text: "upstream down" }], isError: true })),
+    server: "weather",
+  },
+}
+
+const layerWith = (tools: Record<string, MCP.McpTool>) =>
+  Layer.mergeAll(
+    Layer.succeed(Plugin.Service, fakePlugin),
+    Layer.succeed(Permission.Service, fakePermission),
+    Layer.mock(MCP.Service)({
+      tools: () => Effect.succeed(tools),
+      clients: () => Effect.succeed({}),
+    }),
+    Layer.succeed(Truncate.Service, fakeTruncate),
+    RuntimeFlags.layer(),
+    Layer.succeed(
+      ToolRegistry.Service,
+      ToolRegistry.Service.of({
+        ids: () => Effect.succeed(["timing"]),
+        all: () => Effect.succeed([]),
+        named: () => Effect.die("unused"),
+        tools: () =>
+          Effect.succeed([
+            {
+              id: "timing",
+              description: "updates metadata more than once",
+              parameters: Schema.Struct({}),
+              jsonSchema: { type: "object", properties: {} },
+              execute: (_args, ctx) =>
+                Effect.gen(function* () {
+                  yield* ctx.metadata({ metadata: { output: "first" } })
+                  yield* ctx.metadata({ metadata: { output: "second" } })
+                  return { title: "timing", metadata: {}, output: "done" }
+                }),
+            } satisfies Tool.Def,
+          ]),
+      }),
+    ),
+  )
+
+const it = testEffect(layerWith({}))
+const withMcp = testEffect(layerWith(mcpTools))
+
+const assistant = {
+  id: messageID,
+  sessionID,
+  role: "assistant",
+  parentID: MessageID.ascending(),
+  agent: "build",
+  mode: "build",
+  path: { cwd: "/tmp", root: "/tmp" },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  modelID: ModelV2.ID.make("test-model"),
+  providerID: ProviderV2.ID.make("test"),
+  time: { created: 1 },
+} satisfies SessionV1.Assistant
 
 it.effect("preserves running tool start time across metadata updates", () =>
   Effect.gen(function* () {
@@ -184,5 +231,63 @@ it.effect("preserves running tool start time across metadata updates", () =>
     if (state.state.status === "running") {
       expect(state.state.time.start).toBe(100)
     }
+  }),
+)
+
+withMcp.effect("logs each MCP tool call with its outcome and without its arguments or result", () =>
+  Effect.gen(function* () {
+    const records: Array<{ level: string; message: unknown; annotations: Record<string, unknown> }> = []
+    const capture = Logger.make((options) => {
+      records.push({
+        level: options.logLevel,
+        message: options.message,
+        annotations: Logger.formatStructured.log(options).annotations,
+      })
+    })
+    const processor = {
+      message: assistant,
+      updateToolCall: () => Effect.die("unused"),
+      completeToolCall: () => Effect.void,
+    } satisfies Pick<SessionProcessor.Handle, "message" | "updateToolCall" | "completeToolCall">
+    const options = { abortSignal: new AbortController().signal, messages: [] }
+
+    yield* Effect.gen(function* () {
+      const tools = yield* SessionTools.resolve({
+        agent,
+        model,
+        session,
+        processor,
+        bypassAgentCheck: false,
+        messages: [],
+        promptOps,
+      })
+      for (const name of ["weather_current", "weather_broken"]) {
+        const execute = tools[name]?.execute
+        if (!execute) throw new Error(`${name} is missing execute`)
+        // The broken tool rejects, as the AI SDK expects for a tool error.
+        yield* Effect.tryPromise(() => execute({ city: "Paris" }, { ...options, toolCallId: `call-${name}` })).pipe(
+          Effect.ignore,
+        )
+      }
+    }).pipe(Effect.provide(Logger.layer([capture])))
+
+    const calls = records.filter((record) => record.annotations.category === "mcp.tool")
+    expect(calls.map((record) => record.level)).toEqual(["Info", "Warn"])
+    const fields = { server: "weather", sessionID, durationMs: 0 }
+    expect(calls[0]?.message).toEqual([
+      "MCP tool call",
+      { ...fields, tool: "weather_current", callID: "call-weather_current", outcome: "ok" },
+    ])
+    expect(calls[1]?.message).toMatchObject([
+      "MCP tool call",
+      {
+        ...fields,
+        tool: "weather_broken",
+        callID: "call-weather_broken",
+        outcome: "failed",
+        error: { message: "upstream down" },
+      },
+    ])
+    expect(JSON.stringify(calls)).not.toMatch(/Paris|sunny/)
   }),
 )
