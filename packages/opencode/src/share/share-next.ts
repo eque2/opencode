@@ -171,17 +171,24 @@ const layer = Layer.effect(
 
         if (disabled) return cache
 
+        // listen() hands every event as the generic Payload, so the data is checked against
+        // the event schema. The listener ends with the instance state.
         const watch = <D extends EventV2.Definition>(
           def: D,
-          fn: (data: EventV2.Data<D>) => Effect.Effect<void, unknown>,
+          fn: (data: D["data"]["Type"]) => Effect.Effect<void, unknown>,
         ) =>
-          events.listen((event) => {
-            if (event.type !== def.type || event.location?.directory !== _ctx.directory) return Effect.void
-            return fn(event.data as EventV2.Data<D>).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logError("share subscriber failed", { type: def.type, cause: cause }),
-              ),
-            )
+          Effect.gen(function* () {
+            const isData = Schema.is(def.data)
+            const unsubscribe = yield* events.listen((event) => {
+              if (event.type !== def.type || event.location?.directory !== _ctx.directory) return Effect.void
+              if (!isData(event.data)) return Effect.void
+              return fn(event.data).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.logError("share subscriber failed", { type: def.type, cause: cause }),
+                ),
+              )
+            })
+            yield* Effect.addFinalizer(() => unsubscribe)
           })
 
         yield* watch(Session.Event.Updated, (data) =>
