@@ -1,7 +1,7 @@
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { test, expect } from "bun:test"
 import os from "os"
-import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect"
 import { EventV2Bridge } from "../../src/event-v2-bridge"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { Permission } from "../../src/permission"
@@ -654,8 +654,8 @@ it.instance(
       const events = yield* EventV2Bridge.Service
       const seen = yield* Deferred.make<PermissionV1.Request>()
       const unsub = yield* events.listen((event) => {
-        if (event.type === Permission.Event.Asked.type)
-          Deferred.doneUnsafe(seen, Effect.succeed(event.data as PermissionV1.Request))
+        if (event.type === Permission.Event.Asked.type && Schema.is(Permission.Event.Asked.data)(event.data))
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
@@ -928,13 +928,8 @@ it.instance(
       yield* waitForPending(1)
 
       const unsub = yield* events.listen((event) => {
-        if (event.type === Permission.Event.Replied.type)
-          Deferred.doneUnsafe(
-            seen,
-            Effect.succeed(
-              event.data as { sessionID: SessionID; requestID: PermissionV1.ID; reply: PermissionV1.Reply },
-            ),
-          )
+        if (event.type === Permission.Event.Replied.type && Schema.is(Permission.Event.Replied.data)(event.data))
+          Deferred.doneUnsafe(seen, Effect.succeed(event.data))
         return Effect.void
       })
       yield* Effect.addFinalizer(() => unsub)
