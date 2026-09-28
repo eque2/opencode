@@ -82,6 +82,16 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+// The Read tool input that a synthetic text part echoes. Schema.Number keeps the
+// JSON.stringify output, including null for NaN, and optional keys stay omitted.
+const ReadToolInput = Schema.Struct({
+  filePath: Schema.optional(Schema.String),
+  offset: Schema.optional(Schema.Number),
+  limit: Schema.optional(Schema.Number),
+}).annotate({ identifier: "SessionPrompt.ReadToolInput" })
+const encodeReadToolInputJson = Schema.encodeEffect(Schema.fromJsonString(ReadToolInput))
+const encodeReadToolInput = (input: typeof ReadToolInput.Type) => encodeReadToolInputJson(input).pipe(Effect.orDie)
+
 // A state that the prompt service cannot reach. It surfaces as a defect.
 class PromptInvariantError extends Schema.TaggedError<PromptInvariantError>()("SessionPromptInvariantError", {
   message: Schema.String,
@@ -819,7 +829,7 @@ const layer = Layer.effect(
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Called the Read tool with the following input: ${JSON.stringify({ filePath: part.filename })}`,
+                    text: `Called the Read tool with the following input: ${yield* encodeReadToolInput({ filePath: part.filename })}`,
                   },
                   {
                     messageID: info.id,
@@ -885,7 +895,7 @@ const layer = Layer.effect(
                   sessionID: input.sessionID,
                   type: "text",
                   synthetic: true,
-                  text: `Called the Read tool with the following input: ${JSON.stringify(args)}`,
+                  text: `Called the Read tool with the following input: ${yield* encodeReadToolInput(args)}`,
                 }
                 const exit = yield* provider.getModel(info.model.providerID, info.model.modelID).pipe(
                   Effect.flatMap((mdl) => execRead(args, { model: mdl })),
@@ -960,7 +970,7 @@ const layer = Layer.effect(
                     sessionID: input.sessionID,
                     type: "text",
                     synthetic: true,
-                    text: `Called the Read tool with the following input: ${JSON.stringify(args)}`,
+                    text: `Called the Read tool with the following input: ${yield* encodeReadToolInput(args)}`,
                   },
                   {
                     messageID: info.id,
