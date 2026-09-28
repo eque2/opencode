@@ -1,8 +1,8 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
-import { Context, Effect, FiberMap, Iterable, Layer, Option, Schema, Stream } from "effect"
+import { Context, Effect, FiberMap, Iterable, Layer, Option, Predicate, Schema, Stream } from "effect"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { HttpBody, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { HttpBody, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Database } from "@opencode-ai/core/database/database"
 import { asc } from "drizzle-orm"
 import { eq } from "drizzle-orm"
@@ -104,6 +104,10 @@ export class SessionWarpHttpError extends Schema.TaggedError<SessionWarpHttpErro
 export class SyncTimeoutError extends Schema.TaggedError<SyncTimeoutError>()("WorkspaceSyncTimeoutError", {
   message: Schema.String,
   state: Schema.Record(Schema.String, Schema.Number),
+}) {}
+
+class RemoteEventEmitError extends Schema.TaggedError<RemoteEventEmitError>()("WorkspaceRemoteEventEmitError", {
+  cause: Schema.Defect(),
 }) {}
 
 export class SyncAbortedError extends Schema.TaggedError<SyncAbortedError>()("WorkspaceSyncAbortedError", {
@@ -244,15 +248,15 @@ const layer = Layer.effect(
       )
     })
 
-    const runInWorkspace = <A, E, R>(input: {
+    const runInWorkspace = <A, E, R, E2>(input: {
       workspaceID: Option.Option<WorkspaceV2.ID>
       local: () => Effect.Effect<A, E, R>
       remote: (input: {
         workspace: Info
         target: Extract<Target, { type: "remote" }>
       }) => HttpClientRequest.HttpClientRequest
+      read: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A, E2>
       fallback: A
-      response?: "json" | "text"
     }) =>
       Effect.gen(function* () {
         if (Option.isNone(input.workspaceID)) return yield* input.local()
@@ -288,9 +292,7 @@ const layer = Layer.effect(
           return input.fallback
         }
 
-        const body = input.response === "text" ? response.text : response.json
-        return yield* body.pipe(
-          Effect.map((result) => result as A),
+        return yield* input.read(response).pipe(
           Effect.catch((error) =>
             Effect.logWarning("workspace target response decode failed", {
               workspaceID: workspace.id,
@@ -338,7 +340,7 @@ const layer = Layer.effect(
         })
       }
 
-      const history = (yield* response.json) as HistoryEvent[]
+      const history = yield* HttpClientResponse.schemaBodyJson(Schema.Array(HistoryEvent))(response)
 
       return yield* Effect.forEach(
         history,
@@ -346,7 +348,7 @@ const layer = Layer.effect(
           events
             .replay(
               {
-                id: EventV2.ID.make(event.id),
+                id: event.id,
                 aggregateID: event.aggregate_id,
                 seq: event.seq,
                 type: event.type,
@@ -390,12 +392,14 @@ const layer = Layer.effect(
 
           yield* parseSSE(stream, (evt) =>
             Effect.gen(function* () {
-              if (!evt || typeof evt !== "object" || !("payload" in evt)) return
-              const payload = evt.payload as { type?: string; syncEvent?: EventV2.SerializedEvent }
-              if (payload.type === "server.heartbeat") return
+              if (!Predicate.hasProperty(evt, "payload")) return
+              const payload = evt.payload
+              const type = Option.map(decodeRemotePayloadType(payload), (decoded) => decoded.type)
+              if (Option.contains(type, "server.heartbeat")) return
 
-              if (payload.type === "sync" && payload.syncEvent) {
-                const failed = yield* events.replay(payload.syncEvent, { publish: true, ownerID: space.id }).pipe(
+              if (Option.contains(type, "sync") && Predicate.hasProperty(payload, "syncEvent") && payload.syncEvent) {
+                const failed = yield* Schema.decodeUnknownEffect(RemoteSyncEvent)(payload.syncEvent).pipe(
+                  Effect.flatMap((syncEvent) => events.replay(syncEvent, { publish: true, ownerID: space.id })),
                   Effect.as(false),
                   Effect.catchCause((error) =>
                     Effect.logWarning("failed to replay global event", error).pipe(
@@ -407,20 +411,25 @@ const layer = Layer.effect(
                 if (failed) return
               }
 
-              try {
-                const event = evt as { directory?: string; project?: string; payload: unknown }
-                GlobalBus.emit("event", {
-                  directory: event.directory,
-                  project: event.project,
-                  workspace: space.id,
-                  payload: event.payload,
-                })
-              } catch (error) {
-                yield* Effect.logWarning("failed to emit global event", {
-                  workspaceID: space.id,
-                  error: errorData(error),
-                })
-              }
+              const envelope = Option.getOrElse(decodeRemoteEnvelope(evt), (): typeof RemoteEnvelope.Type => ({}))
+              // A GlobalBus listener can throw; that must not end the sync stream.
+              yield* Effect.try({
+                try: () =>
+                  GlobalBus.emit("event", {
+                    directory: envelope.directory,
+                    project: envelope.project,
+                    workspace: space.id,
+                    payload,
+                  }),
+                catch: (cause) => new RemoteEventEmitError({ cause }),
+              }).pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("failed to emit global event", {
+                    workspaceID: space.id,
+                    error: errorData(error.cause),
+                  }),
+                ),
+              )
             }),
           )
 
@@ -596,8 +605,8 @@ const layer = Layer.effect(
                   HttpClientRequest.get(route(target.url, "/vcs/diff/raw"), {
                     headers: new Headers(target.headers),
                   }),
+                read: (response) => response.text,
                 fallback: "",
-                response: "text",
               }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
             : ""
 
@@ -613,6 +622,7 @@ const layer = Layer.effect(
                 headers: new Headers(target.headers),
                 body: HttpBody.jsonUnsafe({ patch: sourcePatch }),
               }),
+            read: HttpClientResponse.schemaBodyJson(Vcs.ApplyResult),
             fallback: { applied: false },
           }).pipe(Effect.provide(AppNodeBuilderV1.build(InstanceStore.node)))
         }
@@ -890,13 +900,35 @@ const layer = Layer.effect(
 
 const TIMEOUT = 5000
 
-type HistoryEvent = {
-  id: string
-  aggregate_id: string
-  seq: number
-  type: string
-  data: Record<string, unknown>
-}
+// Wire shape of the remote /sync/history response, as HistoryEvent in
+// server/routes/instance/httpapi/groups/sync.ts declares it (importing that
+// group here would close a module cycle through the workspace routing
+// middleware). The payloads arrive as JSON.
+const HistoryEvent = Schema.Struct({
+  id: EventV2.ID,
+  aggregate_id: Schema.String.pipe(Schema.brand("AggregateID")),
+  seq: Schema.Number,
+  type: Schema.String,
+  data: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "WorkspaceHistoryEvent" })
+
+// Wire shape of a sync event forwarded on the remote /global/event stream.
+const RemoteSyncEvent = Schema.Struct({
+  id: EventV2.ID,
+  aggregateID: Schema.String,
+  seq: Schema.Number,
+  type: Schema.String,
+  data: Schema.Record(Schema.String, Schema.Json),
+}).annotate({ identifier: "WorkspaceRemoteSyncEvent" })
+
+const RemotePayloadType = Schema.Struct({ type: Schema.String }).annotate({ identifier: "WorkspaceRemotePayloadType" })
+const decodeRemotePayloadType = Schema.decodeUnknownOption(RemotePayloadType)
+
+const RemoteEnvelope = Schema.Struct({
+  directory: Schema.optional(Schema.String),
+  project: Schema.optional(Schema.String),
+}).annotate({ identifier: "WorkspaceRemoteEnvelope" })
+const decodeRemoteEnvelope = Schema.decodeUnknownOption(RemoteEnvelope)
 
 function waitUntilSynced(input: {
   db: Database.Interface["db"]
