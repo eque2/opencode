@@ -36,25 +36,30 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 ### Decision: the config-file layer (layer 2)
 
-**Choice** — Add an optional `observability.datadog` object to the V1 config schema. Every key in it except the API key maps to one switch in §Datadog sink switches. Compose the providers so that environment values win over file values, and file values win over code defaults.
+**Choice** — Add an optional `observability.datadog` object to the V1 config schema. Read it only from the global config files in `Global.Path.config`. The file layer may only narrow the process settings: it can never set `content: "full"`, never re-include `question` or `pty`, never set `url`, and it may set `site` only to a known Datadog site. Precedence is env, then file, then code default.
 
-**Workflow** — `bmad-testarch-atdd` in stage 2 writes the failing precedence tests. Then `bmad-build` in stage 3.
+**Workflow** — `bmad-testarch-atdd` in stage 2 writes the failing precedence and narrowing tests. Then `bmad-build` in stage 3.
 
-**Justification** — The brief asks for "different layers of configuration switches". §Configuration layers names layer 2 as the only file-level layer, and it is not built. A project or organisation can then set categories and content policy in `opencode.json`, without env vars on each machine.
+**Justification** — The brief asks for "different layers of configuration switches". §Configuration layers names layer 2 as the only file-level layer, and it is not built. The sink is built once per process, before any project config loads, so only process-level files can configure it. The user chose global files only on 2026-09-28. A file can be written by the config HTTP API, a tool or a plugin, so it must not widen exposure or redirect the API key. The user chose narrow-only on 2026-09-28.
 
 **Alternatives**
 - Environment only. Rejected: it does not meet the brief's layered requirement.
-- A separate `datadog.json` file. Rejected: it is a second config discovery path to maintain, when `Config` already merges project, global and managed files.
+- A separate `datadog.json` file. Rejected: it is a second config discovery path to maintain.
+- Project files as a per-instance `LogPolicy`. Rejected by the user: a committed project file would then control what that project sends.
+- Managed config. Rejected for now: its resolver lives in `packages/opencode`, which `core` must not import.
+- Full file control. Rejected by the user: it re-opens the data-loss-prevention risks that the review found.
 
 ### Decision: keep the API key out of config files
 
-**Choice** — Read `DD_API_KEY` from the environment only. The schema rejects an `apiKey` key under `observability.datadog`.
+**Choice** — Read `DD_API_KEY` from the environment only. An `apiKey` key (or `api_key`, or `DD_API_KEY`) under `observability.datadog` in a config file is ignored, and the sink writes one warning to the other sinks that names the file. The rest of the config still loads.
 
 **Workflow** — `bmad-build` in stage 3. The same ATDD suite covers it.
 
-**Justification** — Config files are committed and shared. A key in one would breach the Eque2 data-loss-prevention rules. The sites catalogue tags config token handling as `S` at `config.ts:371`.
+**Justification** — Config files are committed and shared. A key in one would breach the Eque2 data-loss-prevention rules. The sites catalogue tags config token handling as `S` at `config.ts:371`. The review found that a hard schema error would make the whole global config fall back to defaults (`config.ts:298`), so the user chose ignore-plus-warn on 2026-09-28.
 
-**Alternatives** — Allow the key with a warning. Rejected: a warning does not stop the commit.
+**Alternatives**
+- Hard schema rejection. Rejected by the user: one bad key would reset every global user setting.
+- Allow the key with a warning. Rejected: a warning does not stop the commit.
 
 ### Decision: the runtime scope layer (layer 5)
 
@@ -183,6 +188,10 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 **Justification** — The sink is a host-generic transport, like the OTLP logger. It holds no Eque2 policy, so the fork policy in `AGENTS.md` allows it. Eque2 audit rules belong in pattern 6, as §Recommended combination says.
 
 **Alternatives** — Move it into the Eque2 plugin (pattern 6). Rejected: §Pattern 6 cons say that plugins see V1 hooks only and lose trace correlation.
+
+## Revision history
+
+- **2026-09-28, stage 2 Phase R.** The adversarial and edge-case reviews found that the config-file and API key Decisions could not hold as written. The user answered three questions: global files only, narrow-only file settings, and ignore-plus-warn for `apiKey`. The user then chose "Revise and approve". This revision replaces the approval of hash `681261f1`.
 
 ## Worktree
 
