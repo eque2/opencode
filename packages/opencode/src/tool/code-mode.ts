@@ -61,7 +61,7 @@ function catalogEntries(mcpTools: Record<string, MCP.McpTool>, servers: readonly
         key,
         server,
         local,
-        tool: mcpTools[key]!,
+        tool: mcpTools[key],
       }
     })
   return Array.dedupe(entries.map((entry) => entry.server)).flatMap((server) =>
@@ -80,7 +80,7 @@ export function describeCatalog(mcpTools: Record<string, MCP.McpTool>, servers: 
 
 // The last path segment of a URI, or None when the path ends without one.
 const lastSegment = (uri: string) => {
-  const trimmed = uri.split(/[?#]/, 1)[0]!.replace(/\/+$/, "")
+  const trimmed = uri.split(/[?#]/, 1)[0].replace(/\/+$/, "")
   const segment = trimmed.slice(trimmed.lastIndexOf("/") + 1)
   return segment.length > 0 ? Option.some(segment) : Option.none<string>()
 }
