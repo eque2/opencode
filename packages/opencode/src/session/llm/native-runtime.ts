@@ -88,22 +88,25 @@ export function stream(input: StreamInput): StreamResult {
   // — if a field ever needs to differ between the two surfaces, the
   // translation belongs here, not split across both packages.
   const tools = nativeTools(input.tools, input)
-  const request = LLMNative.request({
-    model: input.model,
-    apiKey: current.apiKey,
-    baseURL: current.baseURL,
-    messages: ProviderTransform.message(input.messages, input.model, input.providerOptions ?? {}),
-    toolChoice: input.toolChoice,
-    temperature: input.temperature,
-    topP: input.topP,
-    topK: input.topK,
-    maxOutputTokens: input.maxOutputTokens,
-    providerOptions: LLMJson.objectEntries(ProviderTransform.providerOptions(input.model, input.providerOptions ?? {})),
-    headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
-  })
   const stream = Stream.scoped(
     Stream.unwrap(
       Effect.gen(function* () {
+        // A request that cannot be lowered fails the stream with NativeRequestError.
+        const request = yield* LLMNative.request({
+          model: input.model,
+          apiKey: current.apiKey,
+          baseURL: current.baseURL,
+          messages: ProviderTransform.message(input.messages, input.model, input.providerOptions ?? {}),
+          toolChoice: input.toolChoice,
+          temperature: input.temperature,
+          topP: input.topP,
+          topK: input.topK,
+          maxOutputTokens: input.maxOutputTokens,
+          providerOptions: LLMJson.objectEntries(
+            ProviderTransform.providerOptions(input.model, input.providerOptions ?? {}),
+          ),
+          headers: { ...providerHeaders(input.provider.options.headers), ...input.headers },
+        })
         const settlements = yield* FiberSet.make<void>()
         const results = yield* Queue.unbounded<LLMEvent, Cause.Done>()
         const provider = input.llmClient

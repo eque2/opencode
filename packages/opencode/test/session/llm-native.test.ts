@@ -127,7 +127,8 @@ const openAIResponses = {
   }),
 }
 
-const prepareNativeRequest = (input: NativeRequestInput) => LLMClient.prepare(LLMNative.request(input))
+const prepareNativeRequest = (input: NativeRequestInput) =>
+  LLMNative.request(input).pipe(Effect.flatMap((request) => LLMClient.prepare(request)))
 
 const expectOpenAIResponsesRequest = (input: {
   readonly history: NativeRequestInput["messages"]
@@ -195,30 +196,32 @@ describe("session.llm-native.request", () => {
       },
     ]
 
-    const request = LLMNative.request({
-      model: baseModel,
-      system: ["agent system"],
-      messages,
-      tools: {
-        bash: tool({
-          description: "Run a shell command",
-          inputSchema: jsonSchema({
-            type: "object",
-            properties: {
-              command: { type: "string" },
-            },
-            required: ["command"],
+    const request = Effect.runSync(
+      LLMNative.request({
+        model: baseModel,
+        system: ["agent system"],
+        messages,
+        tools: {
+          bash: tool({
+            description: "Run a shell command",
+            inputSchema: jsonSchema({
+              type: "object",
+              properties: {
+                command: { type: "string" },
+              },
+              required: ["command"],
+            }),
           }),
-        }),
-      },
-      toolChoice: "required",
-      temperature: 0.2,
-      topP: 0.9,
-      topK: 40,
-      maxOutputTokens: 1024,
-      providerOptions: { openai: { store: false } },
-      headers: { "x-request": "request-header" },
-    })
+        },
+        toolChoice: "required",
+        temperature: 0.2,
+        topP: 0.9,
+        topK: 40,
+        maxOutputTokens: 1024,
+        providerOptions: { openai: { store: false } },
+        headers: { "x-request": "request-header" },
+      }),
+    )
 
     expect(request.model).toMatchObject({
       id: "gpt-5-mini",
@@ -308,15 +311,17 @@ describe("session.llm-native.request", () => {
         },
       },
     )
-    const request = LLMNative.request({
-      model: baseModel,
-      messages: [
-        {
-          role: "assistant",
-          content: [reasoning],
-        },
-      ],
-    })
+    const request = Effect.runSync(
+      LLMNative.request({
+        model: baseModel,
+        messages: [
+          {
+            role: "assistant",
+            content: [reasoning],
+          },
+        ],
+      }),
+    )
 
     expect(request.messages).toMatchObject([
       {
@@ -333,58 +338,72 @@ describe("session.llm-native.request", () => {
   })
 
   test("selects native request routes for provider packages", () => {
-    const openai = LLMNative.model({
-      model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/openai" } },
-      apiKey: "test-key",
-      messages: [],
-    })
+    const openai = Effect.runSync(
+      LLMNative.model({
+        model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/openai" } },
+        apiKey: "test-key",
+        messages: [],
+      }),
+    )
     expect(openai.route.id).toBe("openai-responses")
     expect(openai.route.endpoint.baseURL).toBe("https://api.openai.com/v1")
 
-    const anthropic = LLMNative.model({
-      model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/anthropic" } },
-      apiKey: "test-key",
-      messages: [],
-    })
+    const anthropic = Effect.runSync(
+      LLMNative.model({
+        model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/anthropic" } },
+        apiKey: "test-key",
+        messages: [],
+      }),
+    )
     expect(anthropic.route.id).toBe("anthropic-messages")
     expect(anthropic.route.endpoint.baseURL).toBe("https://api.anthropic.com/v1")
 
-    const google = LLMNative.model({
-      model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/google" } },
-      apiKey: "test-key",
-      messages: [],
-    })
+    const google = Effect.runSync(
+      LLMNative.model({
+        model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@ai-sdk/google" } },
+        apiKey: "test-key",
+        messages: [],
+      }),
+    )
     expect(google.route.id).toBe("gemini")
     expect(google.route.endpoint.baseURL).toBe("https://generativelanguage.googleapis.com/v1beta")
 
-    const compatible = LLMNative.model({
-      model: {
-        ...baseModel,
-        providerID: ProviderV2.ID.make("opencode"),
-        api: { ...baseModel.api, url: "https://ai.example.test/v1", npm: "@ai-sdk/openai-compatible" },
-      },
-      apiKey: "test-key",
-      messages: [],
-    })
+    const compatible = Effect.runSync(
+      LLMNative.model({
+        model: {
+          ...baseModel,
+          providerID: ProviderV2.ID.make("opencode"),
+          api: { ...baseModel.api, url: "https://ai.example.test/v1", npm: "@ai-sdk/openai-compatible" },
+        },
+        apiKey: "test-key",
+        messages: [],
+      }),
+    )
     expect(compatible.route.id).toBe("openai-compatible-chat")
     expect(compatible.route.endpoint.baseURL).toBe("https://ai.example.test/v1")
 
-    const openrouter = LLMNative.model({
-      model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@openrouter/ai-sdk-provider" } },
-      apiKey: "test-key",
-      messages: [],
-    })
+    const openrouter = Effect.runSync(
+      LLMNative.model({
+        model: { ...baseModel, api: { ...baseModel.api, url: "", npm: "@openrouter/ai-sdk-provider" } },
+        apiKey: "test-key",
+        messages: [],
+      }),
+    )
     expect(openrouter.route.id).toBe("openrouter")
     expect(openrouter.route.endpoint.baseURL).toBe("https://openrouter.ai/api/v1")
   })
 
   test("fails fast for unsupported provider packages", () => {
-    expect(() =>
-      LLMNative.request({
-        model: { ...baseModel, api: { ...baseModel.api, npm: "unknown-provider" } },
-        messages: [],
-      }),
-    ).toThrow("Native LLM request adapter does not support provider package unknown-provider")
+    const error = Effect.runSync(
+      Effect.flip(
+        LLMNative.request({
+          model: { ...baseModel, api: { ...baseModel.api, npm: "unknown-provider" } },
+          messages: [],
+        }),
+      ),
+    )
+    expect(error).toBeInstanceOf(LLMNative.NativeRequestError)
+    expect(error.message).toContain("Native LLM request adapter does not support provider package unknown-provider")
   })
 
   test("only enables native runtime for supported OpenAI API-key models", () => {
