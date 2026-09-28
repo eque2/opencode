@@ -43,6 +43,10 @@ type TriggerName = {
   [K in keyof Hooks]-?: NonNullable<Hooks[K]> extends (input: any, output: any) => Promise<void> ? K : never
 }[keyof Hooks]
 
+// Trigger callers pass a partial input, so a hook runs with an unchecked input. A method signature
+// has bivariant parameters, so every trigger hook type assigns to this one without a cast.
+type UncheckedTriggerHook = { run(input: unknown, output: unknown): unknown }["run"]
+
 type PluginEvent = Parameters<NonNullable<Hooks["event"]>>[0]["event"]
 
 // A plugin module threw, rejected, or returned an invalid value while it loaded or ran a hook.
@@ -351,7 +355,7 @@ const layer = Layer.effect(
       if (!name) return output
       const s = yield* InstanceState.get(state)
       for (const hook of s.hooks) {
-        const fn = hook[name] as any
+        const fn: UncheckedTriggerHook | undefined = hook[name]
         if (!fn) continue
         // A rejected or throwing trigger hook is a defect, as it was with Effect.promise.
         yield* awaited(() => fn(input, output))
