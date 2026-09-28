@@ -19,7 +19,7 @@ Every pattern uses the same record shape, so that sinks and dashboards do not de
 
 - **`category` annotation.** Use the dotted taxonomy from the sites document, such as `llm.request` or `tool.call`. Sinks filter on it.
 - **Correlation annotations.** Use `sessionID`, `messageID`, `callID`, `agent`, `providerID` and `modelID` where they apply.
-- **Content keys.** Put sensitive text under the keys `prompt`, `system`, `messages`, `content`, `text`, `input`, `output`, `args`, `arguments`, `result`, `diff` or `command`. The Datadog sink omits or hashes these keys by default.
+- **Content keys.** Put sensitive text under the keys `prompt`, `system`, `messages`, `content`, `text`, `input`, `output`, `args`, `arguments`, `result`, `diff`, `command`, `answers` or `cmd`. The Datadog sink omits or hashes these keys by default.
 - **Secret keys.** Never log a secret on purpose. The sink redacts keys that match `api key`, `authorization`, `password`, `secret`, `token`, `cookie` or `credential` as a safety net.
 
 ---
@@ -111,29 +111,25 @@ export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=prod,team=platform"
 
 ## Pattern 3: Batched custom Logger sink (recommended)
 
-Write a `Logger` that maps each record to the vendor format. Wrap it in `Logger.batched`, and add it to the root logger set in `Observability.layer`. Read every switch through Effect `Config`.
+Write a `Logger` that maps each record to the vendor format. Buffer the records, flush them on a timer and at shutdown, and add the logger to the root logger set in `Observability.layer`. Read every switch through Effect `Config`.
 
 This is the pattern of `packages/core/src/observability/datadog.ts`. The core of it:
 
 ```ts
-export function logger(settings: Settings) {
-  const url = Option.getOrElse(settings.url, () => `https://http-intake.logs.${settings.site}/api/v2/logs`)
-  const include = categoryFilter(settings.categories)
-  const format = Logger.make((options) =>
-    LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level) ? entry(options, settings, include) : undefined,
-  )
+export function logger(settings: Settings, options: LoggerOptions = {}) {
   return Effect.gen(function* () {
-    const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
-    const send = (batch: Array<Entry>) =>
-      http.execute(HttpClientRequest.post(url).pipe(/* DD-API-KEY header, JSON body */)).pipe(
-        Effect.retry({ times: 3, schedule: Schedule.exponential("500 millis") }),
-        Effect.ignore,
-        Effect.withTracerEnabled(false), // the export must not trace or log itself
-      )
-    return yield* Logger.batched(format, {
-      window: settings.flushInterval,
-      flush: (items) => Effect.forEach(chunks(items.filter((item) => item !== undefined)), send, { discard: true }),
+    // deliver: status rules, Retry-After (capped at 30 seconds), 3 retries with exponential backoff
+    const send = (batch: Array<Entry>) => deliver(Bun.gzipSync(encodeJson(batch))).pipe(Effect.withTracerEnabled(false))
+    // flush: skip while the breaker is open; a "failed" delivery opens it for the cooldown
+    const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
+    // final: one attempt per chunk, 5-second total timeout, no Retry-After wait
+    const final = drain((chunk) => post(Bun.gzipSync(encodeJson(chunk)))).pipe(Effect.timeoutOption(FINAL_TIMEOUT))
+    const sink = Logger.make((options) => {
+      /* level check, entry(), push to a buffer of at most 10,000 entries */
     })
+    yield* Effect.addFinalizer(() => final)
+    yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
+    return sink
   })
 }
 ```
@@ -141,9 +137,15 @@ export function logger(settings: Settings) {
 The mount in `core/src/observability.ts`:
 
 ```ts
-const datadog = yield * Datadog.settings
-const loggers = [...Logging.loggers(), ...Otlp.loggers(), ...(datadog ? [Datadog.logger(datadog)] : [])]
-const logs = Logger.layer(loggers, { mergeWithExisting: false }).pipe(Layer.provide(FetchHttpClient.layer) /* … */)
+const level = yield * Logging.minimumLogLevel
+const datadog = yield * datadogSettings // Datadog.provider({ env: process.env, configDir }), then Datadog.settings
+const loggers = [
+  ...Logging.loggers(level),
+  ...otlpLoggers, // each wrapped in Logging.atLevel(logger, level)
+  ...Option.toArray(Option.map(datadog.settings, (settings) => Datadog.logger(settings))),
+]
+const logs = Logger.layer(loggers, { mergeWithExisting: false }).pipe(/* … */)
+// References.MinimumLogLevel is minimumLevel(level, datadog.settings): the lowest active sink level.
 ```
 
 `entry` maps one record to the Datadog format:
@@ -151,20 +153,20 @@ const logs = Logger.layer(loggers, { mergeWithExisting: false }).pipe(Layer.prov
 - It sets the reserved attributes `message`, `status`, `date`, `service`, `hostname`, `ddsource` and `ddtags`.
 - It merges the annotations and object messages as attributes.
 - It adds `dd.trace_id` and `dd.span_id` from the current span, so Datadog links the log to APM.
-- It redacts secrets, and omits or hashes content keys.
+- It scrubs secret keys and secret value shapes in every content mode, and omits or hashes content keys unless the content mode or a `Datadog.withPolicy` scope says `full`.
 
 **Pros**
 
 - One place owns level, category filter, redaction, batching, retry and vendor format. No call site changes.
 - It receives every record from every emission pattern, including the existing `Effect.log*` calls.
-- It shares the logger scope, so `Logger.batched` flushes remaining records when the runtime shuts down.
-- It is testable end to end with a local `Bun.serve` intake. See `core/test/effect/observability-datadog.test.ts`.
+- It shares the logger scope, so disposing the runtime runs a bounded final flush of the remaining records.
+- It is testable end to end with a local `Bun.serve` intake. See `core/test/effect/observability-datadog.test.ts` and `core/test/effect/observability-datadog-atdd.test.ts`.
 - It needs no Agent or collector next to each client.
 
 **Cons**
 
 - It only sees what is emitted. Silent sites stay silent until pattern 1, 4 or 5 emits a record.
-- It owns the delivery work: batching, payload limits, retry and backoff. The current version drops a batch after three retries and has no disk spool.
+- It owns the delivery work: batching, payload limits, compression, retry, backoff and a circuit breaker. It has no disk spool, so an outage loses records.
 - It needs a vendor API key on each client. The key is `Redacted` in memory, but it is still on the machine.
 - A sink per vendor duplicates the delivery work. OTLP avoids this.
 
@@ -376,22 +378,27 @@ Keep pattern 6 for Eque2 audit rules in the Eque2 plugin.
 
 The logging configuration has five layers. Each layer overrides the layer above it.
 
-| Layer            | Mechanism                                                                       | Example                                                    | Scope           |
-| ---------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------- | --------------- |
-| 1. Code defaults | `Config.withDefault`                                                            | `level: Info`, `content: omit`, `flushInterval: 5 seconds` | build           |
-| 2. Config file   | `ConfigProvider.fromUnknown(config.observability)`                              | `{ "datadog": { "categories": "llm,tool" } }`              | user or project |
-| 3. Environment   | `ConfigProvider.fromEnv()`                                                      | `OPENCODE_DATADOG_CONTENT=hash`                            | process         |
-| 4. CLI flags     | yargs middleware that writes env before the layer builds                        | `--log-level DEBUG`                                        | invocation      |
-| 5. Runtime scope | `Effect.provideService(References.MinimumLogLevel, …)` or a `Context.Reference` | debug logs for one session only                            | fiber           |
+| Layer            | Mechanism                                                         | Example                                                     | Scope      |
+| ---------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- | ---------- |
+| 1. Code defaults | `Config.withDefault`                                              | `level: Info`, `content: omit`, `flushInterval: 5 seconds`  | build      |
+| 2. Config file   | `Datadog.provider`, from the global config files                  | `{ "observability": { "datadog": { "content": "hash" } } }` | user       |
+| 3. Environment   | `ConfigProvider.fromEnv()`                                        | `OPENCODE_DATADOG_CONTENT=hash`                             | process    |
+| 4. CLI flags     | yargs middleware that writes env before the layer builds          | `--log-level DEBUG`                                         | invocation |
+| 5. Runtime scope | `Datadog.withPolicy(…)`, or `References.MinimumLogLevel` directly | full content for one session only                           | fiber      |
 
-Layers 1 to 4 need no new code, because the sink reads `Config` values. To add layer 2, compose the providers when the observability layer builds:
+The sink reads `Config` values, so layers 1, 3 and 4 need no code of their own. `Datadog.provider({ env, configDir })` composes layers 2 and 3: it maps the file keys to their env var names, and a non-empty env value wins.
 
-```ts
-const provider = ConfigProvider.orElse(ConfigProvider.fromEnv(), () =>
-  ConfigProvider.fromUnknown({ DD_SERVICE: "opencode" }),
-)
-const datadog = yield * Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider)))
-```
+Layer 2 reads `observability.datadog` from `config.json`, `opencode.json` and `opencode.jsonc` in the global config dir, in that order. The dir is `OPENCODE_CONFIG_DIR` when set, else `Global.Path.config`. The files merge key by key, and the later file wins. The sink is built once for each process, before any project config loads, so a project `opencode.json` has no effect. `OPENCODE_CONFIG` and `OPENCODE_CONFIG_CONTENT` are also ignored.
+
+A file can be written by the config HTTP API, a tool or a plugin, so the file layer can only narrow what the process sends:
+
+- `enabled` has an effect only when it is `false`.
+- `content` accepts only `omit` or `hash`.
+- `site` accepts only a known Datadog site.
+- `categories` cannot re-include `question` or `pty`, and a wildcard keeps their exclusion.
+- `url` and the API key (`apiKey`, `api_key` or `DD_API_KEY`) are env-only.
+
+Each ignored value, unknown key, malformed file or non-object `observability` or `datadog` logs one warning that names the file. `Observability.layer` holds these warnings until its own loggers are installed, so they reach the file log and never the default console logger. The rest of the config still loads.
 
 Layer 5 changes behaviour for one fiber tree, without a restart:
 
@@ -399,36 +406,49 @@ Layer 5 changes behaviour for one fiber tree, without a restart:
 // Everything inside this session's drain logs at Debug. Other sessions keep Info.
 drain(sessionID).pipe(Effect.provideService(References.MinimumLogLevel, "Debug"))
 
-// A per-scope policy that sinks can read from options.fiber
-export const LogPolicy = Context.Reference<{ readonly content: "omit" | "hash" | "full" }>("opencode/LogPolicy", {
-  defaultValue: () => ({ content: "omit" }),
-})
+// Full content for one support session. Nested scopes merge field by field, and the inner value wins.
+drain(sessionID).pipe(Datadog.withPolicy({ content: "full" }))
 ```
 
-A sink reads a per-scope policy with `options.fiber.getRef(LogPolicy)`. That lets a support engineer turn on full content for one debug session, while every other session stays redacted. The current Datadog sink does not read `LogPolicy`. Add it when a support workflow needs per-session content.
+`Datadog.LogPolicy` is a `Context.Reference<{ content?, categories? }>`, and the sink reads it with `options.fiber.getRef(LogPolicy)` for each record. A policy can widen `content` up to `full`. Secrets stay redacted in every mode, and `question` and `pty` stay excluded unless the `OPENCODE_DATADOG_CATEGORIES` env var re-includes them.
 
 ### Datadog sink switches
 
-| Variable                             | Default                                      | Purpose                                                                                                                              |
-| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `DD_API_KEY`                         | none                                         | Required. The sink stays off without it.                                                                                             |
-| `OPENCODE_DATADOG_LOGS`              | `true`                                       | Master switch. `false` turns the sink off while the key stays set.                                                                   |
-| `DD_SITE`                            | `datadoghq.com`                              | Datadog region, such as `datadoghq.eu` for EU data residency.                                                                        |
-| `OPENCODE_DATADOG_LOGS_URL`          | derived from `DD_SITE`                       | Full intake URL override: a proxy, the Agent, or a test server.                                                                      |
-| `DD_SERVICE`, `DD_ENV`, `DD_VERSION` | `opencode`, install channel, install version | Unified service tagging.                                                                                                             |
-| `DD_TAGS`                            | empty                                        | Extra comma-separated `key:value` tags.                                                                                              |
-| `DD_HOSTNAME`                        | `os.hostname()`                              | Host attribute.                                                                                                                      |
-| `OPENCODE_DATADOG_LOG_LEVEL`         | `Info`                                       | Sink level: `Trace`, `Debug`, `Info`, `Warn`, `Error` or `Fatal`. It can only raise the global `OPENCODE_LOG_LEVEL`, never lower it. |
-| `OPENCODE_DATADOG_CATEGORIES`        | `*`                                          | Category prefixes to send; a `-` prefix excludes. Example: `llm,tool,-tool.read`.                                                    |
-| `OPENCODE_DATADOG_CONTENT`           | `omit`                                       | Content keys: `omit` (length only), `hash` (SHA-256 prefix) or `full`.                                                               |
-| `OPENCODE_DATADOG_FLUSH_INTERVAL`    | `5 seconds`                                  | Batch window.                                                                                                                        |
+| Variable                             | File key (layer 2)                 | Default                                      | Purpose                                                                                |
+| ------------------------------------ | ---------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `DD_API_KEY`                         | none (env only)                    | none                                         | Required. The sink stays off without it.                                               |
+| `OPENCODE_DATADOG_LOGS`              | `enabled` (`false` only)           | `true`                                       | Master switch. `false` turns the sink off while the key stays set.                     |
+| `DD_SITE`                            | `site` (known sites only)          | `datadoghq.com`                              | Datadog region, such as `datadoghq.eu` for EU data residency.                          |
+| `OPENCODE_DATADOG_LOGS_URL`          | none (env only)                    | derived from `DD_SITE`                       | Full intake URL override: a proxy, the Agent, or a test server.                        |
+| `DD_SERVICE`, `DD_ENV`, `DD_VERSION` | `service`, `env`, `version`        | `opencode`, install channel, install version | Unified service tagging.                                                               |
+| `DD_TAGS`                            | `tags`                             | empty                                        | Extra comma-separated `key:value` tags.                                                |
+| `DD_HOSTNAME`                        | `hostname`                         | `os.hostname()`                              | Host attribute.                                                                        |
+| `OPENCODE_DATADOG_LOG_LEVEL`         | `level`                            | `Info`                                       | Sink level, in any case: `Trace`, `Debug`, `Info`, `Warn`, `Error`, `Fatal` or `None`. |
+| `OPENCODE_DATADOG_CATEGORIES`        | `categories` (no `question`/`pty`) | `*,-question,-pty`                           | Category prefixes to send; a `-` prefix excludes. Example: `llm,tool,-tool.read`.      |
+| `OPENCODE_DATADOG_CONTENT`           | `content` (`omit` or `hash`)       | `omit`                                       | Content keys: `omit` (length only), `hash` (SHA-256 prefix) or `full`.                 |
+| `OPENCODE_DATADOG_FLUSH_INTERVAL`    | `flushInterval`                    | `5 seconds`                                  | Batch window, as a duration string.                                                    |
 
-An invalid value turns the sink off. It does not stop startup.
+An empty env value counts as unset. An invalid env value turns the sink off with one `Warn` record to the other sinks. It does not stop startup.
+
+The Datadog level is independent of `OPENCODE_LOG_LEVEL`. The global `References.MinimumLogLevel` is the lowest level of the active sinks, and the file, stderr and OTLP loggers each filter to `OPENCODE_LOG_LEVEL`. So `OPENCODE_DATADOG_LOG_LEVEL=Debug` sends `Debug` to Datadog and keeps the file log at `Info`.
+
+Delivery follows the Datadog Logs API (`POST /api/v2/logs`):
+
+- Each request body is gzip-compressed and sent with `Content-Encoding: gzip`. A chunk holds at most 1,000 entries and 4.5 MB before compression, measured in UTF-8 bytes. An entry above 1,000,000 bytes has its message truncated with `[TRUNCATED]`.
+- `400`, `401`, `403` and `413` drop the batch with no retry. `408`, `429`, `5xx` and transport errors retry up to 3 times. An integer or HTTP-date `Retry-After` is honoured, capped at 30 seconds; any other value falls back to the exponential backoff.
+- When the retries run out, or on a `401` or `403`, the sink turns off for 60 seconds and logs one `Warn` ("Datadog sink disabled for 60 seconds") to the other sinks. It drops records while it is off. The buffer keeps the newest 10,000 entries.
+- At shutdown, the final flush makes one attempt per chunk within 5 seconds, with no `Retry-After` wait. It sends nothing while the sink is off.
+
+The redaction runs before a record enters the buffer:
+
+- A key is secret when its lowercase form, without `-` and `_`, ends with `apikey`, `authorization`, `password`, `secret`, `token`, `cookie` or `credential`. So `inputTokens` and `tokenizer` are kept.
+- Every string, including the message, nested attribute values, `error.message` and the pretty cause in `error.stack`, has these shapes replaced with `[REDACTED]`: Bearer tokens, `sk-…`, `AKIA…`, `gh?_…`, `xox?-…`, and query parameters whose name ends with `key` or `token` (such as `exaApiKey`), or that are `api_key` or `access_token`. Each shape has a left boundary, so `task-…` and `risk-…` survive.
+- The content keys include `answers` and `cmd`, so the `Question.reply` and `Pty.create` logs send no answer or command text with no category annotation.
 
 ### Limits of the current sink
 
-- A batch is dropped after three failed retries. There is no disk spool.
-- Payloads are not gzip-compressed. Add compression when volume makes bandwidth matter.
+- There is no disk spool. An outage loses the batch after its retries, every record while the breaker is open, and all but the newest 10,000 buffered entries. The file log keeps the local copy. A bounded spool in `Global.Path.log` needs retention rules and a data-loss-prevention review, so it waits for a requirement.
+- Only the global config files configure the sink. A project config file has no effect, and the file layer can only narrow the process settings.
 - An `Error` keeps only its name and message. The V2 bash `ToolFailure` message holds the command text, so exclude `tool.error` or accept the command text.
-- The global `OPENCODE_LOG_LEVEL` filters records before any sink. To send `Debug` to Datadog, lower both levels.
-- `opencode/src/server/server.ts:132` builds its listener with a fresh memo map, so it can build a second sink instance. Each instance batches on its own, so this is safe, but it doubles the HTTP connections.
+- The value scrubbing matches known secret shapes only. A secret with no known shape, in free text under a key that is not secret or content, still reaches Datadog.
+- `opencode/src/server/server.ts:132` builds its listener with a fresh memo map, so it can build a second sink instance (the duplicate listener). Each instance batches only its own runtime's records, so nothing is sent twice, but it doubles the HTTP connections. The plan accepts this, because sharing the memo map would change server layer lifetimes.
