@@ -96,6 +96,16 @@ IMPORTANT:
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
 
+// A state that the prompt service cannot reach. It surfaces as a defect.
+class PromptInvariantError extends Schema.TaggedError<PromptInvariantError>()("SessionPromptInvariantError", {
+  message: Schema.String,
+}) {}
+
+// An MCP server answered a resource read without content. It surfaces as a defect.
+class ResourceNotFoundError extends Schema.TaggedError<ResourceNotFoundError>()("SessionPromptResourceNotFoundError", {
+  message: Schema.String,
+}) {}
+
 function mcpResourceBase64Size(value: string) {
   const trimmed = value.replace(/\s/g, "")
   const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0
@@ -344,10 +354,10 @@ const layer = Layer.effect(
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
         yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-        throw error
+        return yield* Effect.die(error)
       }
 
-      let error: Error | undefined
+      let failure = Option.none<string>()
       const taskAbort = new AbortController()
       const result = yield* taskTool
         .execute(taskArgs, {
@@ -378,9 +388,9 @@ const layer = Layer.effect(
         .pipe(
           Effect.catchCause((cause) => {
             const defect = Cause.squash(cause)
-            error = defect instanceof Error ? defect : new Error(String(defect))
+            failure = Option.some(defect instanceof Error ? defect.message : String(defect))
             return Effect.logError("subtask execution failed", {
-              error,
+              error: defect,
               agent: task.agent,
               description: task.description,
             })
@@ -444,7 +454,10 @@ const layer = Layer.effect(
           ...part,
           state: {
             status: "error",
-            error: error ? `Tool execution failed: ${error.message}` : "Tool execution failed",
+            error: Option.match(failure, {
+              onNone: () => "Tool execution failed",
+              onSome: (message) => `Tool execution failed: ${message}`,
+            }),
             time: {
               start: part.state.status === "running" ? part.state.time.start : yield* Clock.currentTimeMillis,
               end: yield* Clock.currentTimeMillis,
@@ -492,7 +505,7 @@ const layer = Layer.effect(
               const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
               const error = new NamedError.Unknown({ message: `Agent not found: "${input.agent}".${hint}` })
               yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-              throw error
+              return yield* Effect.die(error)
             }
             const model = input.model ?? agent.model ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
@@ -668,7 +681,7 @@ const layer = Layer.effect(
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
+        return yield* Effect.die(error)
       }
 
       const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
@@ -755,7 +768,10 @@ const layer = Layer.effect(
               ]
             }
             const content = exit.value
-            if (!content) throw new Error(`Resource not found: ${clientName}/${uri}`)
+            if (!content)
+              return yield* Effect.die(
+                new ResourceNotFoundError({ message: `Resource not found: ${clientName}/${uri}` }),
+              )
             const items = Array.isArray(content.contents) ? content.contents : [content.contents]
             const synthetic = (text: string): Draft<SessionV1.Part> => ({
               messageID: info.id,
@@ -1092,7 +1108,7 @@ const layer = Layer.effect(
       if (Option.isSome(match)) return match.value
       const msgs = yield* sessions.messages({ sessionID, limit: 1 }).pipe(Effect.orDie)
       if (msgs.length > 0) return msgs[0]
-      throw new Error("Impossible")
+      return yield* Effect.die(new PromptInvariantError({ message: "Impossible" }))
     })
 
     const runLoop: (sessionID: SessionID) => Effect.Effect<SessionV1.WithParts> = Effect.fn("SessionPrompt.run")(
@@ -1110,7 +1126,10 @@ const layer = Layer.effect(
 
           const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs)
 
-          if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+          if (!lastUser)
+            return yield* Effect.die(
+              new PromptInvariantError({ message: "No user message found in stream. This should never happen." }),
+            )
 
           const lastAssistantMsg = msgs.findLast(
             (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -1188,7 +1207,7 @@ const layer = Layer.effect(
             const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
             const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
             yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-            throw error
+            return yield* Effect.die(error)
           }
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
@@ -1369,7 +1388,7 @@ const layer = Layer.effect(
         const hint = available.length ? ` Available commands: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Command not found: "${input.command}".${hint}` })
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
+        return yield* Effect.die(error)
       }
       const agentName = cmd.agent ?? input.agent
 
@@ -1430,7 +1449,7 @@ const layer = Layer.effect(
         const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
         const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
         yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        throw error
+        return yield* Effect.die(error)
       }
 
       const templateParts = yield* resolvePromptParts(template)
