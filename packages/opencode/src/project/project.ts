@@ -60,7 +60,7 @@ export const UpdateInput = Schema.Struct({
   name: Schema.optional(Schema.String),
   icon: Schema.optional(Project.Icon),
   commands: Schema.optional(Project.Commands),
-})
+}).annotate({ identifier: "Project.UpdateInput", description: "The project fields that Project.update changes" })
 export type UpdateInput = Types.DeepMutable<Schema.Schema.Type<typeof UpdateInput>>
 
 export const UpdatePayload = Schema.Struct({
