@@ -367,7 +367,7 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
   }
 
   // Calculate similarity for multiple candidates
-  let bestMatch: { startLine: number; endLine: number } | null = null
+  let bestMatch = Option.none<{ startLine: number; endLine: number }>()
   let maxSimilarity = -1
 
   for (const candidate of candidates) {
@@ -396,13 +396,13 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 
     if (similarity > maxSimilarity) {
       maxSimilarity = similarity
-      bestMatch = candidate
+      bestMatch = Option.some(candidate)
     }
   }
 
   // Threshold judgment
-  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && bestMatch) {
-    const { startLine, endLine } = bestMatch
+  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && Option.isSome(bestMatch)) {
+    const { startLine, endLine } = bestMatch.value
     let matchStartIndex = 0
     for (let k = 0; k < startLine; k++) {
       matchStartIndex += originalLines[k].length + 1

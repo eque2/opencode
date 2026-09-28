@@ -90,7 +90,7 @@ function normalizeObject(value: JsonObject, options: { stripNull?: boolean } = {
 }
 
 function isRecord(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return Predicate.isObject(value)
 }
 
 function isNonFiniteNumber(value: unknown) {
