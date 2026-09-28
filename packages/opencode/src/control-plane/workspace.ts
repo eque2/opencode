@@ -386,6 +386,7 @@ const layer = Layer.effect(
 
         const stream = yield* connectSSE(target.url, target.headers).pipe(
           Effect.tap(() => syncHistory(space, target.url, target.headers)),
+          Effect.map(Option.some),
           Effect.catch((err) =>
             Effect.gen(function* () {
               setStatus(space.id, "error")
@@ -393,17 +394,17 @@ const layer = Layer.effect(
                 workspace: space.name,
                 error: errorData(err),
               })
-              return null
+              return Option.none()
             }),
           ),
         )
 
-        if (stream) {
+        if (Option.isSome(stream)) {
           attempt = 0
 
           setStatus(space.id, "connected")
 
-          yield* parseSSE(stream, (evt) =>
+          yield* parseSSE(stream.value, (evt) =>
             Effect.gen(function* () {
               if (!Predicate.hasProperty(evt, "payload")) return
               const payload = evt.payload
@@ -459,7 +460,8 @@ const layer = Layer.effect(
     const startSync = Effect.fn("Workspace.startSync")(function* (space: Info) {
       if (!flags.experimentalWorkspaces) return
 
-      const target = yield* WorkspaceAdapterRuntime.target(space).pipe(
+      const resolved = yield* WorkspaceAdapterRuntime.target(space).pipe(
+        Effect.map(Option.some),
         Effect.catch((error) =>
           Effect.gen(function* () {
             setStatus(space.id, "error")
@@ -467,11 +469,12 @@ const layer = Layer.effect(
               workspaceID: space.id,
               error: errorData(error),
             })
-            return null
+            return Option.none()
           }),
         ),
       )
-      if (!target) return
+      if (Option.isNone(resolved)) return
+      const target = resolved.value
 
       if (target.type === "local") {
         setStatus(space.id, (yield* fs.existsSafe(target.directory)) ? "connected" : "error")
@@ -514,17 +517,19 @@ const layer = Layer.effect(
         ...input,
         id,
         name: yield* Slug.make,
+        // eslint-disable-next-line effect/no-null-use-option -- (b) foreign value domain: WorkspaceInfo.directory is Schema.NullOr, stored as SQL NULL and sent as JSON null; adapters receive null before they choose a directory
         directory: null,
-        extra: input.extra ?? null,
+        extra: Option.getOrNull(Option.fromNullishOr(input.extra)),
       })
 
+      // WorkspaceInfo keeps absent fields as null (SQL NULL, JSON null on the HTTP API).
       const info: Info = {
         id,
         type: config.type,
-        branch: config.branch ?? null,
-        name: config.name ?? null,
-        directory: config.directory ?? null,
-        extra: config.extra ?? null,
+        branch: Option.getOrNull(Option.fromNullishOr(config.branch)),
+        name: config.name,
+        directory: Option.getOrNull(Option.fromNullishOr(config.directory)),
+        extra: Option.getOrNull(Option.fromNullishOr(config.extra)),
         projectID: input.projectID,
         timeUsed: yield* Clock.currentTimeMillis,
       }
