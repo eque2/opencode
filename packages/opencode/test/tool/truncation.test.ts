@@ -8,6 +8,7 @@ import { Truncate } from "@/tool/truncate"
 import { Config } from "@/config/config"
 import { Identifier } from "../../src/id/id"
 import { Process } from "@/util/process"
+import type { Agent } from "@/agent/agent"
 import path from "path"
 import { testEffect } from "../lib/effect"
 import { writeFileStringScoped } from "../lib/filesystem"
@@ -187,7 +188,7 @@ describe("Truncate", () => {
         expect(result.outputPath).toContain("tool_")
 
         const fsys = yield* FSUtil.Service
-        const written = yield* fsys.readFileString(result.outputPath!)
+        const written = yield* fsys.readFileString(result.outputPath)
         expect(written).toBe(lines)
       }),
     )
@@ -196,8 +197,13 @@ describe("Truncate", () => {
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        const agent = { permission: [{ permission: "task", pattern: "*", action: "allow" as const }] }
-        const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
+        const agent = {
+          name: "test",
+          mode: "primary",
+          permission: [{ permission: "task", pattern: "*", action: "allow" }],
+          options: {},
+        } satisfies Agent.Info
+        const result = yield* svc.output(lines, { maxLines: 10 }, agent)
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("Grep")
@@ -209,8 +215,13 @@ describe("Truncate", () => {
       Effect.gen(function* () {
         const svc = yield* Truncate.Service
         const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n")
-        const agent = { permission: [{ permission: "task", pattern: "*", action: "deny" as const }] }
-        const result = yield* svc.output(lines, { maxLines: 10 }, agent as any)
+        const agent = {
+          name: "test",
+          mode: "primary",
+          permission: [{ permission: "task", pattern: "*", action: "deny" }],
+          options: {},
+        } satisfies Agent.Info
+        const result = yield* svc.output(lines, { maxLines: 10 }, agent)
 
         expect(result.truncated).toBe(true)
         expect(result.content).toContain("Grep")
