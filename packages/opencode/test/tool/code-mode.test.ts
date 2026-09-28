@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { CODE_MODE_TOOL, CodeModeTool, Parameters, describeCatalog } from "@/tool/code-mode"
-import type { Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { CallToolResultSchema, type CallToolRequest, type Tool as MCPToolDef } from "@modelcontextprotocol/sdk/types.js"
+import { ProjectV2 } from "@opencode-ai/core/project"
 import type { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { Agent } from "@/agent/agent"
 import { MCP } from "@/mcp"
@@ -10,7 +12,7 @@ import { Session } from "@/session/session"
 import { Tool } from "@/tool/tool"
 import * as Truncate from "@/tool/truncate"
 import { MessageID, SessionID } from "@/session/schema"
-import { Cause, Effect, Exit, Layer, Schema } from "effect"
+import { Cause, Effect, Exit, Layer, Predicate, Schema } from "effect"
 
 const ctx: Tool.Context = {
   sessionID: SessionID.make("ses_code-mode"),
@@ -23,17 +25,39 @@ const ctx: Tool.Context = {
   ask: () => Effect.void,
 }
 
+// A real SDK Client that answers tools/call in-process; each result passes the SDK result schema.
+class StubClient extends Client {
+  constructor(private readonly handler: (args: Record<string, unknown>) => unknown) {
+    super({ name: "code-mode-test", version: "1.0.0" })
+  }
+
+  override async callTool(params: CallToolRequest["params"]) {
+    return CallToolResultSchema.parse(await this.handler(params.arguments ?? {}))
+  }
+}
+
+const session: Session.Info = {
+  id: SessionID.make("ses_code-mode"),
+  slug: "code-mode",
+  projectID: ProjectV2.ID.global,
+  directory: "/tmp/opencode",
+  title: "Code mode",
+  version: "1.0.0",
+  time: { created: 1, updated: 1 },
+  permission: [],
+}
+
+const passthrough: Plugin.Interface["trigger"] = (_name, _input, output) => Effect.succeed(output)
+
 function mcpTool(
   name: string,
   handler: (args: Record<string, unknown>) => unknown,
-  inputSchema: Record<string, unknown> = { type: "object", properties: {} },
-  outputSchema?: Record<string, unknown>,
+  inputSchema: MCPToolDef["inputSchema"] = { type: "object", properties: {} },
+  outputSchema?: MCPToolDef["outputSchema"],
 ): MCP.McpTool {
   return {
-    def: { name, description: name, inputSchema, ...(outputSchema ? { outputSchema } : {}) } as MCPToolDef,
-    client: {
-      callTool: async (params: { arguments?: Record<string, unknown> }) => handler(params.arguments ?? {}),
-    } as unknown as MCP.McpTool["client"],
+    def: { name, description: name, inputSchema, ...(outputSchema ? { outputSchema } : {}) },
+    client: new StubClient(handler),
   }
 }
 
@@ -45,20 +69,29 @@ function harness(input: {
 }) {
   return Layer.mergeAll(
     Layer.mock(Plugin.Service, {
-      trigger: input.trigger ?? (((_name, _input, output) => Effect.succeed(output)) as Plugin.Interface["trigger"]),
+      trigger: input.trigger ?? passthrough,
     }),
     Layer.mock(Truncate.Service, {
       output: (text: string) => Effect.succeed({ content: text, truncated: false as const }),
     }),
     Layer.mock(Agent.Service, {
-      get: () => Effect.succeed({ name: "build", permission: input.permission ?? [] } as any),
+      get: () =>
+        Effect.succeed({
+          name: "build",
+          mode: "primary",
+          permission: input.permission ?? [],
+          options: {},
+        } satisfies Agent.Info),
     }),
     Layer.mock(Session.Service, {
-      get: () => Effect.succeed({ permission: [] } as any),
+      get: () => Effect.succeed(session),
     }),
     Layer.mock(MCP.Service, {
       tools: () => Effect.succeed(input.mcpTools),
-      clients: () => Effect.succeed(Object.fromEntries(input.servers.map((name) => [name, {} as any]))),
+      clients: () =>
+        Effect.succeed(
+          Object.fromEntries(input.servers.map((name) => [name, new StubClient(() => ({ content: [] }))])),
+        ),
     }),
   )
 }
@@ -90,7 +123,9 @@ function describeFor(mcpTools: Record<string, MCP.McpTool>, servers?: string[], 
 async function failure(effect: Effect.Effect<unknown>) {
   const exit = await Effect.runPromise(effect.pipe(Effect.exit))
   if (Exit.isSuccess(exit)) throw new Error("expected the tool to fail")
-  return Cause.squash(exit.cause) as Error
+  const error = Cause.squash(exit.cause)
+  if (!(error instanceof Error)) throw new Error(`expected an Error defect, got ${String(error)}`)
+  return error
 }
 
 describe("code mode execute", () => {
@@ -201,8 +236,8 @@ describe("code mode execute", () => {
           name: `op_${i}`,
           description: `${filler}${i}`,
           inputSchema: { type: "object", properties: { value: { type: "string" }, count: { type: "number" } } },
-        } as MCPToolDef,
-        client: { callTool: async () => ({ content: [] }) } as unknown as MCP.McpTool["client"],
+        },
+        client: new StubClient(() => ({ content: [] })),
       }
     }
     tools["zeta_only_tool"] = mcpTool("only_tool", () => "", {
@@ -292,10 +327,10 @@ describe("code mode execute", () => {
 
   test("exposes structured content as native data and composes multiple calls", async () => {
     const tool = await build({
-      math_add: mcpTool("add", (args) => ({
-        content: [],
-        structuredContent: { sum: (args.a as number) + (args.b as number) },
-      })),
+      math_add: mcpTool("add", (args) => {
+        const { a, b } = Schema.decodeUnknownSync(Schema.Struct({ a: Schema.Number, b: Schema.Number }))(args)
+        return { content: [], structuredContent: { sum: a + b } }
+      }),
     })
 
     const output = await Effect.runPromise(
@@ -393,11 +428,11 @@ describe("code mode execute", () => {
 
   test("child calls fire plugin tool.execute hooks with the MCP key and synthetic parent/N call ids", async () => {
     const events: { name: string; input: any; output: any }[] = []
-    const trigger = ((name: unknown, input: unknown, output: unknown) =>
+    const trigger: Plugin.Interface["trigger"] = (name, input, output) =>
       Effect.sync(() => {
-        events.push({ name: name as string, input, output })
+        events.push({ name, input, output })
         return output
-      })) as Plugin.Interface["trigger"]
+      })
     const tool = await build(
       {
         a_tool: mcpTool("a", () => ({ content: [{ type: "text", text: "one" }] })),
@@ -427,10 +462,11 @@ describe("code mode execute", () => {
   })
 
   test("a failing before hook fails only that child call as a catchable in-program error", async () => {
-    const trigger = ((name: unknown, input: any, output: unknown) => {
-      if (name === "tool.execute.before" && input.tool === "a_tool") return Effect.die(new Error("hook exploded"))
+    const trigger: Plugin.Interface["trigger"] = (name, input, output) => {
+      if (name === "tool.execute.before" && Predicate.hasProperty(input, "tool") && input.tool === "a_tool")
+        return Effect.die(new Error("hook exploded"))
       return Effect.succeed(output)
-    }) as Plugin.Interface["trigger"]
+    }
     const called: string[] = []
     const record = (name: string) => () => {
       called.push(name)
