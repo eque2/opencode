@@ -58,7 +58,8 @@ export interface Def<
   description: string
   parameters: Parameters
   jsonSchema?: JSONSchema7
-  execute(args: Schema.Schema.Type<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
+  // Indexed so a generic Parameters still accepts what Schema.decodeUnknownEffect returns.
+  execute(args: Parameters["Type"], ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: unknown): string
 }
 export type DefWithoutID<
@@ -125,7 +126,7 @@ function wrap<Parameters extends Schema.Decoder<unknown>, Result extends Metadat
                 }),
             ),
           )
-          const result = yield* execute(decoded as Schema.Schema.Type<Parameters>, ctx)
+          const result = yield* execute(decoded, ctx)
           if (result.metadata.truncated !== undefined) {
             return result
           }
