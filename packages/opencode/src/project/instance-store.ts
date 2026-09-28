@@ -6,7 +6,7 @@ import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { InstanceRef } from "@/effect/instance-ref"
 import { disposeInstance as runDisposers } from "@/effect/instance-registry"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Context, Deferred, Duration, Effect, Exit, Layer, Scope } from "effect"
+import { Context, Deferred, Duration, Effect, Exit, Layer, MutableHashMap, Option, Scope } from "effect"
 import { type InstanceContext } from "./instance-context"
 import { InstanceBootstrap } from "./bootstrap-service"
 import * as Project from "./project"
@@ -41,7 +41,9 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     const fsu = yield* FSUtil.Service
     const bootstrap = yield* InstanceBootstrap.Service
     const scope = yield* Scope.Scope
-    const cache = new Map<string, Entry>()
+    const cache = MutableHashMap.empty<string, Entry>()
+    const isCurrent = (directory: string, entry: Entry) =>
+      Option.exists(MutableHashMap.get(cache, directory), (current) => current === entry)
 
     const boot = (input: LoadInput & { directory: string }) =>
       Effect.gen(function* () {
@@ -65,8 +67,8 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
 
     const removeEntry = (directory: string, entry: Entry) =>
       Effect.sync(() => {
-        if (cache.get(directory) !== entry) return false
-        cache.delete(directory)
+        if (!isCurrent(directory, entry)) return false
+        MutableHashMap.remove(cache, directory)
         return true
       })
 
@@ -99,10 +101,10 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     })
 
     const disposeEntry = Effect.fnUntraced(function* (directory: string, entry: Entry, ctx: InstanceContext) {
-      if (cache.get(directory) !== entry) return false
+      if (!isCurrent(directory, entry)) return false
       yield* disposeContext(ctx)
-      if (cache.get(directory) !== entry) return false
-      cache.delete(directory)
+      if (!isCurrent(directory, entry)) return false
+      MutableHashMap.remove(cache, directory)
       return true
     })
 
@@ -111,11 +113,11 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
         Effect.flatMap((directory) =>
           Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              const existing = cache.get(directory)
-              if (existing) return yield* restore(Deferred.await(existing.deferred))
+              const existing = MutableHashMap.get(cache, directory)
+              if (Option.isSome(existing)) return yield* restore(Deferred.await(existing.value.deferred))
 
               const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
-              cache.set(directory, entry)
+              MutableHashMap.set(cache, directory, entry)
               yield* Effect.gen(function* () {
                 yield* Effect.logInfo("creating instance", { directory: directory })
                 yield* completeLoad(directory, input, entry)
@@ -132,13 +134,13 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
         Effect.flatMap((directory) =>
           Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              const previous = cache.get(directory)
+              const previous = MutableHashMap.get(cache, directory)
               const entry: Entry = { deferred: Deferred.makeUnsafe<InstanceContext>() }
-              cache.set(directory, entry)
+              MutableHashMap.set(cache, directory, entry)
               yield* Effect.gen(function* () {
                 yield* Effect.logInfo("reloading instance", { directory: directory })
-                if (previous) {
-                  yield* Deferred.await(previous.deferred).pipe(Effect.ignore)
+                if (Option.isSome(previous)) {
+                  yield* Deferred.await(previous.value.deferred).pipe(Effect.ignore)
                   yield* Effect.promise(() => runDisposers(directory))
                   yield* emitDisposed({ directory, project: input.project?.id })
                 }
@@ -152,11 +154,12 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
       )
 
     const dispose = Effect.fn("InstanceStore.dispose")(function* (ctx: InstanceContext) {
-      const entry = cache.get(ctx.directory)
-      if (!entry) {
+      const found = MutableHashMap.get(cache, ctx.directory)
+      if (Option.isNone(found)) {
         yield* disposeContext(ctx)
         return
       }
+      const entry = found.value
 
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
       if (Exit.isFailure(exit)) {
@@ -169,8 +172,9 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
 
     const disposeDirectory = Effect.fn("InstanceStore.disposeDirectory")(function* (input: string) {
       const directory = yield* fsu.resolve(input)
-      const entry = cache.get(directory)
-      if (!entry) return
+      const found = MutableHashMap.get(cache, directory)
+      if (Option.isNone(found)) return
+      const entry = found.value
       const exit = yield* Deferred.await(entry.deferred).pipe(Effect.exit)
       if (Exit.isFailure(exit)) {
         yield* removeEntry(directory, entry)
@@ -182,7 +186,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     const disposeAllOnce = Effect.fnUntraced(function* () {
       yield* Effect.logInfo("disposing all instances")
       yield* Effect.forEach(
-        [...cache.entries()],
+        [...cache],
         (item) =>
           Effect.gen(function* () {
             const exit = yield* Deferred.await(item[1].deferred).pipe(Effect.exit)
