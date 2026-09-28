@@ -591,8 +591,9 @@ export const McpAddCommand = effectCmd({
         array: true,
       }),
   handler: Effect.fn("Cli.mcp.add")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return yield* Effect.die("InstanceRef not provided")
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return yield* Effect.die("InstanceRef not provided")
+    const ctx = instance.value
     const command = args["--"] ?? []
     if (!args.name && (args.url || args.env?.length || args.header?.length || command.length)) {
       return yield* fail("A server name is required for non-interactive MCP configuration")

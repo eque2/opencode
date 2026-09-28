@@ -222,7 +222,7 @@ const tryGithub = <A>(run: () => Promise<A>) =>
 
 // The command runs under AppRuntime, which always provides the instance; a missing one is a defect.
 const requireInstance = Effect.gen(function* () {
-  return yield* Effect.fromNullishOr(yield* InstanceRef).pipe(
+  return yield* Effect.fromOption(yield* InstanceRef).pipe(
     Effect.catch(() => Effect.die("InstanceRef not provided")),
   )
 })

@@ -1,6 +1,6 @@
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Cause, Duration, Effect, Layer, Scope } from "effect"
+import { Cause, Duration, Effect, Layer, Option, Scope } from "effect"
 import { TestLLMServer } from "../../lib/llm-server"
 import { MessageID, PartID } from "../../../src/session/schema"
 import { call, callAuthProbe, disposeApps } from "./backend"
@@ -111,7 +111,7 @@ function withContext<A, E>(
             )
           : undefined
         const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          effect.pipe(Effect.provideService(modules.InstanceRef, instance), Effect.provide(app))
+          effect.pipe(Effect.provideService(modules.InstanceRef, Option.fromNullishOr(instance)), Effect.provide(app))
         const directory = () => {
           if (!context.dir?.path) throw new Error("scenario needs a project directory")
           return context.dir.path

@@ -134,7 +134,7 @@ export const loaderLayer = Layer.effect(
             commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
             ...(defaultModel._tag === "Some" ? { defaultModel: defaultModel.value } : {}),
           })
-        }).pipe(Effect.provideService(InstanceRef, ctx))
+        }).pipe(Effect.provideService(InstanceRef, Option.some(ctx)))
       }),
     })
   }),

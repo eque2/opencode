@@ -132,7 +132,7 @@ export const contextLimitLoaderLayer = Layer.effect(
         const ctx = yield* store.load({ directory })
         return yield* Effect.gen(function* () {
           return yield* provider.list()
-        }).pipe(Effect.provideService(InstanceRef, ctx))
+        }).pipe(Effect.provideService(InstanceRef, Option.some(ctx)))
       }),
     })
   }),

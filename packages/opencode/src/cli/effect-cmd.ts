@@ -1,5 +1,5 @@
 import type { ArgumentsCamelCase, Argv, CommandModule } from "yargs"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import type { AppServices } from "@/effect/app-runtime"
 import type { InstanceStore } from "@/project/instance-store"
 
@@ -36,7 +36,7 @@ interface EffectCmdOpts<Args, A> {
    * `false`: skip the instance entirely. Saves the InstanceBootstrap work and
    * suppresses the `server.instance.disposed` IPC event. The handler runs
    * directly under AppRuntime — it can yield any `AppServices` but must not
-   * yield `InstanceRef` (it'd be undefined, causing a defect).
+   * rely on `InstanceRef` (it is `Option.none()`, so an instance read is a defect).
    *
    * Function form: `(args) => boolean` decides per-invocation. Useful for
    * commands like `run --attach <url>` where one flag flips between local
@@ -95,7 +95,9 @@ const runHandler = Effect.fnUntraced(function* <Args, A>(opts: EffectCmdOpts<Arg
           .load({ directory })
           .pipe(
             Effect.flatMap((ctx) =>
-              opts.handler(args).pipe(Effect.provideService(InstanceRef, ctx), Effect.ensuring(store.dispose(ctx))),
+              opts
+                .handler(args)
+                .pipe(Effect.provideService(InstanceRef, Option.some(ctx)), Effect.ensuring(store.dispose(ctx))),
             ),
           ),
       ),

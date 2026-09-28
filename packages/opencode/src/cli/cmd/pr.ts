@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { UI } from "../ui"
 import { effectCmd, fail } from "../effect-cmd"
 import { Git } from "@/git"
@@ -30,8 +30,9 @@ export const PrCommand = effectCmd({
   // AppRuntime does not provide AppProcess, so the handler provides its own.
   handler: Effect.fn("Cli.pr")(
     function* (args) {
-      const ctx = yield* InstanceRef
-      if (!ctx) return yield* fail("Could not load instance context")
+      const instance = yield* InstanceRef
+      if (Option.isNone(instance)) return yield* fail("Could not load instance context")
+      const ctx = instance.value
       if (ctx.project.vcs !== "git") {
         return yield* fail("Could not find git repository. Please run this command from a git repository.")
       }

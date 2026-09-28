@@ -218,8 +218,9 @@ export const PluginCommand = effectCmd({
       force: Boolean(args.force),
     })
 
-    const ctx = yield* InstanceRef
-    if (!ctx) return
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const ctx = instance.value
     const ok = yield* run({
       vcs: ctx.project.vcs,
       worktree: ctx.worktree,

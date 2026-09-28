@@ -27,8 +27,8 @@ function provideInstanceContext<E>(
     const route = yield* WorkspaceRouteContext
     const ctx = yield* store.load({ directory: decode(route.directory) })
     return yield* effect.pipe(
-      Effect.provideService(InstanceRef, ctx),
-      Effect.provideService(WorkspaceRef, route.workspaceID),
+      Effect.provideService(InstanceRef, Option.some(ctx)),
+      Effect.provideService(WorkspaceRef, Option.fromNullishOr(route.workspaceID)),
     )
   })
 }

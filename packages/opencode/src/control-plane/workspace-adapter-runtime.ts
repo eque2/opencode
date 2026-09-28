@@ -1,13 +1,14 @@
-import { Effect } from "effect"
+import { Effect, Option } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import { getAdapter } from "./adapters"
 import type { WorkspaceAdapter, WorkspaceInfo } from "./types"
 
+// WorkspaceAdapterContext is the plugin-facing Promise contract, with optional fields.
 const context = Effect.gen(function* () {
   return {
-    instance: yield* InstanceRef,
-    workspaceID: yield* WorkspaceRef,
+    instance: Option.getOrUndefined(yield* InstanceRef),
+    workspaceID: Option.getOrUndefined(yield* WorkspaceRef),
   }
 })
 

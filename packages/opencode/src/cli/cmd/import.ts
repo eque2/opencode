@@ -112,9 +112,9 @@ export const ImportCommand = effectCmd({
       demandOption: true,
     }),
   handler: Effect.fn("Cli.import")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return yield* Effect.die("InstanceRef not provided")
-    return yield* runImport(args.file, ctx)
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return yield* Effect.die("InstanceRef not provided")
+    return yield* runImport(args.file, instance.value)
   }),
 })
 

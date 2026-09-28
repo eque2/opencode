@@ -2,7 +2,7 @@ import { afterEach, describe, expect } from "bun:test"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { HttpClientResponse } from "effect/unstable/http"
 import path from "path"
 import { InstanceRef } from "../../src/effect/instance-ref"
@@ -83,7 +83,7 @@ describe("project.initGit endpoint", () => {
 
       const ctx = yield* InstanceStore.use.reload({ directory: tmp.directory })
       const tracked = yield* Snapshot.Service.use((snapshot) => snapshot.track()).pipe(
-        Effect.provideService(InstanceRef, ctx),
+        Effect.provideService(InstanceRef, Option.some(ctx)),
       )
       expect(tracked).toBeTruthy()
     }),

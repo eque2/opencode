@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { InstanceRef, WorkspaceRef } from "@/effect/instance-ref"
 import type { Worktree } from "@/worktree"
 import type { InstanceContext } from "@/project/instance-context"
@@ -45,8 +45,8 @@ const run = <A, E>(
       const exit = yield* Effect.promise(() =>
         AppRuntime.runPromiseExit(
           Worktree.Service.use((svc) => use(svc, instance)).pipe(
-            Effect.provideService(InstanceRef, instance),
-            Effect.provideService(WorkspaceRef, context?.workspaceID),
+            Effect.provideService(InstanceRef, Option.some(instance)),
+            Effect.provideService(WorkspaceRef, Option.fromNullishOr(context?.workspaceID)),
           ),
         ),
       )

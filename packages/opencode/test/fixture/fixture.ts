@@ -3,7 +3,7 @@ import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import * as fs from "fs/promises"
 import os from "os"
 import path from "path"
-import { Effect, Context, Layer } from "effect"
+import { Effect, Context, Layer, Option } from "effect"
 import type * as PlatformError from "effect/PlatformError"
 import type * as Scope from "effect/Scope"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -29,7 +29,7 @@ export async function provideTestInstance<R>(input: {
 }) {
   const ctx = await InstanceRuntime.load({ directory: input.directory })
   try {
-    if (input.init) await Effect.runPromise(input.init.pipe(Effect.provideService(InstanceRef, ctx)))
+    if (input.init) await Effect.runPromise(input.init.pipe(Effect.provideService(InstanceRef, Option.some(ctx))))
     return await input.fn(ctx)
   } finally {
     await InstanceRuntime.disposeInstance(ctx)
@@ -199,8 +199,8 @@ export class TestInstance extends Context.Service<TestInstance, { readonly direc
 
 export const requireInstance = Effect.gen(function* () {
   const instance = yield* InstanceRef
-  if (!instance) return yield* Effect.die(new Error("missing test instance"))
-  return instance
+  if (Option.isNone(instance)) return yield* Effect.die(new Error("missing test instance"))
+  return instance.value
 })
 
 export const withTmpdirInstance =

@@ -1,5 +1,5 @@
 import { EOL } from "os"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
@@ -32,8 +32,9 @@ const FilesCommand = effectCmd({
         description: "Limit number of results",
       }),
   handler: Effect.fn("Cli.debug.rg.files")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const ctx = instance.value
     const ripgrep = yield* Ripgrep.Service
     const files = yield* ripgrep
       .glob({
@@ -65,8 +66,9 @@ const SearchCommand = effectCmd({
         description: "Limit number of results",
       }),
   handler: Effect.fn("Cli.debug.rg.search")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const ctx = instance.value
     const ripgrep = yield* Ripgrep.Service
     const results = yield* ripgrep
       .grep({

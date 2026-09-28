@@ -66,9 +66,9 @@ export const StatsCommand = effectCmd({
         type: "string",
       }),
   handler: Effect.fn("Cli.stats")(function* (args) {
-    const ctx = yield* InstanceRef
-    if (!ctx) return
-    const stats = yield* aggregateSessionStats(ctx.project, args.days, args.project)
+    const instance = yield* InstanceRef
+    if (Option.isNone(instance)) return
+    const stats = yield* aggregateSessionStats(instance.value.project, args.days, args.project)
     let modelLimit: number | undefined
     if (args.models === true) {
       modelLimit = Infinity

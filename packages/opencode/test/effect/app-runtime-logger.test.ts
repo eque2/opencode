@@ -1,6 +1,6 @@
 import { expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Context, Deferred, Effect, Fiber, Layer, Logger } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Logger, Option } from "effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { AppLayer } from "../../src/effect/app-runtime"
 import { EffectBridge } from "@/effect/bridge"
@@ -58,7 +58,7 @@ it.instance(
       const test = yield* TestInstance
       const current = yield* attach(
         Effect.gen(function* () {
-          return (yield* InstanceRef)?.directory
+          return Option.getOrUndefined(Option.map(yield* InstanceRef, (ctx) => ctx.directory))
         }),
       )
 
@@ -82,7 +82,7 @@ it.instance(
             bridge.promise(
               Effect.gen(function* () {
                 return {
-                  directory: (yield* InstanceRef)?.directory,
+                  directory: Option.getOrUndefined(Option.map(yield* InstanceRef, (ctx) => ctx.directory)),
                   ...check(yield* Effect.service(Logger.CurrentLoggers)),
                 }
               }),

@@ -2,7 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EOL } from "os"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { basename } from "path"
-import { Cause, Clock, Effect, Predicate, Schema } from "effect"
+import { Cause, Clock, Effect, HashSet, Option, Predicate, Schema } from "effect"
 import { Agent } from "../../../agent/agent"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
@@ -25,9 +25,9 @@ export const debugAgent = Effect.fn("Cli.debug.agent")(function* (args: {
   tool?: string
   params?: string
 }) {
-  const ctx = yield* InstanceRef
-  if (!ctx) return
-  yield* run(args, ctx)
+  const instance = yield* InstanceRef
+  if (Option.isNone(instance)) return
+  yield* run(args, instance.value)
 })
 
 const run = Effect.fn("Cli.debug.agent.body")(function* (
@@ -96,7 +96,7 @@ function resolveTools(agent: Agent.Info, availableTools: { id: string }[]) {
   )
   const resolved: Record<string, boolean> = {}
   for (const tool of availableTools) {
-    resolved[tool.id] = !disabled.has(tool.id)
+    resolved[tool.id] = !HashSet.has(disabled, tool.id)
   }
   return resolved
 }

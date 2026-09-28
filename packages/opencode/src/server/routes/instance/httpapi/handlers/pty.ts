@@ -32,7 +32,11 @@ function validOrigin(request: HttpServerRequest.HttpServerRequest, opts: CorsOpt
 const ticketScope = Effect.gen(function* () {
   const instance = yield* InstanceRef
   const workspaceID = yield* WorkspaceRef
-  return { directory: instance?.directory, workspaceID }
+  // PtyTicket takes optional scope fields.
+  return {
+    directory: Option.getOrUndefined(Option.map(instance, (ctx) => ctx.directory)),
+    workspaceID: Option.getOrUndefined(workspaceID),
+  }
 })
 
 // Legacy surface compatibility: before exited-session retention, sessions vanished the moment

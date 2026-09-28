@@ -425,7 +425,7 @@ lifecycle.live("pending question rejects on instance dispose", () =>
     expect(yield* waitForPending(1).pipe(provideInstance(dir))).toHaveLength(1)
     // A missing instance is a broken fixture, so it dies instead of failing the assertion below.
     const ctx = yield* Effect.gen(function* () {
-      return yield* Effect.fromNullishOr(yield* InstanceRef)
+      return yield* Effect.fromOption(yield* InstanceRef)
     }).pipe(provideInstance(dir), Effect.orDie)
     yield* InstanceStore.Service.use((store) => store.dispose(ctx))
 

@@ -61,7 +61,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
                   project: result.project,
                 })),
               )
-        yield* bootstrap.run.pipe(Effect.provideService(InstanceRef, ctx))
+        yield* bootstrap.run.pipe(Effect.provideService(InstanceRef, Option.some(ctx)))
         return ctx
       }).pipe(Effect.withSpan("InstanceStore.boot"))
 
@@ -207,7 +207,7 @@ const layer: Layer.Layer<Service, never, Project.Service | InstanceBootstrap.Ser
     })
 
     const provide = <A, E, R>(input: LoadInput, effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-      load(input).pipe(Effect.flatMap((ctx) => effect.pipe(Effect.provideService(InstanceRef, ctx))))
+      load(input).pipe(Effect.flatMap((ctx) => effect.pipe(Effect.provideService(InstanceRef, Option.some(ctx)))))
 
     yield* Effect.addFinalizer(() => disposeAll().pipe(Effect.ignore))
 

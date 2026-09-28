@@ -369,7 +369,7 @@ const layer = Layer.effect(
               },
               { publish: true, ownerID: space.id },
             )
-            .pipe(Effect.provideService(WorkspaceRef, space.id)),
+            .pipe(Effect.provideService(WorkspaceRef, Option.some(space.id))),
         { discard: true },
       )
     })

@@ -115,7 +115,7 @@ const configIt = (options?: Parameters<typeof configLayer>[0]) => testEffect(con
 const schemaConfig = (config: object) => ({ $schema: "https://opencode.ai/config.json", ...config })
 
 const provideCurrentInstance = <A, E, R>(effect: Effect.Effect<A, E, R>, ctx: InstanceContext) =>
-  effect.pipe(Effect.provideService(InstanceRef, ctx))
+  effect.pipe(Effect.provideService(InstanceRef, Option.some(ctx)))
 
 const load = (ctx: InstanceContext) =>
   Effect.runPromise(

@@ -15,21 +15,24 @@ export type Refs = {
 export function attachWith<A, E, R>(effect: Effect.Effect<A, E, R>, refs: Refs): Effect.Effect<A, E, R> {
   const withInstance = Option.match(refs.instance, {
     onNone: () => effect,
-    onSome: (instance) => effect.pipe(Effect.provideService(InstanceRef, instance)),
+    onSome: (instance) => effect.pipe(Effect.provideService(InstanceRef, Option.some(instance))),
   })
   // An empty workspace ID means no workspace, as the earlier truthiness check treated it.
-  return Option.match(Option.filter(refs.workspace, (workspace) => workspace !== ""), {
-    onNone: () => withInstance,
-    onSome: (workspace) => withInstance.pipe(Effect.provideService(WorkspaceRef, workspace)),
-  })
+  return Option.match(
+    Option.filter(refs.workspace, (workspace) => workspace !== ""),
+    {
+      onNone: () => withInstance,
+      onSome: (workspace) => withInstance.pipe(Effect.provideService(WorkspaceRef, Option.some(workspace))),
+    },
+  )
 }
 
 export function attach<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
   const fiber = Option.fromNullishOr(Fiber.getCurrent())
   return attachWith(effect, {
-    instance: Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, InstanceRef)),
+    instance: Option.flatMap(fiber, (current) => Context.get(current.context, InstanceRef)),
     workspace: Option.fromNullishOr(WorkspaceContext.workspaceID).pipe(
-      Option.orElse(() => Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, WorkspaceRef))),
+      Option.orElse(() => Option.flatMap(fiber, (current) => Context.get(current.context, WorkspaceRef))),
     ),
   })
 }

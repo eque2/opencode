@@ -19,8 +19,8 @@ function restoreWorkspace<R>(workspace: Option.Option<WorkspaceV2.ID>, fn: () =>
 
 function captureSync() {
   const fiber = Option.fromNullishOr(Fiber.getCurrent())
-  const instance = Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, InstanceRef))
-  const workspace = Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, WorkspaceRef)).pipe(
+  const instance = Option.flatMap(fiber, (current) => Context.get(current.context, InstanceRef))
+  const workspace = Option.flatMap(fiber, (current) => Context.get(current.context, WorkspaceRef)).pipe(
     Option.orElse(() => Option.fromNullishOr(WorkspaceContext.workspaceID)),
   )
   return { instance, workspace }
@@ -36,7 +36,7 @@ function captureSync() {
  */
 export const fromPromise = <T>(fn: () => Promise<T> | T): Effect.Effect<T> =>
   Effect.gen(function* () {
-    const workspace = Option.fromNullishOr(yield* WorkspaceRef)
+    const workspace = yield* WorkspaceRef
     return yield* Effect.suspend(() => {
       const result = restoreWorkspace(workspace, fn)
       return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.succeed(result)
@@ -47,8 +47,8 @@ export function make(): Effect.Effect<Shape> {
   return Effect.gen(function* () {
     const ctx = yield* Effect.context()
     const captured = captureSync()
-    const instance = Option.fromNullishOr(yield* InstanceRef).pipe(Option.orElse(() => captured.instance))
-    const workspace = Option.fromNullishOr(yield* WorkspaceRef).pipe(Option.orElse(() => captured.workspace))
+    const instance = (yield* InstanceRef).pipe(Option.orElse(() => captured.instance))
+    const workspace = (yield* WorkspaceRef).pipe(Option.orElse(() => captured.workspace))
     const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       attachWith(effect.pipe(Effect.provide(ctx)) as Effect.Effect<A, E>, { instance, workspace })
 

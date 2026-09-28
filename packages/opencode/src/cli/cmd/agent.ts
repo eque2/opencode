@@ -65,7 +65,7 @@ const AgentCreateCommand = effectCmd({
     const { Agent } = yield* Effect.promise(() => import("../../agent/agent"))
     const { Provider } = yield* Effect.promise(() => import("@/provider/provider"))
     // effectCmd always provides the instance for this command; a missing one is a defect.
-    const ctx = yield* Effect.fromNullishOr(yield* InstanceRef).pipe(
+    const ctx = yield* Effect.fromOption(yield* InstanceRef).pipe(
       Effect.catch(() => Effect.die("InstanceRef not provided")),
     )
     const agentSvc = yield* Agent.Service
