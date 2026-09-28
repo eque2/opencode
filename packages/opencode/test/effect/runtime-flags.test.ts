@@ -315,19 +315,22 @@ describe("RuntimeFlags", () => {
   it.effect("layer ignores the active ConfigProvider for omitted test overrides", () =>
     Effect.gen(function* () {
       const flags = yield* readFlags.pipe(
-        Effect.provide(RuntimeFlags.layer()),
         Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              OPENCODE_PURE: "true",
-              OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
-              OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
-              OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
-              OPENCODE_EXPERIMENTAL: "true",
-              OPENCODE_ENABLE_EXA: "true",
-              OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: "1234",
-              OPENCODE_CLIENT: "desktop",
-            }),
+          RuntimeFlags.layer().pipe(
+            Layer.provide(
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  OPENCODE_PURE: "true",
+                  OPENCODE_DISABLE_DEFAULT_PLUGINS: "true",
+                  OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+                  OPENCODE_DISABLE_LSP_DOWNLOAD: "true",
+                  OPENCODE_EXPERIMENTAL: "true",
+                  OPENCODE_ENABLE_EXA: "true",
+                  OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS: "1234",
+                  OPENCODE_CLIENT: "desktop",
+                }),
+              ),
+            ),
           ),
         ),
       )
