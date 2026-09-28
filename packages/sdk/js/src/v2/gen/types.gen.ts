@@ -134,32 +134,13 @@ export type Session = {
   directory: string
   path?: string
   parentID?: string
-  summary?: {
-    additions: number
-    deletions: number
-    files: number
-    diffs?: Array<SnapshotFileDiff>
-  }
+  summary?: SessionV1Summary
   cost?: number
-  tokens?: {
-    input: number
-    output: number
-    reasoning: number
-    cache: {
-      read: number
-      write: number
-    }
-  }
-  share?: {
-    url: string
-  }
+  tokens?: SessionV1Tokens
+  share?: SessionV1Share
   title: string
   agent?: string
-  model?: {
-    id: string
-    providerID: string
-    variant?: string
-  }
+  model?: SessionV1Model
   version: string
   metadata?: {
     [key: string]: unknown
@@ -171,12 +152,7 @@ export type Session = {
     archived?: number
   }
   permission?: PermissionRuleset
-  revert?: {
-    messageID: string
-    partID?: string
-    snapshot?: string
-    diff?: string
-  }
+  revert?: SessionV1Revert
 }
 
 export type JsonSchema = {
@@ -682,839 +658,442 @@ export type GlobalEvent = {
     | {
         id: string
         type: "models-dev.refreshed"
-        properties: unknown
+        properties: EventModelsDevRefreshedData
       }
     | {
         id: string
         type: "integration.updated"
-        properties: unknown
+        properties: EventIntegrationUpdatedData
       }
     | {
         id: string
         type: "integration.connection.updated"
-        properties: {
-          integrationID: string
-        }
+        properties: EventIntegrationConnectionUpdatedData
       }
     | {
         id: string
         type: "catalog.updated"
-        properties: unknown
+        properties: EventCatalogUpdatedData
       }
     | {
         id: string
         type: "session.created"
-        properties: {
-          sessionID: string
-          info: Session
-        }
+        properties: EventSessionCreatedData
       }
     | {
         id: string
         type: "session.updated"
-        properties: {
-          sessionID: string
-          info: Session
-        }
+        properties: EventSessionUpdatedData
       }
     | {
         id: string
         type: "session.deleted"
-        properties: {
-          sessionID: string
-          info: Session
-        }
+        properties: EventSessionDeletedData
       }
     | {
         id: string
         type: "message.updated"
-        properties: {
-          sessionID: string
-          info: Message
-        }
+        properties: EventMessageUpdatedData
       }
     | {
         id: string
         type: "message.removed"
-        properties: {
-          sessionID: string
-          messageID: string
-        }
+        properties: EventMessageRemovedData
       }
     | {
         id: string
         type: "message.part.updated"
-        properties: {
-          sessionID: string
-          part: Part
-          time: number
-        }
+        properties: EventMessagePartUpdatedData
       }
     | {
         id: string
         type: "message.part.removed"
-        properties: {
-          sessionID: string
-          messageID: string
-          partID: string
-        }
+        properties: EventMessagePartRemovedData
       }
     | {
         id: string
         type: "session.next.agent.switched"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          agent: string
-        }
+        properties: EventSessionNextAgentSwitchedData
       }
     | {
         id: string
         type: "session.next.model.switched"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          model: ModelRef
-        }
+        properties: EventSessionNextModelSwitchedData
       }
     | {
         id: string
         type: "session.next.moved"
-        properties: {
-          timestamp: number
-          sessionID: string
-          location: LocationRef
-          subdirectory?: string
-        }
+        properties: EventSessionNextMovedData
       }
     | {
         id: string
         type: "session.next.prompted"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          prompt: Prompt
-          delivery: "steer" | "queue"
-        }
+        properties: EventSessionNextPromptedData
       }
     | {
         id: string
         type: "session.next.prompt.admitted"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          prompt: Prompt
-          delivery: "steer" | "queue"
-        }
+        properties: EventSessionNextPromptAdmittedData
       }
     | {
         id: string
         type: "session.next.context.updated"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          text: string
-        }
+        properties: EventSessionNextContextUpdatedData
       }
     | {
         id: string
         type: "session.next.synthetic"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          text: string
-        }
+        properties: EventSessionNextSyntheticData
       }
     | {
         id: string
         type: "session.next.shell.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          callID: string
-          command: string
-        }
+        properties: EventSessionNextShellStartedData
       }
     | {
         id: string
         type: "session.next.shell.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          callID: string
-          output: string
-        }
+        properties: EventSessionNextShellEndedData
       }
     | {
         id: string
         type: "session.next.step.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          agent: string
-          model: ModelRef
-          snapshot?: string
-        }
+        properties: EventSessionNextStepStartedData
       }
     | {
         id: string
         type: "session.next.step.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          finish: string
-          cost: number
-          tokens: {
-            input: number
-            output: number
-            reasoning: number
-            cache: {
-              read: number
-              write: number
-            }
-          }
-          snapshot?: string
-          files?: Array<string>
-        }
+        properties: EventSessionNextStepEndedData
       }
     | {
         id: string
         type: "session.next.step.failed"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          error: SessionErrorUnknown
-        }
+        properties: EventSessionNextStepFailedData
       }
     | {
         id: string
         type: "session.next.text.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          textID: string
-        }
+        properties: EventSessionNextTextStartedData
       }
     | {
         id: string
         type: "session.next.text.delta"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          textID: string
-          delta: string
-        }
+        properties: EventSessionNextTextDeltaData
       }
     | {
         id: string
         type: "session.next.text.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          textID: string
-          text: string
-        }
+        properties: EventSessionNextTextEndedData
       }
     | {
         id: string
         type: "session.next.reasoning.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          reasoningID: string
-          providerMetadata?: LlmProviderMetadata
-        }
+        properties: EventSessionNextReasoningStartedData
       }
     | {
         id: string
         type: "session.next.reasoning.delta"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          reasoningID: string
-          delta: string
-        }
+        properties: EventSessionNextReasoningDeltaData
       }
     | {
         id: string
         type: "session.next.reasoning.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          reasoningID: string
-          text: string
-          providerMetadata?: LlmProviderMetadata1
-        }
+        properties: EventSessionNextReasoningEndedData
       }
     | {
         id: string
         type: "session.next.tool.input.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          name: string
-        }
+        properties: EventSessionNextToolInputStartedData
       }
     | {
         id: string
         type: "session.next.tool.input.delta"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          delta: string
-        }
+        properties: EventSessionNextToolInputDeltaData
       }
     | {
         id: string
         type: "session.next.tool.input.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          text: string
-        }
+        properties: EventSessionNextToolInputEndedData
       }
     | {
         id: string
         type: "session.next.tool.called"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          tool: string
-          input: {
-            [key: string]: unknown
-          }
-          provider: {
-            executed: boolean
-            metadata?: LlmProviderMetadata2
-          }
-        }
+        properties: EventSessionNextToolCalledData
       }
     | {
         id: string
         type: "session.next.tool.progress"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          structured: {
-            [key: string]: unknown
-          }
-          content: Array<LlmToolContent>
-        }
+        properties: EventSessionNextToolProgressData
       }
     | {
         id: string
         type: "session.next.tool.success"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          structured: {
-            [key: string]: unknown
-          }
-          content: Array<LlmToolContent>
-          outputPaths?: Array<string>
-          result?: unknown
-          provider: {
-            executed: boolean
-            metadata?: LlmProviderMetadata3
-          }
-        }
+        properties: EventSessionNextToolSuccessData
       }
     | {
         id: string
         type: "session.next.tool.failed"
-        properties: {
-          timestamp: number
-          sessionID: string
-          assistantMessageID: string
-          callID: string
-          error: SessionErrorUnknown
-          result?: unknown
-          provider: {
-            executed: boolean
-            metadata?: LlmProviderMetadata4
-          }
-        }
+        properties: EventSessionNextToolFailedData
       }
     | {
         id: string
         type: "session.next.retried"
-        properties: {
-          timestamp: number
-          sessionID: string
-          attempt: number
-          error: SessionNextRetryError
-        }
+        properties: EventSessionNextRetriedData
       }
     | {
         id: string
         type: "session.next.compaction.started"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          reason: "auto" | "manual"
-        }
+        properties: EventSessionNextCompactionStartedData
       }
     | {
         id: string
         type: "session.next.compaction.delta"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          text: string
-        }
+        properties: EventSessionNextCompactionDeltaData
       }
     | {
         id: string
         type: "session.next.compaction.ended"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-          reason: "auto" | "manual"
-          text: string
-          recent: string
-        }
+        properties: EventSessionNextCompactionEndedData
       }
     | {
         id: string
         type: "session.next.revert.staged"
-        properties: {
-          timestamp: number
-          sessionID: string
-          revert: RevertState
-        }
+        properties: EventSessionNextRevertStagedData
       }
     | {
         id: string
         type: "session.next.revert.cleared"
-        properties: {
-          timestamp: number
-          sessionID: string
-        }
+        properties: EventSessionNextRevertClearedData
       }
     | {
         id: string
         type: "session.next.revert.committed"
-        properties: {
-          timestamp: number
-          sessionID: string
-          messageID: string
-        }
+        properties: EventSessionNextRevertCommittedData
       }
     | {
         id: string
         type: "message.part.delta"
-        properties: {
-          sessionID: string
-          messageID: string
-          partID: string
-          field: string
-          delta: string
-        }
+        properties: EventMessagePartDeltaData
       }
     | {
         id: string
         type: "session.diff"
-        properties: {
-          sessionID: string
-          diff: Array<SnapshotFileDiff>
-        }
+        properties: EventSessionDiffData
       }
     | {
         id: string
         type: "session.error"
-        properties: {
-          sessionID?: string
-          error?:
-            | ProviderAuthError
-            | UnknownError
-            | MessageOutputLengthError
-            | MessageAbortedError
-            | StructuredOutputError
-            | ContextOverflowError
-            | ContentFilterError
-            | ApiError
-        }
+        properties: EventSessionErrorData
       }
     | {
         id: string
         type: "installation.updated"
-        properties: {
-          version: string
-        }
+        properties: EventInstallationUpdatedData
       }
     | {
         id: string
         type: "installation.update-available"
-        properties: {
-          version: string
-        }
+        properties: EventInstallationUpdateAvailableData
       }
     | {
         id: string
         type: "file.edited"
-        properties: {
-          file: string
-        }
+        properties: EventFileEditedData
       }
     | {
         id: string
         type: "reference.updated"
-        properties: unknown
+        properties: EventReferenceUpdatedData
       }
     | {
         id: string
         type: "permission.v2.asked"
-        properties: {
-          id: string
-          sessionID: string
-          action: string
-          resources: Array<string>
-          save?: Array<string>
-          metadata?: {
-            [key: string]: unknown
-          }
-          source?: PermissionV2Source
-        }
+        properties: EventPermissionV2AskedData
       }
     | {
         id: string
         type: "permission.v2.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          reply: PermissionV2Reply
-        }
+        properties: EventPermissionV2RepliedData
       }
     | {
         id: string
         type: "plugin.added"
-        properties: {
-          id: string
-        }
+        properties: EventPluginAddedData
       }
     | {
         id: string
         type: "project.directories.updated"
-        properties: {
-          projectID: string
-        }
+        properties: EventProjectDirectoriesUpdatedData
       }
     | {
         id: string
         type: "file.watcher.updated"
-        properties: {
-          file: string
-          event: "add" | "change" | "unlink"
-        }
+        properties: EventFileWatcherUpdatedData
       }
     | {
         id: string
         type: "pty.created"
-        properties: {
-          info: Pty
-        }
+        properties: EventPtyCreatedData
       }
     | {
         id: string
         type: "pty.updated"
-        properties: {
-          info: Pty
-        }
+        properties: EventPtyUpdatedData
       }
     | {
         id: string
         type: "pty.exited"
-        properties: {
-          id: string
-          exitCode: number
-        }
+        properties: EventPtyExitedData
       }
     | {
         id: string
         type: "pty.deleted"
-        properties: {
-          id: string
-        }
+        properties: EventPtyDeletedData
       }
     | {
         id: string
         type: "question.v2.asked"
-        properties: {
-          id: string
-          sessionID: string
-          /**
-           * Questions to ask
-           */
-          questions: Array<QuestionV2Info>
-          tool?: QuestionV2Tool
-        }
+        properties: EventQuestionV2AskedData
       }
     | {
         id: string
         type: "question.v2.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          answers: Array<QuestionV2Answer>
-        }
+        properties: EventQuestionV2RepliedData
       }
     | {
         id: string
         type: "question.v2.rejected"
-        properties: {
-          sessionID: string
-          requestID: string
-        }
+        properties: EventQuestionV2RejectedData
       }
     | {
         id: string
         type: "todo.updated"
-        properties: {
-          sessionID: string
-          todos: Array<Todo>
-        }
+        properties: EventTodoUpdatedData
       }
     | {
         id: string
         type: "lsp.updated"
-        properties: unknown
+        properties: EventLspUpdatedData
       }
     | {
         id: string
         type: "permission.asked"
-        properties: {
-          id: string
-          sessionID: string
-          permission: string
-          patterns: Array<string>
-          metadata: {
-            [key: string]: unknown
-          }
-          always: Array<string>
-          tool?: {
-            messageID: string
-            callID: string
-          }
-        }
+        properties: EventPermissionAskedData
       }
     | {
         id: string
         type: "permission.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          reply: "once" | "always" | "reject"
-        }
+        properties: EventPermissionRepliedData
       }
     | {
         id: string
         type: "tui.prompt.append"
-        properties: {
-          text: string
-        }
+        properties: EventTuiPromptAppendData
       }
     | {
         id: string
         type: "tui.command.execute"
-        properties: {
-          command: string
-        }
+        properties: EventTuiCommandExecuteData
       }
     | {
         id: string
         type: "tui.toast.show"
-        properties: {
-          title?: string
-          message: string
-          variant: "info" | "success" | "warning" | "error"
-          duration?: number
-        }
+        properties: EventTuiToastShowData
       }
     | {
         id: string
         type: "tui.session.select"
-        properties: {
-          /**
-           * Session ID to navigate to
-           */
-          sessionID: string
-        }
+        properties: EventTuiSessionSelectData
       }
     | {
         id: string
         type: "mcp.tools.changed"
-        properties: {
-          server: string
-        }
+        properties: EventMcpToolsChangedData
       }
     | {
         id: string
         type: "mcp.browser.open.failed"
-        properties: {
-          mcpName: string
-          url: string
-        }
+        properties: EventMcpBrowserOpenFailedData
       }
     | {
         id: string
         type: "command.executed"
-        properties: {
-          name: string
-          sessionID: string
-          arguments: string
-          messageID: string
-        }
+        properties: EventCommandExecutedData
       }
     | {
         id: string
         type: "project.updated"
-        properties: {
-          id: string
-          worktree: string
-          vcs?: ProjectVcs
-          name?: string
-          icon?: ProjectIcon
-          commands?: ProjectCommands
-          time: ProjectTime
-          sandboxes: Array<string>
-        }
+        properties: EventProjectUpdatedData
       }
     | {
         id: string
         type: "session.status"
-        properties: {
-          sessionID: string
-          status: SessionStatus
-        }
+        properties: EventSessionStatusData
       }
     | {
         id: string
         type: "session.idle"
-        properties: {
-          sessionID: string
-        }
+        properties: EventSessionIdleData
       }
     | {
         id: string
         type: "question.asked"
-        properties: {
-          id: string
-          sessionID: string
-          /**
-           * Questions to ask
-           */
-          questions: Array<QuestionInfo>
-          tool?: QuestionTool
-        }
+        properties: EventQuestionAskedData
       }
     | {
         id: string
         type: "question.replied"
-        properties: {
-          sessionID: string
-          requestID: string
-          answers: Array<QuestionAnswer>
-        }
+        properties: EventQuestionRepliedData
       }
     | {
         id: string
         type: "question.rejected"
-        properties: {
-          sessionID: string
-          requestID: string
-        }
+        properties: EventQuestionRejectedData
       }
     | {
         id: string
         type: "session.compacted"
-        properties: {
-          sessionID: string
-        }
+        properties: EventSessionCompactedData
       }
     | {
         id: string
         type: "vcs.branch.updated"
-        properties: {
-          branch?: string
-        }
+        properties: EventVcsBranchUpdatedData
       }
     | {
         id: string
         type: "workspace.ready"
-        properties: {
-          name: string
-        }
+        properties: EventWorkspaceReadyData
       }
     | {
         id: string
         type: "workspace.failed"
-        properties: {
-          message: string
-        }
+        properties: EventWorkspaceFailedData
       }
     | {
         id: string
         type: "workspace.status"
-        properties: {
-          workspaceID: string
-          status: "connected" | "connecting" | "disconnected" | "error"
-        }
+        properties: EventWorkspaceStatusData
       }
     | {
         id: string
         type: "worktree.ready"
-        properties: {
-          name: string
-          branch?: string
-        }
+        properties: EventWorktreeReadyData
       }
     | {
         id: string
         type: "worktree.failed"
-        properties: {
-          message: string
-        }
+        properties: EventWorktreeFailedData
       }
     | {
         id: string
         type: "server.connected"
-        properties: unknown
+        properties: EventServerConnectedData
       }
     | {
         id: string
         type: "global.disposed"
-        properties: unknown
+        properties: EventGlobalDisposedData
       }
     | EventServerInstanceDisposed
     | SyncEventSessionCreated
@@ -1568,6 +1147,15 @@ export type ServerConfig = {
   mdns?: boolean
   mdnsDomain?: string
   cors?: Array<string>
+}
+
+export type CommandConfig = {
+  template: string
+  description?: string
+  agent?: string
+  model?: string
+  variant?: string
+  subtask?: boolean
 }
 
 export type PermissionActionConfig = "ask" | "allow" | "deny"
@@ -1712,6 +1300,15 @@ export type McpRemoteConfig = {
   timeout?: number
 }
 
+export type FormatterEntryConfig = {
+  disabled?: boolean
+  command?: Array<string>
+  environment?: {
+    [key: string]: string
+  }
+  extensions?: Array<string>
+}
+
 /**
  * @deprecated Always uses stretch layout.
  */
@@ -1734,14 +1331,7 @@ export type Config = {
   logLevel?: LogLevel
   server?: ServerConfig
   command?: {
-    [key: string]: {
-      template: string
-      description?: string
-      agent?: string
-      model?: string
-      variant?: string
-      subtask?: boolean
-    }
+    [key: string]: CommandConfig
   }
   skills?: {
     paths?: Array<string>
@@ -1811,14 +1401,7 @@ export type Config = {
   formatter?:
     | boolean
     | {
-        [key: string]: {
-          disabled?: boolean
-          command?: Array<string>
-          environment?: {
-            [key: string]: string
-          }
-          extensions?: Array<string>
-        }
+        [key: string]: FormatterEntryConfig
       }
   /**
    * Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.
@@ -1880,14 +1463,7 @@ export type Config1 = {
   logLevel?: LogLevel
   server?: ServerConfig
   command?: {
-    [key: string]: {
-      template: string
-      description?: string
-      agent?: string
-      model?: string
-      variant?: string
-      subtask?: boolean
-    }
+    [key: string]: CommandConfig
   }
   skills?: {
     paths?: Array<string>
@@ -1957,14 +1533,7 @@ export type Config1 = {
   formatter?:
     | boolean
     | {
-        [key: string]: {
-          disabled?: boolean
-          command?: Array<string>
-          environment?: {
-            [key: string]: string
-          }
-          extensions?: Array<string>
-        }
+        [key: string]: FormatterEntryConfig
       }
   /**
    * Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.
@@ -2026,14 +1595,7 @@ export type Config2 = {
   logLevel?: LogLevel
   server?: ServerConfig
   command?: {
-    [key: string]: {
-      template: string
-      description?: string
-      agent?: string
-      model?: string
-      variant?: string
-      subtask?: boolean
-    }
+    [key: string]: CommandConfig
   }
   skills?: {
     paths?: Array<string>
@@ -2103,14 +1665,7 @@ export type Config2 = {
   formatter?:
     | boolean
     | {
-        [key: string]: {
-          disabled?: boolean
-          command?: Array<string>
-          environment?: {
-            [key: string]: string
-          }
-          extensions?: Array<string>
-        }
+        [key: string]: FormatterEntryConfig
       }
   /**
    * Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.
@@ -2172,14 +1727,7 @@ export type Config3 = {
   logLevel?: LogLevel
   server?: ServerConfig
   command?: {
-    [key: string]: {
-      template: string
-      description?: string
-      agent?: string
-      model?: string
-      variant?: string
-      subtask?: boolean
-    }
+    [key: string]: CommandConfig
   }
   skills?: {
     paths?: Array<string>
@@ -2249,14 +1797,7 @@ export type Config3 = {
   formatter?:
     | boolean
     | {
-        [key: string]: {
-          disabled?: boolean
-          command?: Array<string>
-          environment?: {
-            [key: string]: string
-          }
-          extensions?: Array<string>
-        }
+        [key: string]: FormatterEntryConfig
       }
   /**
    * Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.
@@ -2318,14 +1859,7 @@ export type Config4 = {
   logLevel?: LogLevel
   server?: ServerConfig
   command?: {
-    [key: string]: {
-      template: string
-      description?: string
-      agent?: string
-      model?: string
-      variant?: string
-      subtask?: boolean
-    }
+    [key: string]: CommandConfig
   }
   skills?: {
     paths?: Array<string>
@@ -2395,14 +1929,7 @@ export type Config4 = {
   formatter?:
     | boolean
     | {
-        [key: string]: {
-          disabled?: boolean
-          command?: Array<string>
-          environment?: {
-            [key: string]: string
-          }
-          extensions?: Array<string>
-        }
+        [key: string]: FormatterEntryConfig
       }
   /**
    * Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.
@@ -2461,6 +1988,9 @@ export type Config4 = {
 export type Model = {
   id: string
   providerID: string
+  /**
+   * Upstream API model id, base URL, and AI SDK package of a model
+   */
   api: {
     id: string
     url: string
@@ -2468,11 +1998,17 @@ export type Model = {
   }
   name: string
   family?: string
+  /**
+   * Features that a model supports
+   */
   capabilities: {
     temperature: boolean
     reasoning: boolean
     attachment: boolean
     toolcall: boolean
+    /**
+     * Content types that a model accepts or produces
+     */
     input: {
       text: boolean
       audio: boolean
@@ -2480,6 +2016,9 @@ export type Model = {
       video: boolean
       pdf: boolean
     }
+    /**
+     * Content types that a model accepts or produces
+     */
     output: {
       text: boolean
       audio: boolean
@@ -2493,9 +2032,15 @@ export type Model = {
           field: string
         }
   }
+  /**
+   * Token cost of a model
+   */
   cost: {
     input: number
     output: number
+    /**
+     * Cost of cache reads and cache writes
+     */
     cache: {
       read: number
       write: number
@@ -2503,6 +2048,9 @@ export type Model = {
     tiers?: Array<{
       input: number
       output: number
+      /**
+       * Cost of cache reads and cache writes
+       */
       cache: {
         read: number
         write: number
@@ -2515,12 +2063,18 @@ export type Model = {
     experimentalOver200K?: {
       input: number
       output: number
+      /**
+       * Cost of cache reads and cache writes
+       */
       cache: {
         read: number
         write: number
       }
     }
   }
+  /**
+   * Token limits of a model
+   */
   limit: {
     context: number
     input?: number
@@ -2611,6 +2165,9 @@ export type GlobalSession = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -2618,6 +2175,9 @@ export type GlobalSession = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -2627,11 +2187,17 @@ export type GlobalSession = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -2641,6 +2207,9 @@ export type GlobalSession = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -2648,6 +2217,9 @@ export type GlobalSession = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -2665,15 +2237,14 @@ export type McpResource = {
   client: string
 }
 
+export type Position = {
+  line: number
+  character: number
+}
+
 export type Range1 = {
-  start: {
-    line: number
-    character: number
-  }
-  end: {
-    line: number
-    character: number
-  }
+  start: Position
+  end: Position
 }
 
 export type Symbol = {
@@ -2949,6 +2520,9 @@ export type Session1 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -2956,6 +2530,9 @@ export type Session1 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -2965,11 +2542,17 @@ export type Session1 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -2979,6 +2562,9 @@ export type Session1 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -2986,6 +2572,9 @@ export type Session1 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3002,6 +2591,9 @@ export type Session2 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3009,6 +2601,9 @@ export type Session2 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3018,11 +2613,17 @@ export type Session2 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3032,6 +2633,9 @@ export type Session2 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3039,6 +2643,9 @@ export type Session2 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3055,6 +2662,9 @@ export type Session3 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3062,6 +2672,9 @@ export type Session3 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3071,11 +2684,17 @@ export type Session3 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3085,6 +2704,9 @@ export type Session3 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3092,6 +2714,9 @@ export type Session3 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3108,6 +2733,9 @@ export type Session4 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3115,6 +2743,9 @@ export type Session4 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3124,11 +2755,17 @@ export type Session4 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3138,6 +2775,9 @@ export type Session4 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3145,6 +2785,9 @@ export type Session4 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3161,6 +2804,9 @@ export type Session5 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3168,6 +2814,9 @@ export type Session5 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3177,11 +2826,17 @@ export type Session5 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3191,6 +2846,9 @@ export type Session5 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3198,6 +2856,9 @@ export type Session5 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3214,6 +2875,9 @@ export type Session6 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3221,6 +2885,9 @@ export type Session6 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3230,11 +2897,17 @@ export type Session6 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3244,6 +2917,9 @@ export type Session6 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3251,6 +2927,9 @@ export type Session6 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3267,6 +2946,9 @@ export type Session7 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3274,6 +2956,9 @@ export type Session7 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3283,11 +2968,17 @@ export type Session7 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3297,6 +2988,9 @@ export type Session7 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3304,6 +2998,9 @@ export type Session7 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3368,6 +3065,9 @@ export type Session8 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3375,6 +3075,9 @@ export type Session8 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3384,11 +3087,17 @@ export type Session8 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3398,6 +3107,9 @@ export type Session8 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3405,6 +3117,9 @@ export type Session8 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3421,6 +3136,9 @@ export type Session9 = {
   directory: string
   path?: string
   parentID?: string
+  /**
+   * Line and file change counts of a session
+   */
   summary?: {
     additions: number
     deletions: number
@@ -3428,6 +3146,9 @@ export type Session9 = {
     diffs?: Array<SnapshotFileDiff>
   }
   cost?: number
+  /**
+   * Token usage of a session
+   */
   tokens?: {
     input: number
     output: number
@@ -3437,11 +3158,17 @@ export type Session9 = {
       write: number
     }
   }
+  /**
+   * Share link of a session
+   */
   share?: {
     url: string
   }
   title: string
   agent?: string
+  /**
+   * Model that a session uses
+   */
   model?: {
     id: string
     providerID: string
@@ -3451,6 +3178,9 @@ export type Session9 = {
   metadata?: {
     [key: string]: unknown
   }
+  /**
+   * Lifecycle timestamps of a session
+   */
   time: {
     created: number
     updated: number
@@ -3458,6 +3188,9 @@ export type Session9 = {
     archived?: number
   }
   permission?: PermissionRuleset
+  /**
+   * Revert point of a session
+   */
   revert?: {
     messageID: string
     partID?: string
@@ -3482,36 +3215,22 @@ export type Part1 =
 
 export type EventTuiPromptAppend = {
   type: "tui.prompt.append"
-  properties: {
-    text: string
-  }
+  properties: EventTuiPromptAppendData
 }
 
 export type EventTuiCommandExecute = {
   type: "tui.command.execute"
-  properties: {
-    command: string
-  }
+  properties: EventTuiCommandExecuteData
 }
 
 export type EventTuiToastShow = {
   type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    duration?: number
-  }
+  properties: EventTuiToastShowData
 }
 
 export type EventTuiSessionSelect = {
   type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
-    sessionID: string
-  }
+  properties: EventTuiSessionSelectData
 }
 
 export type Workspace = {
@@ -3729,6 +3448,65 @@ export type MoveSessionError = {
   }
 }
 
+export type EventModelsDevRefreshedData = unknown
+
+export type EventIntegrationUpdatedData = unknown
+
+export type EventIntegrationConnectionUpdatedData = {
+  integrationID: string
+}
+
+export type EventCatalogUpdatedData = unknown
+
+export type SessionV1Summary = {
+  additions: number
+  deletions: number
+  files: number
+  diffs?: Array<SnapshotFileDiff>
+}
+
+export type SessionV1Tokens = {
+  input: number
+  output: number
+  reasoning: number
+  cache: {
+    read: number
+    write: number
+  }
+}
+
+export type SessionV1Share = {
+  url: string
+}
+
+export type SessionV1Model = {
+  id: string
+  providerID: string
+  variant?: string
+}
+
+export type SessionV1Revert = {
+  messageID: string
+  partID?: string
+  snapshot?: string
+  diff?: string
+}
+
+export type EventSessionCreatedData = {
+  sessionID: string
+  info: Session
+}
+
+export type EventSessionUpdatedData = {
+  sessionID: string
+  info: Session
+}
+
+export type EventSessionDeletedData = {
+  sessionID: string
+  info: Session
+}
+
 export type OutputFormatText = {
   type: "text"
 }
@@ -3739,15 +3517,58 @@ export type OutputFormatJsonSchema = {
   retryCount?: number
 }
 
+export type EventMessageUpdatedData = {
+  sessionID: string
+  info: Message
+}
+
+export type EventMessageRemovedData = {
+  sessionID: string
+  messageID: string
+}
+
+export type EventMessagePartUpdatedData = {
+  sessionID: string
+  part: Part
+  time: number
+}
+
+export type EventMessagePartRemovedData = {
+  sessionID: string
+  messageID: string
+  partID: string
+}
+
+export type EventSessionNextAgentSwitchedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  agent: string
+}
+
 export type ModelRef = {
   id: string
   providerID: string
   variant?: string
 }
 
+export type EventSessionNextModelSwitchedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  model: ModelRef
+}
+
 export type LocationRef = {
   directory: string
   workspaceID?: string
+}
+
+export type EventSessionNextMovedData = {
+  timestamp: number
+  sessionID: string
+  location: LocationRef
+  subdirectory?: string
 }
 
 export type PromptSource = {
@@ -3769,9 +3590,112 @@ export type PromptAgentAttachment = {
   source?: PromptSource
 }
 
+export type EventSessionNextPromptedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  prompt: Prompt
+  delivery: "steer" | "queue"
+}
+
+export type EventSessionNextPromptAdmittedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  prompt: Prompt
+  delivery: "steer" | "queue"
+}
+
+export type EventSessionNextContextUpdatedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  text: string
+}
+
+export type EventSessionNextSyntheticData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  text: string
+}
+
+export type EventSessionNextShellStartedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  callID: string
+  command: string
+}
+
+export type EventSessionNextShellEndedData = {
+  timestamp: number
+  sessionID: string
+  callID: string
+  output: string
+}
+
+export type EventSessionNextStepStartedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  agent: string
+  model: ModelRef
+  snapshot?: string
+}
+
+export type EventSessionNextStepEndedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  finish: string
+  cost: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+  snapshot?: string
+  files?: Array<string>
+}
+
 export type SessionErrorUnknown = {
   type: "unknown"
   message: string
+}
+
+export type EventSessionNextStepFailedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  error: SessionErrorUnknown
+}
+
+export type EventSessionNextTextStartedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  textID: string
+}
+
+export type EventSessionNextTextDeltaData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  textID: string
+  delta: string
+}
+
+export type EventSessionNextTextEndedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  textID: string
+  text: string
 }
 
 export type LlmProviderMetadata = {
@@ -3780,15 +3704,67 @@ export type LlmProviderMetadata = {
   }
 }
 
-export type LlmProviderMetadata1 = {
-  [key: string]: {
-    [key: string]: unknown
-  }
+export type EventSessionNextReasoningStartedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  reasoningID: string
+  providerMetadata?: LlmProviderMetadata
 }
 
-export type LlmProviderMetadata2 = {
-  [key: string]: {
+export type EventSessionNextReasoningDeltaData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  reasoningID: string
+  delta: string
+}
+
+export type EventSessionNextReasoningEndedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  reasoningID: string
+  text: string
+  providerMetadata?: LlmProviderMetadata
+}
+
+export type EventSessionNextToolInputStartedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  name: string
+}
+
+export type EventSessionNextToolInputDeltaData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  delta: string
+}
+
+export type EventSessionNextToolInputEndedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  text: string
+}
+
+export type EventSessionNextToolCalledData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  tool: string
+  input: {
     [key: string]: unknown
+  }
+  provider: {
+    executed: boolean
+    metadata?: LlmProviderMetadata
   }
 }
 
@@ -3806,15 +3782,44 @@ export type ToolFileContent = {
 
 export type LlmToolContent = ToolTextContent | ToolFileContent
 
-export type LlmProviderMetadata3 = {
-  [key: string]: {
+export type EventSessionNextToolProgressData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  structured: {
     [key: string]: unknown
+  }
+  content: Array<LlmToolContent>
+}
+
+export type EventSessionNextToolSuccessData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  structured: {
+    [key: string]: unknown
+  }
+  content: Array<LlmToolContent>
+  outputPaths?: Array<string>
+  result?: unknown
+  provider: {
+    executed: boolean
+    metadata?: LlmProviderMetadata
   }
 }
 
-export type LlmProviderMetadata4 = {
-  [key: string]: {
-    [key: string]: unknown
+export type EventSessionNextToolFailedData = {
+  timestamp: number
+  sessionID: string
+  assistantMessageID: string
+  callID: string
+  error: SessionErrorUnknown
+  result?: unknown
+  provider: {
+    executed: boolean
+    metadata?: LlmProviderMetadata
   }
 }
 
@@ -3829,6 +3834,36 @@ export type SessionNextRetryError = {
   metadata?: {
     [key: string]: string
   }
+}
+
+export type EventSessionNextRetriedData = {
+  timestamp: number
+  sessionID: string
+  attempt: number
+  error: SessionNextRetryError
+}
+
+export type EventSessionNextCompactionStartedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  reason: "auto" | "manual"
+}
+
+export type EventSessionNextCompactionDeltaData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  text: string
+}
+
+export type EventSessionNextCompactionEndedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+  reason: "auto" | "manual"
+  text: string
+  recent: string
 }
 
 export type FileDiff = {
@@ -3847,13 +3882,118 @@ export type RevertState = {
   files?: Array<FileDiff>
 }
 
+export type EventSessionNextRevertStagedData = {
+  timestamp: number
+  sessionID: string
+  revert: RevertState
+}
+
+export type EventSessionNextRevertClearedData = {
+  timestamp: number
+  sessionID: string
+}
+
+export type EventSessionNextRevertCommittedData = {
+  timestamp: number
+  sessionID: string
+  messageID: string
+}
+
+export type EventMessagePartDeltaData = {
+  sessionID: string
+  messageID: string
+  partID: string
+  field: string
+  delta: string
+}
+
+export type EventSessionDiffData = {
+  sessionID: string
+  diff: Array<SnapshotFileDiff>
+}
+
+export type EventSessionErrorData = {
+  sessionID?: string
+  error?:
+    | ProviderAuthError
+    | UnknownError
+    | MessageOutputLengthError
+    | MessageAbortedError
+    | StructuredOutputError
+    | ContextOverflowError
+    | ContentFilterError
+    | ApiError
+}
+
+export type EventInstallationUpdatedData = {
+  version: string
+}
+
+export type EventInstallationUpdateAvailableData = {
+  version: string
+}
+
+export type EventFileEditedData = {
+  file: string
+}
+
+export type EventReferenceUpdatedData = unknown
+
 export type PermissionV2Source = {
   type: "tool"
   messageID: string
   callID: string
 }
 
+export type EventPermissionV2AskedData = {
+  id: string
+  sessionID: string
+  action: string
+  resources: Array<string>
+  save?: Array<string>
+  metadata?: {
+    [key: string]: unknown
+  }
+  source?: PermissionV2Source
+}
+
 export type PermissionV2Reply = "once" | "always" | "reject"
+
+export type EventPermissionV2RepliedData = {
+  sessionID: string
+  requestID: string
+  reply: PermissionV2Reply
+}
+
+export type EventPluginAddedData = {
+  id: string
+}
+
+export type EventProjectDirectoriesUpdatedData = {
+  projectID: string
+}
+
+export type EventFileWatcherUpdatedData = {
+  file: string
+  event: "add" | "change" | "unlink"
+}
+
+export type EventPtyCreatedData = {
+  info: Pty
+}
+
+export type EventPtyUpdatedData = {
+  info: Pty
+}
+
+export type EventPtyExitedData = {
+  id: string
+  exitCode: number
+}
+
+export type EventPtyDeletedData = {
+  id: string
+}
 
 export type QuestionV2Option = {
   /**
@@ -3888,7 +4028,94 @@ export type QuestionV2Tool = {
   callID: string
 }
 
+export type EventQuestionV2AskedData = {
+  id: string
+  sessionID: string
+  /**
+   * Questions to ask
+   */
+  questions: Array<QuestionV2Info>
+  tool?: QuestionV2Tool
+}
+
 export type QuestionV2Answer = Array<string>
+
+export type EventQuestionV2RepliedData = {
+  sessionID: string
+  requestID: string
+  answers: Array<QuestionV2Answer>
+}
+
+export type EventQuestionV2RejectedData = {
+  sessionID: string
+  requestID: string
+}
+
+export type EventTodoUpdatedData = {
+  sessionID: string
+  todos: Array<Todo>
+}
+
+export type EventLspUpdatedData = unknown
+
+export type EventPermissionAskedData = {
+  id: string
+  sessionID: string
+  permission: string
+  patterns: Array<string>
+  metadata: {
+    [key: string]: unknown
+  }
+  always: Array<string>
+  tool?: {
+    messageID: string
+    callID: string
+  }
+}
+
+export type EventPermissionRepliedData = {
+  sessionID: string
+  requestID: string
+  reply: "once" | "always" | "reject"
+}
+
+export type EventTuiPromptAppendData = {
+  text: string
+}
+
+export type EventTuiCommandExecuteData = {
+  command: string
+}
+
+export type EventTuiToastShowData = {
+  title?: string
+  message: string
+  variant: "info" | "success" | "warning" | "error"
+  duration?: number
+}
+
+export type EventTuiSessionSelectData = {
+  /**
+   * Session ID to navigate to
+   */
+  sessionID: string
+}
+
+export type EventMcpToolsChangedData = {
+  server: string
+}
+
+export type EventMcpBrowserOpenFailedData = {
+  mcpName: string
+  url: string
+}
+
+export type EventCommandExecutedData = {
+  name: string
+  sessionID: string
+  arguments: string
+  messageID: string
+}
 
 export type ProjectVcs = "git"
 
@@ -3911,6 +4138,81 @@ export type ProjectTime = {
   initialized?: number
 }
 
+export type EventProjectUpdatedData = {
+  id: string
+  worktree: string
+  vcs?: ProjectVcs
+  name?: string
+  icon?: ProjectIcon
+  commands?: ProjectCommands
+  time: ProjectTime
+  sandboxes: Array<string>
+}
+
+export type EventSessionStatusData = {
+  sessionID: string
+  status: SessionStatus
+}
+
+export type EventSessionIdleData = {
+  sessionID: string
+}
+
+export type EventQuestionAskedData = {
+  id: string
+  sessionID: string
+  /**
+   * Questions to ask
+   */
+  questions: Array<QuestionInfo>
+  tool?: QuestionTool
+}
+
+export type EventQuestionRepliedData = {
+  sessionID: string
+  requestID: string
+  answers: Array<QuestionAnswer>
+}
+
+export type EventQuestionRejectedData = {
+  sessionID: string
+  requestID: string
+}
+
+export type EventSessionCompactedData = {
+  sessionID: string
+}
+
+export type EventVcsBranchUpdatedData = {
+  branch?: string
+}
+
+export type EventWorkspaceReadyData = {
+  name: string
+}
+
+export type EventWorkspaceFailedData = {
+  message: string
+}
+
+export type EventWorkspaceStatusData = {
+  workspaceID: string
+  status: "connected" | "connecting" | "disconnected" | "error"
+}
+
+export type EventWorktreeReadyData = {
+  name: string
+  branch?: string
+}
+
+export type EventWorktreeFailedData = {
+  message: string
+}
+
+export type EventServerConnectedData = unknown
+
+export type EventGlobalDisposedData = unknown
+
 export type EventServerInstanceDisposed = {
   id: string
   type: "server.instance.disposed"
@@ -3927,10 +4229,7 @@ export type SyncEventSessionCreated = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      info: Session
-    }
+    data: EventSessionCreatedData
   }
 }
 
@@ -3942,10 +4241,7 @@ export type SyncEventSessionUpdated = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      info: Session
-    }
+    data: EventSessionUpdatedData
   }
 }
 
@@ -3957,10 +4253,7 @@ export type SyncEventSessionDeleted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      info: Session
-    }
+    data: EventSessionDeletedData
   }
 }
 
@@ -3972,10 +4265,7 @@ export type SyncEventMessageUpdated = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      info: Message
-    }
+    data: EventMessageUpdatedData
   }
 }
 
@@ -3987,10 +4277,7 @@ export type SyncEventMessageRemoved = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      messageID: string
-    }
+    data: EventMessageRemovedData
   }
 }
 
@@ -4002,11 +4289,7 @@ export type SyncEventMessagePartUpdated = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      part: Part
-      time: number
-    }
+    data: EventMessagePartUpdatedData
   }
 }
 
@@ -4018,11 +4301,7 @@ export type SyncEventMessagePartRemoved = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      sessionID: string
-      messageID: string
-      partID: string
-    }
+    data: EventMessagePartRemovedData
   }
 }
 
@@ -4034,12 +4313,7 @@ export type SyncEventSessionNextAgentSwitched = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      agent: string
-    }
+    data: EventSessionNextAgentSwitchedData
   }
 }
 
@@ -4051,12 +4325,7 @@ export type SyncEventSessionNextModelSwitched = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      model: ModelRef
-    }
+    data: EventSessionNextModelSwitchedData
   }
 }
 
@@ -4068,12 +4337,7 @@ export type SyncEventSessionNextMoved = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      location: LocationRef
-      subdirectory?: string
-    }
+    data: EventSessionNextMovedData
   }
 }
 
@@ -4085,13 +4349,7 @@ export type SyncEventSessionNextPrompted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      prompt: Prompt
-      delivery: "steer" | "queue"
-    }
+    data: EventSessionNextPromptedData
   }
 }
 
@@ -4103,13 +4361,7 @@ export type SyncEventSessionNextPromptAdmitted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      prompt: Prompt
-      delivery: "steer" | "queue"
-    }
+    data: EventSessionNextPromptAdmittedData
   }
 }
 
@@ -4121,12 +4373,7 @@ export type SyncEventSessionNextContextUpdated = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      text: string
-    }
+    data: EventSessionNextContextUpdatedData
   }
 }
 
@@ -4138,12 +4385,7 @@ export type SyncEventSessionNextSynthetic = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      text: string
-    }
+    data: EventSessionNextSyntheticData
   }
 }
 
@@ -4155,13 +4397,7 @@ export type SyncEventSessionNextShellStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      callID: string
-      command: string
-    }
+    data: EventSessionNextShellStartedData
   }
 }
 
@@ -4173,12 +4409,7 @@ export type SyncEventSessionNextShellEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      callID: string
-      output: string
-    }
+    data: EventSessionNextShellEndedData
   }
 }
 
@@ -4190,14 +4421,7 @@ export type SyncEventSessionNextStepStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      agent: string
-      model: ModelRef
-      snapshot?: string
-    }
+    data: EventSessionNextStepStartedData
   }
 }
 
@@ -4209,24 +4433,7 @@ export type SyncEventSessionNextStepEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      finish: string
-      cost: number
-      tokens: {
-        input: number
-        output: number
-        reasoning: number
-        cache: {
-          read: number
-          write: number
-        }
-      }
-      snapshot?: string
-      files?: Array<string>
-    }
+    data: EventSessionNextStepEndedData
   }
 }
 
@@ -4238,12 +4445,7 @@ export type SyncEventSessionNextStepFailed = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      error: SessionErrorUnknown
-    }
+    data: EventSessionNextStepFailedData
   }
 }
 
@@ -4255,12 +4457,7 @@ export type SyncEventSessionNextTextStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      textID: string
-    }
+    data: EventSessionNextTextStartedData
   }
 }
 
@@ -4272,13 +4469,7 @@ export type SyncEventSessionNextTextEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      textID: string
-      text: string
-    }
+    data: EventSessionNextTextEndedData
   }
 }
 
@@ -4290,13 +4481,7 @@ export type SyncEventSessionNextReasoningStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      reasoningID: string
-      providerMetadata?: LlmProviderMetadata
-    }
+    data: EventSessionNextReasoningStartedData
   }
 }
 
@@ -4308,14 +4493,7 @@ export type SyncEventSessionNextReasoningEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      reasoningID: string
-      text: string
-      providerMetadata?: LlmProviderMetadata1
-    }
+    data: EventSessionNextReasoningEndedData
   }
 }
 
@@ -4327,13 +4505,7 @@ export type SyncEventSessionNextToolInputStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      name: string
-    }
+    data: EventSessionNextToolInputStartedData
   }
 }
 
@@ -4345,13 +4517,7 @@ export type SyncEventSessionNextToolInputEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      text: string
-    }
+    data: EventSessionNextToolInputEndedData
   }
 }
 
@@ -4363,20 +4529,7 @@ export type SyncEventSessionNextToolCalled = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      tool: string
-      input: {
-        [key: string]: unknown
-      }
-      provider: {
-        executed: boolean
-        metadata?: LlmProviderMetadata2
-      }
-    }
+    data: EventSessionNextToolCalledData
   }
 }
 
@@ -4388,16 +4541,7 @@ export type SyncEventSessionNextToolProgress = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      structured: {
-        [key: string]: unknown
-      }
-      content: Array<LlmToolContent>
-    }
+    data: EventSessionNextToolProgressData
   }
 }
 
@@ -4409,22 +4553,7 @@ export type SyncEventSessionNextToolSuccess = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      structured: {
-        [key: string]: unknown
-      }
-      content: Array<LlmToolContent>
-      outputPaths?: Array<string>
-      result?: unknown
-      provider: {
-        executed: boolean
-        metadata?: LlmProviderMetadata3
-      }
-    }
+    data: EventSessionNextToolSuccessData
   }
 }
 
@@ -4436,18 +4565,7 @@ export type SyncEventSessionNextToolFailed = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      assistantMessageID: string
-      callID: string
-      error: SessionErrorUnknown
-      result?: unknown
-      provider: {
-        executed: boolean
-        metadata?: LlmProviderMetadata4
-      }
-    }
+    data: EventSessionNextToolFailedData
   }
 }
 
@@ -4459,12 +4577,7 @@ export type SyncEventSessionNextRetried = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      attempt: number
-      error: SessionNextRetryError
-    }
+    data: EventSessionNextRetriedData
   }
 }
 
@@ -4476,12 +4589,7 @@ export type SyncEventSessionNextCompactionStarted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      reason: "auto" | "manual"
-    }
+    data: EventSessionNextCompactionStartedData
   }
 }
 
@@ -4493,14 +4601,7 @@ export type SyncEventSessionNextCompactionEnded = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-      reason: "auto" | "manual"
-      text: string
-      recent: string
-    }
+    data: EventSessionNextCompactionEndedData
   }
 }
 
@@ -4512,11 +4613,7 @@ export type SyncEventSessionNextRevertStaged = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      revert: RevertState
-    }
+    data: EventSessionNextRevertStagedData
   }
 }
 
@@ -4528,10 +4625,7 @@ export type SyncEventSessionNextRevertCleared = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-    }
+    data: EventSessionNextRevertClearedData
   }
 }
 
@@ -4543,11 +4637,7 @@ export type SyncEventSessionNextRevertCommitted = {
     id: string
     seq: number
     aggregateID: string
-    data: {
-      timestamp: number
-      sessionID: string
-      messageID: string
-    }
+    data: EventSessionNextRevertCommittedData
   }
 }
 
@@ -4688,6 +4778,9 @@ export type ProviderAuthMethod = {
         key: string
         message: string
         placeholder?: string
+        /**
+         * Condition on an earlier prompt value that shows this prompt
+         */
         when?: {
           key: string
           op: "eq" | "neq"
@@ -4703,6 +4796,9 @@ export type ProviderAuthMethod = {
           value: string
           hint?: string
         }>
+        /**
+         * Condition on an earlier prompt value that shows this prompt
+         */
         when?: {
           key: string
           op: "eq" | "neq"
@@ -4738,6 +4834,31 @@ export type NotFoundError = {
   data: {
     message: string
   }
+}
+
+export type SessionV1WithParts = {
+  info: Message
+  parts: Array<Part>
+}
+
+export type SessionV1WithParts1 = {
+  info: Message
+  parts: Array<Part>
+}
+
+export type SessionV1WithParts2 = {
+  info: Message
+  parts: Array<Part>
+}
+
+export type SessionV1WithParts3 = {
+  info: Message
+  parts: Array<Part>
+}
+
+export type SessionV1WithParts4 = {
+  info: Message
+  parts: Array<Part>
 }
 
 export type SessionBusyError = {
@@ -4977,32 +5098,14 @@ export type SessionMessageAssistantText = {
   text: string
 }
 
-export type LlmProviderMetadata5 = {
-  [key: string]: {
-    [key: string]: unknown
-  }
-}
-
 export type SessionMessageAssistantReasoning = {
   type: "reasoning"
   id: string
   text: string
-  providerMetadata?: LlmProviderMetadata5
+  providerMetadata?: LlmProviderMetadata
   time?: {
     created: number
     completed?: number
-  }
-}
-
-export type LlmProviderMetadata6 = {
-  [key: string]: {
-    [key: string]: unknown
-  }
-}
-
-export type LlmProviderMetadata7 = {
-  [key: string]: {
-    [key: string]: unknown
   }
 }
 
@@ -5055,8 +5158,8 @@ export type SessionMessageAssistantTool = {
   name: string
   provider?: {
     executed: boolean
-    metadata?: LlmProviderMetadata6
-    resultMetadata?: LlmProviderMetadata7
+    metadata?: LlmProviderMetadata
+    resultMetadata?: LlmProviderMetadata
   }
   state:
     | SessionMessageToolStatePending
@@ -5139,12 +5242,7 @@ export type SessionNextAgentSwitched = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    agent: string
-  }
+  data: EventSessionNextAgentSwitchedData
 }
 
 export type SessionNextModelSwitched = {
@@ -5159,12 +5257,7 @@ export type SessionNextModelSwitched = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    model: ModelRef
-  }
+  data: EventSessionNextModelSwitchedData
 }
 
 export type SessionNextMoved = {
@@ -5179,12 +5272,7 @@ export type SessionNextMoved = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    location: LocationRef
-    subdirectory?: string
-  }
+  data: EventSessionNextMovedData
 }
 
 export type SessionNextPrompted = {
@@ -5199,13 +5287,7 @@ export type SessionNextPrompted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    prompt: Prompt
-    delivery: "steer" | "queue"
-  }
+  data: EventSessionNextPromptedData
 }
 
 export type SessionNextPromptAdmitted = {
@@ -5220,13 +5302,7 @@ export type SessionNextPromptAdmitted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    prompt: Prompt
-    delivery: "steer" | "queue"
-  }
+  data: EventSessionNextPromptAdmittedData
 }
 
 export type SessionNextContextUpdated = {
@@ -5241,12 +5317,7 @@ export type SessionNextContextUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  data: EventSessionNextContextUpdatedData
 }
 
 export type SessionNextSynthetic = {
@@ -5261,12 +5332,7 @@ export type SessionNextSynthetic = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  data: EventSessionNextSyntheticData
 }
 
 export type SessionNextShellStarted = {
@@ -5281,13 +5347,7 @@ export type SessionNextShellStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    callID: string
-    command: string
-  }
+  data: EventSessionNextShellStartedData
 }
 
 export type SessionNextShellEnded = {
@@ -5302,12 +5362,7 @@ export type SessionNextShellEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    callID: string
-    output: string
-  }
+  data: EventSessionNextShellEndedData
 }
 
 export type SessionNextStepStarted = {
@@ -5322,14 +5377,7 @@ export type SessionNextStepStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    agent: string
-    model: ModelRef
-    snapshot?: string
-  }
+  data: EventSessionNextStepStartedData
 }
 
 export type SessionNextStepEnded = {
@@ -5344,24 +5392,7 @@ export type SessionNextStepEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    finish: string
-    cost: number
-    tokens: {
-      input: number
-      output: number
-      reasoning: number
-      cache: {
-        read: number
-        write: number
-      }
-    }
-    snapshot?: string
-    files?: Array<string>
-  }
+  data: EventSessionNextStepEndedData
 }
 
 export type SessionNextStepFailed = {
@@ -5376,12 +5407,7 @@ export type SessionNextStepFailed = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    error: SessionErrorUnknown
-  }
+  data: EventSessionNextStepFailedData
 }
 
 export type SessionNextTextStarted = {
@@ -5396,12 +5422,7 @@ export type SessionNextTextStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-  }
+  data: EventSessionNextTextStartedData
 }
 
 export type SessionNextTextEnded = {
@@ -5416,13 +5437,7 @@ export type SessionNextTextEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-    text: string
-  }
+  data: EventSessionNextTextEndedData
 }
 
 export type SessionNextToolInputStarted = {
@@ -5437,13 +5452,7 @@ export type SessionNextToolInputStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    name: string
-  }
+  data: EventSessionNextToolInputStartedData
 }
 
 export type SessionNextToolInputEnded = {
@@ -5458,13 +5467,7 @@ export type SessionNextToolInputEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    text: string
-  }
+  data: EventSessionNextToolInputEndedData
 }
 
 export type SessionNextToolCalled = {
@@ -5479,20 +5482,7 @@ export type SessionNextToolCalled = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    tool: string
-    input: {
-      [key: string]: unknown
-    }
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata2
-    }
-  }
+  data: EventSessionNextToolCalledData
 }
 
 export type SessionNextToolProgress = {
@@ -5507,16 +5497,7 @@ export type SessionNextToolProgress = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    structured: {
-      [key: string]: unknown
-    }
-    content: Array<LlmToolContent>
-  }
+  data: EventSessionNextToolProgressData
 }
 
 export type SessionNextToolSuccess = {
@@ -5531,22 +5512,7 @@ export type SessionNextToolSuccess = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    structured: {
-      [key: string]: unknown
-    }
-    content: Array<LlmToolContent>
-    outputPaths?: Array<string>
-    result?: unknown
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata3
-    }
-  }
+  data: EventSessionNextToolSuccessData
 }
 
 export type SessionNextToolFailed = {
@@ -5561,18 +5527,7 @@ export type SessionNextToolFailed = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    error: SessionErrorUnknown
-    result?: unknown
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata4
-    }
-  }
+  data: EventSessionNextToolFailedData
 }
 
 export type SessionNextReasoningStarted = {
@@ -5587,13 +5542,7 @@ export type SessionNextReasoningStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    providerMetadata?: LlmProviderMetadata
-  }
+  data: EventSessionNextReasoningStartedData
 }
 
 export type SessionNextReasoningEnded = {
@@ -5608,14 +5557,7 @@ export type SessionNextReasoningEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    text: string
-    providerMetadata?: LlmProviderMetadata1
-  }
+  data: EventSessionNextReasoningEndedData
 }
 
 export type SessionNextRetried = {
@@ -5630,12 +5572,7 @@ export type SessionNextRetried = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    attempt: number
-    error: SessionNextRetryError
-  }
+  data: EventSessionNextRetriedData
 }
 
 export type SessionNextCompactionStarted = {
@@ -5650,12 +5587,7 @@ export type SessionNextCompactionStarted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    reason: "auto" | "manual"
-  }
+  data: EventSessionNextCompactionStartedData
 }
 
 export type SessionNextCompactionEnded = {
@@ -5670,14 +5602,7 @@ export type SessionNextCompactionEnded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    reason: "auto" | "manual"
-    text: string
-    recent: string
-  }
+  data: EventSessionNextCompactionEndedData
 }
 
 export type SessionNextRevertStaged = {
@@ -5692,11 +5617,7 @@ export type SessionNextRevertStaged = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    revert: RevertState
-  }
+  data: EventSessionNextRevertStagedData
 }
 
 export type SessionNextRevertCleared = {
@@ -5711,10 +5632,7 @@ export type SessionNextRevertCleared = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-  }
+  data: EventSessionNextRevertClearedData
 }
 
 export type SessionNextRevertCommitted = {
@@ -5729,11 +5647,7 @@ export type SessionNextRevertCommitted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-  }
+  data: EventSessionNextRevertCommittedData
 }
 
 export type SessionDurableEventStream = string
@@ -5911,46 +5825,36 @@ export type IntegrationInfo = {
   connections: Array<ConnectionInfo>
 }
 
+export type IntegrationAttemptTime = {
+  created: number | "Infinity" | "-Infinity" | "NaN"
+  expires: number | "Infinity" | "-Infinity" | "NaN"
+}
+
 export type IntegrationAttempt = {
   attemptID: string
   url: string
   instructions: string
   mode: "auto" | "code"
-  time: {
-    created: number | "Infinity" | "-Infinity" | "NaN"
-    expires: number | "Infinity" | "-Infinity" | "NaN"
-  }
+  time: IntegrationAttemptTime
 }
 
 export type IntegrationAttemptStatus =
   | {
       status: "pending"
-      time: {
-        created: number | "Infinity" | "-Infinity" | "NaN"
-        expires: number | "Infinity" | "-Infinity" | "NaN"
-      }
+      time: IntegrationAttemptTime
     }
   | {
       status: "complete"
-      time: {
-        created: number | "Infinity" | "-Infinity" | "NaN"
-        expires: number | "Infinity" | "-Infinity" | "NaN"
-      }
+      time: IntegrationAttemptTime
     }
   | {
       status: "failed"
       message: string
-      time: {
-        created: number | "Infinity" | "-Infinity" | "NaN"
-        expires: number | "Infinity" | "-Infinity" | "NaN"
-      }
+      time: IntegrationAttemptTime
     }
   | {
       status: "expired"
-      time: {
-        created: number | "Infinity" | "-Infinity" | "NaN"
-        expires: number | "Infinity" | "-Infinity" | "NaN"
-      }
+      time: IntegrationAttemptTime
     }
 
 export type PermissionV2Request = {
@@ -6067,926 +5971,529 @@ export type EffectHttpApiErrorForbidden = {
 export type EventModelsDevRefreshed = {
   id: string
   type: "models-dev.refreshed"
-  properties: unknown
+  properties: EventModelsDevRefreshedData
 }
 
 export type EventIntegrationUpdated = {
   id: string
   type: "integration.updated"
-  properties: unknown
+  properties: EventIntegrationUpdatedData
 }
 
 export type EventIntegrationConnectionUpdated = {
   id: string
   type: "integration.connection.updated"
-  properties: {
-    integrationID: string
-  }
+  properties: EventIntegrationConnectionUpdatedData
 }
 
 export type EventCatalogUpdated = {
   id: string
   type: "catalog.updated"
-  properties: unknown
+  properties: EventCatalogUpdatedData
 }
 
 export type EventSessionCreated = {
   id: string
   type: "session.created"
-  properties: {
-    sessionID: string
-    info: Session
-  }
+  properties: EventSessionCreatedData
 }
 
 export type EventSessionUpdated = {
   id: string
   type: "session.updated"
-  properties: {
-    sessionID: string
-    info: Session
-  }
+  properties: EventSessionUpdatedData
 }
 
 export type EventSessionDeleted = {
   id: string
   type: "session.deleted"
-  properties: {
-    sessionID: string
-    info: Session
-  }
+  properties: EventSessionDeletedData
 }
 
 export type EventMessageUpdated = {
   id: string
   type: "message.updated"
-  properties: {
-    sessionID: string
-    info: Message
-  }
+  properties: EventMessageUpdatedData
 }
 
 export type EventMessageRemoved = {
   id: string
   type: "message.removed"
-  properties: {
-    sessionID: string
-    messageID: string
-  }
+  properties: EventMessageRemovedData
 }
 
 export type EventMessagePartUpdated = {
   id: string
   type: "message.part.updated"
-  properties: {
-    sessionID: string
-    part: Part
-    time: number
-  }
+  properties: EventMessagePartUpdatedData
 }
 
 export type EventMessagePartRemoved = {
   id: string
   type: "message.part.removed"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
-  }
+  properties: EventMessagePartRemovedData
 }
 
 export type EventSessionNextAgentSwitched = {
   id: string
   type: "session.next.agent.switched"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    agent: string
-  }
+  properties: EventSessionNextAgentSwitchedData
 }
 
 export type EventSessionNextModelSwitched = {
   id: string
   type: "session.next.model.switched"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    model: ModelRef
-  }
+  properties: EventSessionNextModelSwitchedData
 }
 
 export type EventSessionNextMoved = {
   id: string
   type: "session.next.moved"
-  properties: {
-    timestamp: number
-    sessionID: string
-    location: LocationRef
-    subdirectory?: string
-  }
+  properties: EventSessionNextMovedData
 }
 
 export type EventSessionNextPrompted = {
   id: string
   type: "session.next.prompted"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    prompt: Prompt
-    delivery: "steer" | "queue"
-  }
+  properties: EventSessionNextPromptedData
 }
 
 export type EventSessionNextPromptAdmitted = {
   id: string
   type: "session.next.prompt.admitted"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    prompt: Prompt
-    delivery: "steer" | "queue"
-  }
+  properties: EventSessionNextPromptAdmittedData
 }
 
 export type EventSessionNextContextUpdated = {
   id: string
   type: "session.next.context.updated"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  properties: EventSessionNextContextUpdatedData
 }
 
 export type EventSessionNextSynthetic = {
   id: string
   type: "session.next.synthetic"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  properties: EventSessionNextSyntheticData
 }
 
 export type EventSessionNextShellStarted = {
   id: string
   type: "session.next.shell.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    callID: string
-    command: string
-  }
+  properties: EventSessionNextShellStartedData
 }
 
 export type EventSessionNextShellEnded = {
   id: string
   type: "session.next.shell.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    callID: string
-    output: string
-  }
+  properties: EventSessionNextShellEndedData
 }
 
 export type EventSessionNextStepStarted = {
   id: string
   type: "session.next.step.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    agent: string
-    model: ModelRef
-    snapshot?: string
-  }
+  properties: EventSessionNextStepStartedData
 }
 
 export type EventSessionNextStepEnded = {
   id: string
   type: "session.next.step.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    finish: string
-    cost: number
-    tokens: {
-      input: number
-      output: number
-      reasoning: number
-      cache: {
-        read: number
-        write: number
-      }
-    }
-    snapshot?: string
-    files?: Array<string>
-  }
+  properties: EventSessionNextStepEndedData
 }
 
 export type EventSessionNextStepFailed = {
   id: string
   type: "session.next.step.failed"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    error: SessionErrorUnknown
-  }
+  properties: EventSessionNextStepFailedData
 }
 
 export type EventSessionNextTextStarted = {
   id: string
   type: "session.next.text.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-  }
+  properties: EventSessionNextTextStartedData
 }
 
 export type EventSessionNextTextDelta = {
   id: string
   type: "session.next.text.delta"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-    delta: string
-  }
+  properties: EventSessionNextTextDeltaData
 }
 
 export type EventSessionNextTextEnded = {
   id: string
   type: "session.next.text.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-    text: string
-  }
+  properties: EventSessionNextTextEndedData
 }
 
 export type EventSessionNextReasoningStarted = {
   id: string
   type: "session.next.reasoning.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    providerMetadata?: LlmProviderMetadata
-  }
+  properties: EventSessionNextReasoningStartedData
 }
 
 export type EventSessionNextReasoningDelta = {
   id: string
   type: "session.next.reasoning.delta"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    delta: string
-  }
+  properties: EventSessionNextReasoningDeltaData
 }
 
 export type EventSessionNextReasoningEnded = {
   id: string
   type: "session.next.reasoning.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    text: string
-    providerMetadata?: LlmProviderMetadata1
-  }
+  properties: EventSessionNextReasoningEndedData
 }
 
 export type EventSessionNextToolInputStarted = {
   id: string
   type: "session.next.tool.input.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    name: string
-  }
+  properties: EventSessionNextToolInputStartedData
 }
 
 export type EventSessionNextToolInputDelta = {
   id: string
   type: "session.next.tool.input.delta"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    delta: string
-  }
+  properties: EventSessionNextToolInputDeltaData
 }
 
 export type EventSessionNextToolInputEnded = {
   id: string
   type: "session.next.tool.input.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    text: string
-  }
+  properties: EventSessionNextToolInputEndedData
 }
 
 export type EventSessionNextToolCalled = {
   id: string
   type: "session.next.tool.called"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    tool: string
-    input: {
-      [key: string]: unknown
-    }
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata2
-    }
-  }
+  properties: EventSessionNextToolCalledData
 }
 
 export type EventSessionNextToolProgress = {
   id: string
   type: "session.next.tool.progress"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    structured: {
-      [key: string]: unknown
-    }
-    content: Array<LlmToolContent>
-  }
+  properties: EventSessionNextToolProgressData
 }
 
 export type EventSessionNextToolSuccess = {
   id: string
   type: "session.next.tool.success"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    structured: {
-      [key: string]: unknown
-    }
-    content: Array<LlmToolContent>
-    outputPaths?: Array<string>
-    result?: unknown
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata3
-    }
-  }
+  properties: EventSessionNextToolSuccessData
 }
 
 export type EventSessionNextToolFailed = {
   id: string
   type: "session.next.tool.failed"
-  properties: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    error: SessionErrorUnknown
-    result?: unknown
-    provider: {
-      executed: boolean
-      metadata?: LlmProviderMetadata4
-    }
-  }
+  properties: EventSessionNextToolFailedData
 }
 
 export type EventSessionNextRetried = {
   id: string
   type: "session.next.retried"
-  properties: {
-    timestamp: number
-    sessionID: string
-    attempt: number
-    error: SessionNextRetryError
-  }
+  properties: EventSessionNextRetriedData
 }
 
 export type EventSessionNextCompactionStarted = {
   id: string
   type: "session.next.compaction.started"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    reason: "auto" | "manual"
-  }
+  properties: EventSessionNextCompactionStartedData
 }
 
 export type EventSessionNextCompactionDelta = {
   id: string
   type: "session.next.compaction.delta"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  properties: EventSessionNextCompactionDeltaData
 }
 
 export type EventSessionNextCompactionEnded = {
   id: string
   type: "session.next.compaction.ended"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    reason: "auto" | "manual"
-    text: string
-    recent: string
-  }
+  properties: EventSessionNextCompactionEndedData
 }
 
 export type EventSessionNextRevertStaged = {
   id: string
   type: "session.next.revert.staged"
-  properties: {
-    timestamp: number
-    sessionID: string
-    revert: RevertState
-  }
+  properties: EventSessionNextRevertStagedData
 }
 
 export type EventSessionNextRevertCleared = {
   id: string
   type: "session.next.revert.cleared"
-  properties: {
-    timestamp: number
-    sessionID: string
-  }
+  properties: EventSessionNextRevertClearedData
 }
 
 export type EventSessionNextRevertCommitted = {
   id: string
   type: "session.next.revert.committed"
-  properties: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-  }
+  properties: EventSessionNextRevertCommittedData
 }
 
 export type EventMessagePartDelta = {
   id: string
   type: "message.part.delta"
-  properties: {
-    sessionID: string
-    messageID: string
-    partID: string
-    field: string
-    delta: string
-  }
+  properties: EventMessagePartDeltaData
 }
 
 export type EventSessionDiff = {
   id: string
   type: "session.diff"
-  properties: {
-    sessionID: string
-    diff: Array<SnapshotFileDiff>
-  }
+  properties: EventSessionDiffData
 }
 
 export type EventSessionError = {
   id: string
   type: "session.error"
-  properties: {
-    sessionID?: string
-    error?:
-      | ProviderAuthError
-      | UnknownError
-      | MessageOutputLengthError
-      | MessageAbortedError
-      | StructuredOutputError
-      | ContextOverflowError
-      | ContentFilterError
-      | ApiError
-  }
+  properties: EventSessionErrorData
 }
 
 export type EventInstallationUpdated = {
   id: string
   type: "installation.updated"
-  properties: {
-    version: string
-  }
+  properties: EventInstallationUpdatedData
 }
 
 export type EventInstallationUpdateAvailable = {
   id: string
   type: "installation.update-available"
-  properties: {
-    version: string
-  }
+  properties: EventInstallationUpdateAvailableData
 }
 
 export type EventFileEdited = {
   id: string
   type: "file.edited"
-  properties: {
-    file: string
-  }
+  properties: EventFileEditedData
 }
 
 export type EventReferenceUpdated = {
   id: string
   type: "reference.updated"
-  properties: unknown
+  properties: EventReferenceUpdatedData
 }
 
 export type EventPermissionV2Asked = {
   id: string
   type: "permission.v2.asked"
-  properties: {
-    id: string
-    sessionID: string
-    action: string
-    resources: Array<string>
-    save?: Array<string>
-    metadata?: {
-      [key: string]: unknown
-    }
-    source?: PermissionV2Source
-  }
+  properties: EventPermissionV2AskedData
 }
 
 export type EventPermissionV2Replied = {
   id: string
   type: "permission.v2.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    reply: PermissionV2Reply
-  }
+  properties: EventPermissionV2RepliedData
 }
 
 export type EventPluginAdded = {
   id: string
   type: "plugin.added"
-  properties: {
-    id: string
-  }
+  properties: EventPluginAddedData
 }
 
 export type EventProjectDirectoriesUpdated = {
   id: string
   type: "project.directories.updated"
-  properties: {
-    projectID: string
-  }
+  properties: EventProjectDirectoriesUpdatedData
 }
 
 export type EventFileWatcherUpdated = {
   id: string
   type: "file.watcher.updated"
-  properties: {
-    file: string
-    event: "add" | "change" | "unlink"
-  }
+  properties: EventFileWatcherUpdatedData
 }
 
 export type EventPtyCreated = {
   id: string
   type: "pty.created"
-  properties: {
-    info: Pty
-  }
+  properties: EventPtyCreatedData
 }
 
 export type EventPtyUpdated = {
   id: string
   type: "pty.updated"
-  properties: {
-    info: Pty
-  }
+  properties: EventPtyUpdatedData
 }
 
 export type EventPtyExited = {
   id: string
   type: "pty.exited"
-  properties: {
-    id: string
-    exitCode: number
-  }
+  properties: EventPtyExitedData
 }
 
 export type EventPtyDeleted = {
   id: string
   type: "pty.deleted"
-  properties: {
-    id: string
-  }
+  properties: EventPtyDeletedData
 }
 
 export type EventQuestionV2Asked = {
   id: string
   type: "question.v2.asked"
-  properties: {
-    id: string
-    sessionID: string
-    /**
-     * Questions to ask
-     */
-    questions: Array<QuestionV2Info>
-    tool?: QuestionV2Tool
-  }
+  properties: EventQuestionV2AskedData
 }
 
 export type EventQuestionV2Replied = {
   id: string
   type: "question.v2.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    answers: Array<QuestionV2Answer>
-  }
+  properties: EventQuestionV2RepliedData
 }
 
 export type EventQuestionV2Rejected = {
   id: string
   type: "question.v2.rejected"
-  properties: {
-    sessionID: string
-    requestID: string
-  }
+  properties: EventQuestionV2RejectedData
 }
 
 export type EventTodoUpdated = {
   id: string
   type: "todo.updated"
-  properties: {
-    sessionID: string
-    todos: Array<Todo>
-  }
+  properties: EventTodoUpdatedData
 }
 
 export type EventLspUpdated = {
   id: string
   type: "lsp.updated"
-  properties: unknown
+  properties: EventLspUpdatedData
 }
 
 export type EventPermissionAsked = {
   id: string
   type: "permission.asked"
-  properties: {
-    id: string
-    sessionID: string
-    permission: string
-    patterns: Array<string>
-    metadata: {
-      [key: string]: unknown
-    }
-    always: Array<string>
-    tool?: {
-      messageID: string
-      callID: string
-    }
-  }
+  properties: EventPermissionAskedData
 }
 
 export type EventPermissionReplied = {
   id: string
   type: "permission.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    reply: "once" | "always" | "reject"
-  }
+  properties: EventPermissionRepliedData
 }
 
 export type EventTuiPromptAppend2 = {
   id: string
   type: "tui.prompt.append"
-  properties: {
-    text: string
-  }
+  properties: EventTuiPromptAppendData
 }
 
 export type EventTuiCommandExecute2 = {
   id: string
   type: "tui.command.execute"
-  properties: {
-    command: string
-  }
+  properties: EventTuiCommandExecuteData
 }
 
 export type EventTuiToastShow2 = {
   id: string
   type: "tui.toast.show"
-  properties: {
-    title?: string
-    message: string
-    variant: "info" | "success" | "warning" | "error"
-    duration?: number
-  }
+  properties: EventTuiToastShowData
 }
 
 export type EventTuiSessionSelect2 = {
   id: string
   type: "tui.session.select"
-  properties: {
-    /**
-     * Session ID to navigate to
-     */
-    sessionID: string
-  }
+  properties: EventTuiSessionSelectData
 }
 
 export type EventMcpToolsChanged = {
   id: string
   type: "mcp.tools.changed"
-  properties: {
-    server: string
-  }
+  properties: EventMcpToolsChangedData
 }
 
 export type EventMcpBrowserOpenFailed = {
   id: string
   type: "mcp.browser.open.failed"
-  properties: {
-    mcpName: string
-    url: string
-  }
+  properties: EventMcpBrowserOpenFailedData
 }
 
 export type EventCommandExecuted = {
   id: string
   type: "command.executed"
-  properties: {
-    name: string
-    sessionID: string
-    arguments: string
-    messageID: string
-  }
+  properties: EventCommandExecutedData
 }
 
 export type EventProjectUpdated = {
   id: string
   type: "project.updated"
-  properties: {
-    id: string
-    worktree: string
-    vcs?: ProjectVcs
-    name?: string
-    icon?: ProjectIcon
-    commands?: ProjectCommands
-    time: ProjectTime
-    sandboxes: Array<string>
-  }
+  properties: EventProjectUpdatedData
 }
 
 export type EventSessionStatus = {
   id: string
   type: "session.status"
-  properties: {
-    sessionID: string
-    status: SessionStatus
-  }
+  properties: EventSessionStatusData
 }
 
 export type EventSessionIdle = {
   id: string
   type: "session.idle"
-  properties: {
-    sessionID: string
-  }
+  properties: EventSessionIdleData
 }
 
 export type EventQuestionAsked = {
   id: string
   type: "question.asked"
-  properties: {
-    id: string
-    sessionID: string
-    /**
-     * Questions to ask
-     */
-    questions: Array<QuestionInfo>
-    tool?: QuestionTool
-  }
+  properties: EventQuestionAskedData
 }
 
 export type EventQuestionReplied = {
   id: string
   type: "question.replied"
-  properties: {
-    sessionID: string
-    requestID: string
-    answers: Array<QuestionAnswer>
-  }
+  properties: EventQuestionRepliedData
 }
 
 export type EventQuestionRejected = {
   id: string
   type: "question.rejected"
-  properties: {
-    sessionID: string
-    requestID: string
-  }
+  properties: EventQuestionRejectedData
 }
 
 export type EventSessionCompacted = {
   id: string
   type: "session.compacted"
-  properties: {
-    sessionID: string
-  }
+  properties: EventSessionCompactedData
 }
 
 export type EventVcsBranchUpdated = {
   id: string
   type: "vcs.branch.updated"
-  properties: {
-    branch?: string
-  }
+  properties: EventVcsBranchUpdatedData
 }
 
 export type EventWorkspaceReady = {
   id: string
   type: "workspace.ready"
-  properties: {
-    name: string
-  }
+  properties: EventWorkspaceReadyData
 }
 
 export type EventWorkspaceFailed = {
   id: string
   type: "workspace.failed"
-  properties: {
-    message: string
-  }
+  properties: EventWorkspaceFailedData
 }
 
 export type EventWorkspaceStatus = {
   id: string
   type: "workspace.status"
-  properties: {
-    workspaceID: string
-    status: "connected" | "connecting" | "disconnected" | "error"
-  }
+  properties: EventWorkspaceStatusData
 }
 
 export type EventWorktreeReady = {
   id: string
   type: "worktree.ready"
-  properties: {
-    name: string
-    branch?: string
-  }
+  properties: EventWorktreeReadyData
 }
 
 export type EventWorktreeFailed = {
   id: string
   type: "worktree.failed"
-  properties: {
-    message: string
-  }
+  properties: EventWorktreeFailedData
 }
 
 export type EventServerConnected = {
   id: string
   type: "server.connected"
-  properties: unknown
+  properties: EventServerConnectedData
 }
 
 export type EventGlobalDisposed = {
   id: string
   type: "global.disposed"
-  properties: unknown
+  properties: EventGlobalDisposedData
 }
 
 export type CredentialOAuth = {
@@ -7035,7 +6542,7 @@ export type ModelsDevRefreshed = {
     version: number
   }
   location?: LocationRef
-  data: unknown
+  data: EventModelsDevRefreshedData
 }
 
 export type IntegrationUpdated = {
@@ -7050,7 +6557,7 @@ export type IntegrationUpdated = {
     version: number
   }
   location?: LocationRef
-  data: unknown
+  data: EventIntegrationUpdatedData
 }
 
 export type IntegrationConnectionUpdated = {
@@ -7065,9 +6572,7 @@ export type IntegrationConnectionUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    integrationID: string
-  }
+  data: EventIntegrationConnectionUpdatedData
 }
 
 export type CatalogUpdated = {
@@ -7082,7 +6587,7 @@ export type CatalogUpdated = {
     version: number
   }
   location?: LocationRef
-  data: unknown
+  data: EventCatalogUpdatedData
 }
 
 export type SessionCreated = {
@@ -7097,10 +6602,7 @@ export type SessionCreated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    info: Session
-  }
+  data: EventSessionCreatedData
 }
 
 export type SessionUpdated = {
@@ -7115,10 +6617,7 @@ export type SessionUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    info: Session
-  }
+  data: EventSessionUpdatedData
 }
 
 export type SessionDeleted = {
@@ -7133,10 +6632,7 @@ export type SessionDeleted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    info: Session
-  }
+  data: EventSessionDeletedData
 }
 
 export type MessageUpdated = {
@@ -7151,10 +6647,7 @@ export type MessageUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    info: Message
-  }
+  data: EventMessageUpdatedData
 }
 
 export type MessageRemoved = {
@@ -7169,10 +6662,7 @@ export type MessageRemoved = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    messageID: string
-  }
+  data: EventMessageRemovedData
 }
 
 export type MessagePartUpdated = {
@@ -7187,11 +6677,7 @@ export type MessagePartUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    part: Part
-    time: number
-  }
+  data: EventMessagePartUpdatedData
 }
 
 export type MessagePartRemoved = {
@@ -7206,11 +6692,7 @@ export type MessagePartRemoved = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    messageID: string
-    partID: string
-  }
+  data: EventMessagePartRemovedData
 }
 
 export type SessionNextTextDelta = {
@@ -7225,13 +6707,7 @@ export type SessionNextTextDelta = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    textID: string
-    delta: string
-  }
+  data: EventSessionNextTextDeltaData
 }
 
 export type SessionNextReasoningDelta = {
@@ -7246,13 +6722,7 @@ export type SessionNextReasoningDelta = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    reasoningID: string
-    delta: string
-  }
+  data: EventSessionNextReasoningDeltaData
 }
 
 export type SessionNextToolInputDelta = {
@@ -7267,13 +6737,7 @@ export type SessionNextToolInputDelta = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    assistantMessageID: string
-    callID: string
-    delta: string
-  }
+  data: EventSessionNextToolInputDeltaData
 }
 
 export type SessionNextCompactionDelta = {
@@ -7288,12 +6752,7 @@ export type SessionNextCompactionDelta = {
     version: number
   }
   location?: LocationRef
-  data: {
-    timestamp: number
-    sessionID: string
-    messageID: string
-    text: string
-  }
+  data: EventSessionNextCompactionDeltaData
 }
 
 export type FileEdited = {
@@ -7308,9 +6767,7 @@ export type FileEdited = {
     version: number
   }
   location?: LocationRef
-  data: {
-    file: string
-  }
+  data: EventFileEditedData
 }
 
 export type ReferenceUpdated = {
@@ -7325,7 +6782,7 @@ export type ReferenceUpdated = {
     version: number
   }
   location?: LocationRef
-  data: unknown
+  data: EventReferenceUpdatedData
 }
 
 export type PermissionV2Asked = {
@@ -7340,17 +6797,7 @@ export type PermissionV2Asked = {
     version: number
   }
   location?: LocationRef
-  data: {
-    id: string
-    sessionID: string
-    action: string
-    resources: Array<string>
-    save?: Array<string>
-    metadata?: {
-      [key: string]: unknown
-    }
-    source?: PermissionV2Source
-  }
+  data: EventPermissionV2AskedData
 }
 
 export type PermissionV2Replied = {
@@ -7365,11 +6812,7 @@ export type PermissionV2Replied = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
-    reply: PermissionV2Reply
-  }
+  data: EventPermissionV2RepliedData
 }
 
 export type PluginAdded = {
@@ -7384,9 +6827,7 @@ export type PluginAdded = {
     version: number
   }
   location?: LocationRef
-  data: {
-    id: string
-  }
+  data: EventPluginAddedData
 }
 
 export type ProjectDirectoriesUpdated = {
@@ -7401,9 +6842,7 @@ export type ProjectDirectoriesUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    projectID: string
-  }
+  data: EventProjectDirectoriesUpdatedData
 }
 
 export type FileWatcherUpdated = {
@@ -7418,10 +6857,7 @@ export type FileWatcherUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    file: string
-    event: "add" | "change" | "unlink"
-  }
+  data: EventFileWatcherUpdatedData
 }
 
 export type PtyCreated = {
@@ -7436,9 +6872,7 @@ export type PtyCreated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    info: Pty
-  }
+  data: EventPtyCreatedData
 }
 
 export type PtyUpdated = {
@@ -7453,9 +6887,7 @@ export type PtyUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    info: Pty
-  }
+  data: EventPtyUpdatedData
 }
 
 export type PtyExited = {
@@ -7470,10 +6902,7 @@ export type PtyExited = {
     version: number
   }
   location?: LocationRef
-  data: {
-    id: string
-    exitCode: number
-  }
+  data: EventPtyExitedData
 }
 
 export type PtyDeleted = {
@@ -7488,9 +6917,7 @@ export type PtyDeleted = {
     version: number
   }
   location?: LocationRef
-  data: {
-    id: string
-  }
+  data: EventPtyDeletedData
 }
 
 export type QuestionV2Asked = {
@@ -7505,15 +6932,7 @@ export type QuestionV2Asked = {
     version: number
   }
   location?: LocationRef
-  data: {
-    id: string
-    sessionID: string
-    /**
-     * Questions to ask
-     */
-    questions: Array<QuestionV2Info>
-    tool?: QuestionV2Tool
-  }
+  data: EventQuestionV2AskedData
 }
 
 export type QuestionV2Replied = {
@@ -7528,11 +6947,7 @@ export type QuestionV2Replied = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
-    answers: Array<QuestionV2Answer>
-  }
+  data: EventQuestionV2RepliedData
 }
 
 export type QuestionV2Rejected = {
@@ -7547,10 +6962,7 @@ export type QuestionV2Rejected = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    requestID: string
-  }
+  data: EventQuestionV2RejectedData
 }
 
 export type TodoUpdated = {
@@ -7565,10 +6977,7 @@ export type TodoUpdated = {
     version: number
   }
   location?: LocationRef
-  data: {
-    sessionID: string
-    todos: Array<Todo>
-  }
+  data: EventTodoUpdatedData
 }
 
 export type V2EventServerConnected = {
@@ -7693,6 +7102,9 @@ export type AppLogResponses = {
 export type AppLogResponse = AppLogResponses[keyof AppLogResponses]
 
 export type ExperimentalControlPlaneMoveSessionData = {
+  /**
+   * Request to move a session to another workspace
+   */
   body?: {
     sessionID: string
     destination: MoveSessionDestination
@@ -7852,6 +7264,9 @@ export type GlobalDisposeResponses = {
 export type GlobalDisposeResponse = GlobalDisposeResponses[keyof GlobalDisposeResponses]
 
 export type GlobalUpgradeData = {
+  /**
+   * Request to upgrade opencode
+   */
   body?: {
     target: string
   }
@@ -8100,6 +7515,9 @@ export type ExperimentalConsoleListOrgsResponse =
   ExperimentalConsoleListOrgsResponses[keyof ExperimentalConsoleListOrgsResponses]
 
 export type ExperimentalConsoleSwitchOrgData = {
+  /**
+   * Request to switch the active Console organization
+   */
   body?: {
     accountID: string
     orgID: string
@@ -8752,6 +8170,9 @@ export type VcsDiffRawResponses = {
 export type VcsDiffRawResponse = VcsDiffRawResponses[keyof VcsDiffRawResponses]
 
 export type VcsApplyData = {
+  /**
+   * A raw patch to apply to the working tree
+   */
   body?: {
     patch: string
   }
@@ -8959,6 +8380,9 @@ export type McpStatusResponses = {
 export type McpStatusResponse = McpStatusResponses[keyof McpStatusResponses]
 
 export type McpAddData = {
+  /**
+   * Request to add an MCP server
+   */
   body?: {
     name: string
     config: McpLocalConfig | McpRemoteConfig
@@ -9065,6 +8489,9 @@ export type McpAuthStartResponses = {
 export type McpAuthStartResponse = McpAuthStartResponses[keyof McpAuthStartResponses]
 
 export type McpAuthCallbackData = {
+  /**
+   * OAuth callback code for an MCP server
+   */
   body?: {
     code: string
   }
@@ -9287,6 +8714,9 @@ export type ProjectInitGitResponses = {
 export type ProjectInitGitResponse = ProjectInitGitResponses[keyof ProjectInitGitResponses]
 
 export type ProjectUpdateData = {
+  /**
+   * Project properties to update
+   */
   body?: {
     name?: string
     icon?: ProjectIcon
@@ -9355,6 +8785,9 @@ export type ProjectDirectoriesResponses = {
 export type ProjectDirectoriesResponse = ProjectDirectoriesResponses[keyof ProjectDirectoriesResponses]
 
 export type ExperimentalProjectCopyGenerateNameData = {
+  /**
+   * Request to generate a project copy name
+   */
   body?: {
     context?: string
   }
@@ -9451,6 +8884,9 @@ export type PtyListResponses = {
 export type PtyListResponse = PtyListResponses[keyof PtyListResponses]
 
 export type PtyCreateData = {
+  /**
+   * Options for a new PTY session
+   */
   body?: {
     command?: string
     args?: Array<string>
@@ -9555,6 +8991,9 @@ export type PtyGetResponses = {
 export type PtyGetResponse = PtyGetResponses[keyof PtyGetResponses]
 
 export type PtyUpdateData = {
+  /**
+   * Changes to an existing PTY session
+   */
   body?: {
     title?: string
     size?: {
@@ -9762,6 +9201,9 @@ export type PermissionListResponses = {
 export type PermissionListResponse = PermissionListResponses[keyof PermissionListResponses]
 
 export type PermissionReplyData = {
+  /**
+   * Reply to a permission request
+   */
   body?: {
     reply: "once" | "always" | "reject"
     message?: string
@@ -9975,6 +9417,9 @@ export type SessionCreateData = {
     parentID?: string
     title?: string
     agent?: string
+    /**
+     * Model that a session uses
+     */
     model?: {
       id: string
       providerID: string
@@ -10111,6 +9556,9 @@ export type SessionGetResponses = {
 export type SessionGetResponse = SessionGetResponses[keyof SessionGetResponses]
 
 export type SessionUpdateData = {
+  /**
+   * Session properties to update
+   */
   body?: {
     title?: string
     metadata?: {
@@ -10283,17 +9731,20 @@ export type SessionMessagesResponses = {
   /**
    * List of messages
    */
-  200: Array<{
-    info: Message
-    parts: Array<Part>
-  }>
+  200: Array<SessionV1WithParts>
 }
 
 export type SessionMessagesResponse2 = SessionMessagesResponses[keyof SessionMessagesResponses]
 
 export type SessionPromptData = {
+  /**
+   * Prompt to send to a session
+   */
   body?: {
     messageID?: string
+    /**
+     * Provider and model that answer a prompt
+     */
     model?: {
       providerID: string
       modelID: string
@@ -10412,15 +9863,15 @@ export type SessionMessageResponses = {
   /**
    * Message
    */
-  200: {
-    info: Message
-    parts: Array<Part>
-  }
+  200: SessionV1WithParts1
 }
 
 export type SessionMessageResponse = SessionMessageResponses[keyof SessionMessageResponses]
 
 export type SessionForkData = {
+  /**
+   * Request to fork a session
+   */
   body?: {
     messageID?: string
   }
@@ -10487,6 +9938,9 @@ export type SessionAbortResponses = {
 export type SessionAbortResponse = SessionAbortResponses[keyof SessionAbortResponses]
 
 export type SessionInitData = {
+  /**
+   * Request to initialize a session
+   */
   body?: {
     modelID: string
     providerID: string
@@ -10601,6 +10055,9 @@ export type SessionShareResponses = {
 export type SessionShareResponse = SessionShareResponses[keyof SessionShareResponses]
 
 export type SessionSummarizeData = {
+  /**
+   * Request to summarize a session
+   */
   body?: {
     providerID: string
     modelID: string
@@ -10639,8 +10096,14 @@ export type SessionSummarizeResponses = {
 export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSummarizeResponses]
 
 export type SessionPromptAsyncData = {
+  /**
+   * Prompt to send to a session
+   */
   body?: {
     messageID?: string
+    /**
+     * Provider and model that answer a prompt
+     */
     model?: {
       providerID: string
       modelID: string
@@ -10688,6 +10151,9 @@ export type SessionPromptAsyncResponses = {
 export type SessionPromptAsyncResponse = SessionPromptAsyncResponses[keyof SessionPromptAsyncResponses]
 
 export type SessionCommandData = {
+  /**
+   * Command to run in a session
+   */
   body?: {
     messageID?: string
     agent?: string
@@ -10740,9 +10206,15 @@ export type SessionCommandResponses = {
 export type SessionCommandResponse = SessionCommandResponses[keyof SessionCommandResponses]
 
 export type SessionShellData = {
+  /**
+   * Shell command to run in a session
+   */
   body?: {
     messageID?: string
     agent: string
+    /**
+     * Provider and model that answer a prompt
+     */
     model?: {
       providerID: string
       modelID: string
@@ -10780,15 +10252,15 @@ export type SessionShellResponses = {
   /**
    * Created message
    */
-  200: {
-    info: Message
-    parts: Array<Part>
-  }
+  200: SessionV1WithParts4
 }
 
 export type SessionShellResponse = SessionShellResponses[keyof SessionShellResponses]
 
 export type SessionRevertData = {
+  /**
+   * Request to revert a session to a message or part
+   */
   body?: {
     messageID: string
     partID?: string
@@ -10868,6 +10340,9 @@ export type SessionUnrevertResponses = {
 export type SessionUnrevertResponse = SessionUnrevertResponses[keyof SessionUnrevertResponses]
 
 export type PermissionRespondData = {
+  /**
+   * Reply to a session permission request
+   */
   body?: {
     response: "once" | "always" | "reject"
   }
@@ -11005,6 +10480,9 @@ export type SyncStartResponses = {
 export type SyncStartResponse = SyncStartResponses[keyof SyncStartResponses]
 
 export type SyncReplayData = {
+  /**
+   * Sync events to replay
+   */
   body?: {
     directory: string
     events: Array<{
@@ -11046,6 +10524,9 @@ export type SyncReplayResponses = {
 export type SyncReplayResponse = SyncReplayResponses[keyof SyncReplayResponses]
 
 export type SyncStealData = {
+  /**
+   * Request for the sync history of a session
+   */
   body?: {
     sessionID: string
   }
@@ -11314,6 +10795,9 @@ export type TuiClearPromptResponses = {
 export type TuiClearPromptResponse = TuiClearPromptResponses[keyof TuiClearPromptResponses]
 
 export type TuiExecuteCommandData = {
+  /**
+   * TUI command to run
+   */
   body?: {
     command: string
   }
@@ -11564,6 +11048,9 @@ export type ExperimentalWorkspaceListResponse =
   ExperimentalWorkspaceListResponses[keyof ExperimentalWorkspaceListResponses]
 
 export type ExperimentalWorkspaceCreateData = {
+  /**
+   * Request to create a workspace
+   */
   body?: {
     id?: string
     type: string
@@ -11691,6 +11178,9 @@ export type ExperimentalWorkspaceRemoveResponse =
   ExperimentalWorkspaceRemoveResponses[keyof ExperimentalWorkspaceRemoveResponses]
 
 export type ExperimentalWorkspaceWarpData = {
+  /**
+   * Request to move a session to a workspace
+   */
   body?: {
     id: string | null
     sessionID: string
@@ -13532,6 +13022,9 @@ export type V2PtyListResponses = {
 export type V2PtyListResponse = V2PtyListResponses[keyof V2PtyListResponses]
 
 export type V2PtyCreateData = {
+  /**
+   * Options for a new PTY session
+   */
   body: {
     command?: string
     args?: Array<string>
@@ -13660,6 +13153,9 @@ export type V2PtyGetResponses = {
 export type V2PtyGetResponse = V2PtyGetResponses[keyof V2PtyGetResponses]
 
 export type V2PtyUpdateData = {
+  /**
+   * Changes to an existing PTY session
+   */
   body: {
     title?: string
     size?: {
