@@ -185,16 +185,13 @@ const AgentCreateCommand = effectCmd({
 
     yield* fs.ensureDir(targetPath).pipe(Effect.orDie)
 
-    if (yield* fs.existsSafe(filePath)) yield* fileExists(filePath, isFullyNonInteractive)
+    if (yield* fs.existsSafe(filePath)) return yield* fileExists(filePath, isFullyNonInteractive)
 
     yield* fs.writeWithDirs(filePath, content).pipe(Effect.orDie)
 
-    if (isFullyNonInteractive) {
-      yield* Console.log(filePath)
-    } else {
-      yield* Prompt.log.success(`Agent created: ${filePath}`)
-      yield* Prompt.outro("Done")
-    }
+    if (isFullyNonInteractive) return yield* Console.log(filePath)
+    yield* Prompt.log.success(`Agent created: ${filePath}`)
+    return yield* Prompt.outro("Done")
   }),
 })
 
@@ -228,7 +225,7 @@ const fileExists = Effect.fnUntraced(function* (filePath: string, isFullyNonInte
     yield* exit(1)
   }
   yield* Prompt.log.error(`Agent file already exists: ${filePath}`)
-  yield* cancelled()
+  return yield* cancelled()
 })
 
 const AgentListCommand = effectCmd({
