@@ -19,7 +19,6 @@ import {
 } from "effect"
 import { NodeFileSystem } from "@effect/platform-node"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import { type ParseError, parse } from "jsonc-parser"
 import os from "os"
 import path from "path"
 import { InstallationChannel, InstallationVersion } from "../installation/version"
@@ -54,6 +53,9 @@ const FILE_KEYS: Readonly<Record<string, string>> = {
   site: "DD_SITE",
 }
 const decodeDuration = Schema.decodeUnknownOption(Schema.DurationFromString)
+// Bun.JSONC accepts comments and trailing commas, and throws on a malformed file. The jsonc-parser package is not
+// used here, because its UMD entry breaks a Node bundle of any module that reaches this sink.
+const parseJsonc = Option.liftThrowable((text: string): unknown => Bun.JSONC.parse(text))
 
 // Levels are case-insensitive, for example `DEBUG`, `debug` or `Debug`.
 const LEVEL_NAMES = LogLevel.values.flatMap((level) => [level, level.toLowerCase(), level.toUpperCase()])
@@ -200,9 +202,9 @@ export const provider = (options: ProviderOptions) =>
 /** Maps one file's `observability.datadog` object to env var values that narrow, and the warnings for the rest. */
 function fileSettings(file: string, text: string) {
   const ignored = (reason: string) => ({ values: {}, warnings: [`Datadog settings in ${file} ignored: ${reason}`] })
-  const errors: Array<ParseError> = []
-  const input: unknown = parse(text, errors, { allowTrailingComma: true })
-  if (errors.length > 0) return ignored("the file is not valid JSONC")
+  const parsed = parseJsonc(text)
+  if (Option.isNone(parsed)) return ignored("the file is not valid JSONC")
+  const input = parsed.value
   if (!Predicate.isObject(input) || !("observability" in input)) return { values: {}, warnings: [] }
   const observability = input.observability
   if (!plain(observability)) return ignored('"observability" is not an object')
