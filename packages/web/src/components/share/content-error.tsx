@@ -11,7 +11,7 @@ export function ContentError(props: Props) {
   const messages = useShareMessages()
 
   return (
-    <div class={style.root} data-expanded={expanded() || props.expand === true ? true : undefined}>
+    <div class={style.root} {...(expanded() || props.expand === true ? { "data-expanded": true } : {})}>
       <div data-section="content" ref={overflow.ref}>
         {props.children}
       </div>

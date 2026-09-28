@@ -16,8 +16,8 @@ export function ContentText(props: Props) {
   return (
     <div
       class={style.root}
-      data-expanded={expanded() || props.expand === true ? true : undefined}
-      data-compact={props.compact === true ? true : undefined}
+      {...(expanded() || props.expand === true ? { "data-expanded": true } : {})}
+      {...(props.compact === true ? { "data-compact": true } : {})}
     >
       <pre data-slot="text" ref={overflow.ref}>
         {props.text}

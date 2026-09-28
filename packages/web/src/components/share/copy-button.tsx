@@ -40,7 +40,7 @@ export function CopyButton(props: CopyButtonProps) {
       <button
         type="button"
         onClick={handleCopyClick}
-        data-copied={copied() ? true : undefined}
+        {...(copied() ? { "data-copied": true } : {})}
         aria-label={copied() ? messages.copied : messages.copy}
         title={copied() ? messages.copied : messages.copy}
       >
