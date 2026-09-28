@@ -6,8 +6,8 @@ import path from "path"
 import { pathToFileURL, fileURLToPath } from "url"
 import * as LSPServer from "./server"
 import { Config } from "@/config/config"
-import { Process } from "@/util/process"
-import { spawn as lspspawn } from "./launch"
+import { LSPLaunch } from "./launch"
+import { AppProcess } from "@opencode-ai/core/process"
 import {
   Array,
   Clock,
@@ -170,6 +170,7 @@ const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const events = yield* EventV2Bridge.Service
     const fsu = yield* FSUtil.Service
+    const appProcess = yield* AppProcess.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("LSP.state")(function* () {
@@ -200,7 +201,7 @@ const layer = Layer.effect(
                 root: existing?.root ?? ((_file, ctx) => Effect.succeed(Option.some(ctx.directory))),
                 extensions: item.extensions ?? existing?.extensions ?? [],
                 spawn: (root) =>
-                  lspspawn(item.command[0], item.command.slice(1), {
+                  LSPLaunch.spawn(item.command[0], item.command.slice(1), {
                     cwd: root,
                     env: { ...process.env, ...item.env },
                   }).pipe(Effect.map((proc) => Option.some({ process: proc, initialization: item.initialization }))),
@@ -237,7 +238,7 @@ const layer = Layer.effect(
     const rootOf = (server: LSPServer.Info, file: string, ctx: InstanceContext) =>
       server.root(file, ctx).pipe(Effect.provideService(FSUtil.Service, fsu))
 
-    const stop = (handle: LSPServer.Handle) => Effect.tryPromise(() => Process.stop(handle.process)).pipe(Effect.ignore)
+    const stop = (handle: LSPServer.Handle) => LSPLaunch.stop(handle.process)
 
     // Starts the server and connects a client. Any failure marks the server broken for this root.
     const schedule = Effect.fnUntraced(function* (
@@ -249,7 +250,11 @@ const layer = Layer.effect(
     ) {
       const handle = yield* server
         .spawn(root, ctx, flags)
-        .pipe(Effect.provideService(FSUtil.Service, fsu), Effect.catchCause(() => Effect.succeedNone))
+        .pipe(
+          Effect.provideService(FSUtil.Service, fsu),
+          Effect.provideService(AppProcess.Service, appProcess),
+          Effect.catchCause(() => Effect.succeedNone),
+        )
       if (Option.isNone(handle)) {
         MutableHashSet.add(s.broken, key)
         return Option.none<LSPClient.Info>()
@@ -520,7 +525,7 @@ export * as Diagnostic from "./diagnostic"
 export const node = LayerNode.make({
   service: Service,
   layer: layer,
-  deps: [Config.node, RuntimeFlags.node, FSUtil.node, EventV2Bridge.node],
+  deps: [Config.node, RuntimeFlags.node, FSUtil.node, AppProcess.node, EventV2Bridge.node],
 })
 
 export * as LSP from "./lsp"

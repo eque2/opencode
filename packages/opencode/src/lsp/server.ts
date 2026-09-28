@@ -1,7 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "child_process"
 import path from "path"
 import os from "os"
-import { text } from "node:stream/consumers"
 import { Array, Config, Effect, Option, Schema, Semaphore } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -9,10 +8,11 @@ import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { Filesystem } from "@/util/filesystem"
 import type { InstanceContext } from "../project/instance-context"
 import { Archive } from "@/util/archive"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
 import { which } from "@opencode-ai/core/util/which"
 import { Module } from "@opencode-ai/core/util/module"
-import { spawn, type LaunchError } from "./launch"
+import { LSPLaunch, type LaunchError } from "./launch"
 import { Npm } from "@opencode-ai/core/npm"
 import type { RuntimeFlags } from "@/effect/runtime-flags"
 
@@ -39,7 +39,11 @@ export interface Info {
     root: string,
     ctx: InstanceContext,
     flags: RuntimeFlags.Info,
-  ) => Effect.Effect<Option.Option<Handle>, InstallError | LaunchError | FSUtil.Error, FSUtil.Service>
+  ) => Effect.Effect<
+    Option.Option<Handle>,
+    InstallError | LaunchError | FSUtil.Error,
+    FSUtil.Service | AppProcess.Service
+  >
 }
 
 const ReleaseAsset = Schema.Struct({
@@ -72,18 +76,46 @@ const decodeTerraformRelease = Schema.decodeUnknownEffect(TerraformRelease)
 const attempt = <A>(message: string, evaluate: () => PromiseLike<A>) =>
   Effect.tryPromise({ try: evaluate, catch: (cause) => new InstallError({ message, cause }) })
 
-const run = (cmd: string[], opts: Process.RunOptions = {}) =>
-  attempt(`Could not run ${cmd[0]}`, () => Process.run(cmd, { ...opts, nothrow: true }))
+interface CommandOptions {
+  cwd?: string
+  /** Variables to add to the parent environment. */
+  env?: NodeJS.ProcessEnv
+}
 
-const output = (cmd: string[], opts: Process.RunOptions = {}) =>
-  attempt(`Could not run ${cmd[0]}`, () => Process.text(cmd, { ...opts, nothrow: true }))
+const command = (cmd: ReadonlyArray<string>, opts: CommandOptions) =>
+  ChildProcess.make(cmd[0], cmd.slice(1), { cwd: opts.cwd, env: opts.env, extendEnv: true, stdin: "ignore" })
 
-// Runs an installer and returns its exit code.
-const install = (cmd: string[], opts: Process.Options = {}) =>
-  attempt(
-    `Could not run ${cmd[0]}`,
-    () => Process.spawn(cmd, { ...opts, stdout: "pipe", stderr: "pipe", stdin: "pipe" }).exited,
+// Runs a command and returns its result. A command that cannot start reports exit code 1
+// with the failure as its stderr, so the caller treats it like a failed command.
+const run = Effect.fnUntraced(function* (cmd: ReadonlyArray<string>, opts: CommandOptions = {}) {
+  const appProcess = yield* AppProcess.Service
+  return yield* appProcess.run(command(cmd, opts)).pipe(
+    Effect.map((result) => ({ code: result.exitCode, stdout: result.stdout, stderr: result.stderr })),
+    Effect.catch((error) => Effect.succeed({ code: 1, stdout: Buffer.alloc(0), stderr: Buffer.from(error.message) })),
   )
+})
+
+// Runs a command and returns its stdout as text, with the same failure handling as run.
+const output = (cmd: ReadonlyArray<string>, opts: CommandOptions = {}) =>
+  run(cmd, opts).pipe(Effect.map((result) => ({ ...result, text: result.stdout.toString() })))
+
+// Runs an installer and returns its exit code. A command that cannot start fails the install.
+const install = Effect.fnUntraced(function* (cmd: ReadonlyArray<string>, opts: CommandOptions = {}) {
+  const appProcess = yield* AppProcess.Service
+  const result = yield* appProcess
+    .run(command(cmd, opts))
+    .pipe(Effect.mapError((cause) => new InstallError({ message: `Could not run ${cmd[0]}`, cause })))
+  return result.exitCode
+})
+
+// Runs a build step; a command that cannot start or exits non-zero fails the install with message.
+const step = Effect.fnUntraced(function* (message: string, cmd: ReadonlyArray<string>, opts: CommandOptions = {}) {
+  const appProcess = yield* AppProcess.Service
+  yield* appProcess.run(command(cmd, opts)).pipe(
+    Effect.flatMap(AppProcess.requireSuccess),
+    Effect.mapError((cause) => new InstallError({ message, cause })),
+  )
+})
 
 const npmWhich = (pkg: string, bin?: string) =>
   attempt(`Could not resolve the npm package ${pkg}`, () => Npm.which(pkg, bin)).pipe(Effect.map(Option.fromNullishOr))
@@ -131,7 +163,7 @@ const download = Effect.fnUntraced(function* (url: string, target: string) {
 
 // Extracts a zip archive; a failed extraction is false.
 const unzip = (archive: string, target: string) =>
-  attempt(`Could not extract ${archive}`, () => Archive.extractZip(archive, target)).pipe(
+  Archive.extractZip(archive, target).pipe(
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   )
@@ -152,10 +184,10 @@ const firstExisting = Effect.fnUntraced(function* (candidates: ReadonlyArray<str
 const start = (
   command: string,
   args: ReadonlyArray<string>,
-  options: Process.Options,
+  options: LSPLaunch.Options,
   initialization?: Record<string, unknown>,
 ) =>
-  spawn(command, args, options).pipe(
+  LSPLaunch.spawn(command, args, options).pipe(
     Effect.map(
       (proc): Option.Option<Handle> => Option.some(initialization ? { process: proc, initialization } : { process: proc }),
     ),
@@ -282,10 +314,8 @@ export const ESLint: Info = {
       yield* fsu.rename(extractedPath, finalPath)
 
       const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm"
-      yield* attempt("Could not install vscode-eslint", () => Process.run([npmCmd, "install"], { cwd: finalPath }))
-      yield* attempt("Could not compile vscode-eslint", () =>
-        Process.run([npmCmd, "run", "compile"], { cwd: finalPath }),
-      )
+      yield* step("Could not install vscode-eslint", [npmCmd, "install"], { cwd: finalPath })
+      yield* step("Could not compile vscode-eslint", [npmCmd, "run", "compile"], { cwd: finalPath })
     }
 
     return yield* start("node", [serverPath, "--stdio"], { cwd: root, env: { ...process.env } })
@@ -316,10 +346,11 @@ export const Oxlint: Info = {
 
     const lintBin = yield* resolveBin(path.join("node_modules", ".bin", "oxlint" + ext), "oxlint")
     if (Option.isSome(lintBin)) {
-      const proc = yield* spawn(lintBin.value, ["--help"])
-      yield* attempt("Could not run oxlint --help", () => proc.exited)
-      const help = yield* attempt("Could not read oxlint --help", () => text(proc.stdout))
-      if (help.includes("--lsp")) return yield* start(lintBin.value, ["--lsp"], { cwd: root })
+      const appProcess = yield* AppProcess.Service
+      const help = yield* appProcess
+        .run(command([lintBin.value, "--help"], {}))
+        .pipe(Effect.mapError((cause) => new InstallError({ message: "Could not run oxlint --help", cause })))
+      if (help.stdout.toString().includes("--lsp")) return yield* start(lintBin.value, ["--lsp"], { cwd: root })
     }
 
     const serverBin = yield* resolveBin(
@@ -505,11 +536,9 @@ export const ElixirLS: Info = {
 
       const cwd = path.join(Global.Path.bin, "elixir-ls-master")
       const env = { MIX_ENV: "prod", ...process.env }
-      yield* attempt("Could not fetch the elixir-ls dependencies", () => Process.run(["mix", "deps.get"], { cwd, env }))
-      yield* attempt("Could not compile elixir-ls", () => Process.run(["mix", "compile"], { cwd, env }))
-      yield* attempt("Could not release elixir-ls", () =>
-        Process.run(["mix", "elixir_ls.release2", "-o", "release"], { cwd, env }),
-      )
+      yield* step("Could not fetch the elixir-ls dependencies", ["mix", "deps.get"], { cwd, env })
+      yield* step("Could not compile elixir-ls", ["mix", "compile"], { cwd, env })
+      yield* step("Could not release elixir-ls", ["mix", "elixir_ls.release2", "-o", "release"], { cwd, env })
     }
 
     return yield* start(binary, [], { cwd: root })

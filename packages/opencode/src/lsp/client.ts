@@ -8,7 +8,7 @@ import {
   StreamMessageWriter,
 } from "vscode-jsonrpc/node"
 import type { Diagnostic as VSCodeDiagnostic } from "vscode-languageserver-types"
-import { Process } from "@/util/process"
+import { stop } from "./launch"
 import { LANGUAGE_EXTENSIONS } from "./language"
 import {
   Array as Arr,
@@ -690,7 +690,7 @@ const make = Effect.fn("LSPClient.create")(function* (input: CreateInput) {
   const shutdown = Effect.fn("LSPClient.shutdown")(function* () {
     connection.end()
     connection.dispose()
-    yield* Effect.tryPromise(() => Process.stop(input.server.process))
+    yield* stop(input.server.process)
   })
 
   return {
