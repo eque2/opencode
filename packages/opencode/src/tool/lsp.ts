@@ -8,6 +8,9 @@ import { pathToFileURL } from "url"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 
+// LSP responses are opaque JSON-RPC data; the tool only pretty-prints them for the model.
+const encodeResult = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
 const operations = [
   "goToDefinition",
   "findReferences",
@@ -99,7 +102,7 @@ export const LspTool = Tool.define(
           return {
             title,
             metadata: { result },
-            output: result.length === 0 ? `No results found for ${args.operation}` : JSON.stringify(result, null, 2),
+            output: result.length === 0 ? `No results found for ${args.operation}` : yield* encodeResult(result),
           }
         }).pipe(Effect.provideService(FSUtil.Service, fs), Effect.orDie),
     }

@@ -7,6 +7,8 @@ export const Parameters = Schema.Struct({
   todos: Schema.mutable(Schema.Array(Todo.Info)).annotate({ description: "The updated todo list" }),
 })
 
+const encodeTodos = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Todo.Info), { space: 2 }))
+
 type Metadata = {
   todos: Todo.Info[]
 }
@@ -35,7 +37,7 @@ export const TodoWriteTool = Tool.define<typeof Parameters, Metadata, Todo.Servi
 
           return {
             title: `${params.todos.filter((x) => x.status !== "completed").length} todos`,
-            output: JSON.stringify(params.todos, null, 2),
+            output: yield* encodeTodos(params.todos).pipe(Effect.orDie),
             metadata: {
               todos: params.todos,
             },
