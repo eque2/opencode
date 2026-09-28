@@ -138,8 +138,7 @@ const live: Layer.Layer<
             const output = typeof result === "string" ? result : (result?.output ?? JSON.stringify(result))
             return {
               result: output,
-              metadata: typeof result === "object" ? result?.metadata : undefined,
-              title: typeof result === "object" ? result?.title : undefined,
+              ...(typeof result === "object" ? { metadata: result?.metadata, title: result?.title } : {}),
             }
           } catch (e: any) {
             return { result: "", error: e.message ?? String(e) }
@@ -206,10 +205,12 @@ const live: Layer.Layer<
       }
 
       const tracer = cfg.experimental?.openTelemetry
-        ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
-        : undefined
-      const telemetryTracer = tracer
-        ? new Proxy(tracer, {
+        ? yield* Effect.serviceOption(OtelTracer.OtelTracer)
+        : Option.none()
+      const telemetryTracer = Option.map(
+        tracer,
+        (tracer) =>
+          new Proxy(tracer, {
             get(target, prop, receiver) {
               if (prop !== "startSpan") return Reflect.get(target, prop, receiver)
               return (...args: Parameters<typeof target.startSpan>) => {
@@ -218,8 +219,8 @@ const live: Layer.Layer<
                 return span
               }
             },
-          })
-        : undefined
+          }),
+      )
 
       // Runtime seam: native is an opt-in adapter over @opencode-ai/llm. It
       // either returns a ready LLMEvent stream or a concrete fallback reason.
@@ -344,7 +345,7 @@ const live: Layer.Layer<
           experimental_telemetry: {
             isEnabled: cfg.experimental?.openTelemetry,
             functionId: "session.llm",
-            tracer: telemetryTracer,
+            tracer: Option.getOrUndefined(telemetryTracer),
             metadata: {
               userId: cfg.username ?? "unknown",
               sessionId: input.sessionID,

@@ -68,7 +68,7 @@ function statusWithFetch(
   return {
     type: "supported",
     apiKey,
-    baseURL: typeof input.provider.options.baseURL === "string" ? input.provider.options.baseURL : undefined,
+    ...(typeof input.provider.options.baseURL === "string" ? { baseURL: input.provider.options.baseURL } : {}),
   }
 }
 

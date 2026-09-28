@@ -36,21 +36,27 @@ export type RequestInput = {
   readonly headers?: Record<string, string>
 }
 
-const providerMetadata = (value: unknown): ProviderMetadata | undefined => {
-  if (!isRecord(value)) return undefined
+const providerMetadata = (value: unknown): Option.Option<ProviderMetadata> => {
+  if (!isRecord(value)) return Option.none()
   const result = LLMJson.objectEntries(value)
-  return Object.keys(result).length === 0 ? undefined : result
+  return Object.keys(result).length === 0 ? Option.none() : Option.some(result)
 }
 
 // Stored AI SDK parts historically kept provider-owned continuation metadata in
 // `providerOptions`; native parts now use `providerMetadata` directly.
-const partProviderMetadata = (part: Record<string, unknown>) =>
-  providerMetadata(part.providerMetadata) ?? providerMetadata(part.providerOptions)
+const providerMetadataField = (part: Record<string, unknown>) =>
+  Option.match(
+    Option.orElse(providerMetadata(part.providerMetadata), () => providerMetadata(part.providerOptions)),
+    { onNone: () => ({}), onSome: (providerMetadata) => ({ providerMetadata }) },
+  )
+
+const providerExecutedField = (part: Record<string, unknown>) =>
+  typeof part.providerExecuted === "boolean" ? { providerExecuted: part.providerExecuted } : {}
 
 const textPart = (part: Record<string, unknown>) => ({
   type: "text" as const,
   text: typeof part.text === "string" ? part.text : "",
-  providerMetadata: partProviderMetadata(part),
+  ...providerMetadataField(part),
 })
 
 const mediaPart = (part: Record<string, unknown>) => {
@@ -60,7 +66,7 @@ const mediaPart = (part: Record<string, unknown>) => {
     type: "media" as const,
     mediaType: typeof part.mediaType === "string" ? part.mediaType : "application/octet-stream",
     data: part.data,
-    filename: typeof part.filename === "string" ? part.filename : undefined,
+    ...(typeof part.filename === "string" ? { filename: part.filename } : {}),
   }
 }
 
@@ -72,8 +78,8 @@ const toolResult = (part: Record<string, unknown>) => {
     name: typeof part.toolName === "string" ? part.toolName : "",
     result: "value" in output ? output.value : output,
     resultType: type,
-    providerExecuted: typeof part.providerExecuted === "boolean" ? part.providerExecuted : undefined,
-    providerMetadata: partProviderMetadata(part),
+    ...providerExecutedField(part),
+    ...providerMetadataField(part),
   })
 }
 
@@ -85,15 +91,15 @@ const contentPart = (part: unknown) => {
     return {
       type: "reasoning" as const,
       text: typeof part.text === "string" ? part.text : "",
-      providerMetadata: partProviderMetadata(part),
+      ...providerMetadataField(part),
     }
   if (part.type === "tool-call")
     return ToolCallPart.make({
       id: typeof part.toolCallId === "string" ? part.toolCallId : "",
       name: typeof part.toolName === "string" ? part.toolName : "",
       input: part.input,
-      providerExecuted: typeof part.providerExecuted === "boolean" ? part.providerExecuted : undefined,
-      providerMetadata: partProviderMetadata(part),
+      ...providerExecutedField(part),
+      ...providerMetadataField(part),
     })
   if (part.type === "tool-result") return toolResult(part)
   throw new Error(`Native LLM request adapter does not support ${String(part.type)} content parts`)
@@ -110,9 +116,9 @@ const messages = (input: readonly ModelMessage[]) => {
       Message.make({
         role: message.role,
         content: content(message.content),
-        native: isRecord(message.providerOptions)
-          ? { providerOptions: LLMJson.objectEntries(message.providerOptions) }
-          : undefined,
+        ...(isRecord(message.providerOptions)
+          ? { native: { providerOptions: LLMJson.objectEntries(message.providerOptions) } }
+          : {}),
       }),
     ]
   })
@@ -138,31 +144,33 @@ const tools = (input: Record<string, ToolInput> | undefined): ToolDefinition[] =
     }),
   )
 
-const generation = (input: RequestInput) => {
-  const result = {
+const generationField = (input: RequestInput) => {
+  const generation = {
     temperature: input.temperature,
     topP: input.topP,
     topK: input.topK,
     maxTokens: input.maxOutputTokens,
   }
-  return Object.values(result).some((value) => value !== undefined) ? result : undefined
+  return Object.values(generation).some((value) => value !== undefined) ? { generation } : {}
 }
 
+// An empty configured URL counts as no URL; a request base URL overrides the model URL.
 const baseURL = (input: Provider.Model | RequestInput) =>
-  "model" in input ? (input.baseURL ?? (input.model.api.url || undefined)) : input.api.url || undefined
+  Option.liftPredicate("model" in input ? (input.baseURL ?? input.model.api.url) : input.api.url, (url) => url !== "")
 
-const requireBaseURL = (model: Provider.Model, url: string | undefined) => {
-  if (url) return url
+const requireBaseURL = (model: Provider.Model, url: Option.Option<string>) => {
+  if (Option.isSome(url)) return url.value
   throw new Error(`Native LLM request adapter requires a base URL for ${model.providerID}/${model.id}`)
 }
 
 export const model = (input: Provider.Model | RequestInput, headers?: Record<string, string>) => {
   const model = "model" in input ? input.model : input
   const url = baseURL(input)
+  const mergedHeaders = { ...model.headers, ...headers }
   const options = {
     ...("model" in input && input.apiKey ? { apiKey: input.apiKey } : {}),
-    ...(url ? { baseURL: url } : {}),
-    headers: Object.keys({ ...model.headers, ...headers }).length === 0 ? undefined : { ...model.headers, ...headers },
+    ...Option.match(url, { onNone: () => ({}), onSome: (baseURL) => ({ baseURL }) }),
+    ...(Object.keys(mergedHeaders).length === 0 ? {} : { headers: mergedHeaders }),
     limits: {
       context: model.limit.context,
       output: model.limit.output,
@@ -194,7 +202,7 @@ export const request = (input: RequestInput) => {
     messages: converted.messages,
     tools: tools(input.tools),
     toolChoice: input.toolChoice,
-    generation: generation(input),
+    ...generationField(input),
     providerOptions: input.providerOptions,
   })
 }
