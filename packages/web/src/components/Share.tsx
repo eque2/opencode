@@ -102,7 +102,7 @@ export default function Share(props: {
     }
 
     if (!apiUrl) {
-      console.error("API URL not found in environment variables")
+      Effect.runFork(Effect.logError("API URL not found in environment variables"))
       setConnectionStatus(["error", props.messages.error_api_url_not_found])
       return
     }
@@ -165,7 +165,7 @@ export default function Share(props: {
 
       // Handle errors
       socket.onerror = (error) => {
-        console.error("WebSocket error:", error)
+        Effect.runFork(Effect.logError("WebSocket error:", error))
         setConnectionStatus(["error", props.messages.error_connection_failed])
       }
 
