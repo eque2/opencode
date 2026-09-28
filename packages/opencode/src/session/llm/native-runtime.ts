@@ -4,7 +4,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { errorMessage } from "@/util/error"
 import { isRecord } from "@/util/record"
 import { asSchema, type ModelMessage, type Tool } from "ai"
-import { Cause, Effect, FiberSet, Option, Queue } from "effect"
+import { Cause, Effect, FiberSet, Option, Predicate, Queue } from "effect"
 import * as Stream from "effect/Stream"
 import { FetchHttpClient } from "effect/unstable/http"
 import {
@@ -180,15 +180,23 @@ export function nativeTools(tools: Record<string, Tool>, input: Pick<StreamInput
         execute: (args: unknown, ctx) => {
           const execute = item.execute
           if (!execute) return Effect.fail(new ToolFailure({ message: `Tool has no execute handler: ${name}` }))
-          return Effect.tryPromise({
+          const failure = (error: unknown) => new ToolFailure({ message: errorMessage(error), error })
+          // AI SDK handlers may return a plain value or a PromiseLike.
+          return Effect.try({
             try: () =>
               execute(args, {
                 toolCallId: ctx?.id ?? name,
                 messages: input.messages,
                 abortSignal: input.abort,
               }),
-            catch: (error) => new ToolFailure({ message: errorMessage(error), error }),
-          })
+            catch: failure,
+          }).pipe(
+            Effect.flatMap((output: unknown) =>
+              Predicate.isPromiseLike(output)
+                ? Effect.tryPromise({ try: () => output, catch: failure })
+                : Effect.succeed(output),
+            ),
+          )
         },
       }),
     ]),

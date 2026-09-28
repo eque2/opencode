@@ -5,7 +5,6 @@ import type { RuntimeFlags } from "@/effect/runtime-flags"
 import { InstanceState } from "@/effect/instance-state"
 import { Permission } from "@/permission"
 import type { Agent } from "@/agent/agent"
-import type { MessageV2 } from "../message-v2"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { SystemPrompt } from "../system"
@@ -170,7 +169,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
           reason: { type: "string", description: "Unused" },
         },
       }),
-      execute: async () => ({ output: "", title: "", metadata: {} }),
+      execute: () => ({ output: "", title: "", metadata: {} }),
     })
   }
 
