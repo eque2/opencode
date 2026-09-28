@@ -20,7 +20,9 @@ export const InstallFailedError = NamedError.create("InstallFailedError", {
 })
 
 export function ide() {
+  // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.ide() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
   if (process.env["TERM_PROGRAM"] === "vscode") {
+    // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.ide() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
     const v = process.env["GIT_ASKPASS"]
     for (const ide of SUPPORTED_IDES) {
       if (v?.includes(ide.name)) return ide.name
@@ -30,7 +32,9 @@ export function ide() {
 }
 
 export function alreadyInstalled() {
-  return process.env["OPENCODE_CALLER"] === "vscode" || process.env["OPENCODE_CALLER"] === "vscode-insiders"
+  // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.alreadyInstalled() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
+  const caller = process.env["OPENCODE_CALLER"]
+  return caller === "vscode" || caller === "vscode-insiders"
 }
 
 /** The IDE name has no entry in SUPPORTED_IDES. */
