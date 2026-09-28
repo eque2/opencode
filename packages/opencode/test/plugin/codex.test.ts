@@ -1,16 +1,69 @@
 import { describe, expect, test } from "bun:test"
 import { createServer, type IncomingMessage } from "node:http"
-import { type AddressInfo } from "node:net"
+import type { Provider } from "@opencode-ai/sdk"
+import type { Auth, Model, Provider as ProviderV2 } from "@opencode-ai/sdk/v2"
+import { Option } from "effect"
 import { WebSocketServer } from "ws"
 import {
   CodexAuthPlugin,
+  CodexOrganizationId,
   parseJwtClaims,
   extractAccountIdFromClaims,
   extractAccountId,
   extractResidency,
   renderOAuthError,
+  type CodexAuthInput,
   type IdTokenClaims,
 } from "../../src/plugin/openai/codex"
+
+const input: CodexAuthInput = { client: { auth: { set: async () => {} } } }
+
+const loaderProvider: Provider = {
+  id: "openai",
+  name: "OpenAI",
+  source: "custom",
+  env: [],
+  options: {},
+  models: {},
+}
+
+const apiAuth = async (): Promise<Auth> => ({ type: "api", key: "sk-test" })
+const oauthContext: { auth: Auth } = { auth: { type: "oauth", refresh: "refresh", access: "access", expires: 0 } }
+const apiContext: { auth: Auth } = { auth: { type: "api", key: "sk-test" } }
+
+const defaultLimit: Model["limit"] = { context: 128_000, output: 16_000 }
+
+function model(
+  id: string,
+  options: { apiID?: string; limit?: Model["limit"]; options?: Model["options"] } = {},
+): Model {
+  const flags = { text: true, audio: false, image: false, video: false, pdf: false }
+  return {
+    id,
+    providerID: "openai",
+    api: { id: options.apiID ?? id, url: "", npm: "" },
+    name: id,
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: false,
+      toolcall: true,
+      input: flags,
+      output: flags,
+      interleaved: false,
+    },
+    cost: { input: 1, output: 1, cache: { read: 0, write: 0 } },
+    limit: options.limit ?? defaultLimit,
+    status: "active",
+    options: options.options ?? {},
+    headers: {},
+    release_date: "",
+  }
+}
+
+function modelsProvider(models: Record<string, Model>): ProviderV2 {
+  return { id: "openai", name: "OpenAI", source: "custom", env: [], options: {}, models }
+}
 
 function createTestJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url")
@@ -32,22 +85,22 @@ describe("plugin.codex", () => {
       const payload = { email: "test@example.com", chatgpt_account_id: "acc-123" }
       const jwt = createTestJwt(payload)
       const claims = parseJwtClaims(jwt)
-      expect(claims).toEqual(payload)
+      expect(claims).toEqual(Option.some(payload))
     })
 
-    test("returns undefined for JWT with less than 3 parts", () => {
-      expect(parseJwtClaims("invalid")).toBeUndefined()
-      expect(parseJwtClaims("only.two")).toBeUndefined()
+    test("returns none for JWT with less than 3 parts", () => {
+      expect(parseJwtClaims("invalid")).toEqual(Option.none())
+      expect(parseJwtClaims("only.two")).toEqual(Option.none())
     })
 
-    test("returns undefined for invalid base64", () => {
-      expect(parseJwtClaims("a.!!!invalid!!!.b")).toBeUndefined()
+    test("returns none for invalid base64", () => {
+      expect(parseJwtClaims("a.!!!invalid!!!.b")).toEqual(Option.none())
     })
 
-    test("returns undefined for invalid JSON payload", () => {
+    test("returns none for invalid JSON payload", () => {
       const header = Buffer.from("{}").toString("base64url")
       const invalidJson = Buffer.from("not json").toString("base64url")
-      expect(parseJwtClaims(`${header}.${invalidJson}.sig`)).toBeUndefined()
+      expect(parseJwtClaims(`${header}.${invalidJson}.sig`)).toEqual(Option.none())
     })
   })
 
@@ -74,7 +127,7 @@ describe("plugin.codex", () => {
 
     test("extracts from organizations array as fallback", () => {
       const claims: IdTokenClaims = {
-        organizations: [{ id: "org-123" }, { id: "org-456" }],
+        organizations: [{ id: CodexOrganizationId.make("org-123") }, { id: CodexOrganizationId.make("org-456") }],
       }
       expect(extractAccountIdFromClaims(claims)).toBe("org-123")
     })
@@ -95,7 +148,7 @@ describe("plugin.codex", () => {
           access_token: accessToken,
           refresh_token: "rt",
         }),
-      ).toBe("from-id-token")
+      ).toEqual(Option.some("from-id-token"))
     })
 
     test("falls back to access_token when id_token has no accountId", () => {
@@ -109,10 +162,10 @@ describe("plugin.codex", () => {
           access_token: accessToken,
           refresh_token: "rt",
         }),
-      ).toBe("from-access")
+      ).toEqual(Option.some("from-access"))
     })
 
-    test("returns undefined when no tokens have accountId", () => {
+    test("returns none when no tokens have accountId", () => {
       const token = createTestJwt({ email: "test@example.com" })
       expect(
         extractAccountId({
@@ -120,7 +173,7 @@ describe("plugin.codex", () => {
           access_token: token,
           refresh_token: "rt",
         }),
-      ).toBeUndefined()
+      ).toEqual(Option.none())
     })
 
     test("handles missing id_token", () => {
@@ -131,7 +184,7 @@ describe("plugin.codex", () => {
           access_token: accessToken,
           refresh_token: "rt",
         }),
-      ).toBe("acc-123")
+      ).toEqual(Option.some("acc-123"))
     })
   })
 
@@ -143,11 +196,11 @@ describe("plugin.codex", () => {
             "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
           }),
         ),
-      ).toBe("eu")
+      ).toEqual(Option.some("eu"))
     })
 
     test("falls back to a root compute residency claim", () => {
-      expect(extractResidency(createTestJwt({ chatgpt_compute_residency: "us" }))).toBe("us")
+      expect(extractResidency(createTestJwt({ chatgpt_compute_residency: "us" }))).toEqual(Option.some("us"))
     })
 
     test("supports compute residency values without maintaining a region list", () => {
@@ -157,14 +210,14 @@ describe("plugin.codex", () => {
             "https://api.openai.com/auth": { chatgpt_compute_residency: "ae" },
           }),
         ),
-      ).toBe("ae")
+      ).toEqual(Option.some("ae"))
       expect(
         extractResidency(
           createTestJwt({
             "https://api.openai.com/auth": { chatgpt_compute_residency: "future-region_1" },
           }),
         ),
-      ).toBe("future-region_1")
+      ).toEqual(Option.some("future-region_1"))
     })
 
     test("ignores unconstrained and data residency values", () => {
@@ -174,16 +227,16 @@ describe("plugin.codex", () => {
             "https://api.openai.com/auth": { chatgpt_compute_residency: "no_constraint" },
           }),
         ),
-      ).toBeUndefined()
+      ).toEqual(Option.none())
       expect(
         extractResidency(
           createTestJwt({
             "https://api.openai.com/auth": { chatgpt_data_residency: "gb" },
           }),
         ),
-      ).toBeUndefined()
-      expect(extractResidency(createTestJwt({ chatgpt_compute_residency: "" }))).toBeUndefined()
-      expect(extractResidency("not-a-jwt")).toBeUndefined()
+      ).toEqual(Option.none())
+      expect(extractResidency(createTestJwt({ chatgpt_compute_residency: "" }))).toEqual(Option.none())
+      expect(extractResidency("not-a-jwt")).toEqual(Option.none())
     })
 
     test("prefers a namespaced unconstrained value over a root residency", () => {
@@ -194,22 +247,16 @@ describe("plugin.codex", () => {
             "https://api.openai.com/auth": { chatgpt_compute_residency: "no_constraint" },
           }),
         ),
-      ).toBeUndefined()
+      ).toEqual(Option.none())
     })
   })
 
   test("installs websocket transport only when experimental websockets are enabled", async () => {
-    const disabled = await CodexAuthPlugin({} as never)
-    const enabled = await CodexAuthPlugin({} as never, { experimentalWebSockets: true })
+    const disabled = await CodexAuthPlugin(input)
+    const enabled = await CodexAuthPlugin(input, { experimentalWebSockets: true })
 
-    const disabledOptions = await disabled.auth!.loader!(
-      async () => ({ type: "api", key: "sk-test" }) as never,
-      {} as never,
-    )
-    const enabledOptions = await enabled.auth!.loader!(
-      async () => ({ type: "api", key: "sk-test" }) as never,
-      {} as never,
-    )
+    const disabledOptions = await disabled.auth!.loader!(apiAuth, loaderProvider)
+    const enabledOptions = await enabled.auth!.loader!(apiAuth, loaderProvider)
 
     expect(disabledOptions.fetch).toBeUndefined()
     expect(enabledOptions.fetch).toBeFunction()
@@ -228,20 +275,19 @@ describe("plugin.codex", () => {
         return new Response("{}")
       },
     })
-    const hooks = await CodexAuthPlugin({} as never, {
+    const hooks = await CodexAuthPlugin(input, {
       codexApiEndpoint: new URL("/backend-api/codex/responses", server.url).toString(),
     })
     const loaded = await hooks.auth!.loader!(
-      async () =>
-        ({
-          type: "oauth",
-          refresh: "refresh",
-          access: createTestJwt({
-            "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
-          }),
-          expires: Date.now() + 60_000,
-        }) as never,
-      {} as never,
+      async (): Promise<Auth> => ({
+        type: "oauth",
+        refresh: "refresh",
+        access: createTestJwt({
+          "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
+        }),
+        expires: Date.now() + 60_000,
+      }),
+      loaderProvider,
     )
 
     await loaded.fetch!("https://api.openai.com/v1/responses")
@@ -255,21 +301,20 @@ describe("plugin.codex", () => {
 
   test("sends token residency through the WebSocket transport", async () => {
     await using server = await createCodexWebSocketServer()
-    const hooks = await CodexAuthPlugin({} as never, {
+    const hooks = await CodexAuthPlugin(input, {
       codexApiEndpoint: server.url,
       experimentalWebSockets: true,
     })
     const loaded = await hooks.auth!.loader!(
-      async () =>
-        ({
-          type: "oauth",
-          refresh: "refresh",
-          access: createTestJwt({
-            "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
-          }),
-          expires: Date.now() + 60_000,
-        }) as never,
-      {} as never,
+      async (): Promise<Auth> => ({
+        type: "oauth",
+        refresh: "refresh",
+        access: createTestJwt({
+          "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
+        }),
+        expires: Date.now() + 60_000,
+      }),
+      loaderProvider,
     )
 
     const response = await loaded.fetch!("https://api.openai.com/v1/responses", {
@@ -284,34 +329,24 @@ describe("plugin.codex", () => {
   })
 
   test("filters unsupported modes and uses Codex context limits for OAuth GPT models", async () => {
-    const hooks = await CodexAuthPlugin({} as never)
+    const hooks = await CodexAuthPlugin(input)
     const limit = { context: 1_050_000, input: 922_000, output: 128_000 }
-    const provider = {
-      models: {
-        ...Object.fromEntries(
-          ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.7-pro"].map((id) => [
-            id,
-            { id, api: { id }, limit, cost: {}, options: {} },
-          ]),
-        ),
-        "gpt-5.4-pro": {
-          id: "gpt-5.4-pro",
-          api: { id: "gpt-5.4" },
-          limit,
-          cost: {},
-          options: { reasoningMode: "pro" },
-        },
-        "gpt-5.6-sol-high": {
-          id: "gpt-5.6-sol-high",
-          api: { id: "gpt-5.6-sol" },
-          limit,
-          cost: {},
-          options: { reasoningEffort: "high" },
-        },
-      },
-    }
+    const provider = modelsProvider({
+      ...Object.fromEntries(
+        ["gpt-5.4", "gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.7-pro"].map((id) => [
+          id,
+          model(id, { limit }),
+        ]),
+      ),
+      "gpt-5.4-pro": model("gpt-5.4-pro", { apiID: "gpt-5.4", limit, options: { reasoningMode: "pro" } }),
+      "gpt-5.6-sol-high": model("gpt-5.6-sol-high", {
+        apiID: "gpt-5.6-sol",
+        limit,
+        options: { reasoningEffort: "high" },
+      }),
+    })
 
-    const models = await hooks.provider!.models!(provider as never, { auth: { type: "oauth" } } as never)
+    const models = await hooks.provider!.models!(provider, oauthContext)
 
     expect(models["gpt-5.4"]?.limit).toEqual(limit)
     expect(models["gpt-5.5"]?.limit).toEqual({ context: 400_000, input: 272_000, output: 128_000 })
@@ -321,9 +356,7 @@ describe("plugin.codex", () => {
     expect(models["gpt-5.4-pro"]).toBeUndefined()
     expect(models["gpt-5.7-pro"]).toBeDefined()
     expect(models["gpt-5.6-sol-high"]).toBeDefined()
-    expect(await hooks.provider!.models!(provider as never, { auth: { type: "api" } } as never)).toBe(
-      provider.models as never,
-    )
+    expect(await hooks.provider!.models!(provider, apiContext)).toBe(provider.models)
   })
 
   test.each([
@@ -349,14 +382,10 @@ describe("plugin.codex", () => {
     ["gpt-6.1.2", true],
     ["not-a-gpt-model", false],
   ])("filters OAuth model %s by GPT major and minor versions", async (id, allowed) => {
-    const hooks = await CodexAuthPlugin({} as never)
-    const provider = {
-      models: {
-        [id]: { id, api: { id }, limit: {}, cost: {}, options: {} },
-      },
-    }
+    const hooks = await CodexAuthPlugin(input)
+    const provider = modelsProvider({ [id]: model(id) })
 
-    const models = await hooks.provider!.models!(provider as never, { auth: { type: "oauth" } } as never)
+    const models = await hooks.provider!.models!(provider, oauthContext)
 
     expect(Object.keys(models)).toEqual(allowed ? [id] : [])
   })
@@ -365,8 +394,8 @@ describe("plugin.codex", () => {
     const refreshedAccess = createTestJwt({
       "https://api.openai.com/auth": { chatgpt_compute_residency: "eu" },
     })
-    let auth = {
-      type: "oauth" as const,
+    let auth: Auth = {
+      type: "oauth",
       refresh: "refresh-old",
       access: "",
       expires: 0,
@@ -414,7 +443,7 @@ describe("plugin.codex", () => {
       {
         client: {
           auth: {
-            async set(input: { body: { refresh: string; access: string; expires: number; accountId?: string } }) {
+            async set(input) {
               authUpdates.push(input)
               auth = {
                 type: "oauth",
@@ -425,22 +454,14 @@ describe("plugin.codex", () => {
               }
             },
           },
-        } as never,
-        project: {} as never,
-        directory: "",
-        worktree: "",
-        experimental_workspace: {
-          register() {},
         },
-        serverUrl: new URL("https://example.com"),
-        $: {} as never,
       },
       {
         issuer: server.url.origin,
         codexApiEndpoint: new URL("/backend-api/codex/responses", server.url).toString(),
       },
     )
-    const loaded = await hooks.auth!.loader!(async () => auth as never, {} as never)
+    const loaded = await hooks.auth!.loader!(async () => auth, loaderProvider)
 
     const first = loaded.fetch!("https://api.openai.com/v1/responses")
     const second = loaded.fetch!("https://api.openai.com/v1/responses")
@@ -485,7 +506,8 @@ async function createCodexWebSocketServer() {
     server.once("error", reject)
     server.listen(0, "127.0.0.1", resolve)
   })
-  const address = server.address() as AddressInfo
+  const address = server.address()
+  if (!address || typeof address === "string") throw new Error("expected a TCP address for the test server")
   return {
     url: `http://127.0.0.1:${address.port}/backend-api/codex/responses`,
     headers: () => headers,
