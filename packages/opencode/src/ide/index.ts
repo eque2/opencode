@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Config, ConfigProvider, Effect, Option, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { AppProcess } from "@opencode-ai/core/process"
 import { ChildProcess } from "effect/unstable/process"
@@ -20,23 +20,25 @@ export const InstallFailedError = NamedError.create("InstallFailedError", {
   stderr: Schema.String,
 })
 
-export function ide() {
-  // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.ide() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
-  if (process.env["TERM_PROGRAM"] === "vscode") {
-    // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.ide() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
-    const v = process.env["GIT_ASKPASS"]
-    for (const ide of SUPPORTED_IDES) {
-      if (v?.includes(ide.name)) return ide.name
-    }
-  }
-  return "unknown"
-}
+// Reads a variable from the live process environment on each run, keeping empty values as set.
+const processEnv = (key: string) =>
+  Effect.suspend(() =>
+    Config.option(Config.String(key)).parse(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  ).pipe(Effect.orDie)
 
-export function alreadyInstalled() {
-  // eslint-disable-next-line effect/no-process-env-use-config -- (c) public contract: Ide.alreadyInstalled() is a synchronous API exported through the package "./*" export and pinned by test/ide/ide.test.ts, which sets process.env after start; an Effect Config read would change the signature
-  const caller = process.env["OPENCODE_CALLER"]
-  return caller === "vscode" || caller === "vscode-insiders"
-}
+/** The IDE whose integrated terminal runs this process, or "unknown". */
+export const ide = Effect.fn("Ide.ide")(function* () {
+  const term = yield* processEnv("TERM_PROGRAM")
+  if (Option.getOrUndefined(term) !== "vscode") return "unknown"
+  const askpass = Option.getOrElse(yield* processEnv("GIT_ASKPASS"), () => "")
+  return SUPPORTED_IDES.find((entry) => askpass.includes(entry.name))?.name ?? "unknown"
+})
+
+/** True when a VS Code extension started this process, so the extension is already installed. */
+export const alreadyInstalled = Effect.fn("Ide.alreadyInstalled")(function* () {
+  const caller = yield* processEnv("OPENCODE_CALLER")
+  return Option.exists(caller, (value) => value === "vscode" || value === "vscode-insiders")
+})
 
 /** The IDE name has no entry in SUPPORTED_IDES. */
 export class UnknownIdeError extends Schema.TaggedError<UnknownIdeError>()("UnknownIdeError", {
