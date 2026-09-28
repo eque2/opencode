@@ -38,5 +38,5 @@ export const GithubCommand = cmd({
   command: "github",
   describe: "manage GitHub agent",
   builder: (yargs) => yargs.command(GithubInstallCommand).command(GithubRunCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })

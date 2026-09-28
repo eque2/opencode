@@ -1,8 +1,11 @@
 import { test, expect, describe } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { extractResponseText, formatPromptTooLargeError } from "../../src/cli/cmd/github"
-import type { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID, PartID } from "../../src/session/schema"
+import { Effect, Option } from "effect"
+
+// Runs the extraction; it has no requirements and fails only on an empty response.
+const extract = (parts: SessionV1.Part[]) => Effect.runSync(extractResponseText(parts))
 
 // Helper to create minimal valid parts
 function createTextPart(text: string): SessionV1.Part {
@@ -84,28 +87,28 @@ function createStepFinishPart(): SessionV1.Part {
 describe("extractResponseText", () => {
   test("returns text from text part", () => {
     const parts = [createTextPart("Hello world")]
-    expect(extractResponseText(parts)).toBe("Hello world")
+    expect(extract(parts)).toEqual(Option.some("Hello world"))
   })
 
   test("returns last text part when multiple exist", () => {
     const parts = [createTextPart("First"), createTextPart("Last")]
-    expect(extractResponseText(parts)).toBe("Last")
+    expect(extract(parts)).toEqual(Option.some("Last"))
   })
 
   test("returns text even when tool parts follow", () => {
     const parts = [createTextPart("I'll help with that."), createToolPart("todowrite", "3 todos")]
-    expect(extractResponseText(parts)).toBe("I'll help with that.")
+    expect(extract(parts)).toEqual(Option.some("I'll help with that."))
   })
 
   test("returns null for reasoning-only response (signals summary needed)", () => {
     const parts = [createReasoningPart("Let me think about this...")]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns null for tool-only response (signals summary needed)", () => {
     // This is the exact scenario from the bug report - todowrite with no text
     const parts = [createToolPart("todowrite", "8 todos")]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns null for multiple completed tools", () => {
@@ -114,31 +117,33 @@ describe("extractResponseText", () => {
       createToolPart("edit", "src/file.ts"),
       createToolPart("bash", "bun test"),
     ]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns null for running tool parts (signals summary needed)", () => {
     const parts = [createToolPart("bash", "", "running")]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
-  test("throws on empty array", () => {
-    expect(() => extractResponseText([])).toThrow("no parts returned")
+  test("fails on empty array", () => {
+    const error = Effect.runSync(Effect.flip(extractResponseText([])))
+    expect(error._tag).toBe("GithubResponseError")
+    expect(error.message).toContain("no parts returned")
   })
 
   test("returns null for step-start only", () => {
     const parts = [createStepStartPart()]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns null for step-finish only", () => {
     const parts = [createStepFinishPart()]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns null for step-start and step-finish", () => {
     const parts = [createStepStartPart(), createStepFinishPart()]
-    expect(extractResponseText(parts)).toBeNull()
+    expect(extract(parts)).toEqual(Option.none())
   })
 
   test("returns text from multi-step response", () => {
@@ -148,17 +153,17 @@ describe("extractResponseText", () => {
       createTextPart("Done"),
       createStepFinishPart(),
     ]
-    expect(extractResponseText(parts)).toBe("Done")
+    expect(extract(parts)).toEqual(Option.some("Done"))
   })
 
   test("prefers text over reasoning when both present", () => {
     const parts = [createReasoningPart("Internal thinking..."), createTextPart("Final answer")]
-    expect(extractResponseText(parts)).toBe("Final answer")
+    expect(extract(parts)).toEqual(Option.some("Final answer"))
   })
 
   test("prefers text over tools when both present", () => {
     const parts = [createToolPart("read", "src/file.ts"), createTextPart("Here's what I found")]
-    expect(extractResponseText(parts)).toBe("Here's what I found")
+    expect(extract(parts)).toEqual(Option.some("Here's what I found"))
   })
 })
 
