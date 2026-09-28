@@ -108,10 +108,12 @@ const MIGRATIONS: Migration[] = [
           cwd: full,
           absolute: true,
         })) {
-          const json = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "ignore" })
-          const root = Option.isSome(json) ? json.value.path?.root : undefined
-          if (!root) continue
-          worktree = root
+          const root = decodeRoot(yield* fs.readJson(msgFile), { onExcessProperty: "ignore" }).pipe(
+            Option.flatMapNullishOr((json) => json.path?.root),
+            Option.filter((value) => value.length > 0),
+          )
+          if (Option.isNone(root)) continue
+          worktree = root.value
           break
         }
         if (!worktree) continue
