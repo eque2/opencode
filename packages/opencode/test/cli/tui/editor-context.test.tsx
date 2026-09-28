@@ -60,16 +60,25 @@ const editorService: EditorIntegration = {
 function createWebSocketImpl(...sockets: FakeWebSocket[]) {
   let index = 0
 
-  return class {
-    constructor(url: string, options?: { headers?: Record<string, string> }) {
+  // Each construction hands out the next prepared socket, so a test drives the socket that the provider opens.
+  // The provider passes Bun's { headers } options as the second argument when the lock file has a token.
+  class QueuedWebSocket {
+    static readonly CONNECTING = FakeWebSocket.CONNECTING
+    static readonly OPEN = FakeWebSocket.OPEN
+    static readonly CLOSING = FakeWebSocket.CLOSING
+    static readonly CLOSED = FakeWebSocket.CLOSED
+
+    constructor(url: string | URL, options?: string | string[] | { headers?: Record<string, string> }) {
       const socket = sockets[index]
       index += 1
       expect(socket).toBeDefined()
-      expect(url).toBe(socket!.url)
-      expect(options).toEqual(socket!.options)
-      return socket as unknown as object
+      expect(String(url)).toBe(socket.url)
+      expect(options).toEqual(socket.options)
+      return socket
     }
-  } as unknown as typeof WebSocket
+  }
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) external boundary: @opencode-ai/tui EditorContextProvider types WebSocketImpl as the lib.dom WebSocket constructor, and a fake cannot extend WebSocket without opening a real socket; FakeWebSocket has the addEventListener, send, close and readyState members that the provider uses
+  return QueuedWebSocket as typeof WebSocket
 }
 
 function sendSelection(socket: FakeWebSocket, filePath: string, text = "foo") {
