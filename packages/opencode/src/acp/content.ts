@@ -2,6 +2,7 @@ import type { ContentBlock, ContentChunk, ResourceLink, Role } from "@agentclien
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
+import { Option } from "effect"
 
 export type PromptPart = SessionV1.TextPartInput | SessionV1.FilePartInput
 
@@ -34,7 +35,7 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
         {
           type: "text",
           text: block.text,
-          ...audienceFlags(block.annotations?.audience ?? undefined),
+          ...audienceFlags(block.annotations?.audience),
         },
       ]
 
@@ -44,7 +45,7 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
           {
             type: "file",
             url: `data:${block.mimeType};base64,${block.data}`,
-            filename: filenameFromUri(block.uri ?? undefined) ?? "image",
+            filename: filenameOr(block.uri, "image"),
             mime: block.mimeType,
           },
         ]
@@ -54,7 +55,7 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
           {
             type: "file",
             url: block.uri,
-            filename: filenameFromUri(block.uri) ?? "image",
+            filename: filenameOr(block.uri, "image"),
             mime: block.mimeType,
           },
         ]
@@ -64,7 +65,7 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
           {
             type: "file",
             url: block.uri,
-            filename: filenameFromUri(block.uri) ?? "image",
+            filename: filenameOr(block.uri, "image"),
             mime: block.mimeType,
           },
         ]
@@ -76,26 +77,9 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
 
     case "resource":
       if ("text" in block.resource) {
-        try {
-          const parsed = new URL(block.resource.uri)
-          if (parsed.protocol === "file:") {
-            const line = parsed.hash.match(/^#L(\d+)/)?.[1]
-            let filepath: string
-            try {
-              filepath = fileURLToPath(parsed)
-            } catch {
-              filepath = decodeURIComponent(parsed.pathname)
-            }
-            if (path.sep === "\\") filepath = filepath.replace(/\\/g, "/")
-            return [
-              {
-                type: "text",
-                text: `[${filepath}${line ? `:${line}` : ""}]\n${block.resource.text}`,
-              },
-            ]
-          }
-        } catch {}
-        return [{ type: "text", text: `[${block.resource.uri}]\n${block.resource.text}` }]
+        const uri = block.resource.uri
+        const label = Option.getOrElse(fileResourceLabel(uri), () => uri)
+        return [{ type: "text", text: `[${label}]\n${block.resource.text}` }]
       }
       if (block.resource.mimeType) {
         return [
@@ -104,7 +88,7 @@ export function contentBlockToParts(block: ContentBlock): PromptPart[] {
             url: block.resource.uri.startsWith("data:")
               ? block.resource.uri
               : `data:${block.resource.mimeType};base64,${block.resource.blob}`,
-            filename: filenameFromUri(block.resource.uri) ?? "file",
+            filename: filenameOr(block.resource.uri, "file"),
             mime: block.resource.mimeType,
           },
         ]
@@ -121,33 +105,17 @@ export function partsToContentChunks(parts: readonly ReplayPart[]): ContentChunk
 }
 
 export function partToContentChunks(part: ReplayPart): ContentChunk[] {
-  switch (part.type) {
-    case "text":
-      if (!part.text) return []
-      return [
-        {
-          content: {
-            type: "text",
-            text: part.text,
-            ...partAudience(part),
-          },
-        },
-      ]
-
-    case "file":
-      return filePartToContentChunks(part)
-
-    case "reasoning":
-      if (!part.text) return []
-      return [
-        {
-          content: {
-            type: "text",
-            text: part.text,
-          },
-        },
-      ]
-  }
+  if (part.type === "file") return filePartToContentChunks(part)
+  if (!part.text) return []
+  return [
+    {
+      content: {
+        type: "text",
+        text: part.text,
+        ...(part.type === "text" ? partAudience(part) : {}),
+      },
+    },
+  ]
 }
 
 function resourceLinkToPart(link: ResourceLink): PromptPart {
@@ -161,30 +129,33 @@ function uriToFilePart(
   mime: string,
   filename?: string,
 ): SessionV1.FilePartInput | SessionV1.TextPartInput {
-  try {
-    if (uri.startsWith("file://")) {
-      return {
-        type: "file",
-        url: uri,
-        filename: filename ?? filenameFromUri(uri) ?? "file",
-        mime,
-      }
+  const text: SessionV1.TextPartInput = { type: "text", text: uri }
+  if (uri.startsWith("file://")) {
+    return {
+      type: "file",
+      url: uri,
+      filename: filename ?? filenameOr(uri, "file"),
+      mime,
     }
-    if (uri.startsWith("zed://")) {
-      const pathname = new URL(uri).searchParams.get("path")
-      if (pathname) {
-        return {
-          type: "file",
-          url: pathToFileURL(pathname).href,
-          filename: filename ?? (path.basename(pathname) || "file"),
-          mime,
-        }
-      }
-    }
-    return { type: "text", text: uri }
-  } catch {
-    return { type: "text", text: uri }
   }
+  if (!uri.startsWith("zed://")) return text
+  return parseUrl(uri).pipe(
+    Option.flatMap((parsed) => Option.fromNullishOr(parsed.searchParams.get("path"))),
+    Option.filter((pathname) => pathname.length > 0),
+    Option.flatMap((pathname) =>
+      fileUrlHref(pathname).pipe(
+        Option.map(
+          (url): SessionV1.FilePartInput => ({
+            type: "file",
+            url,
+            filename: filename ?? (path.basename(pathname) || "file"),
+            mime,
+          }),
+        ),
+      ),
+    ),
+    Option.getOrElse(() => text),
+  )
 }
 
 function filePartToContentChunks(part: Extract<ReplayPart, { type: "file" }>): ContentChunk[] {
@@ -202,8 +173,9 @@ function filePartToContentChunks(part: Extract<ReplayPart, { type: "file" }>): C
   }
   if (!part.url.startsWith("data:")) return []
 
-  const data = decodeDataUrl(part.url)
-  if (!data) return []
+  const decoded = decodeDataUrl(part.url)
+  if (Option.isNone(decoded)) return []
+  const data = decoded.value
   if (data.mime.startsWith("image/")) {
     return [
       {
@@ -238,10 +210,10 @@ function filePartToContentChunks(part: Extract<ReplayPart, { type: "file" }>): C
   ]
 }
 
-function decodeDataUrl(url: string) {
+function decodeDataUrl(url: string): Option.Option<{ readonly mime: string; readonly base64: string }> {
   const match = /^data:([^;]+);base64,(.*)$/.exec(url)
-  if (!match) return
-  return { mime: match[1], base64: match[2] }
+  if (!match) return Option.none()
+  return Option.some({ mime: match[1], base64: match[2] })
 }
 
 function audienceFlags(audience: readonly Role[] | null | undefined) {
@@ -251,19 +223,44 @@ function audienceFlags(audience: readonly Role[] | null | undefined) {
 }
 
 function partAudience(part: Extract<ReplayPart, { type: "text" }>) {
-  const audience: Role[] | undefined = part.synthetic ? ["assistant"] : part.ignored ? ["user"] : undefined
-  if (!audience) return {}
+  if (part.synthetic) return annotateAudience(["assistant"])
+  if (part.ignored) return annotateAudience(["user"])
+  return {}
+}
+
+function annotateAudience(audience: Role[]) {
   return { annotations: { audience } }
 }
 
-function filenameFromUri(uri: string | undefined) {
-  if (!uri) return
-  if (uri.startsWith("data:")) return
-  try {
-    const parsed = new URL(uri)
-    const name = path.basename(parsed.pathname)
-    return name || undefined
-  } catch {
-    return path.basename(uri) || undefined
-  }
+const parseUrl = Option.liftThrowable((uri: string) => new URL(uri))
+const filePathFromUrl = Option.liftThrowable((url: URL) => fileURLToPath(url))
+const decodeUriComponent = Option.liftThrowable((value: string) => decodeURIComponent(value))
+const fileUrlHref = Option.liftThrowable((pathname: string) => pathToFileURL(pathname).href)
+
+function fileResourceLabel(uri: string): Option.Option<string> {
+  return parseUrl(uri).pipe(
+    Option.filter((parsed) => parsed.protocol === "file:"),
+    Option.flatMap((parsed) =>
+      Option.orElse(filePathFromUrl(parsed), () => decodeUriComponent(parsed.pathname)).pipe(
+        Option.map((filepath) => {
+          const line = parsed.hash.match(/^#L(\d+)/)?.[1]
+          const normalized = path.sep === "\\" ? filepath.replace(/\\/g, "/") : filepath
+          return `${normalized}${line ? `:${line}` : ""}`
+        }),
+      ),
+    ),
+  )
+}
+
+function filenameOr(uri: string | null | undefined, fallback: string) {
+  return Option.getOrElse(filenameFromUri(uri), () => fallback)
+}
+
+function filenameFromUri(uri: string | null | undefined): Option.Option<string> {
+  if (!uri || uri.startsWith("data:")) return Option.none()
+  const name = Option.match(parseUrl(uri), {
+    onSome: (parsed) => path.basename(parsed.pathname),
+    onNone: () => path.basename(uri),
+  })
+  return name ? Option.some(name) : Option.none()
 }
