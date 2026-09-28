@@ -57,7 +57,7 @@ describe("acp session state", () => {
       const error = yield* ACPSession.Service.use((session) => session.get("ses_missing")).pipe(Effect.flip)
 
       expect(error).toBeInstanceOf(ACPError.SessionNotFoundError)
-      expect(error.sessionId).toBe("ses_missing")
+      expect(error.sessionId).toBe(ACPError.RequestedSessionId.make("ses_missing"))
     }),
   )
 
