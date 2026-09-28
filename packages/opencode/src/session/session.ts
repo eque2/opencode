@@ -686,6 +686,7 @@ const layer: Layer.Layer<
         .get()
         .pipe(Effect.orDie)
       if (!row) return undefined
+      // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
       return {
         ...row.data,
         id: row.id,

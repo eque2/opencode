@@ -99,6 +99,7 @@ export const cursor = {
 const encodeUnknownJson = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
 
 const info = (row: typeof MessageTable.$inferSelect) =>
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
   ({
     ...row.data,
     id: row.id,
@@ -106,6 +107,7 @@ const info = (row: typeof MessageTable.$inferSelect) =>
   }) as Info
 
 const part = (row: typeof PartTable.$inferSelect) =>
+  // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) drizzle $type gives the json column one type for insert and select; the projector writes the readonly decoded schema Type, and this reader returns the public DeepMutable type of freshly parsed JSON
   ({
     ...row.data,
     id: row.id,
