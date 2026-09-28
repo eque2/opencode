@@ -1,10 +1,25 @@
 import { test, expect, describe } from "bun:test"
 import { determineScope } from "@modelcontextprotocol/sdk/client/auth.js"
 import { McpOAuthProvider, OAUTH_CALLBACK_PORT, OAUTH_CALLBACK_PATH } from "../../src/mcp/oauth-provider"
+import { Effect } from "effect"
 import type { McpAuth } from "../../src/mcp/auth"
 
-// Stub auth — only synchronous getters are exercised in these tests
-const stubAuth = {} as McpAuth.Interface
+// Stub auth — only synchronous getters are exercised in these tests, so every store method dies.
+const unused = () => Effect.die("McpAuth is not used by the synchronous getter tests")
+const stubAuth: McpAuth.Interface = {
+  all: unused,
+  get: unused,
+  getForUrl: unused,
+  set: unused,
+  remove: unused,
+  updateTokens: unused,
+  updateClientInfo: unused,
+  updateCodeVerifier: unused,
+  clearCodeVerifier: unused,
+  updateOAuthState: unused,
+  getOAuthState: unused,
+  clearOAuthState: unused,
+}
 
 const makeProvider = (config: ConstructorParameters<typeof McpOAuthProvider>[2]) =>
   new McpOAuthProvider("test-server", "https://mcp.example.com/mcp", config, { onRedirect: async () => {} }, stubAuth)
