@@ -1,14 +1,13 @@
 import type { AgentSideConnection, Usage } from "@agentclientprotocol/sdk"
 import type { AssistantMessage as OpenCodeAssistantMessage, Message } from "@opencode-ai/sdk/v2"
 import { InstanceRef } from "@/effect/instance-ref"
-import { InstanceBootstrap } from "@/project/bootstrap"
 import { InstanceStore } from "@/project/instance-store"
 import { makeGlobalNode, Node } from "@opencode-ai/core/effect/app-node"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Provider } from "@/provider/provider"
-import { Context, Effect, Layer, SynchronizedRef } from "effect"
+import { Context, Effect, HashMap, Layer, Option, SynchronizedRef } from "effect"
 
 export type AssistantTokenCost = Pick<OpenCodeAssistantMessage, "cost" | "tokens">
 
@@ -144,7 +143,7 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const messageLoader = yield* MessageLoader
     const contextLimitLoader = yield* ContextLimitLoader
-    const limits = yield* SynchronizedRef.make(new Map<string, Effect.Effect<number | undefined>>())
+    const limits = yield* SynchronizedRef.make(HashMap.empty<string, Effect.Effect<Option.Option<number>>>())
 
     const cachedLimit = Effect.fnUntraced(function* (input: {
       readonly directory: string
@@ -155,19 +154,21 @@ const layer = Layer.effect(
         limits,
         Effect.fnUntraced(function* (items) {
           const key = `${input.directory}\u0000${input.providerID}\u0000${input.modelID}`
-          const current = items.get(key)
-          if (current) return [current, items] as const
+          const current = HashMap.get(items, key)
+          if (Option.isSome(current)) return [current.value, items] as const
           const next = yield* Effect.cached(
             contextLimitLoader.providers(input.directory).pipe(
-              Effect.map((providers) => findContextLimit(providers, input.providerID, input.modelID)),
+              Effect.map((providers) =>
+                Option.fromNullishOr(findContextLimit(providers, input.providerID, input.modelID)),
+              ),
               Effect.catch((error) =>
                 Effect.logError("failed to get providers for usage context limit", { error: error }).pipe(
-                  Effect.as(undefined),
+                  Effect.as(Option.none<number>()),
                 ),
               ),
             ),
           )
-          return [next, new Map(items).set(key, next)] as const
+          return [next, HashMap.set(items, key, next)] as const
         }),
       )
     })
@@ -177,7 +178,8 @@ const layer = Layer.effect(
       readonly providerID: ProviderV2.ID
       readonly modelID: ModelV2.ID
     }) {
-      return yield* yield* cachedLimit(input)
+      // The service interface reports a missing limit as undefined.
+      return Option.getOrUndefined(yield* yield* cachedLimit(input))
     })
 
     const sendUpdate = Effect.fn("ACPUsage.sendUpdate")(function* (input: {
@@ -185,14 +187,16 @@ const layer = Layer.effect(
       readonly sessionID: string
       readonly directory: string
     }) {
-      const messages = yield* messageLoader
-        .messages({ sessionID: input.sessionID, directory: input.directory })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logError("failed to fetch messages for usage update", { error: error }).pipe(Effect.as(undefined)),
+      const loaded = yield* messageLoader.messages({ sessionID: input.sessionID, directory: input.directory }).pipe(
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          Effect.logError("failed to fetch messages for usage update", { error: error }).pipe(
+            Effect.as(Option.none<readonly SessionMessage[]>()),
           ),
-        )
-      if (!messages) return
+        ),
+      )
+      if (Option.isNone(loaded)) return
+      const messages = loaded.value
 
       const message = latestAssistantMessage(messages)
       if (!message) return
