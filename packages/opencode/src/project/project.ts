@@ -263,7 +263,7 @@ const layer = Layer.effect(
         .values({
           id: result.id,
           worktree: AbsolutePath.make(result.worktree),
-          vcs: result.vcs ?? null,
+          vcs: result.vcs,
           name: result.name,
           icon_url: result.icon?.url,
           icon_url_override: result.icon?.override,
@@ -278,6 +278,7 @@ const layer = Layer.effect(
           target: ProjectTable.id,
           set: {
             worktree: AbsolutePath.make(result.worktree),
+            // eslint-disable-next-line effect/no-null-use-option -- (a) Drizzle onConflictDoUpdate().set() writes SQL NULL only from a null value; undefined skips the column and would keep a stale vcs
             vcs: result.vcs ?? null,
             name: result.name,
             icon_url: result.icon?.url,
