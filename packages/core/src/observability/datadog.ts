@@ -336,7 +336,10 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
         )
       })
 
-    // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
+    // ponytail: no disk spool. The ceiling: an outage loses the batch after its retries, every record while the
+    // breaker is open, and all but the newest 10,000 buffered entries; the file log keeps the local copy. The
+    // upgrade path, when log loss becomes unacceptable: a bounded spool in Global.Path.log with retention rules and
+    // a data-loss-prevention review, because it writes redacted records to disk a second time.
     const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
 
     // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
