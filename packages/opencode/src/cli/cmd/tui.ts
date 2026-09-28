@@ -261,7 +261,8 @@ export const TuiThreadCommand = cmd({
                 yield* Effect.sync(() => UI.error("Failed to change directory to " + next))
                 return false
               }
-              const cwd = Filesystem.resolve(process.cwd())
+              const fs = yield* FSUtil.Service
+              const cwd = yield* fs.resolve(process.cwd())
 
               const worker = yield* Effect.sync(
                 () =>
