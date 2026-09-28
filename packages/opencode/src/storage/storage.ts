@@ -54,6 +54,8 @@ const decodeRoot = Schema.decodeUnknownOption(RootFile)
 const decodeSession = Schema.decodeUnknownOption(SessionFile)
 const decodeMessage = Schema.decodeUnknownOption(MessageFile)
 const decodeSummary = Schema.decodeUnknownOption(SummaryFile)
+// Migration 2 rewrites a whole session file, so it keeps every field it does not know.
+const decodeFields = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown))
 
 // Storage files hold arbitrary JSON, pretty-printed with two spaces.
 const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
@@ -195,13 +197,14 @@ const MIGRATIONS: Migration[] = [
     })) {
       const raw = yield* fs.readJson(item)
       const session = decodeSummary(raw, { onExcessProperty: "ignore" })
-      if (Option.isNone(session)) continue
+      const fields = decodeFields(raw)
+      if (Option.isNone(session) || Option.isNone(fields)) continue
       const diffs = session.value.summary.diffs
       yield* fs.writeWithDirs(path.join(dir, "session_diff", session.value.id + ".json"), yield* jsonText(diffs))
       yield* fs.writeWithDirs(
         path.join(dir, "session", session.value.projectID, session.value.id + ".json"),
         yield* jsonText({
-          ...(raw as Record<string, unknown>),
+          ...fields.value,
           summary: {
             additions: diffs.reduce((sum, x) => sum + x.additions, 0),
             deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
