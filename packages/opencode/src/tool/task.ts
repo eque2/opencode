@@ -10,7 +10,7 @@ import { Agent } from "../agent/agent"
 import { deriveSubagentSessionPermission } from "../agent/subagent-permissions"
 import type { SessionPrompt } from "../session/prompt"
 import { Config } from "@/config/config"
-import { Effect, Exit, Option, Schema, Scope } from "effect"
+import { Effect, Exit, Option, Predicate, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
@@ -19,6 +19,18 @@ export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
   resolvePromptParts(template: string): Effect.Effect<SessionPrompt.PromptInput["parts"]>
   prompt(input: SessionPrompt.PromptInput): Effect.Effect<SessionV1.WithParts>
+}
+
+// ctx.extra is untyped, so check the shape the session layer supplies before use.
+function isTaskPromptOps(value: unknown): value is TaskPromptOps {
+  return (
+    Predicate.hasProperty(value, "cancel") &&
+    Predicate.isFunction(value.cancel) &&
+    Predicate.hasProperty(value, "resolvePromptParts") &&
+    Predicate.isFunction(value.resolvePromptParts) &&
+    Predicate.hasProperty(value, "prompt") &&
+    Predicate.isFunction(value.prompt)
+  )
 }
 
 const id = "task"
@@ -203,8 +215,8 @@ export const TaskTool = Tool.define(
         metadata,
       })
 
-      const ops = ctx.extra?.promptOps as TaskPromptOps
-      if (!ops) return yield* new TaskError({ message: "TaskTool requires promptOps in ctx.extra" })
+      const ops = ctx.extra?.promptOps
+      if (!isTaskPromptOps(ops)) return yield* new TaskError({ message: "TaskTool requires promptOps in ctx.extra" })
 
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
         const parts = yield* ops.resolvePromptParts(params.prompt)
