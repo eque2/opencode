@@ -31,7 +31,7 @@ function makeTool(id: string, executeFn?: () => void) {
   return {
     description: "test tool",
     parameters: params,
-    execute() {
+    execute: () => {
       executeFn?.()
       return Effect.succeed({ title: "test", output: "ok", metadata: {} })
     },
