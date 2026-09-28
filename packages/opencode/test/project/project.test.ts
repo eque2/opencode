@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm"
 import { Hash } from "@opencode-ai/core/util/hash"
 import { SessionID } from "@/session/schema"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
-import { Cause, Effect, Exit, Layer, Stream } from "effect"
+import { Cause, Effect, Exit, Layer, Sink, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
@@ -49,11 +49,11 @@ function mockGitFailure(failArg: string) {
               exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(128)),
               isRunning: Effect.succeed(false),
               kill: () => Effect.void,
-              stdin: { [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") } as any,
+              stdin: Sink.drain,
               stdout: Stream.empty,
               stderr: Stream.make(encoder.encode("fatal: simulated failure\n")),
               all: Stream.empty,
-              getInputFd: () => ({ [Symbol.for("effect/Sink/TypeId")]: Symbol.for("effect/Sink/TypeId") }) as any,
+              getInputFd: () => Sink.drain,
               getOutputFd: () => Stream.empty,
               unref: Effect.succeed(Effect.void),
             })
@@ -194,7 +194,7 @@ describe("Project.fromDirectory", () => {
       const rootResult = yield* projects.fromDirectory(tmp)
       const rootProject = rootResult.project
       const remoteID = remoteProjectID("github.com/acme/app")
-      const sessionID = crypto.randomUUID() as SessionID
+      const sessionID = SessionID.descending()
       const workspaceID = WorkspaceV2.ID.ascending()
 
       yield* db

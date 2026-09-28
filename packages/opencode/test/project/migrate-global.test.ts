@@ -18,7 +18,7 @@ const it = testEffect(LayerNode.compile(LayerNode.group([Project.node, Database.
 
 function legacySessionID() {
   // Global-session migration covers persisted IDs from before prefixed session IDs.
-  return crypto.randomUUID() as SessionID
+  return SessionID.make(crypto.randomUUID(), { disableChecks: true })
 }
 
 function seed(opts: { id: SessionID; dir: string; project: ProjectV2.ID }) {
