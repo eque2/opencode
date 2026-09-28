@@ -103,7 +103,7 @@ const TOOL_DEFS: MCPToolDef[] = [
 function handleCall(name: string, args: Record<string, unknown>) {
   switch (name) {
     case "get_text":
-      return { content: [{ type: "text", text: `hello ${args.name}` }] }
+      return { content: [{ type: "text", text: `hello ${String(args.name)}` }] }
     case "add": {
       const sum = (args.a as number) + (args.b as number)
       return { content: [{ type: "text", text: String(sum) }], structuredContent: { sum } }
