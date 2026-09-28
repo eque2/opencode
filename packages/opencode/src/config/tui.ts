@@ -18,7 +18,6 @@ import { ConfigPlugin } from "@/config/plugin"
 import { TuiKeybind } from "@opencode-ai/tui/config/keybind"
 import { InstallationLocal, InstallationVersion } from "@opencode-ai/core/installation/version"
 import { makeRuntime } from "@opencode-ai/core/effect/runtime"
-import { Filesystem } from "@/util/filesystem"
 import { ConfigVariable } from "@/config/variable"
 import { Npm } from "@opencode-ai/core/npm"
 import { FormatError, FormatUnknownError } from "@/cli/error"
@@ -47,8 +46,8 @@ export interface Interface {
 export class Service extends Context.Service<Service, Interface>()("@opencode/TuiConfig") {}
 
 function pluginScope(file: string, ctx: { directory: string }): ConfigPlugin.Scope {
-  if (Filesystem.contains(ctx.directory, file)) return "local"
-  // if (ctx.worktree !== "/" && Filesystem.contains(ctx.worktree, file)) return "local"
+  if (FSUtil.contains(ctx.directory, file)) return "local"
+  // if (ctx.worktree !== "/" && FSUtil.contains(ctx.worktree, file)) return "local"
   return "global"
 }
 
