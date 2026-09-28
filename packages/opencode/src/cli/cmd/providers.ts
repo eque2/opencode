@@ -16,7 +16,7 @@ import type { Hooks } from "@opencode-ai/plugin"
 import { Process } from "@/util/process"
 import { errorMessage } from "@/util/error"
 import { text } from "node:stream/consumers"
-import { Array as Arr, Effect, Option } from "effect"
+import { Array as Arr, Effect, Option, Schema } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
 
@@ -40,6 +40,15 @@ const put = Effect.fn("Cli.providers.put")(function* (key: string, info: Auth.In
   const auth = yield* Auth.Service
   yield* Effect.orDie(auth.set(key, info))
 })
+
+/** The `/.well-known/opencode` document of an opencode auth provider. */
+const WellKnown = Schema.Struct({
+  auth: Schema.Struct({ command: Schema.Array(Schema.String), env: Schema.String }),
+}).annotate({
+  identifier: "ProvidersWellKnown",
+  description: "The auth command and the env variable name that an opencode auth provider publishes",
+})
+const decodeWellKnown = Schema.decodeUnknownEffect(WellKnown)
 
 const cliTry = <Value>(message: string, fn: () => PromiseLike<Value>) =>
   Effect.tryPromise({
@@ -327,21 +336,29 @@ export const ProvidersLoginCommand = effectCmd({
     yield* Prompt.intro("Add credential")
     if (args.url) {
       const url = args.url.replace(/\/+$/, "")
-      const wellknown = (yield* cliTry(`Failed to load auth provider metadata from ${url}: `, () =>
-        fetch(`${url}/.well-known/opencode`).then((x) => x.json()),
-      )) as {
-        auth: { command: string[]; env: string }
-      }
+      const metadataError = `Failed to load auth provider metadata from ${url}: `
+      const response = yield* cliTry(metadataError, () => fetch(`${url}/.well-known/opencode`))
+      const wellknown = yield* cliTry(metadataError, () => response.json()).pipe(
+        Effect.flatMap(decodeWellKnown),
+        Effect.mapError((error) => new CliError({ message: metadataError + errorMessage(error) })),
+      )
       yield* Prompt.log.info(`Running \`${wellknown.auth.command.join(" ")}\``)
       const abort = new AbortController()
-      const proc = Process.spawn(wellknown.auth.command, { stdout: "pipe", stderr: "inherit", abort: abort.signal })
-      if (!proc.stdout) {
+      const proc = Process.spawn([...wellknown.auth.command], {
+        stdout: "pipe",
+        stderr: "inherit",
+        abort: abort.signal,
+      })
+      const stdout = proc.stdout
+      if (!stdout) {
         yield* Prompt.log.error("Failed")
         yield* Prompt.outro("Done")
         return
       }
-      const [exit, token] = yield* cliTry("Failed to run auth provider command: ", () =>
-        Promise.all([proc.exited, text(proc.stdout!)]),
+      const commandError = "Failed to run auth provider command: "
+      const [exit, token] = yield* Effect.all(
+        [cliTry(commandError, () => proc.exited), cliTry(commandError, () => text(stdout))],
+        { concurrency: "unbounded" },
       ).pipe(Effect.ensuring(Effect.sync(() => abort.abort())))
       if (exit !== 0) {
         yield* Prompt.log.error("Failed")
