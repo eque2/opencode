@@ -76,6 +76,7 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
     headers: { authorization: "[REDACTED]" },
   })
   expect(entry.ddtags).toBe("env:test,version:1.2.3,team:platform")
+  expect(entry.run).toMatch(/^[0-9a-f]{8}$/)
   expect(entry.prompt).toMatch(/^sha256:[0-9a-f]{16}$/)
   expect(JSON.stringify(requests[0].body)).not.toContain("my secret plan")
   expect(entry.dd.trace_id).toBe(BigInt(`0x${entry.trace_id.slice(-16)}`).toString())

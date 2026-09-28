@@ -274,6 +274,7 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
   const include = categoryFilter(settings.categories)
   return Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
+    const run = yield* runID
     const post = (body: Uint8Array) =>
       http
         .execute(
@@ -346,7 +347,7 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
     const sink = Logger.make((options) => {
       if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
       others = options.fiber.getRef(Logger.CurrentLoggers)
-      Option.map(entry(options, settings, include), (item) => {
+      Option.map(entry(options, settings, run, include), (item) => {
         buffer.push(item)
         // The oldest records go first when the intake cannot keep up.
         if (buffer.length > MAX_BUFFER) buffer.splice(0, buffer.length - MAX_BUFFER)
@@ -365,6 +366,7 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
 export function entry(
   options: Logger.Options<unknown>,
   settings: Settings,
+  run: string,
   include = categoryFilter(settings.categories),
 ) {
   const policy = options.fiber.getRef(LogPolicy)
@@ -400,7 +402,7 @@ export function entry(
     ddsource: "opencode",
     ddtags: [`env:${settings.env}`, `version:${settings.version}`, settings.tags].filter(Boolean).join(","),
     category,
-    run: runID,
+    run,
     spans: structured.spans,
     ...(structured.cause === undefined ? {} : { error: { stack: redact(structured.cause, content) } }),
     ...(span?._tag === "Span"
