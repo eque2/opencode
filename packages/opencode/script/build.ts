@@ -113,6 +113,14 @@ const allTargets: {
   },
 ]
 
+// Bun types the compile target as a template-literal union; check the derived name against it.
+const compileTargetPattern = /^bun-(darwin|linux|windows)-(x64|arm64|aarch64)(-(baseline|modern))?(-(glibc|musl))?$/
+const isCompileTarget = (value: string): value is Bun.Build.CompileTarget => compileTargetPattern.test(value)
+const compileTarget = (value: string): Bun.Build.CompileTarget => {
+  if (isCompileTarget(value)) return value
+  throw new Error(`Unsupported Bun compile target: ${value}`)
+}
+
 const targets = singleFlag
   ? allTargets.filter((item) => {
       if (item.os !== process.platform || item.arch !== process.arch) {
@@ -174,7 +182,7 @@ for (const item of targets) {
       autoloadDotenv: false,
       autoloadTsconfig: true,
       autoloadPackageJson: true,
-      target: name.replace(pkg.name, "bun") as any,
+      target: compileTarget(name.replace(pkg.name, "bun")),
       outfile: `dist/${name}/bin/opencode`,
       execArgv: [`--user-agent=opencode/${Script.version}`, "--use-system-ca", "--"],
       windows: {},
