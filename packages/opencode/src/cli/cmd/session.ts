@@ -1,5 +1,5 @@
 import type { Argv } from "yargs"
-import { Effect, Option, Schema } from "effect"
+import { Console, Effect, Option, Schema } from "effect"
 import { cmd } from "./cmd"
 import { effectCmd, fail } from "../effect-cmd"
 import { Session } from "@/session/session"
@@ -104,7 +104,7 @@ export const SessionListCommand = effectCmd({
       })
 
       if (!proc.stdin) {
-        console.log(output)
+        yield* Console.log(output)
         return
       }
 
@@ -112,7 +112,7 @@ export const SessionListCommand = effectCmd({
       proc.stdin.end()
       yield* Effect.promise(() => proc.exited)
     } else {
-      console.log(output)
+      yield* Console.log(output)
     }
   }),
 })
