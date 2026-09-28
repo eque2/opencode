@@ -118,22 +118,17 @@ export const SessionListCommand = effectCmd({
 })
 
 function formatSessionTable(sessions: Session.Info[]): string {
-  const lines: string[] = []
-
   const maxIdWidth = Math.max(20, ...sessions.map((s) => s.id.length))
   const maxTitleWidth = Math.max(25, ...sessions.map((s) => s.title.length))
 
   const header = `Session ID${" ".repeat(maxIdWidth - 10)}  Title${" ".repeat(maxTitleWidth - 5)}  Updated`
-  lines.push(header)
-  lines.push("─".repeat(header.length))
-  for (const session of sessions) {
+  const rows = sessions.map((session) => {
     const truncatedTitle = Locale.truncate(session.title, maxTitleWidth)
     const timeStr = Locale.todayTimeOrDateTime(session.time.updated)
-    const line = `${session.id.padEnd(maxIdWidth)}  ${truncatedTitle.padEnd(maxTitleWidth)}  ${timeStr}`
-    lines.push(line)
-  }
+    return `${session.id.padEnd(maxIdWidth)}  ${truncatedTitle.padEnd(maxTitleWidth)}  ${timeStr}`
+  })
 
-  return lines.join(EOL)
+  return [header, "─".repeat(header.length), ...rows].join(EOL)
 }
 
 function formatSessionJSON(sessions: Session.Info[]) {

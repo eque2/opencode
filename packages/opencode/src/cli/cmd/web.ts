@@ -7,25 +7,12 @@ import open from "open"
 import { networkInterfaces } from "os"
 
 function getNetworkIPs() {
-  const nets = networkInterfaces()
-  const results: string[] = []
-
-  for (const name of Object.keys(nets)) {
-    const net = nets[name]
-    if (!net) continue
-
-    for (const netInfo of net) {
-      // Skip internal and non-IPv4 addresses
-      if (netInfo.internal || netInfo.family !== "IPv4") continue
-
-      // Skip Docker bridge networks (typically 172.x.x.x)
-      if (netInfo.address.startsWith("172.")) continue
-
-      results.push(netInfo.address)
-    }
-  }
-
-  return results
+  return Object.values(networkInterfaces()).flatMap((net) =>
+    (net ?? [])
+      // Skip internal and non-IPv4 addresses, and Docker bridge networks (typically 172.x.x.x)
+      .filter((netInfo) => !netInfo.internal && netInfo.family === "IPv4" && !netInfo.address.startsWith("172."))
+      .map((netInfo) => netInfo.address),
+  )
 }
 
 export const WebCommand = effectCmd({
