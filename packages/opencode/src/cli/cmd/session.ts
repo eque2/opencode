@@ -8,7 +8,9 @@ import { UI } from "../ui"
 import { Locale } from "@/util/locale"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { EOL } from "os"
 import path from "path"
 import { which } from "@opencode-ai/core/util/which"
@@ -96,20 +98,14 @@ export const SessionListCommand = effectCmd({
 
     if (shouldPaginate) {
       const pager = yield* pagerCmd()
-      const proc = Process.spawn(pager, {
-        stdin: "pipe",
-        stdout: "inherit",
-        stderr: "inherit",
-      })
-
-      if (!proc.stdin) {
-        yield* Console.log(output)
-        return
-      }
-
-      proc.stdin.write(output)
-      proc.stdin.end()
-      yield* Effect.promise(() => proc.exited)
+      // The pager reads the terminal, so it stays in this process group. AppRuntime does not provide
+      // AppProcess, so the call provides its own. A pager that cannot start stays a defect.
+      yield* AppProcess.Service.use((appProcess) =>
+        appProcess.run(
+          ChildProcess.make(pager[0], pager.slice(1), { stdout: "inherit", stderr: "inherit", detached: false }),
+          { stdin: output },
+        ),
+      ).pipe(Effect.orDie, Effect.provide(LayerNode.compile(AppProcess.node)))
     } else {
       yield* Console.log(output)
     }
