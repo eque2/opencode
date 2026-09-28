@@ -29,6 +29,39 @@ const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate
   description: "Log level",
 })
 
+// The values are plain strings: the Datadog sink checks them itself and ignores a widening value with a warning,
+// because a decode failure here would drop the whole config file.
+const DatadogLogs = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean).annotate({
+    description: "Set to false to turn the Datadog log sink off. A file cannot turn it on.",
+  }),
+  service: Schema.optional(Schema.String).annotate({ description: "Datadog service name. Default: opencode" }),
+  env: Schema.optional(Schema.String).annotate({ description: "Datadog env tag. Default: the installation channel" }),
+  version: Schema.optional(Schema.String).annotate({ description: "Datadog version tag. Default: the opencode version" }),
+  tags: Schema.optional(Schema.String).annotate({ description: "Extra Datadog tags, comma-separated" }),
+  hostname: Schema.optional(Schema.String).annotate({ description: "Datadog hostname. Default: the OS hostname" }),
+  level: Schema.optional(Schema.String).annotate({
+    description: "Lowest log level sent to Datadog, in any case. Default: Info",
+  }),
+  categories: Schema.optional(Schema.String).annotate({
+    description:
+      'Category prefixes to send, comma-separated, with "-" to exclude. The question and pty categories stay excluded.',
+  }),
+  content: Schema.optional(Schema.String).annotate({
+    description: 'How content fields are sent: "omit" (default) or "hash". Only an env var can set "full".',
+  }),
+  flushInterval: Schema.optional(Schema.String).annotate({
+    description: 'How often buffered logs are sent, as a duration such as "10 seconds". Default: 5 seconds',
+  }),
+  site: Schema.optional(Schema.String).annotate({
+    description: "Datadog site, such as datadoghq.eu. Only known Datadog sites are accepted. Default: datadoghq.com",
+  }),
+}).annotate({
+  identifier: "DatadogLogsConfig",
+  description:
+    "Datadog log sink settings. Read only from the global config files; a project file has no effect. The API key and the intake URL are read only from env vars, and a file can only narrow what is sent.",
+})
+
 export const Info = Schema.Struct({
   $schema: Schema.optional(Schema.String).annotate({
     description: "JSON schema reference for configuration validation",
@@ -165,6 +198,9 @@ export const Info = Schema.Struct({
         description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
       }),
     }),
+  ),
+  observability: Schema.optional(
+    Schema.Struct({ datadog: Schema.optional(DatadogLogs) }).annotate({ identifier: "ObservabilityConfig" }),
   ),
   experimental: Schema.optional(
     Schema.Struct({

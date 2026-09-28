@@ -1325,6 +1325,24 @@ export type AttachmentConfig = {
   image?: ImageAttachmentConfig
 }
 
+export type DatadogLogsConfig = {
+  enabled?: boolean
+  service?: string
+  env?: string
+  version?: string
+  tags?: string
+  hostname?: string
+  level?: string
+  categories?: string
+  content?: string
+  flushInterval?: string
+  site?: string
+}
+
+export type ObservabilityConfig = {
+  datadog?: DatadogLogsConfig
+}
+
 export type Config = {
   $schema?: string
   shell?: string
@@ -1446,6 +1464,7 @@ export type Config = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  observability?: ObservabilityConfig
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
@@ -1578,6 +1597,7 @@ export type Config1 = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  observability?: ObservabilityConfig
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
@@ -1710,6 +1730,7 @@ export type Config2 = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  observability?: ObservabilityConfig
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
@@ -1842,6 +1863,7 @@ export type Config3 = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  observability?: ObservabilityConfig
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
@@ -1974,6 +1996,7 @@ export type Config4 = {
     preserve_recent_tokens?: number
     reserved?: number
   }
+  observability?: ObservabilityConfig
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
