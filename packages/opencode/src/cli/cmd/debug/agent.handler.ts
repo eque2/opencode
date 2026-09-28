@@ -109,10 +109,10 @@ const parseToolParams = Effect.fn("Cli.debug.agent.parseToolParams")(function* (
   const parsed: unknown = yield* decodeJson(trimmed).pipe(
     Effect.catch((jsonError) =>
       Effect.try({
-        // --params accepts a JS object literal as well as JSON, so a JSON parse failure falls back to evaluation.
-        try: (): unknown => new Function(`return (${trimmed})`)(),
-        catch: (evalError) =>
-          `Failed to parse --params. Use JSON or a JS object literal. JSON error: ${jsonError.message}. Eval error: ${String(evalError)}.`,
+        // --params also accepts the object-literal form (unquoted keys, single quotes, trailing commas), which JSON5 covers without evaluating code.
+        try: (): unknown => Bun.JSON5.parse(trimmed),
+        catch: (json5Error) =>
+          `Failed to parse --params. Use JSON or JSON5. JSON error: ${jsonError.message}. JSON5 error: ${String(json5Error)}.`,
       }),
     ),
     Effect.catch((message) => fail(message)),
