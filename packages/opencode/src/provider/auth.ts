@@ -6,13 +6,13 @@ import { InstanceState } from "@/effect/instance-state"
 import { optional } from "@opencode-ai/core/schema"
 import { Plugin } from "../plugin"
 import { ProviderV2 } from "@opencode-ai/core/provider"
-import { Array as Arr, Effect, Layer, Record, Result, Context, Schema } from "effect"
+import { Array as Arr, Effect, Layer, MutableHashMap, Option, Record, Result, Context, Schema } from "effect"
 
 const When = Schema.Struct({
   key: Schema.String,
   op: Schema.Literals(["eq", "neq"]),
   value: Schema.String,
-})
+}).annotate({ description: "Condition on an earlier prompt value that shows this prompt" })
 
 const TextPrompt = Schema.Struct({
   type: Schema.Literal("text"),
@@ -20,13 +20,13 @@ const TextPrompt = Schema.Struct({
   message: Schema.String,
   placeholder: optional(Schema.String),
   when: optional(When),
-})
+}).annotate({ description: "Free-text auth prompt" })
 
 const SelectOption = Schema.Struct({
   label: Schema.String,
   value: Schema.String,
   hint: optional(Schema.String),
-})
+}).annotate({ description: "Option of a select auth prompt" })
 
 const SelectPrompt = Schema.Struct({
   type: Schema.Literal("select"),
@@ -34,7 +34,7 @@ const SelectPrompt = Schema.Struct({
   message: Schema.String,
   options: Schema.Array(SelectOption),
   when: optional(When),
-})
+}).annotate({ description: "Select auth prompt" })
 
 const Prompt = Schema.Union([TextPrompt, SelectPrompt])
 
@@ -86,6 +86,10 @@ export class ValidationFailed extends Schema.TaggedError<ValidationFailed>()("Pr
 export type Error = Auth.AuthError | OauthMissing | OauthCodeMissing | OauthCallbackFailed | ValidationFailed
 
 type Hook = NonNullable<Hooks["auth"]>
+type HookMethod = Hook["methods"][number]
+type OAuthMethod = Extract<HookMethod, { type: "oauth" }>
+
+const isOAuthMethod = (method: HookMethod): method is OAuthMethod => method.type === "oauth"
 
 export interface Interface {
   readonly methods: () => Effect.Effect<Methods>
@@ -99,7 +103,7 @@ export interface Interface {
 
 interface State {
   hooks: Record<ProviderV2.ID, Hook>
-  pending: Map<ProviderV2.ID, AuthOAuthResult>
+  pending: MutableHashMap.MutableHashMap<ProviderV2.ID, AuthOAuthResult>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ProviderAuth") {}
@@ -122,7 +126,7 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
                 : Result.failVoid,
             ),
           ),
-          pending: new Map<ProviderV2.ID, AuthOAuthResult>(),
+          pending: MutableHashMap.empty<ProviderV2.ID, AuthOAuthResult>(),
         }
       }),
     )
@@ -160,24 +164,22 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
       )
     })
 
-    const authorize = Effect.fn("ProviderAuth.authorize")(function* (
+    const startOAuth = Effect.fnUntraced(function* (
+      method: OAuthMethod,
       input: { providerID: ProviderV2.ID } & AuthorizeInput,
+      pending: State["pending"],
     ) {
-      const { hooks, pending } = yield* InstanceState.get(state)
-      const method = hooks[input.providerID].methods[input.method]
-      if (method.type !== "oauth") return
-
-      if (method.prompts && input.inputs) {
-        for (const prompt of method.prompts) {
-          if (prompt.type === "text" && prompt.validate && input.inputs[prompt.key] !== undefined) {
-            const error = prompt.validate(input.inputs[prompt.key])
-            if (error) return yield* new ValidationFailed({ field: prompt.key, message: error })
-          }
-        }
-      }
+      const inputs = input.inputs
+      const invalid = Arr.findFirst(method.prompts ?? [], (prompt) => {
+        if (!inputs || prompt.type !== "text" || !prompt.validate || inputs[prompt.key] === undefined)
+          return Option.none()
+        const error = prompt.validate(inputs[prompt.key])
+        return error ? Option.some(new ValidationFailed({ field: prompt.key, message: error })) : Option.none()
+      })
+      if (Option.isSome(invalid)) return yield* invalid.value
 
       const result = yield* Effect.promise(() => method.authorize(input.inputs))
-      pending.set(input.providerID, result)
+      MutableHashMap.set(pending, input.providerID, result)
       return {
         url: result.url,
         method: result.method,
@@ -185,31 +187,49 @@ const layer: Layer.Layer<Service, never, Auth.Service | Plugin.Service> = Layer.
       }
     })
 
+    const authorize = Effect.fn("ProviderAuth.authorize")(function* (
+      input: { providerID: ProviderV2.ID } & AuthorizeInput,
+    ) {
+      const { hooks, pending } = yield* InstanceState.get(state)
+      const method = hooks[input.providerID].methods[input.method]
+      const started = yield* Effect.transposeOption(
+        Option.liftPredicate(method, isOAuthMethod).pipe(Option.map((oauth) => startOAuth(oauth, input, pending))),
+      )
+      // The HTTP API contract answers a non-OAuth method with an empty (undefined) authorization.
+      return Option.getOrUndefined(started)
+    })
+
     const callback = Effect.fn("ProviderAuth.callback")(function* (
       input: { providerID: ProviderV2.ID } & CallbackInput,
     ) {
       const pending = (yield* InstanceState.get(state)).pending
-      const match = pending.get(input.providerID)
-      if (!match) return yield* new OauthMissing({ providerID: input.providerID })
-      if (match.method === "code" && !input.code) {
-        return yield* new OauthCodeMissing({ providerID: input.providerID })
-      }
-
-      const result = yield* Effect.promise(() =>
-        match.method === "code" ? match.callback(input.code!) : match.callback(),
+      const match = yield* Effect.fromOption(
+        MutableHashMap.get(pending, input.providerID),
+        () => new OauthMissing({ providerID: input.providerID }),
       )
-      if (!result || result.type !== "success") return yield* new OauthCallbackFailed({})
+      const code = Option.fromNullishOr(input.code).pipe(Option.filter((value) => value !== ""))
+      const run =
+        match.method === "code"
+          ? Option.match(code, {
+              onNone: () => Effect.fail(new OauthCodeMissing({ providerID: input.providerID })),
+              onSome: (value) => Effect.promise(() => match.callback(value)),
+            })
+          : Effect.promise(() => match.callback())
+      const result = yield* run
+      const success = yield* result && result.type === "success"
+        ? Effect.succeed(result)
+        : Effect.fail(new OauthCallbackFailed({}))
 
-      if ("key" in result) {
+      if ("key" in success) {
         yield* auth.set(input.providerID, {
           type: "api",
-          key: result.key,
-          ...(result.metadata ? { metadata: result.metadata } : {}),
+          key: success.key,
+          ...(success.metadata ? { metadata: success.metadata } : {}),
         })
       }
 
-      if ("refresh" in result) {
-        const { type: _, provider: __, refresh, access, expires, ...extra } = result
+      if ("refresh" in success) {
+        const { type: _, provider: __, refresh, access, expires, ...extra } = success
         yield* auth.set(input.providerID, {
           type: "oauth",
           access,
