@@ -19,11 +19,11 @@ export const AcpCommand = effectCmd({
   handler: Effect.fn("Cli.acp")(function* (args) {
     const { Server } = yield* Effect.promise(() => import("@/server/server"))
     const { ACP } = yield* Effect.promise(() => import("@/acp/agent"))
-    ACPProfile.mark("cli.acp.handler")
+    yield* ACPProfile.mark("cli.acp.handler")
     // eslint-disable-next-line effect/no-process-env-use-config -- (a) env write, not a read: the in-process server reads OPENCODE_CLIENT from process.env through its ConfigProvider, and Effect Config cannot write env
     process.env.OPENCODE_CLIENT = "acp"
     const opts = yield* resolveNetworkOptions(args)
-    const server = yield* Effect.promise(() => ACPProfile.measure("cli.acp.server.listen", () => Server.listen(opts)))
+    const server = yield* Effect.promise(() => Server.listen(opts)).pipe(ACPProfile.measure("cli.acp.server.listen"))
 
     const sdk = createOpencodeClient({
       baseUrl: `http://${server.hostname}:${server.port}`,
@@ -52,9 +52,11 @@ export const AcpCommand = effectCmd({
 
     const stream = ndJsonStream(input, output)
     const agent = ACP.init({ sdk })
+    // The connection factory is a synchronous SDK callback, so the mark runs on this handler's context.
+    const runFork = Effect.runForkWith(yield* Effect.context())
 
     new AgentSideConnection((conn) => {
-      ACPProfile.mark("cli.acp.connection.create")
+      runFork(ACPProfile.mark("cli.acp.connection.create"))
       return agent.create(conn)
     }, stream)
 

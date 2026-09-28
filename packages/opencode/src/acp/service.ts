@@ -40,6 +40,7 @@ import type {
   SessionMessageResponse,
 } from "@opencode-ai/sdk/v2"
 import {
+  Clock,
   Context,
   DateTime,
   Effect,
@@ -110,7 +111,7 @@ export function make(input: {
     Option.match(events, { onNone: fn, onSome: (subscription) => subscription.runUntilIdle(sessionId, fn) })
 
   const initialize = Effect.fn("ACP.initialize")(function* (params: InitializeRequest) {
-    const started = performance.now()
+    const started = yield* Clock.currentTimeMillis
     const authMethod: AuthMethod = {
       description: "Run `opencode auth login` in the terminal",
       name: "Login with opencode",
@@ -152,7 +153,7 @@ export function make(input: {
         version: InstallationVersion,
       },
     }
-    ACPProfile.duration("acp.initialize", started)
+    yield* ACPProfile.duration("acp.initialize", started)
     return response
   })
 
@@ -164,9 +165,9 @@ export function make(input: {
   })
 
   const directorySnapshot = Effect.fn("ACP.directorySnapshot")(function* (cwd: string) {
-    const started = performance.now()
+    const started = yield* Clock.currentTimeMillis
     const snapshot = yield* directoryService.get(cwd)
-    ACPProfile.duration("acp.directory.snapshot", started)
+    yield* ACPProfile.duration("acp.directory.snapshot", started)
     return snapshot
   })
 
@@ -179,7 +180,7 @@ export function make(input: {
   })
 
   const newSession = Effect.fn("ACP.newSession")(function* (params: NewSessionRequest) {
-    const started = performance.now()
+    const started = yield* Clock.currentTimeMillis
     const snapshot = yield* directorySnapshot(params.cwd)
     const selected = selectDefaultModel(snapshot)
     // The session store and the SDK request take plain optional fields.
@@ -223,7 +224,7 @@ export function make(input: {
         modeId: state.modeId,
       }),
     }
-    ACPProfile.duration("acp.newSession", started)
+    yield* ACPProfile.duration("acp.newSession", started)
     return response
   })
 
@@ -751,16 +752,11 @@ function request<T>(fn: () => Promise<{ readonly data: T }>, service?: string) {
 }
 
 function profiledRequest<T>(name: string, fn: () => Promise<{ readonly data: T }>, service?: string) {
-  return request(() => ACPProfile.measure(name, fn), service)
+  return request(fn, service).pipe(ACPProfile.measure(name))
 }
 
 function loadDirectorySnapshot(sdk: OpencodeClient, directory: string) {
-  return Effect.suspend(() => {
-    const started = performance.now()
-    return buildDirectorySnapshot(sdk, directory).pipe(
-      Effect.ensuring(Effect.sync(() => ACPProfile.duration("acp.directory.load", started))),
-    )
-  })
+  return buildDirectorySnapshot(sdk, directory).pipe(ACPProfile.measure("acp.directory.load"))
 }
 
 const buildDirectorySnapshot = Effect.fn("ACP.buildDirectorySnapshot")(function* (
@@ -799,12 +795,12 @@ const buildDirectorySnapshot = Effect.fn("ACP.buildDirectorySnapshot")(function*
     { concurrency: "unbounded" },
   )
   const providers = providerRecord(providersData.providers)
-  const defaultModelStarted = performance.now()
+  const defaultModelStarted = yield* Clock.currentTimeMillis
   const defaultModel = defaultModelFromConfig(
     Option.flatMapNullishOr(config, (value) => value.model),
     providers,
   )
-  ACPProfile.duration("acp.directory.defaultModel.resolve", defaultModelStarted, {
+  yield* ACPProfile.duration("acp.directory.defaultModel.resolve", defaultModelStarted, {
     configured: Option.isSome(defaultModel),
   })
   const modes = agents
@@ -1095,7 +1091,6 @@ function registerMcpServers(
   sessionId: string,
   servers: readonly McpServer[],
 ) {
-  const started = performance.now()
   const current = Option.getOrElse(MutableHashMap.get(registered, sessionId), () => MutableHashSet.empty<string>())
   MutableHashMap.set(registered, sessionId, current)
   const pending = MutableHashSet.empty<string>()
@@ -1130,14 +1125,9 @@ function registerMcpServers(
       ),
     { concurrency: "unbounded" },
   ).pipe(
-    Effect.tap(() =>
-      Effect.sync(() =>
-        ACPProfile.duration("acp.mcp.register", started, {
-          count: MutableHashSet.size(pending),
-        }),
-      ),
-    ),
     Effect.asVoid,
+    // The filter above has run, so pending holds the servers to register. Each add ignores its failure.
+    ACPProfile.measure("acp.mcp.register", { count: MutableHashSet.size(pending) }),
   )
 }
 
