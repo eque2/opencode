@@ -24,6 +24,9 @@
  * SOFTWARE.
  */
 
+import { Config, Effect, Option } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
+
 const DEFAULT_PORTS: Record<string, number> = {
   ftp: 21,
   gopher: 70,
@@ -33,22 +36,57 @@ const DEFAULT_PORTS: Record<string, number> = {
   wss: 443,
 }
 
-export function getProxyForUrl(input: string | URL) {
-  const url = typeof input === "string" ? (URL.canParse(input) ? new URL(input) : undefined) : input
-  if (!url) return
+type Target = { protocol: string; hostname: string; port: number }
 
-  const protocol = url.protocol.split(":", 1)[0]
-  const hostname = url.host.replace(/:\d*$/, "")
-  const port = Number.parseInt(url.port) || DEFAULT_PORTS[protocol] || 0
-  if (!shouldProxy(hostname, port)) return
+/** Resolves the proxy URL for a request URL from the `*_proxy` and `no_proxy` environment variables. */
+export const proxyForUrl = Effect.fn("ProxyEnv.proxyForUrl")(function* (input: string | URL) {
+  const target = parseTarget(input)
+  if (Option.isNone(target)) return Option.none<string>()
+  const { protocol, hostname, port } = target.value
+  if (!shouldProxy(hostname, port, yield* env("no_proxy"))) return Option.none<string>()
 
-  const proxy = env(`${protocol}_proxy`) || env("all_proxy")
-  if (!proxy) return
-  return proxy.includes("://") ? proxy : `${protocol}://${proxy}`
+  const proxy = (yield* env(`${protocol}_proxy`)) || (yield* env("all_proxy"))
+  return proxyUrl(protocol, proxy)
+})
+
+/**
+ * Synchronous form of {@link proxyForUrl} for callers outside Effect. It reads process.env at call time.
+ * The result is undefined when no proxy applies.
+ */
+export function getProxyForUrl(input: string | URL): string | undefined {
+  return parseTarget(input).pipe(
+    Option.filter(({ hostname, port }) => shouldProxy(hostname, port, envSync("no_proxy"))),
+    Option.flatMap(({ protocol }) => proxyUrl(protocol, envSync(`${protocol}_proxy`) || envSync("all_proxy"))),
+    Option.getOrUndefined,
+  )
 }
 
-function shouldProxy(hostname: string, port: number) {
-  const noProxy = env("no_proxy").toLowerCase()
+function parseTarget(input: string | URL): Option.Option<Target> {
+  const url =
+    typeof input !== "string"
+      ? Option.some(input)
+      : URL.canParse(input)
+        ? Option.some(new URL(input))
+        : Option.none<URL>()
+  return url.pipe(
+    Option.map((url) => {
+      const protocol = url.protocol.split(":", 1)[0]
+      return {
+        protocol,
+        hostname: url.host.replace(/:\d*$/, ""),
+        port: Number.parseInt(url.port) || DEFAULT_PORTS[protocol] || 0,
+      }
+    }),
+  )
+}
+
+function proxyUrl(protocol: string, proxy: string): Option.Option<string> {
+  if (!proxy) return Option.none()
+  return Option.some(proxy.includes("://") ? proxy : `${protocol}://${proxy}`)
+}
+
+function shouldProxy(hostname: string, port: number, env: string) {
+  const noProxy = env.toLowerCase()
   if (!noProxy) return true
   if (noProxy === "*") return false
 
@@ -65,7 +103,14 @@ function shouldProxy(hostname: string, port: number) {
   })
 }
 
-function env(key: string) {
+// The lower-case name wins, and an empty value falls through to the upper-case name, as in proxy-from-env.
+const readVariable = (name: string) => readEnvSnapshot(Config.String(name).pipe(Config.withDefault("")))
+
+const env = Effect.fnUntraced(function* (key: string) {
+  return (yield* readVariable(key.toLowerCase())) || (yield* readVariable(key.toUpperCase()))
+})
+
+function envSync(key: string) {
   return process.env[key.toLowerCase()] || process.env[key.toUpperCase()] || ""
 }
 
