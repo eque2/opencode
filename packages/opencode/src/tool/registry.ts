@@ -21,6 +21,7 @@ import { Config } from "@/config/config"
 import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
 import type { JSONSchema7, JSONSchema7Definition } from "@ai-sdk/provider"
 import { Schema } from "effect"
+// eslint-disable-next-line effect/no-zod-use-schema -- (c) the public @opencode-ai/plugin tool() API hands the host Zod arg shapes, so the registry must validate them with z.object and export them with z.toJSONSchema
 import z from "zod"
 import { Plugin } from "../plugin"
 import { Provider } from "@/provider/provider"
