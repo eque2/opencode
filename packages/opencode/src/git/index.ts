@@ -1,6 +1,6 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
-import { Effect, Layer, Context, Stream } from "effect"
+import { Effect, Layer, Context, Option, Stream } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 
 const cfg = [
@@ -19,6 +19,7 @@ const cfg = [
 
 const out = (result: { text(): string }) => result.text().trim()
 const nuls = (text: string) => text.split("\0").filter(Boolean)
+const nonEmpty = (text: string) => Option.liftPredicate(text, (item) => item.length > 0)
 const fail = (err: unknown) =>
   ({
     exitCode: 1,
@@ -148,9 +149,10 @@ const layer = Layer.effect(
 
     const configured = Effect.fnUntraced(function* (cwd: string, list: string[]) {
       const result = yield* run(["config", "init.defaultBranch"], { cwd })
-      const name = out(result)
-      if (!name || !list.includes(name)) return
-      return { name, ref: name } satisfies Base
+      return nonEmpty(out(result)).pipe(
+        Option.filter((name) => list.includes(name)),
+        Option.map((name) => ({ name, ref: name }) satisfies Base),
+      )
     })
 
     const primary = Effect.fnUntraced(function* (cwd: string) {
@@ -163,9 +165,8 @@ const layer = Layer.effect(
 
     const branch = Effect.fn("Git.branch")(function* (cwd: string) {
       const result = yield* run(["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd })
-      if (result.exitCode !== 0) return
-      const text = out(result)
-      return text || undefined
+      if (result.exitCode !== 0) return Option.none<string>()
+      return nonEmpty(out(result))
     })
 
     const prefix = Effect.fn("Git.prefix")(function* (cwd: string) {
@@ -181,15 +182,16 @@ const layer = Layer.effect(
         if (head.exitCode === 0) {
           const ref = out(head).replace(/^refs\/remotes\//, "")
           const name = ref.startsWith(`${remote}/`) ? ref.slice(`${remote}/`.length) : ""
-          if (name) return { name, ref } satisfies Base
+          if (name) return Option.some({ name, ref } satisfies Base)
         }
       }
 
       const list = yield* refs(cwd)
       const next = yield* configured(cwd, list)
-      if (next) return next
-      if (list.includes("main")) return { name: "main", ref: "main" } satisfies Base
-      if (list.includes("master")) return { name: "master", ref: "master" } satisfies Base
+      if (Option.isSome(next)) return next
+      if (list.includes("main")) return Option.some({ name: "main", ref: "main" } satisfies Base)
+      if (list.includes("master")) return Option.some({ name: "master", ref: "master" } satisfies Base)
+      return Option.none<Base>()
     })
 
     const hasHead = Effect.fn("Git.hasHead")(function* (cwd: string) {
@@ -199,9 +201,8 @@ const layer = Layer.effect(
 
     const mergeBase = Effect.fn("Git.mergeBase")(function* (cwd: string, base: string, head = "HEAD") {
       const result = yield* run(["merge-base", base, head], { cwd })
-      if (result.exitCode !== 0) return
-      const text = out(result)
-      return text || undefined
+      if (result.exitCode !== 0) return Option.none<string>()
+      return nonEmpty(out(result))
     })
 
     const show = Effect.fn("Git.show")(function* (cwd: string, ref: string, file: string, prefix = "") {
@@ -304,32 +305,33 @@ const layer = Layer.effect(
         maxOutputBytes: 4096,
       })
 
-      if (result.truncated) return
+      if (result.truncated) return Option.none<Stat>()
       const text = result.text()
 
       const parts = text.split("\t")
-      if (parts.length < 2) return
+      if (parts.length < 2) return Option.none<Stat>()
 
       const additions = parts[0] === "-" ? 0 : Number.parseInt(parts[0] || "0", 10)
       const deletions = parts[1] === "-" ? 0 : Number.parseInt(parts[1] || "0", 10)
-      return {
+      return Option.some({
         file,
         additions: Number.isFinite(additions) ? additions : 0,
         deletions: Number.isFinite(deletions) ? deletions : 0,
-      } satisfies Stat
+      } satisfies Stat)
     })
 
     const applyPatch = Effect.fn("Git.applyPatch")(function* (cwd: string, patch: string) {
       return yield* run(["apply", "-"], { cwd, stdin: stdin(patch) })
     })
 
+    // The service interface still returns `undefined` for an absent value; its callers read it that way.
     return Service.of({
       run,
-      branch,
+      branch: (cwd) => branch(cwd).pipe(Effect.map(Option.getOrUndefined)),
       prefix,
-      defaultBranch,
+      defaultBranch: (cwd) => defaultBranch(cwd).pipe(Effect.map(Option.getOrUndefined)),
       hasHead,
-      mergeBase,
+      mergeBase: (cwd, base, head) => mergeBase(cwd, base, head).pipe(Effect.map(Option.getOrUndefined)),
       show,
       status,
       diff,
@@ -337,7 +339,7 @@ const layer = Layer.effect(
       patch,
       patchAll,
       patchUntracked,
-      statUntracked,
+      statUntracked: (cwd, file) => statUntracked(cwd, file).pipe(Effect.map(Option.getOrUndefined)),
       applyPatch,
     })
   }),
