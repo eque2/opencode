@@ -1,5 +1,5 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Effect, Layer, Context, Option, Schema, Scope } from "effect"
+import { Array as Arr, Effect, HashMap, Layer, Context, Option, Schema, Scope } from "effect"
 import { formatPatch, structuredPatch } from "diff"
 import { InstanceState } from "@/effect/instance-state"
 import { Watcher } from "@opencode-ai/core/filesystem/watcher"
@@ -19,18 +19,28 @@ const isWatcherUpdated = Schema.is(Watcher.Event.Updated.data)
 
 const emptyPatch = (file: string) => formatPatch(structuredPatch(file, file, "", "", "", "", { context: 0 }))
 
+type LineCounts = { additions: number; deletions: number }
+type PatchBatch = { patches: HashMap.HashMap<string, string>; capped: boolean }
+
 const nums = (list: Git.Stat[]) =>
-  new Map(list.map((item) => [item.file, { additions: item.additions, deletions: item.deletions }] as const))
+  HashMap.fromIterable(
+    list.map((item) => [item.file, { additions: item.additions, deletions: item.deletions }] as const),
+  )
 
-const merge = (...lists: Git.Item[][]) => {
-  const out = new Map<string, Git.Item>()
-  lists.flat().forEach((item) => {
-    if (!out.has(item.file)) out.set(item.file, item)
-  })
-  return [...out.values()]
-}
+// The first item for each file wins. Callers sort the result, so the order is free.
+const merge = (...lists: Git.Item[][]) =>
+  Arr.fromIterable(
+    HashMap.values(
+      lists
+        .flat()
+        .reduce(
+          (out, item) => (HashMap.has(out, item.file) ? out : HashMap.set(out, item.file, item)),
+          HashMap.empty<string, Git.Item>(),
+        ),
+    ),
+  )
 
-const emptyBatch = () => ({ patches: new Map<string, string>(), capped: false })
+const emptyBatch = (): PatchBatch => ({ patches: HashMap.empty(), capped: false })
 
 // A quoted path without its closing quote is None.
 const parseQuotedPath = (value: string): Option.Option<{ value: string; end: number }> => {
@@ -110,7 +120,7 @@ const batchPatches = Effect.fnUntraced(function* (
   list: Git.Item[],
   options?: DiffOptions,
 ) {
-  if (list.length === 0) return { patches: new Map<string, string>(), capped: false }
+  if (list.length === 0) return emptyBatch()
 
   const result = yield* git.patchAll(cwd, ref, {
     context: options?.context ?? PATCH_CONTEXT_LINES,
@@ -121,9 +131,8 @@ const batchPatches = Effect.fnUntraced(function* (
     patches: splitGitPatch(result).reduce((acc, patch, index) => {
       const file = Option.orElse(fileFromPatchChunk(patch), () => Option.fromNullishOr(list[index]?.file))
       if (Option.isNone(file) || !file.value) return acc
-      acc.set(file.value, (acc.get(file.value) ?? "") + patch)
-      return acc
-    }, new Map<string, string>()),
+      return HashMap.set(acc, file.value, Option.getOrElse(HashMap.get(acc, file.value), () => "") + patch)
+    }, HashMap.empty<string, string>()),
     capped: result.truncated,
   }
 })
@@ -160,14 +169,14 @@ const patchForItem = Effect.fnUntraced(function* (
   cwd: string,
   ref: Option.Option<string>,
   item: Git.Item,
-  batch: { patches: Map<string, string>; capped: boolean },
+  batch: PatchBatch,
   capped: boolean,
   options?: DiffOptions,
 ) {
   if (capped) return emptyPatch(item.file)
 
-  const batched = batch.patches.get(item.file)
-  if (batched !== undefined) return batched
+  const batched = HashMap.get(batch.patches, item.file)
+  if (Option.isSome(batched)) return batched.value
   if (item.code !== "??" && batch.capped) return emptyPatch(item.file)
   return yield* nativePatch(git, cwd, ref, item, options)
 })
@@ -177,11 +186,11 @@ const patchForItem = Effect.fnUntraced(function* (
 const lineCounts = Effect.fnUntraced(function* (
   git: Git.Interface,
   cwd: string,
-  map: Map<string, { additions: number; deletions: number }>,
+  map: HashMap.HashMap<string, LineCounts>,
   item: Git.Item,
 ) {
-  const known = map.get(item.file)
-  if (known) return known
+  const known = HashMap.get(map, item.file)
+  if (Option.isSome(known)) return known.value
   if (item.status !== "added") return { additions: 0, deletions: 0 }
   const untracked = yield* git.statUntracked(cwd, item.file)
   return { additions: untracked?.additions ?? 0, deletions: untracked?.deletions ?? 0 }
@@ -192,8 +201,8 @@ const files = Effect.fnUntraced(function* (
   cwd: string,
   ref: Option.Option<string>,
   list: Git.Item[],
-  map: Map<string, { additions: number; deletions: number }>,
-  batch: { patches: Map<string, string>; capped: boolean },
+  map: HashMap.HashMap<string, LineCounts>,
+  batch: PatchBatch,
   options?: DiffOptions,
 ) {
   const next: FileDiff[] = []
@@ -252,7 +261,8 @@ const track = Effect.fnUntraced(function* (
   ref: Option.Option<string>,
   options?: DiffOptions,
 ) {
-  if (Option.isNone(ref)) return yield* files(git, cwd, ref, yield* git.status(cwd), new Map(), emptyBatch(), options)
+  if (Option.isNone(ref))
+    return yield* files(git, cwd, ref, yield* git.status(cwd), HashMap.empty(), emptyBatch(), options)
   return yield* diffAgainstRef(git, cwd, ref.value, options)
 })
 
