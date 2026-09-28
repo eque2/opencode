@@ -96,8 +96,8 @@ async function failure(effect: Effect.Effect<unknown>) {
 describe("code mode execute", () => {
   test("defines execute input with an Effect schema", async () => {
     const decode = Schema.decodeUnknownEffect(Parameters)
-    await expect(Effect.runPromise(decode({ code: "return 1" }))).resolves.toEqual({ code: "return 1" })
-    await expect(Effect.runPromise(decode({}))).rejects.toThrow()
+    expect(await Effect.runPromise(decode({ code: "return 1" }))).toEqual({ code: "return 1" })
+    expect(Exit.isFailure(await Effect.runPromiseExit(decode({})))).toBe(true)
     expect(Schema.toJsonSchemaDocument(Parameters).schema).toMatchObject({
       properties: {
         code: {
