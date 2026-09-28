@@ -84,6 +84,7 @@ const BACKOFF = Duration.millis(500)
 const MAX_RETRY_AFTER = 30_000
 const COOLDOWN = Duration.seconds(60)
 const MAX_BUFFER = 10_000
+const FINAL_TIMEOUT = Duration.seconds(5)
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
@@ -156,21 +157,26 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
       )
     })
 
+    // Takes the buffer and hands each chunk to `each`. An open breaker drops the records, including the chunks
+    // after the one that tripped it.
+    const drain = (each: (chunk: Array<Entry>) => Effect.Effect<void>) =>
+      Effect.suspend(() => {
+        const batch = buffer
+        buffer = []
+        return Effect.forEach(
+          chunks(batch),
+          (chunk) => Effect.flatMap(isOpen, (open) => (open ? Effect.void : each(chunk))),
+          { discard: true },
+        )
+      })
+
     // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
-    const flush = Effect.suspend(() => {
-      const batch = buffer
-      buffer = []
-      return Effect.forEach(
-        chunks(batch),
-        (chunk) =>
-          Effect.gen(function* () {
-            // An open breaker drops the records, including the chunks after the one that tripped it.
-            if (yield* isOpen) return
-            if ((yield* send(chunk)) === "failed") yield* trip
-          }),
-        { discard: true },
-      )
-    })
+    const flush = drain((chunk) => Effect.flatMap(send(chunk), (result) => (result === "failed" ? trip : Effect.void)))
+
+    // Shutdown must not hang the CLI, so the final flush makes one attempt per chunk and never waits for Retry-After.
+    const final = drain((chunk) =>
+      post(Bun.gzipSync(encodeJson(chunk))).pipe(Effect.asVoid, Effect.withTracerEnabled(false)),
+    ).pipe(Effect.timeoutOption(FINAL_TIMEOUT), Effect.asVoid)
 
     const sink = Logger.make((options) => {
       if (!LogLevel.isGreaterThanOrEqualTo(options.logLevel, settings.level)) return
@@ -182,7 +188,8 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
       })
     })
 
-    yield* Effect.addFinalizer(() => flush)
+    // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
+    yield* Effect.addFinalizer(() => final)
     // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
     yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
     return sink

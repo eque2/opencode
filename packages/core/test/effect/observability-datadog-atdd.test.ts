@@ -10,6 +10,7 @@ import path from "path"
 import * as TestClock from "effect/testing/TestClock"
 import { Datadog } from "../../src/observability/datadog"
 import { fileLogger } from "../../src/observability/logging"
+import { Observability } from "../../src/observability"
 import { ConfigV1 } from "../../src/v1/config/config"
 
 type Received = {
@@ -235,7 +236,7 @@ test("AC-7 every request is gzip-compressed", async () => {
   expect(target.requests[0].body[0].message).toBe("compressed")
 })
 
-test.skip("AC-8 disposing the runtime flushes buffered records", async () => {
+test("AC-8 disposing the runtime flushes buffered records", async () => {
   const target = intake()
   using _ = target.server
   const config = required(
@@ -506,3 +507,67 @@ test("AC-6b the buffer holds at most 10,000 entries and drops the oldest first",
   expect(messages[0]).toBe("record 5")
   expect(messages.at(-1)).toBe("record 10004")
 }, 30_000)
+
+// Sets process env vars for one test, because Observability.layer reads the live process env when it builds.
+async function withEnv<A>(vars: Record<string, string>, run: () => Promise<A>) {
+  const saved = Object.fromEntries(Object.keys(vars).map((key) => [key, process.env[key]]))
+  Object.assign(process.env, vars)
+  try {
+    return await run()
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+test("AC-8b disposing an Observability.layer runtime flushes the Datadog buffer", async () => {
+  const target = intake()
+  using _ = target.server
+  await withEnv(
+    { DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" },
+    async () => {
+      const runtime = ManagedRuntime.make(Observability.layer)
+      await runtime.runPromise(Effect.logInfo("observability last words").pipe(Effect.annotateLogs({ category: "cli.exit" })))
+      await runtime.dispose()
+    },
+  )
+  expect(target.requests.flatMap((request) => request.body.map((entry) => entry.message))).toEqual([
+    "observability last words",
+  ])
+})
+
+test("AC-8b disposal against a 503 or a 429 intake makes one attempt and finishes within 5 seconds", async () => {
+  for (const reply of [{ status: 503 }, { status: 429, headers: { "Retry-After": "30" } }]) {
+    const target = intake([reply, reply, reply, reply])
+    using _ = target.server
+    const config = required(
+      await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour" }),
+    )
+    const runtime = ManagedRuntime.make(Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)))
+    await runtime.runPromise(Effect.logInfo("failing intake").pipe(Effect.annotateLogs({ category: "cli.exit" })))
+    const start = Date.now()
+    await runtime.dispose()
+    expect(Date.now() - start).toBeLessThan(5_000)
+    await Bun.sleep(700)
+    expect([reply.status, target.requests.length]).toEqual([reply.status, 1])
+  }
+}, 20_000)
+
+test("AC-8b disposal while the breaker is open sends nothing", async () => {
+  const target = intake([{ status: 401 }])
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+  )
+  const runtime = ManagedRuntime.make(Logger.layer([Datadog.logger(config)]).pipe(Layer.provide(FetchHttpClient.layer)))
+  const log = (message: string) =>
+    runtime.runPromise(Effect.logInfo(message).pipe(Effect.annotateLogs({ category: "cli.exit" })))
+  await log("trips the breaker")
+  await until(() => target.requests.length >= 1)
+  await Bun.sleep(100)
+  await log("buffered while off")
+  await runtime.dispose()
+  expect(target.requests).toHaveLength(1)
+})
