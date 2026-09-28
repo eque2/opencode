@@ -71,7 +71,7 @@ export const Event = {
 const Cursor = Schema.Struct({
   id: MessageID,
   time: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
-})
+}).annotate({ identifier: "MessageCursor" })
 type Cursor = typeof Cursor.Type
 
 const CursorJson = Schema.fromJsonString(Cursor)
