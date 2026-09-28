@@ -1,6 +1,7 @@
 import {
   Clock,
   Config,
+  Context,
   DateTime,
   Duration,
   Effect,
@@ -19,6 +20,7 @@ import { InstallationChannel, InstallationVersion } from "../installation/versio
 import { runID } from "./shared"
 
 // User answers and terminal sessions never leave the machine unless the env var re-includes them.
+const GUARDED = ["question", "pty"]
 const DEFAULT_CATEGORIES = "*,-question,-pty"
 
 // Every switch is an Effect Config, so any ConfigProvider (env, JSON file, test override) can supply it.
@@ -39,6 +41,28 @@ export const config = Config.all({
 })
 
 export type Settings = Config.Success<typeof config>
+
+/** A runtime scope override. A field that is not set keeps the value of the enclosing scope or the settings. */
+export interface Policy {
+  readonly content?: Settings["content"]
+  readonly categories?: string
+}
+
+/** The policy of the current fiber tree. The sink reads it from the logging fiber for each record. */
+export const LogPolicy = Context.Reference<Policy>("@opencode/Datadog/LogPolicy", { defaultValue: () => ({}) })
+
+/**
+ * Runs `self` with `patch` merged into the current policy, field by field; the inner value wins. A policy may
+ * widen `content` up to `full`. Secrets stay redacted, and `question` and `pty` stay excluded unless the
+ * OPENCODE_DATADOG_CATEGORIES env var re-includes them.
+ */
+export const withPolicy =
+  (patch: Policy) =>
+  <A, E, R>(self: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const current = yield* LogPolicy
+      return yield* self.pipe(Effect.provideService(LogPolicy, { ...current, ...defined(patch) }))
+    })
 
 type Entry = Record<string, unknown>
 
@@ -202,18 +226,25 @@ export function entry(
   settings: Settings,
   include = categoryFilter(settings.categories),
 ) {
+  const policy = options.fiber.getRef(LogPolicy)
+  const content = policy.content ?? settings.content
   const structured = Logger.formatStructured.log(options)
   const category = Option.fromNullishOr(structured.annotations.category).pipe(
     Option.map(text),
     Option.getOrElse(() => "general"),
   )
-  if (!include(category)) return Option.none<Entry>()
+  // ponytail: parses the policy list for each record; cache it by string if policies become common.
+  const allowed =
+    policy.categories === undefined
+      ? include(category)
+      : categoryFilter(policy.categories)(category) && (!guarded(category) || include(category))
+  if (!allowed) return Option.none<Entry>()
   const messages = Array.isArray(options.message) ? options.message : [options.message]
   const attributes = Object.assign({}, ...messages.filter(plain), structured.annotations)
   const span = options.fiber.cache.span
   return Option.some<Entry>({
     ...Object.fromEntries(
-      Object.entries(attributes).map(([key, value]) => [key, redact(value, settings.content, key)]),
+      Object.entries(attributes).map(([key, value]) => [key, redact(value, content, key)]),
     ),
     message: scrub(
       messages
@@ -230,7 +261,7 @@ export function entry(
     category,
     run: runID,
     spans: structured.spans,
-    ...(structured.cause === undefined ? {} : { error: { stack: redact(structured.cause, settings.content) } }),
+    ...(structured.cause === undefined ? {} : { error: { stack: redact(structured.cause, content) } }),
     ...(span?._tag === "Span"
       ? {
           trace_id: span.traceId,
@@ -291,6 +322,15 @@ function retryDelay(header: Option.Option<string>) {
       Option.map((wait) => Duration.millis(Math.min(wait, MAX_RETRY_AFTER))),
     ),
   )
+}
+
+/** Categories that a file or a policy cannot re-include. */
+function guarded(category: string) {
+  return GUARDED.some((prefix) => category === prefix || category.startsWith(`${prefix}.`))
+}
+
+function defined(patch: Policy): Policy {
+  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined))
 }
 
 function secretKey(key: string) {

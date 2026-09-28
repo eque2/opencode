@@ -113,7 +113,7 @@ test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async 
   expect(decoded._tag).toBe("Success")
 })
 
-test.skip("AC-3 withPolicy content full ships content only inside its scope and keeps secrets redacted", async () => {
+test("AC-3 withPolicy content full ships content only inside its scope and keeps secrets redacted", async () => {
   const target = intake()
   using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
@@ -122,7 +122,6 @@ test.skip("AC-3 withPolicy content full ships content only inside its scope and 
     content?: "omit" | "hash" | "full"
     categories?: string
   }) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> =
-    // @ts-expect-error AC-3 red phase: Datadog.withPolicy lands in stage 3.
     Datadog.withPolicy
   await ship(
     config,
@@ -570,4 +569,44 @@ test("AC-8b disposal while the breaker is open sends nothing", async () => {
   await log("buffered while off")
   await runtime.dispose()
   expect(target.requests).toHaveLength(1)
+})
+
+test("AC-3b nested withPolicy scopes merge field by field and the inner value wins", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  const log = (message: string, category: string) =>
+    Effect.logInfo(message, { prompt: `${message} prompt` }).pipe(Effect.annotateLogs({ category }))
+  await ship(
+    config,
+    Effect.gen(function* () {
+      yield* log("outer", "llm.request")
+      yield* Effect.gen(function* () {
+        yield* log("inner", "llm.request")
+        // The outer categories still apply inside the inner scope.
+        yield* log("inner tool", "tool.call")
+      }).pipe(Datadog.withPolicy({ content: "full" }))
+    }).pipe(Datadog.withPolicy({ content: "hash", categories: "llm" })),
+  )
+  const [outer, inner, ...rest] = target.requests[0].body
+  expect(outer.prompt).toMatch(/^sha256:/)
+  expect(inner.prompt).toBe("inner prompt")
+  expect(rest).toEqual([])
+})
+
+test("AC-3b a policy cannot re-include question or pty unless the env var does", async () => {
+  const run = async (env: Record<string, string>) => {
+    const target = intake()
+    using _ = target.server
+    const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, ...env }))
+    await ship(
+      config,
+      Effect.forEach(["question.asked", "pty.create", "llm.request"], (category) =>
+        Effect.logInfo(category).pipe(Effect.annotateLogs({ category })),
+      ).pipe(Datadog.withPolicy({ categories: "question,pty,llm" })),
+    )
+    return target.requests[0].body.map((entry) => entry.message)
+  }
+  expect(await run({})).toEqual(["llm.request"])
+  expect(await run({ OPENCODE_DATADOG_CATEGORIES: "*" })).toEqual(["question.asked", "pty.create", "llm.request"])
 })
