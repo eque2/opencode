@@ -22,7 +22,10 @@ export const start = Effect.fn("Heap.start")(function* () {
 })
 
 const check = Effect.fnUntraced(function* (armed: Ref.Ref<boolean>) {
-  if (process.memoryUsage().rss <= LIMIT) return yield* Ref.set(armed, true)
+  if (process.memoryUsage().rss <= LIMIT) {
+    yield* Ref.set(armed, true)
+    return
+  }
   if (!(yield* Ref.getAndSet(armed, false))) return
 
   const now = yield* DateTime.now
