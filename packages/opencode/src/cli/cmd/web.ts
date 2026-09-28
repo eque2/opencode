@@ -80,6 +80,6 @@ export const WebCommand = effectCmd({
       open(displayUrl).catch(() => {})
     }
 
-    yield* Effect.never
+    return yield* Effect.never
   }),
 })

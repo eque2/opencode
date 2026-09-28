@@ -1,5 +1,5 @@
 import { EOL } from "os"
-import { Effect, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Location } from "@opencode-ai/core/location"
@@ -37,8 +37,7 @@ export const V2Command = effectCmd({
           Location.Ref.make({
             directory: AbsolutePath.make(process.cwd()),
           }),
-        ),
+        ).pipe(Layer.provide(locationServiceMapLayer)),
       ),
-      Effect.provide(locationServiceMapLayer),
     ),
 })

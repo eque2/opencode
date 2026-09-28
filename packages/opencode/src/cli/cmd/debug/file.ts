@@ -1,5 +1,5 @@
 import { EOL } from "os"
-import { Effect, Schema } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { FileSystem } from "@opencode-ai/core/filesystem"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Location } from "@opencode-ai/core/location"
@@ -11,8 +11,11 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { s
 
 const filesystem = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
-    Effect.provide(LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(process.cwd()) }))),
-    Effect.provide(locationServiceMapLayer),
+    Effect.provide(
+      LocationServiceMap.Service.get(Location.Ref.make({ directory: AbsolutePath.make(process.cwd()) })).pipe(
+        Layer.provide(locationServiceMapLayer),
+      ),
+    ),
   )
 
 const FileSearchCommand = effectCmd({
