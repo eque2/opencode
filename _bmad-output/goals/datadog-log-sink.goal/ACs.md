@@ -14,11 +14,11 @@ All paths are relative to the worktree root, unless they start with `./`.
 
 ## Done when
 
-- [ ] **CRITICAL** The repository quality gate in `package.json` passes end to end, shown by real run output: root `bun run lint` is clean, root `bun typecheck` is clean, `bun test` in `packages/core` has 0 failures, `bun run check:generated` in `packages/client` is clean, `bun run test:httpapi` in `packages/opencode` passes, `./packages/sdk/js/script/build.ts` leaves `git status` clean (or its regenerated output is committed), and `bunx prettier --check` on every changed file is clean.
+- [ ] **CRITICAL** The repository quality gate in `package.json` passes end to end, shown by real run output: root `bun run lint` is clean (it includes `lint:effect-eslint` over every `packages/*/src`), root `bun typecheck` is clean, `bun test` in `packages/core` has 0 failures, `bun run check:generated` in `packages/client` is clean, `bun run test:httpapi` in `packages/opencode` passes, `./packages/sdk/js/script/build.ts` leaves `git status` clean (or its regenerated output is committed), and `bunx prettier --check` on every changed file is clean.
       - explanation: stage 3 has not started; no implementation exists yet.
 - [ ] **CRITICAL** AC-1: `packages/core/src/observability/datadog.ts` reads a global config file's `observability.datadog` object, and the env var overrides it. The AC-1 leaf in `packages/core/test/effect/observability-datadog-atdd.test.ts` runs un-skipped and passes, with its `@ts-expect-error` lines removed.
       - explanation: red-phase scaffold only; `Datadog.provider` does not exist.
-- [ ] AC-1b: `packages/core/src/observability.ts` passes `Global.Path.config` to `Datadog.provider`, so `Observability.layer` uses the file layer. A passing test titled `AC-1b …` in `packages/core/test/effect/observability-datadog-atdd.test.ts` proves it.
+- [ ] AC-1b: `packages/core/src/observability.ts` passes the global config dir (`OPENCODE_CONFIG_DIR` when set, else `Global.Path.config`) to `Datadog.provider`, so `Observability.layer` uses the file layer. A passing test titled `AC-1b …` in `packages/core/test/effect/observability-datadog-atdd.test.ts` proves it.
       - explanation: not written.
 - [ ] AC-1c: in `packages/core/src/observability/datadog.ts`, files merge key by key with the later file winning. An empty file counts as none. A malformed JSONC file, or a non-object `observability` or `datadog`, is ignored with one warning while env settings still apply. Passing tests titled `AC-1c …` in `packages/core/test/effect/observability-datadog-atdd.test.ts` prove each case.
       - explanation: not written.
@@ -60,7 +60,7 @@ All paths are relative to the worktree root, unless they start with `./`.
       - explanation: not written.
 - [ ] **CRITICAL** AC-10: by default, `packages/core/src/observability/datadog.ts` sends no answer text for a record shaped like today's `Question.reply` log with no category, and excludes the `question.*` and `pty.*` categories. The AC-10 leaf in `packages/core/test/effect/observability-datadog-atdd.test.ts` runs un-skipped and passes.
       - explanation: red-phase scaffold only; the default filter is `*` and `answers` is not a content key.
-- [ ] **CRITICAL** AC-10b: with no category, `packages/core/src/observability/datadog.ts` sends no `cmd` or `data` text for records shaped like today's `Pty.create` and `Pty.write` logs. A passing test titled `AC-10b …` in `packages/core/test/effect/observability-datadog-atdd.test.ts` proves it.
+- [ ] **CRITICAL** AC-10b: with no category, `packages/core/src/observability/datadog.ts` sends no `cmd` or `args` text for a record shaped like today's `Pty.create` log (`packages/core/src/pty.ts:185`). A passing test titled `AC-10b …` in `packages/core/test/effect/observability-datadog-atdd.test.ts` proves it.
       - explanation: not written.
 - [ ] `packages/core/src/observability/datadog.ts` carries a `ponytail:` comment that records the no-disk-spool ceiling and its upgrade path, as the plan's "no disk spool" Decision requires.
       - explanation: the comment is not updated yet.

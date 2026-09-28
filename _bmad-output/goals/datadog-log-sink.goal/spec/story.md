@@ -15,7 +15,7 @@ Stage 2 resolved these details. Phase R reviewed them (see `../reviews/2026-09-2
 
 ### Configuration
 
-1. **Files.** Layer 2 reads `observability.datadog` from `config.json`, `opencode.json` and `opencode.jsonc` in `Global.Path.config`, in that order. `Global.Path.config` already follows `OPENCODE_CONFIG_DIR`.
+1. **Files.** Layer 2 reads `observability.datadog` from `config.json`, `opencode.json` and `opencode.jsonc` in the global config dir, in that order. The dir is `OPENCODE_CONFIG_DIR` when set, else `Global.Path.config`. This is the same rule as `packages/core/src/global.ts:82`. After the dev merge, `Global.Path.config` itself no longer follows the env var.
    - A project `opencode.json` has no effect, and the schema description says so.
    - `OPENCODE_CONFIG` and `OPENCODE_CONFIG_CONTENT` are ignored.
    - No `{env:}` or `{file:}` substitution happens.
@@ -78,12 +78,12 @@ Stage 2 resolved these details. Phase R reviewed them (see `../reviews/2026-09-2
 15. **Chunks.**
     - Size is measured in UTF-8 bytes with `Buffer.byteLength`. A chunk stays under 4.5 MB before compression.
     - An entry above 1,000,000 bytes has its message truncated, with the marker `[TRUNCATED]`.
-16. **Gzip.** Each body is `Bun.gzipSync(JSON.stringify(batch))`, sent with `Content-Encoding: gzip`.
+16. **Gzip.** Each body is `Bun.gzipSync(encodeJson(batch))`, sent with `Content-Encoding: gzip`. `encodeJson` is the module's existing Schema JSON encoder: `lint:effect-eslint` covers `packages/*/src`, and the sink already uses the encoder in place of `JSON.stringify`.
 
 ### Redaction
 
 17. **Default categories** are `*,-question,-pty`.
-18. **More content keys.** The `CONTENT` keys gain `answers`, `cmd` and `data`. So the existing `Question.reply` log (`packages/opencode/src/question/index.ts:125`) and the `Pty.create` and `Pty.write` records (`packages/core/src/pty.ts`) are safe with no category annotation.
+18. **More content keys.** The `CONTENT` keys gain `answers` and `cmd`, so two existing logs are safe with no category annotation: the `Question.reply` log (`packages/opencode/src/question/index.ts:124`) and the `Pty.create` log (`packages/core/src/pty.ts:185`), whose `args` key is already a content key. `Pty.write` has no log after the dev merge, so no `data` key is added.
 19. **Secret keys.** A key is a secret when its lowercase form, with `-` and `_` removed, equals or ends with one of these: `apikey`, `authorization`, `password`, `secret`, `token`, `cookie` or `credential`. `inputTokens` and `tokenizer` are not secret keys.
 20. **Value scrubbing.**
     - It applies to the message, every attribute value at any depth, `error.message` and `error.stack`.
@@ -95,6 +95,12 @@ Stage 2 resolved these details. Phase R reviewed them (see `../reviews/2026-09-2
     - A query parameter is redacted when its name, compared case-insensitively, ends with `key` or `token` and is preceded by `?` or `&`, or when it is one of `api_key` or `access_token`. So `exaApiKey` and `access_token` are covered.
     - Only the value is replaced. The surrounding text survives.
     - These must not be redacted: `task-0123456789abcdef`, `risk-assessment-document`, `monkey=1` in prose, `tokenizer` and `inputTokens: 42`.
+
+## Implementation constraints after the dev merge
+
+- **Lint.** `bun run lint` runs `lint:effect-eslint` over every `packages/*/src`, so the sink code must pass the Effect rules. For example, the rules ban `JSON.parse` in favour of Schema.
+- **Return types.** `Datadog.settings` returns `Option<Settings>`, and `Datadog.entry` returns `Option<Entry>`. New APIs follow the same style.
+- **Effects.** `Logging.minimumLogLevel`, `Otlp.loggers` and `Otlp.tracing` are Effects. Per-sink levels (item 10) compose with them inside `Observability.layer`.
 
 ## Acceptance criteria
 

@@ -273,7 +273,7 @@ test.skip("AC-10 a Question.reply-shaped record sends no answer text by default"
   const target = intake()
   using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
-  // Same shape as packages/opencode/src/question/index.ts:125, which sets no category.
+  // Same shape as packages/opencode/src/question/index.ts:124, which sets no category.
   await ship(config, Effect.logInfo("replied", { requestID: "que_1", answers: [["my private answer"]] }))
   expect(JSON.stringify(target.requests[0].body)).not.toContain("my private answer")
   const include = Datadog.categoryFilter(config.categories)

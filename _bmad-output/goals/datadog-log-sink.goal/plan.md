@@ -55,7 +55,7 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 **Workflow** — `bmad-build` in stage 3. The same ATDD suite covers it.
 
-**Justification** — Config files are committed and shared. A key in one would breach the Eque2 data-loss-prevention rules. The sites catalogue tags config token handling as `S` at `config.ts:371`. The review found that a hard schema error would make the whole global config fall back to defaults (`config.ts:298`), so the user chose ignore-plus-warn on 2026-09-28.
+**Justification** — Config files are committed and shared. A key in one would breach the Eque2 data-loss-prevention rules. The sites catalogue tags config token handling as `S` at `config.ts:431`. The review found that a hard schema error would make the whole global config fall back to defaults (`config.ts:356`), so the user chose ignore-plus-warn on 2026-09-28.
 
 **Alternatives**
 - Hard schema rejection. Rejected by the user: one bad key would reset every global user setting.
@@ -125,7 +125,7 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 ### Decision: the duplicate listener instance
 
-**Choice** — Accept the second sink instance that `opencode/src/server/server.ts:124` builds with a fresh memo map. Document it, and add no code.
+**Choice** — Accept the second sink instance that `opencode/src/server/server.ts:132` builds with a fresh memo map. Document it, and add no code.
 
 **Workflow** — `bmad-build` in stage 3 (doc only).
 
@@ -141,9 +141,9 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 **Workflow** — `bmad-testarch-atdd` in stage 2, with one fixture for each secret shape. Then `bmad-build` in stage 3.
 
-**Justification** — Sites §Gaps item 4 lists logs that carry free text today. Examples are `permission/index.ts:74` (command patterns), `pty.ts` (cmd and args) and the Exa key in a web-search URL. A key-name rule cannot catch a secret inside a message string.
+**Justification** — Sites §Gaps item 4 lists logs that carry free text today. Examples are `permission/index.ts:74` (command patterns), `pty.ts:185` (cmd and args) and the Exa key in a web-search URL. A key-name rule cannot catch a secret inside a message string.
 
-**Alternatives** — Reuse the redaction in `llm/src/route/executor.ts:41-202`. Rejected as a dependency, because `core` must not import `llm` internals for this. Stage 3 should copy its patterns where they fit.
+**Alternatives** — Reuse the redaction in `llm/src/route/executor.ts:39-208`. Rejected as a dependency, because `core` must not import `llm` internals for this. Stage 3 should copy its patterns where they fit.
 
 ### Decision: default category exclusions
 
@@ -151,7 +151,7 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 **Workflow** — `bmad-build` in stage 3.
 
-**Justification** — Sites §Gaps item 4 names `question/index.ts:125` (raw answers) and `Pty.write` (keystrokes) as `U` and `S` content. A default must be safe under the Eque2 data-loss-prevention rules.
+**Justification** — Sites §Gaps item 4 names `question/index.ts:124` (raw answers) and the PTY records as `U` and `S` content. `Pty.create` (`pty.ts:185`) logs the command and its arguments. `Pty.write` carries keystrokes, but after the dev merge it has no log, so the exclusion guards any future log there. A default must be safe under the Eque2 data-loss-prevention rules.
 
 **Alternatives** — Rely on content redaction. Rejected: these records carry the sensitive text in the message field, not under a content key.
 
@@ -193,6 +193,8 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 
 - **2026-09-28, stage 2 Phase R.** The adversarial and edge-case reviews found that the config-file and API key Decisions could not hold as written. The user answered three questions: global files only, narrow-only file settings, and ignore-plus-warn for `apiKey`. The user then chose "Revise and approve". This revision replaces the approval of hash `681261f1`.
 
+- **2026-09-28, dev merge.** The user asked for `dev` to be merged, because it carries the Effect lint migration. The merge (`a04610c20f`) moved code that this plan cites. Line references were updated: `config.ts` 298 to 356 and 371 to 431, `server.ts` 124 to 132, `executor.ts` 41-202 to 39-208, `question/index.ts` 125 to 124, and `pty.ts:185` added. The `Pty.write` wording was corrected, and the lint scope was added to Lane. No Decision's Choice changed.
+
 ## Worktree
 
 - **Path:** `/Users/marknorgate/Projects/eque2/repos/eque2-opencode-workspace/opencode/.claude/worktrees/datadog-log-sink`, inside the `opencode` Git repository. The workspace root is not a Git repository.
@@ -208,7 +210,7 @@ The emission patterns 1, 2, 4, 5 and 6 in §Recommended combination are separate
 - It changes a public interface: the config schema and operator env vars.
 - It touches a security path: data-loss-prevention redaction.
 
-The config schema change can alter generated client types. Stage 3 must run `bun run check:generated` in `packages/client` and `bun typecheck` at the repository root.
+After the dev merge, `lint:effect-eslint` covers every `packages/*/src`, so the sink code must pass the Effect lint rules. The config schema change can alter generated client types. Stage 3 must run `bun run check:generated` in `packages/client` and `bun typecheck` at the repository root.
 
 ## Declined workflows
 

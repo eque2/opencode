@@ -92,7 +92,7 @@ The full design detail is in [`./spec/story.md`](./spec/story.md) §Resolved des
 - The status rules, `Retry-After` with a 30-second cap, a 60-second breaker (with a `cooldown` option), and a 10,000-entry buffer cap.
 - A bounded final flush at shutdown.
 - UTF-8 chunk sizing, gzip, and a 1 MB entry cap.
-- The default categories are `*,-question,-pty`. `answers`, `cmd` and `data` become content keys. Secret keys and value patterns have word boundaries.
+- The default categories are `*,-question,-pty`. `answers` and `cmd` become content keys. Secret keys and value patterns have word boundaries.
 
 ## Task list
 
