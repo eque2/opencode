@@ -15,12 +15,12 @@ import PROMPT_EXPLORE from "./prompt/explore.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
-import { mergeDeep, pipe, sortBy, values } from "remeda"
+import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
 import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
-import { Effect, Context, Layer, Schema } from "effect"
+import { Array as Arr, Effect, Context, Layer, Order, Schema, Stream } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/OtelTracer"
@@ -50,6 +50,7 @@ export const Info = Schema.Struct({
   ),
   variant: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
+  // eslint-disable-next-line effect/no-schema-any-unknown -- (a) external boundary: the bag is merged into the AI SDK provider options per request (session/llm/request.ts) and comes from the config options field, which is ConfigProviderV1.Options
   options: Schema.Record(Schema.String, Schema.Unknown),
   steps: Schema.optional(Schema.Finite),
 }).annotate({ identifier: "Agent" })
@@ -59,7 +60,17 @@ const GeneratedAgent = Schema.Struct({
   identifier: Schema.String,
   whenToUse: Schema.String,
   systemPrompt: Schema.String,
-})
+}).annotate({ description: "An agent configuration generated from a request" })
+
+/** The configured default agent is missing, a subagent, or hidden, or no visible primary agent exists. */
+export class DefaultAgentError extends Schema.TaggedError<DefaultAgentError>()("AgentDefaultAgentError", {
+  message: Schema.String,
+}) {}
+
+/** The structured-output stream of the agent generator reported an error. */
+class GenerateStreamError extends Schema.TaggedError<GenerateStreamError>()("AgentGenerateStreamError", {
+  cause: Schema.Defect(),
+}) {}
 
 export interface Interface {
   readonly get: (agent: string) => Effect.Effect<Info>
@@ -315,12 +326,13 @@ const layer = Layer.effect(
 
         const list = Effect.fnUntraced(function* () {
           const cfg = yield* config.get()
-          return pipe(
-            agents,
-            values(),
-            sortBy(
-              [(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"],
-              [(x) => x.name, "asc"],
+          return Arr.sort(
+            Object.values(agents),
+            Order.combine(
+              Order.mapInput(Order.flip(Order.Boolean), (x: Info) =>
+                cfg.default_agent ? x.name === cfg.default_agent : x.name === "build",
+              ),
+              Order.mapInput(Order.String, (x: Info) => x.name),
             ),
           )
         })
@@ -329,13 +341,19 @@ const layer = Layer.effect(
           const c = yield* config.get()
           if (c.default_agent) {
             const agent = agents[c.default_agent]
-            if (!agent) throw new Error(`default agent "${c.default_agent}" not found`)
-            if (agent.mode === "subagent") throw new Error(`default agent "${c.default_agent}" is a subagent`)
-            if (agent.hidden === true) throw new Error(`default agent "${c.default_agent}" is hidden`)
+            // A misconfigured default agent stays a defect: Interface.defaultInfo has no error channel.
+            if (!agent)
+              return yield* Effect.die(new DefaultAgentError({ message: `default agent "${c.default_agent}" not found` }))
+            if (agent.mode === "subagent")
+              return yield* Effect.die(
+                new DefaultAgentError({ message: `default agent "${c.default_agent}" is a subagent` }),
+              )
+            if (agent.hidden === true)
+              return yield* Effect.die(new DefaultAgentError({ message: `default agent "${c.default_agent}" is hidden` }))
             return agent
           }
           const visible = Object.values(agents).find((a) => a.mode !== "subagent" && a.hidden !== true)
-          if (!visible) throw new Error("no primary visible agent found")
+          if (!visible) return yield* Effect.die(new DefaultAgentError({ message: "no primary visible agent found" }))
           return visible
         })
 
@@ -374,8 +392,8 @@ const layer = Layer.effect(
         const resolved = yield* provider.getModel(model.providerID, model.modelID)
         const language = yield* provider.getLanguage(resolved)
         const tracer = cfg.experimental?.openTelemetry
-          ? Option.getOrUndefined(yield* Effect.serviceOption(OtelTracer.OtelTracer))
-          : undefined
+          ? yield* Effect.serviceOption(OtelTracer.OtelTracer)
+          : Option.none<OtelTracer.OtelTracer["Service"]>()
 
         const system = [PROMPT_GENERATE]
         yield* plugin.trigger("experimental.chat.system.transform", { model: resolved }, { system })
@@ -388,7 +406,7 @@ const layer = Layer.effect(
         const params = {
           experimental_telemetry: {
             isEnabled: cfg.experimental?.openTelemetry,
-            tracer,
+            tracer: Option.getOrUndefined(tracer),
             metadata: {
               userId: cfg.username ?? "unknown",
             },
@@ -416,20 +434,20 @@ const layer = Layer.effect(
         } satisfies Parameters<typeof generateObject>[0]
 
         if (isOpenaiOauth) {
-          return yield* Effect.promise(async () => {
-            const result = streamObject({
-              ...params,
-              providerOptions: ProviderTransform.providerOptions(resolved, {
-                instructions: system.join("\n"),
-                store: false,
-              }),
-              onError: () => {},
-            })
-            for await (const part of result.fullStream) {
-              if (part.type === "error") throw part.error
-            }
-            return result.object
+          const result = streamObject({
+            ...params,
+            providerOptions: ProviderTransform.providerOptions(resolved, {
+              instructions: system.join("\n"),
+              store: false,
+            }),
+            onError: () => {},
           })
+          // A stream error part or a failed stream is a defect, as the generator has no error channel for it.
+          yield* Stream.fromAsyncIterable(result.fullStream, (cause) => new GenerateStreamError({ cause })).pipe(
+            Stream.runForEach((part) => (part.type === "error" ? Effect.die(part.error) : Effect.void)),
+            Effect.orDie,
+          )
+          return yield* Effect.promise(() => result.object)
         }
 
         return yield* Effect.promise(() => generateObject(params).then((r) => r.object))
