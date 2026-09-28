@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import type {
   AgentSideConnection,
   ForkSessionResponse,
@@ -10,7 +10,16 @@ import type {
   SessionConfigSelectOption,
   SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk"
-import type { AssistantMessage, Event, OpencodeClient } from "@opencode-ai/sdk/v2"
+import {
+  OpencodeClient,
+  type Agent,
+  type AssistantMessage,
+  type Event,
+  type GlobalEvent,
+  type Session,
+  type SessionMessageResponse,
+  type UserMessage,
+} from "@opencode-ai/sdk/v2"
 import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { Effect } from "effect"
@@ -32,12 +41,12 @@ function createEventStream() {
     if (waiter) return waiter(event)
     queue.push(event)
   }
-  const stream = async function* (signal?: AbortSignal) {
+  const stream = async function* (signal?: AbortSignal | null): AsyncGenerator<GlobalEvent> {
     for (;;) {
       if (signal?.aborted) return
       const event = queue.shift()
       if (event) {
-        yield { payload: event }
+        yield { directory: "/workspace", payload: event }
         continue
       }
       const next = await new Promise<Event | undefined>((resolve) => {
@@ -45,7 +54,7 @@ function createEventStream() {
         signal?.addEventListener("abort", () => resolve(undefined), { once: true })
       })
       if (!next) return
-      yield { payload: next }
+      yield { directory: "/workspace", payload: next }
     }
   }
   return { push, stream }
@@ -71,6 +80,110 @@ function deferred<A>() {
     promise,
     resolve: (value: A) => state.resolve?.(value),
   }
+}
+
+function ok<T>(data: T) {
+  return Promise.resolve({
+    data,
+    error: undefined,
+    request: new Request("https://opencode.test"),
+    response: new Response(),
+  })
+}
+
+// A declared Promise<never> return keeps a stubbed SDK call from inferring the response type.
+function rejected(reason: unknown): Promise<never> {
+  return Promise.reject(reason)
+}
+
+const buildAgent: Agent = { name: "build", mode: "primary", permission: [], options: {} }
+
+function sessionInfo(input: Partial<Session> & Pick<Session, "id">): Session {
+  return {
+    slug: input.id,
+    projectID: "project",
+    directory: "/workspace",
+    title: input.id,
+    version: "test",
+    time: { created: 1, updated: 1 },
+    ...input,
+  }
+}
+
+function userMessage(input: Partial<UserMessage> = {}): UserMessage {
+  return {
+    id: "msg_user",
+    sessionID: "ses_loaded",
+    role: "user",
+    time: { created: 1 },
+    agent: "build",
+    model: { providerID: "test", modelID: "test-model" },
+    ...input,
+  }
+}
+
+function assistantMessage(input: Partial<AssistantMessage> = {}): AssistantMessage {
+  return {
+    id: "msg_assistant",
+    sessionID: "ses_loaded",
+    role: "assistant",
+    time: { created: 1 },
+    parentID: "msg_user",
+    providerID: "test",
+    modelID: "test-model",
+    mode: "build",
+    agent: "build",
+    path: { cwd: "/workspace", root: "/workspace" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    ...input,
+  }
+}
+
+type SdkOverrides = {
+  readonly providers?: OpencodeClient["config"]["providers"]
+  readonly config?: OpencodeClient["config"]["get"]
+  readonly agents?: OpencodeClient["app"]["agents"]
+  readonly skills?: OpencodeClient["app"]["skills"]
+  readonly commands?: OpencodeClient["command"]["list"]
+  readonly event?: OpencodeClient["global"]["event"]
+  readonly create?: OpencodeClient["session"]["create"]
+  readonly get?: OpencodeClient["session"]["get"]
+  readonly list?: OpencodeClient["session"]["list"]
+  readonly messages?: OpencodeClient["session"]["messages"]
+  readonly prompt?: OpencodeClient["session"]["prompt"]
+  readonly command?: OpencodeClient["session"]["command"]
+  readonly summarize?: OpencodeClient["session"]["summarize"]
+  readonly abort?: OpencodeClient["session"]["abort"]
+  readonly fork?: OpencodeClient["session"]["fork"]
+  readonly mcpAdd?: OpencodeClient["mcp"]["add"]
+}
+
+// A real client whose every call the service makes is stubbed, so no test reaches the network.
+function fakeSdk(overrides: SdkOverrides = {}) {
+  const sdk = new OpencodeClient()
+  const unexpected = (name: string) => () => rejected(new Error(`unexpected SDK call: ${name}`))
+  spyOn(sdk.config, "providers").mockImplementation(
+    overrides.providers ?? (() => ok({ providers: [provider], default: { test: modelID } })),
+  )
+  spyOn(sdk.config, "get").mockImplementation(overrides.config ?? (() => ok({})))
+  spyOn(sdk.app, "agents").mockImplementation(overrides.agents ?? (() => ok([buildAgent])))
+  spyOn(sdk.app, "skills").mockImplementation(overrides.skills ?? (() => ok([])))
+  spyOn(sdk.command, "list").mockImplementation(overrides.commands ?? (() => ok([])))
+  spyOn(sdk.global, "event").mockImplementation(overrides.event ?? unexpected("global.event"))
+  spyOn(sdk.session, "create").mockImplementation(overrides.create ?? unexpected("session.create"))
+  spyOn(sdk.session, "get").mockImplementation(overrides.get ?? unexpected("session.get"))
+  spyOn(sdk.session, "list").mockImplementation(overrides.list ?? (() => ok([])))
+  spyOn(sdk.session, "messages").mockImplementation(overrides.messages ?? (() => ok([])))
+  // The event bridge treats a failed message lookup as unknown part metadata.
+  spyOn(sdk.session, "message").mockImplementation(unexpected("session.message"))
+  spyOn(sdk.session, "prompt").mockImplementation(overrides.prompt ?? unexpected("session.prompt"))
+  spyOn(sdk.session, "command").mockImplementation(overrides.command ?? unexpected("session.command"))
+  spyOn(sdk.session, "summarize").mockImplementation(overrides.summarize ?? unexpected("session.summarize"))
+  spyOn(sdk.session, "abort").mockImplementation(overrides.abort ?? unexpected("session.abort"))
+  spyOn(sdk.session, "fork").mockImplementation(overrides.fork ?? unexpected("session.fork"))
+  spyOn(sdk.mcp, "add").mockImplementation(overrides.mcpAdd ?? (() => ok({})))
+  return sdk
 }
 
 const provider: Provider.Info = {
@@ -192,7 +305,7 @@ const provider: Provider.Info = {
 
 describe("ACP service sessions", () => {
   const makeService = (
-    messages: readonly { info: unknown; parts: readonly unknown[] }[] = [],
+    messages: SessionMessageResponse[] = [],
     options?: {
       abort?: (input: { sessionID: string }) => Promise<{ data: boolean }>
       get?: () => Promise<{
@@ -222,101 +335,80 @@ describe("ACP service sessions", () => {
     const summarizes: unknown[] = []
     const usageUpdates: string[] = []
     const events = createEventStream()
-    const sessions = Array.from({ length: 102 }, (_, index) => ({
-      id: `ses_${index + 1}`,
-      directory: index % 2 === 0 ? "/workspace" : "/other",
-      title: `Session ${index + 1}`,
-      time: { created: index + 1, updated: index + 1 },
-    }))
-    const sdk = {
-      global: {
-        event: (input?: { signal?: AbortSignal }) => Promise.resolve({ stream: events.stream(input?.signal) }),
-      },
-      config: {
-        providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
-        get: () => Promise.resolve({ data: {} }),
-      },
-      app: {
-        agents: () =>
+    const sessions = Array.from({ length: 102 }, (_, index) =>
+      sessionInfo({
+        id: `ses_${index + 1}`,
+        directory: index % 2 === 0 ? "/workspace" : "/other",
+        title: `Session ${index + 1}`,
+        time: { created: index + 1, updated: index + 1 },
+      }),
+    )
+    const sdk = fakeSdk({
+      event: (input) => Promise.resolve({ stream: events.stream(input?.signal) }),
+      agents: () =>
+        ok([
+          buildAgent,
+          { name: "plan", mode: "primary", description: "Plan first", permission: [], options: {} },
+          { name: "hidden", mode: "primary", hidden: true, permission: [], options: {} },
+        ]),
+      skills: () =>
+        ok([{ name: "review-skill", description: "Review", location: "/skills/review", content: "review" }]),
+      commands: () => ok([{ name: "init", description: "Initialize", source: "command", template: "init", hints: [] }]),
+      create: () => ok(sessionInfo({ id: "ses_new" })),
+      get: async () =>
+        ok(sessionInfo((await (options?.get?.() ?? Promise.resolve({ data: { id: "ses_loaded" } }))).data)),
+      list: (input) =>
+        ok(input?.directory ? sessions.filter((session) => session.directory === input.directory) : sessions),
+      messages: () => ok(messages),
+      prompt: async (input) => {
+        const response = await (options?.prompt?.(input) ??
           Promise.resolve({
-            data: [
-              { name: "build", mode: "primary", permission: [], options: {} },
-              { name: "plan", mode: "primary", description: "Plan first", permission: [], options: {} },
-              { name: "hidden", mode: "primary", hidden: true, permission: [], options: {} },
-            ],
-          }),
-        skills: () =>
-          Promise.resolve({
-            data: [{ name: "review-skill", description: "Review", location: "/skills/review", content: "review" }],
-          }),
-      },
-      command: {
-        list: () =>
-          Promise.resolve({
-            data: [{ name: "init", description: "Initialize", source: "command", template: "init", hints: [] }],
-          }),
-      },
-      session: {
-        create: () => Promise.resolve({ data: { id: "ses_new" } }),
-        get: options?.get ?? (() => Promise.resolve({ data: { id: "ses_loaded" } })),
-        list: (input: { directory?: string }) =>
-          Promise.resolve({
-            data: input.directory ? sessions.filter((session) => session.directory === input.directory) : sessions,
-          }),
-        messages: () => Promise.resolve({ data: messages }),
-        prompt: async (input: { sessionID: string; parts?: unknown }) => {
-          const response = await (options?.prompt?.(input) ??
-            Promise.resolve({
-              data: {
-                info: assistantInfo({
-                  input: 100,
-                  output: 40,
-                  reasoning: 7,
-                  cache: { read: 11, write: 13 },
-                }),
-              },
-            }))
-          prompts.push(input)
-          events.push(idleEvent(input.sessionID))
-          return response
-        },
-        command: (input: { sessionID: string }) => {
-          commands.push(input)
-          events.push(idleEvent(input.sessionID))
-          return Promise.resolve({
             data: {
               info: assistantInfo({
-                input: 3,
-                output: 4,
-                reasoning: 0,
-                cache: { read: 0, write: 0 },
+                input: 100,
+                output: 40,
+                reasoning: 7,
+                cache: { read: 11, write: 13 },
               }),
             },
-          })
-        },
-        summarize: (input: { sessionID: string }) => {
-          summarizes.push(input)
-          events.push(idleEvent(input.sessionID))
-          return Promise.resolve({ data: true })
-        },
-        abort:
-          options?.abort ??
-          ((input: { sessionID: string }) => {
-            aborts.push(input.sessionID)
-            return Promise.resolve({ data: true })
+          }))
+        prompts.push(input)
+        events.push(idleEvent(input.sessionID))
+        return ok({ info: response.data.info, parts: [] })
+      },
+      command: (input) => {
+        commands.push(input)
+        events.push(idleEvent(input.sessionID))
+        return ok({
+          info: assistantInfo({
+            input: 3,
+            output: 4,
+            reasoning: 0,
+            cache: { read: 0, write: 0 },
           }),
-        fork: (input: { sessionID: string }) => {
-          forks.push(input.sessionID)
-          return options?.fork?.(input) ?? Promise.resolve({ data: { id: `fork_${input.sessionID}` } })
-        },
+          parts: [],
+        })
       },
-      mcp: {
-        add: (input: { name?: string }) => {
-          if (input.name) mcpAdds.push(input.name)
-          return Promise.resolve({ data: {} })
-        },
+      summarize: (input) => {
+        summarizes.push(input)
+        events.push(idleEvent(input.sessionID))
+        return ok(true)
       },
-    } as unknown as OpencodeClient
+      abort: async (input) => {
+        if (options?.abort) return ok((await options.abort(input)).data)
+        aborts.push(input.sessionID)
+        return ok(true)
+      },
+      fork: async (input) => {
+        forks.push(input.sessionID)
+        const forked = await (options?.fork?.(input) ?? Promise.resolve({ data: { id: `fork_${input.sessionID}` } }))
+        return ok(sessionInfo(forked.data))
+      },
+      mcpAdd: (input) => {
+        if (input?.name) mcpAdds.push(input.name)
+        return ok({})
+      },
+    })
     const connection = {
       sessionUpdate: (update: SessionNotification) => {
         updates.push(update)
@@ -375,13 +467,12 @@ describe("ACP service sessions", () => {
   it("loads a session and restores model variant and mode from messages", async () => {
     const { service } = makeService([
       {
-        info: {
-          role: "assistant",
+        info: assistantMessage({
           providerID: "test",
           modelID: "test-model",
           variant: "high",
           mode: "plan",
-        },
+        }),
         parts: [],
       },
     ])
@@ -397,13 +488,12 @@ describe("ACP service sessions", () => {
     const { service } = makeService(
       [
         {
-          info: {
-            role: "assistant",
+          info: assistantMessage({
             providerID: "test",
             modelID: "second-model",
             variant: "medium",
             mode: "build",
-          },
+          }),
           parts: [],
         },
       ],
@@ -438,11 +528,10 @@ describe("ACP service sessions", () => {
     const { service, prompts, updates } = makeService(
       [
         {
-          info: {
-            role: "user",
+          info: userMessage({
             model: { providerID: "test", modelID: "second-model", variant: "medium" },
             agent: "build",
-          },
+          }),
           parts: [],
         },
       ],
@@ -490,13 +579,12 @@ describe("ACP service sessions", () => {
     const { service } = makeService(
       [
         {
-          info: {
-            role: "assistant",
+          info: assistantMessage({
             providerID: "test",
             modelID: "second-model",
             variant: "medium",
             mode: "plan",
-          },
+          }),
           parts: [],
         },
       ],
@@ -524,11 +612,10 @@ describe("ACP service sessions", () => {
   it("restores default effort from history when durable model state is absent", async () => {
     const { service } = makeService([
       {
-        info: {
-          role: "user",
+        info: userMessage({
           model: { providerID: "test", modelID: "second-model", variant: "default" },
           agent: "build",
-        },
+        }),
         parts: [],
       },
     ])
@@ -539,11 +626,11 @@ describe("ACP service sessions", () => {
   it("replays loaded session transcript chunks", async () => {
     const { service, updates } = makeService([
       {
-        info: { id: "msg_user", sessionID: "ses_loaded", role: "user" },
+        info: userMessage({ id: "msg_user", sessionID: "ses_loaded" }),
         parts: [{ id: "part_user", sessionID: "ses_loaded", messageID: "msg_user", type: "text", text: "hello" }],
       },
       {
-        info: { id: "msg_assistant", sessionID: "ses_loaded", role: "assistant" },
+        info: assistantMessage({ id: "msg_assistant", sessionID: "ses_loaded" }),
         parts: [
           {
             id: "part_assistant",
@@ -579,7 +666,7 @@ describe("ACP service sessions", () => {
   it("replays reasoning parts as separate ACP thought messages", async () => {
     const { service, updates } = makeService([
       {
-        info: { id: "msg_assistant", sessionID: "ses_loaded", role: "assistant" },
+        info: assistantMessage({ id: "msg_assistant", sessionID: "ses_loaded" }),
         parts: [
           {
             id: "part_first",
@@ -653,17 +740,16 @@ describe("ACP service sessions", () => {
   it("resumes a session and stores restored state without replaying transcript chunks", async () => {
     const { service, updates } = makeService([
       {
-        info: {
+        info: userMessage({
           id: "msg_user",
           sessionID: "ses_resume",
-          role: "user",
           model: { providerID: "test", modelID: "test-model", variant: "high" },
           agent: "plan",
-        },
+        }),
         parts: [{ id: "part_user", sessionID: "ses_resume", messageID: "msg_user", type: "text", text: "hello" }],
       },
       {
-        info: { id: "msg_assistant", sessionID: "ses_resume", role: "assistant" },
+        info: assistantMessage({ id: "msg_assistant", sessionID: "ses_resume" }),
         parts: [
           {
             id: "part_assistant",
@@ -734,13 +820,12 @@ describe("ACP service sessions", () => {
   it("forks a session, loads fork state, and returns config options", async () => {
     const { service, forks } = makeService([
       {
-        info: {
-          role: "assistant",
+        info: assistantMessage({
           providerID: "test",
           modelID: "second-model",
           variant: "medium",
           mode: "plan",
-        },
+        }),
         parts: [],
       },
     ])
@@ -762,13 +847,12 @@ describe("ACP service sessions", () => {
     const { service } = makeService(
       [
         {
-          info: {
-            role: "assistant",
+          info: assistantMessage({
             providerID: "test",
             modelID: "test-model",
             variant: "default",
             mode: "build",
-          },
+          }),
           parts: [],
         },
       ],
@@ -796,19 +880,17 @@ describe("ACP service sessions", () => {
   it("restores model variant and mode from the latest user message", async () => {
     const { service } = makeService([
       {
-        info: {
-          role: "user",
+        info: userMessage({
           model: { providerID: "test", modelID: "test-model", variant: "default" },
           agent: "build",
-        },
+        }),
         parts: [],
       },
       {
-        info: {
-          role: "user",
+        info: userMessage({
           model: { providerID: "test", modelID: "test-model", variant: "high" },
           agent: "plan",
-        },
+        }),
         parts: [],
       },
     ])
@@ -822,19 +904,10 @@ describe("ACP service sessions", () => {
 
   it("maps provider auth failures to auth-required request errors", async () => {
     const service = ACPService.make({
-      sdk: {
-        config: {
-          providers: () => Promise.reject({ name: "ProviderAuthError", data: { providerID: "test" } }),
-          get: () => Promise.resolve({ data: {} }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [] }),
-          skills: () => Promise.resolve({ data: [] }),
-        },
-        command: {
-          list: () => Promise.resolve({ data: [] }),
-        },
-      } as unknown as OpencodeClient,
+      sdk: fakeSdk({
+        providers: () => rejected({ name: "ProviderAuthError", data: { providerID: "test" } }),
+        agents: () => ok([]),
+      }),
     })
     const error = await Effect.runPromise(
       service
@@ -847,32 +920,16 @@ describe("ACP service sessions", () => {
 
   it("does not cache failed directory snapshots", async () => {
     let providersCalls = 0
-    const sdk = {
-      config: {
-        providers: () => {
-          providersCalls++
-          if (providersCalls === 1) {
-            return Promise.reject({ name: "ProviderAuthError", data: { providerID: "test" } })
-          }
-          return Promise.resolve({ data: { providers: [provider], default: { test: modelID } } })
-        },
-        get: () => Promise.resolve({ data: {} }),
+    const sdk = fakeSdk({
+      providers: () => {
+        providersCalls++
+        if (providersCalls === 1) {
+          return rejected({ name: "ProviderAuthError", data: { providerID: "test" } })
+        }
+        return ok({ providers: [provider], default: { test: modelID } })
       },
-      app: {
-        agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
-        skills: () => Promise.resolve({ data: [] }),
-      },
-      command: {
-        list: () => Promise.resolve({ data: [] }),
-      },
-      session: {
-        create: () => Promise.resolve({ data: { id: "ses_retry" } }),
-        list: () => Promise.resolve({ data: [] }),
-      },
-      mcp: {
-        add: () => Promise.resolve({ data: {} }),
-      },
-    } as unknown as OpencodeClient
+      create: () => ok(sessionInfo({ id: "ses_retry" })),
+    })
     const service = ACPService.make({ sdk })
 
     const first = await Effect.runPromise(
@@ -890,32 +947,16 @@ describe("ACP service sessions", () => {
   it("registers same-name MCP servers again for different sessions or configs", async () => {
     const adds: unknown[] = []
     let nextSession = 0
-    const sdk = {
-      config: {
-        providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
-        get: () => Promise.resolve({ data: {} }),
+    const sdk = fakeSdk({
+      create: () => {
+        nextSession++
+        return ok(sessionInfo({ id: `ses_${nextSession}` }))
       },
-      app: {
-        agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
-        skills: () => Promise.resolve({ data: [] }),
+      mcpAdd: (input) => {
+        adds.push(input)
+        return ok({})
       },
-      command: {
-        list: () => Promise.resolve({ data: [] }),
-      },
-      session: {
-        create: () => {
-          nextSession++
-          return Promise.resolve({ data: { id: `ses_${nextSession}` } })
-        },
-        list: () => Promise.resolve({ data: [] }),
-      },
-      mcp: {
-        add: (input: unknown) => {
-          adds.push(input)
-          return Promise.resolve({ data: {} })
-        },
-      },
-    } as unknown as OpencodeClient
+    })
     const service = ACPService.make({ sdk })
 
     await Effect.runPromise(
@@ -937,26 +978,10 @@ describe("ACP service sessions", () => {
   })
 
   it("uses the configured model as the new session default", async () => {
-    const sdk = {
-      config: {
-        providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
-        get: () => Promise.resolve({ data: { model: "test/configured-model" } }),
-      },
-      app: {
-        agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
-        skills: () => Promise.resolve({ data: [] }),
-      },
-      command: {
-        list: () => Promise.resolve({ data: [] }),
-      },
-      session: {
-        create: (input: { model?: { id?: string } }) => Promise.resolve({ data: { id: input.model?.id } }),
-        list: () => Promise.resolve({ data: [] }),
-      },
-      mcp: {
-        add: () => Promise.resolve({ data: {} }),
-      },
-    } as unknown as OpencodeClient
+    const sdk = fakeSdk({
+      config: () => ok({ model: "test/configured-model" }),
+      create: (input) => ok(sessionInfo({ id: input?.model?.id ?? "missing-model" })),
+    })
     const service = ACPService.make({ sdk })
 
     const result = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
@@ -967,35 +992,17 @@ describe("ACP service sessions", () => {
 
   it("does not scan last-used sessions when resolving the new session default", async () => {
     const historyCalls: string[] = []
-    const sdk = {
-      config: {
-        providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
-        get: () => Promise.resolve({ data: {} }),
+    const sdk = fakeSdk({
+      create: (input) => ok(sessionInfo({ id: input?.model?.id ?? "missing-model" })),
+      list: () => {
+        historyCalls.push("list")
+        return ok([sessionInfo({ id: "ses_recent" })])
       },
-      app: {
-        agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
-        skills: () => Promise.resolve({ data: [] }),
+      messages: () => {
+        historyCalls.push("messages")
+        return ok([{ info: userMessage({ model: { providerID: "test", modelID: "second-model" } }), parts: [] }])
       },
-      command: {
-        list: () => Promise.resolve({ data: [] }),
-      },
-      session: {
-        create: (input: { model?: { id?: string } }) => Promise.resolve({ data: { id: input.model?.id } }),
-        list: () => {
-          historyCalls.push("list")
-          return Promise.resolve({ data: [{ id: "ses_recent" }] })
-        },
-        messages: () => {
-          historyCalls.push("messages")
-          return Promise.resolve({
-            data: [{ info: { role: "user", model: { providerID: "test", modelID: "second-model" } } }],
-          })
-        },
-      },
-      mcp: {
-        add: () => Promise.resolve({ data: {} }),
-      },
-    } as unknown as OpencodeClient
+    })
     const service = ACPService.make({ sdk })
 
     const result = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
@@ -1120,41 +1127,29 @@ describe("ACP service sessions", () => {
       skills: 0,
       mcpAdds: 0,
     }
-    const sdk = {
-      config: {
-        providers: () => {
-          calls.providers++
-          return Promise.resolve({ data: { providers: [provider], default: { test: modelID } } })
-        },
-        get: () => Promise.resolve({ data: {} }),
+    const sdk = fakeSdk({
+      providers: () => {
+        calls.providers++
+        return ok({ providers: [provider], default: { test: modelID } })
       },
-      app: {
-        agents: () => {
-          calls.agents++
-          return Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] })
-        },
-        skills: () => {
-          calls.skills++
-          return Promise.resolve({ data: [] })
-        },
+      agents: () => {
+        calls.agents++
+        return ok([buildAgent])
       },
-      command: {
-        list: () => {
-          calls.commands++
-          return Promise.resolve({ data: [] })
-        },
+      skills: () => {
+        calls.skills++
+        return ok([])
       },
-      session: {
-        create: () => Promise.resolve({ data: { id: "ses_fast" } }),
-        list: () => Promise.resolve({ data: [] }),
+      commands: () => {
+        calls.commands++
+        return ok([])
       },
-      mcp: {
-        add: () => {
-          calls.mcpAdds++
-          return Promise.resolve({ data: {} })
-        },
+      create: () => ok(sessionInfo({ id: "ses_fast" })),
+      mcpAdd: () => {
+        calls.mcpAdds++
+        return ok({})
       },
-    } as unknown as OpencodeClient
+    })
     const service = ACPService.make({ sdk })
     const session = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
 
@@ -1178,38 +1173,25 @@ describe("ACP service sessions", () => {
       commands: 0,
       skills: 0,
     }
-    const sdk = {
-      config: {
-        providers: () => {
-          calls.providers++
-          return Promise.resolve({ data: { providers: [provider], default: { test: modelID } } })
-        },
-        get: () => Promise.resolve({ data: {} }),
+    const sdk = fakeSdk({
+      providers: () => {
+        calls.providers++
+        return ok({ providers: [provider], default: { test: modelID } })
       },
-      app: {
-        agents: () => {
-          calls.agents++
-          return Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] })
-        },
-        skills: () => {
-          calls.skills++
-          return Promise.resolve({ data: [] })
-        },
+      agents: () => {
+        calls.agents++
+        return ok([buildAgent])
       },
-      command: {
-        list: () => {
-          calls.commands++
-          return Promise.resolve({ data: [] })
-        },
+      skills: () => {
+        calls.skills++
+        return ok([])
       },
-      session: {
-        create: () => Promise.resolve({ data: { id: "ses_model_fast" } }),
-        list: () => Promise.resolve({ data: [] }),
+      commands: () => {
+        calls.commands++
+        return ok([])
       },
-      mcp: {
-        add: () => Promise.resolve({ data: {} }),
-      },
-    } as unknown as OpencodeClient
+      create: () => ok(sessionInfo({ id: "ses_model_fast" })),
+    })
     const service = ACPService.make({ sdk })
     const session = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
     const updated = await Effect.runPromise(
@@ -1235,51 +1217,40 @@ describe("ACP service sessions", () => {
       messages: 0,
       creates: 0,
     }
-    const sdk = {
-      config: {
-        providers: () => {
-          calls.providers++
-          return Promise.resolve({ data: { providers: [provider], default: { test: modelID } } })
-        },
-        get: () => {
-          calls.config++
-          return Promise.resolve({ data: {} })
-        },
+    const sdk = fakeSdk({
+      providers: () => {
+        calls.providers++
+        return ok({ providers: [provider], default: { test: modelID } })
       },
-      app: {
-        agents: () => {
-          calls.agents++
-          return Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] })
-        },
-        skills: () => {
-          calls.skills++
-          return Promise.resolve({ data: [] })
-        },
+      config: () => {
+        calls.config++
+        return ok({})
       },
-      command: {
-        list: () => {
-          calls.commands++
-          return Promise.resolve({ data: [] })
-        },
+      agents: () => {
+        calls.agents++
+        return ok([buildAgent])
       },
-      session: {
-        create: () => {
-          calls.creates++
-          return Promise.resolve({ data: { id: `ses_warm_${calls.creates}` } })
-        },
-        list: () => {
-          calls.sessionList++
-          return Promise.resolve({ data: [] })
-        },
-        messages: () => {
-          calls.messages++
-          return Promise.resolve({ data: [] })
-        },
+      skills: () => {
+        calls.skills++
+        return ok([])
       },
-      mcp: {
-        add: () => Promise.resolve({ data: {} }),
+      commands: () => {
+        calls.commands++
+        return ok([])
       },
-    } as unknown as OpencodeClient
+      create: () => {
+        calls.creates++
+        return ok(sessionInfo({ id: `ses_warm_${calls.creates}` }))
+      },
+      list: () => {
+        calls.sessionList++
+        return ok([])
+      },
+      messages: () => {
+        calls.messages++
+        return ok([])
+      },
+    })
     const service = ACPService.make({ sdk })
 
     const first = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
@@ -1577,27 +1548,10 @@ describe("ACP service sessions", () => {
     const { service } = makeService()
     const session = await Effect.runPromise(service.newSession({ cwd: "/workspace", mcpServers: [] }))
     const failing = ACPService.make({
-      sdk: {
-        config: {
-          providers: () => Promise.resolve({ data: { providers: [provider], default: { test: modelID } } }),
-          get: () => Promise.resolve({ data: {} }),
-        },
-        app: {
-          agents: () => Promise.resolve({ data: [{ name: "build", mode: "primary", permission: [], options: {} }] }),
-          skills: () => Promise.resolve({ data: [] }),
-        },
-        command: {
-          list: () => Promise.resolve({ data: [] }),
-        },
-        session: {
-          create: () => Promise.resolve({ data: { id: session.sessionId } }),
-          list: () => Promise.resolve({ data: [] }),
-          prompt: () => Promise.reject({ name: "ProviderAuthError", data: { providerID: "test" } }),
-        },
-        mcp: {
-          add: () => Promise.resolve({ data: {} }),
-        },
-      } as unknown as OpencodeClient,
+      sdk: fakeSdk({
+        create: () => ok(sessionInfo({ id: session.sessionId })),
+        prompt: () => rejected({ name: "ProviderAuthError", data: { providerID: "test" } }),
+      }),
       usage: UsageService.Service.of({
         buildUsage: UsageService.buildUsage,
         latestAssistantMessage: UsageService.latestAssistantMessage,
@@ -1620,15 +1574,8 @@ describe("ACP service sessions", () => {
 function assistantInfo(
   tokens: UsageService.AssistantTokenCost["tokens"],
   error?: AssistantMessage["error"],
-): UsageService.AssistantMessage & Pick<AssistantMessage, "error"> {
-  return {
-    role: "assistant",
-    providerID: "test",
-    modelID: "test-model",
-    cost: 0,
-    tokens,
-    ...(error ? { error } : {}),
-  }
+): AssistantMessage {
+  return assistantMessage({ tokens, ...(error ? { error } : {}) })
 }
 
 function categories(result: NewSessionResponse | LoadSessionResponse) {

@@ -46,6 +46,11 @@ function ok<T>(data: T) {
   })
 }
 
+// A declared Promise<never> return keeps a stubbed SDK call from inferring the response type.
+function rejected(reason: unknown): Promise<never> {
+  return Promise.reject(reason)
+}
+
 function makeSessionService() {
   return ManagedRuntime.make(LayerNode.compile(ACPSession.node)).runSync(
     ACPSession.Service.use((service) => Effect.succeed(service)),
@@ -66,7 +71,7 @@ function createHarness(
     return ok(true)
   })
   // No message fixture exists; the event bridge treats a failed lookup as unknown metadata.
-  spyOn(sdk.session, "message").mockImplementation(() => Promise.reject<never>(new Error("no message fixture")))
+  spyOn(sdk.session, "message").mockImplementation(() => rejected(new Error("no message fixture")))
   const connection = {
     requestPermission: (params: RequestPermissionRequest) => {
       requests.push(params)
