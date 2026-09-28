@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test"
-import { withTimeout } from "../../src/util/timeout"
+import { withTimeout } from "../lib/timeout"
 import { resetDatabase } from "../fixture/db"
 import { disposeAllInstances } from "../fixture/fixture"
 

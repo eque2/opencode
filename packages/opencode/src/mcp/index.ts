@@ -19,7 +19,6 @@ import { Config } from "@/config/config"
 import { ConfigMCPV1 } from "@opencode-ai/core/v1/config/mcp"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
-import { withTimeout } from "@/util/timeout"
 import { McpOAuthPendingProvider, McpOAuthProvider, OAUTH_CALLBACK_PATH } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
@@ -31,6 +30,7 @@ import {
   Clock,
   Context,
   Crypto,
+  Duration,
   Effect,
   Encoding,
   Exit,
@@ -257,12 +257,15 @@ const layer = Layer.effect(
       return yield* Effect.acquireUseRelease(
         Effect.succeed(transport),
         (t) =>
-          Effect.tryPromise({
-            try: () => {
-              const client = createClient(directory)
-              return withTimeout(client.connect(t), timeout).then(() => client)
-            },
-            catch: mcpError,
+          Effect.suspend(() => {
+            const client = createClient(directory)
+            return Effect.tryPromise({ try: () => client.connect(t), catch: mcpError }).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.millis(timeout),
+                orElse: () => Effect.fail(new McpError({ message: `Operation timed out after ${timeout}ms` })),
+              }),
+              Effect.as(client),
+            )
           }),
         (t, exit) => (Exit.isFailure(exit) ? Effect.tryPromise(() => t.close()).pipe(Effect.ignore) : Effect.void),
       )
