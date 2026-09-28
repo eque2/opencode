@@ -11,7 +11,7 @@ import { Slug } from "@opencode-ai/core/util/slug"
 import { errorMessage } from "../util/error"
 import { GlobalBus } from "@/bus/global"
 import { Git } from "@/git"
-import { Effect, Layer, Option, Path, Schema, Scope, Context } from "effect"
+import { Effect, Layer, Option, Path, Schedule, Schema, Scope, Context } from "effect"
 import { ChildProcess } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -166,7 +166,7 @@ const layer: Layer.Layer<
         Effect.succeed({
           code: 1,
           text: "",
-          stderr: e instanceof Error ? e.message : String(e),
+          stderr: e.message,
         } satisfies GitResult),
       ),
     )
@@ -366,23 +366,14 @@ const layer: Layer.Layer<
     }
 
     function cleanDirectory(target: string) {
-      return Effect.tryPromise({
-        try: async () => {
-          const fsp = await import("fs/promises")
-          const attempts = process.platform === "win32" ? 50 : 5
-          for (const attempt of Array.from({ length: attempts }, (_, i) => i)) {
-            try {
-              await fsp.rm(target, { recursive: true, force: true })
-              return
-            } catch (error) {
-              if (attempt === attempts - 1) throw error
-              await new Promise((resolve) => setTimeout(resolve, 100))
-            }
-          }
-        },
-        catch: (error) =>
-          new RemoveFailedError({ message: errorMessage(error) || "Failed to remove git worktree directory" }),
-      })
+      const attempts = process.platform === "win32" ? 50 : 5
+      return fs.remove(target, { recursive: true, force: true }).pipe(
+        Effect.retry({ times: attempts - 1, schedule: Schedule.spaced("100 millis") }),
+        Effect.mapError(
+          (error) =>
+            new RemoveFailedError({ message: errorMessage(error) || "Failed to remove git worktree directory" }),
+        ),
+      )
     }
 
     const remove = Effect.fn("Worktree.remove")(function* (input: RemoveInput) {
@@ -462,7 +453,7 @@ const layer: Layer.Layer<
       function* (directory: string, cmd: string) {
         const [shell, args] = process.platform === "win32" ? ["cmd", ["/c", cmd]] : ["bash", ["-lc", cmd]]
         const result = yield* appProcess.run(
-          ChildProcess.make(shell, args as string[], { cwd: directory, extendEnv: true, stdin: "ignore" }),
+          ChildProcess.make(shell, args, { cwd: directory, extendEnv: true, stdin: "ignore" }),
         )
         return { code: result.exitCode, stderr: result.stderr.toString("utf8") }
       },
