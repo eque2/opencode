@@ -13,13 +13,12 @@ import { Truncate } from "@/tool/truncate"
 import { Plugin } from "@/plugin"
 import type { TaskPromptOps } from "@/tool/task"
 import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
-import { Effect } from "effect"
-import { MessageV2 } from "./message-v2"
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js"
+import { Clock, Effect, HashSet, Option, Predicate, Result, Schema } from "effect"
 import { Session } from "./session"
 import { SessionProcessor } from "./processor"
 import { PartID } from "./schema"
 import { EffectBridge } from "@/effect/bridge"
-import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -30,13 +29,27 @@ const MCP_RESOURCE_TOOLS = {
   read: "read_mcp_resource",
 } as const
 const MAX_MCP_RESOURCE_BLOB_BYTES = 10 * 1024 * 1024
-const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = new Set([
+
+// The AI SDK reports a rejected tool execute as a tool error, and the processor shows its message.
+export class McpToolError extends Schema.TaggedError<McpToolError>()("SessionTools.McpToolError", {
+  message: Schema.String,
+}) {}
+
+// Pretty JSON for the MCP resource listings that the model reads.
+const encodeListing = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+
+// Text and file attachments that one MCP content item contributes, in content order.
+type CollectedContent = {
+  readonly text: ReadonlyArray<string>
+  readonly attachments: ReadonlyArray<Omit<SessionV1.FilePart, "id" | "sessionID" | "messageID">>
+}
+const SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES = HashSet.make(
   "application/pdf",
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
-])
+)
 
 export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
@@ -65,19 +78,23 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     agent: input.agent.name,
     messages: input.messages,
     metadata: (val) =>
-      input.processor.updateToolCall(options.toolCallId, (match) => {
-        if (!["running", "pending"].includes(match.state.status)) return match
-        return {
-          ...match,
-          state: {
-            title: val.title,
-            metadata: val.metadata,
-            status: "running",
-            input: args,
-            time: match.state.status === "running" ? match.state.time : { start: Date.now() },
-          },
-        }
-      }),
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) =>
+          input.processor.updateToolCall(options.toolCallId, (match) => {
+            if (!["running", "pending"].includes(match.state.status)) return match
+            return {
+              ...match,
+              state: {
+                title: val.title,
+                metadata: val.metadata,
+                status: "running",
+                input: args,
+                time: match.state.status === "running" ? match.state.time : { start: now },
+              },
+            }
+          }),
+        ),
+      ),
     ask: (req) =>
       permission
         .ask({
@@ -155,23 +172,26 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, opts) {
         return run.promise(
           Effect.gen(function* () {
-            const parsed = parseListMcpResourcesArgs(args)
+            const parsed = yield* Effect.fromResult(parseListMcpResourcesArgs(args))
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
             const resourceServers = Object.entries(clients)
               .filter((entry) => !!entry[1].getServerCapabilities()?.resources)
               .map((entry) => entry[0])
               .sort((a, b) => a.localeCompare(b))
-            if (parsed.server && !resourceServers.includes(parsed.server)) {
-              throw new Error(
-                resourceServers.length === 0
-                  ? `MCP server "${parsed.server}" does not support resources`
-                  : `MCP server "${parsed.server}" does not support resources. Available resource servers: ${resourceServers.join(", ")}`,
-              )
+            if (Option.isSome(parsed.server) && !resourceServers.includes(parsed.server.value)) {
+              return yield* new McpToolError({
+                message:
+                  resourceServers.length === 0
+                    ? `MCP server "${parsed.server.value}" does not support resources`
+                    : `MCP server "${parsed.server.value}" does not support resources. Available resource servers: ${resourceServers.join(", ")}`,
+              })
             }
-            const permissionPatterns = parsed.server
-              ? [`mcp:${parsed.server}:*`]
-              : resourceServers.map((server) => `mcp:${server}:*`)
+            const serverMetadata = Option.match(parsed.server, { onNone: () => ({}), onSome: (server) => ({ server }) })
+            const permissionPatterns = Option.match(parsed.server, {
+              onNone: () => resourceServers.map((server) => `mcp:${server}:*`),
+              onSome: (server) => [`mcp:${server}:*`],
+            })
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: MCP_RESOURCE_TOOLS.list, sessionID: ctx.sessionID, callID: opts.toolCallId },
@@ -179,27 +199,32 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             )
             yield* ctx.ask({
               permission: "read",
-              metadata: parsed.server ? { server: parsed.server } : {},
+              metadata: serverMetadata,
               patterns: permissionPatterns,
               always: permissionPatterns,
             })
 
-            const resources = Object.values(yield* mcp.resources(parsed.server))
+            const resources = Object.values(yield* mcp.resources(Option.getOrUndefined(parsed.server)))
             const filtered = resources
-              .filter((resource) => !parsed.server || resource.client === parsed.server)
+              .filter((resource) =>
+                Option.match(parsed.server, { onNone: () => true, onSome: (server) => resource.client === server }),
+              )
               .toSorted((a, b) =>
                 (a.client + "\u0000" + a.name + "\u0000" + a.uri).localeCompare(
                   b.client + "\u0000" + b.name + "\u0000" + b.uri,
                 ),
               )
-            const content = JSON.stringify({ resources: filtered.map(formatMcpResource) }, null, 2)
+            const content = yield* encodeListing({ resources: filtered.map(formatMcpResource) }).pipe(Effect.orDie)
             const truncated = yield* truncate.output(content, {}, input.agent)
             const output = {
-              title: parsed.server ? `MCP resources: ${parsed.server}` : "MCP resources",
+              title: Option.match(parsed.server, {
+                onNone: () => "MCP resources",
+                onSome: (server) => `MCP resources: ${server}`,
+              }),
               metadata: {
                 count: filtered.length,
                 servers: resourceServers,
-                ...(parsed.server ? { server: parsed.server } : {}),
+                ...serverMetadata,
                 truncated: truncated.truncated,
                 ...(truncated.truncated && { outputPath: truncated.outputPath }),
               },
@@ -238,23 +263,26 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, opts) {
         return run.promise(
           Effect.gen(function* () {
-            const parsed = parseListMcpResourcesArgs(args)
+            const parsed = yield* Effect.fromResult(parseListMcpResourcesArgs(args))
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
             const resourceServers = Object.entries(clients)
               .filter((entry) => !!entry[1].getServerCapabilities()?.resources)
               .map((entry) => entry[0])
               .sort((a, b) => a.localeCompare(b))
-            if (parsed.server && !resourceServers.includes(parsed.server)) {
-              throw new Error(
-                resourceServers.length === 0
-                  ? `MCP server "${parsed.server}" does not support resources`
-                  : `MCP server "${parsed.server}" does not support resources. Available resource servers: ${resourceServers.join(", ")}`,
-              )
+            if (Option.isSome(parsed.server) && !resourceServers.includes(parsed.server.value)) {
+              return yield* new McpToolError({
+                message:
+                  resourceServers.length === 0
+                    ? `MCP server "${parsed.server.value}" does not support resources`
+                    : `MCP server "${parsed.server.value}" does not support resources. Available resource servers: ${resourceServers.join(", ")}`,
+              })
             }
-            const permissionPatterns = parsed.server
-              ? [`mcp:${parsed.server}:*`]
-              : resourceServers.map((server) => `mcp:${server}:*`)
+            const serverMetadata = Option.match(parsed.server, { onNone: () => ({}), onSome: (server) => ({ server }) })
+            const permissionPatterns = Option.match(parsed.server, {
+              onNone: () => resourceServers.map((server) => `mcp:${server}:*`),
+              onSome: (server) => [`mcp:${server}:*`],
+            })
             yield* plugin.trigger(
               "tool.execute.before",
               { tool: MCP_RESOURCE_TOOLS.listTemplates, sessionID: ctx.sessionID, callID: opts.toolCallId },
@@ -262,27 +290,34 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             )
             yield* ctx.ask({
               permission: "read",
-              metadata: parsed.server ? { server: parsed.server } : {},
+              metadata: serverMetadata,
               patterns: permissionPatterns,
               always: permissionPatterns,
             })
 
-            const templates = Object.values(yield* mcp.resourceTemplates(parsed.server))
+            const templates = Object.values(yield* mcp.resourceTemplates(Option.getOrUndefined(parsed.server)))
             const filtered = templates
-              .filter((template) => !parsed.server || template.client === parsed.server)
+              .filter((template) =>
+                Option.match(parsed.server, { onNone: () => true, onSome: (server) => template.client === server }),
+              )
               .toSorted((a, b) =>
                 (a.client + "\u0000" + a.name + "\u0000" + a.uriTemplate).localeCompare(
                   b.client + "\u0000" + b.name + "\u0000" + b.uriTemplate,
                 ),
               )
-            const content = JSON.stringify({ resourceTemplates: filtered.map(formatMcpResourceTemplate) }, null, 2)
+            const content = yield* encodeListing({ resourceTemplates: filtered.map(formatMcpResourceTemplate) }).pipe(
+              Effect.orDie,
+            )
             const truncated = yield* truncate.output(content, {}, input.agent)
             const output = {
-              title: parsed.server ? `MCP resource templates: ${parsed.server}` : "MCP resource templates",
+              title: Option.match(parsed.server, {
+                onNone: () => "MCP resource templates",
+                onSome: (server) => `MCP resource templates: ${server}`,
+              }),
               metadata: {
                 count: filtered.length,
                 servers: resourceServers,
-                ...(parsed.server ? { server: parsed.server } : {}),
+                ...serverMetadata,
                 truncated: truncated.truncated,
                 ...(truncated.truncated && { outputPath: truncated.outputPath }),
               },
@@ -325,15 +360,17 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       execute(args, opts) {
         return run.promise(
           Effect.gen(function* () {
-            const parsed = parseReadMcpResourceArgs(args)
+            const parsed = yield* Effect.fromResult(parseReadMcpResourceArgs(args))
             const ctx = context(toRecord(args), opts)
             const clients = yield* mcp.clients()
             const client = clients[parsed.server]
             if (!client) {
-              throw new Error(`MCP server "${parsed.server}" is not connected`)
+              return yield* new McpToolError({ message: `MCP server "${parsed.server}" is not connected` })
             }
             if (!client.getServerCapabilities()?.resources) {
-              throw new Error(`MCP server "${parsed.server}" does not support resources`)
+              return yield* new McpToolError({
+                message: `MCP server "${parsed.server}" does not support resources`,
+              })
             }
             yield* plugin.trigger(
               "tool.execute.before",
@@ -348,7 +385,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             })
 
             const content = yield* mcp.readResource(parsed.server, parsed.uri)
-            if (!content) throw new Error(`Failed to read MCP resource: ${parsed.server}/${parsed.uri}`)
+            if (!content) {
+              return yield* new McpToolError({
+                message: `Failed to read MCP resource: ${parsed.server}/${parsed.uri}`,
+              })
+            }
 
             const formatted = formatMcpResourceContent(parsed.server, parsed.uri, content)
             const truncated = yield* truncate.output(formatted.text, {}, input.agent)
@@ -392,7 +433,10 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     const execute = item.execute
     if (!execute) continue
 
-    const schema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
+    const jsonSchemaValue = asSchema(item.inputSchema).jsonSchema
+    const schema = Predicate.isPromiseLike(jsonSchemaValue)
+      ? yield* Effect.promise(() => jsonSchemaValue)
+      : jsonSchemaValue
     const transformed = ProviderTransform.schema(input.model, { ...schema, properties: schema.properties ?? {} })
     item.inputSchema = jsonSchema(transformed)
     item.execute = (args, opts) =>
@@ -404,9 +448,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             { tool: key, sessionID: ctx.sessionID, callID: opts.toolCallId },
             { args },
           )
-          const result: Awaited<ReturnType<NonNullable<typeof execute>>> = yield* Effect.gen(function* () {
+          const result = yield* Effect.gen(function* () {
             yield* ctx.ask({ permission: key, metadata: {}, patterns: ["*"], always: ["*"] })
-            return yield* Effect.promise(() => execute(args, opts))
+            // The AI SDK types execute as any. McpCatalog.convertTool returns a CallToolResult.
+            const parsed = CallToolResultSchema.safeParse(yield* Effect.promise(() => execute(args, opts)))
+            if (!parsed.success) {
+              return yield* new McpToolError({
+                message: `MCP tool ${key} returned an invalid result: ${parsed.error.message}`,
+              })
+            }
+            return parsed.data
           }).pipe(
             Effect.withSpan("Tool.execute", {
               attributes: {
@@ -423,47 +474,57 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             result,
           )
 
-          const textParts: string[] = []
-          const attachments: Omit<SessionV1.FilePart, "id" | "sessionID" | "messageID">[] = []
-          for (const contentItem of result.content) {
-            if (contentItem.type === "text") textParts.push(contentItem.text)
-            else if (contentItem.type === "image") {
-              attachments.push({
-                type: "file",
-                mime: contentItem.mimeType,
-                url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
-              })
-            } else if (contentItem.type === "resource") {
-              const { resource } = contentItem
-              if (resource.text) textParts.push(resource.text)
-              if (resource.blob) {
-                const mime = resource.mimeType ?? "application/octet-stream"
-                const size = base64Size(resource.blob)
-                if (!SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES.has(mime)) {
-                  textParts.push(
-                    `[Binary MCP resource omitted: ${resource.uri} (${mime}, ${formatBytes(size)}) is not a supported attachment type]`,
-                  )
-                  continue
-                }
-                if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
-                  textParts.push(
-                    `[Binary MCP resource omitted: ${resource.uri} (${mime}, ${formatBytes(size)}) exceeds ${formatBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
-                  )
-                  continue
-                }
-                attachments.push({
-                  type: "file",
-                  mime,
-                  url: `data:${mime};base64,${resource.blob}`,
-                  filename: resource.uri,
-                })
+          const collected = result.content.map((contentItem): CollectedContent => {
+            if (contentItem.type === "text") return { text: [contentItem.text], attachments: [] }
+            if (contentItem.type === "image") {
+              return {
+                text: [],
+                attachments: [
+                  {
+                    type: "file",
+                    mime: contentItem.mimeType,
+                    url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
+                  },
+                ],
               }
             }
-          }
+            if (contentItem.type !== "resource") return { text: [], attachments: [] }
+            const { resource } = contentItem
+            const text = "text" in resource && resource.text ? [resource.text] : []
+            if (!("blob" in resource) || !resource.blob) return { text, attachments: [] }
+            const mime = resource.mimeType ?? "application/octet-stream"
+            const size = base64Size(resource.blob)
+            if (!HashSet.has(SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES, mime)) {
+              return {
+                text: [
+                  ...text,
+                  `[Binary MCP resource omitted: ${resource.uri} (${mime}, ${formatBytes(size)}) is not a supported attachment type]`,
+                ],
+                attachments: [],
+              }
+            }
+            if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
+              return {
+                text: [
+                  ...text,
+                  `[Binary MCP resource omitted: ${resource.uri} (${mime}, ${formatBytes(size)}) exceeds ${formatBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
+                ],
+                attachments: [],
+              }
+            }
+            return {
+              text,
+              attachments: [
+                { type: "file", mime, url: `data:${mime};base64,${resource.blob}`, filename: resource.uri },
+              ],
+            }
+          })
+          const textParts = collected.flatMap((item) => item.text)
+          const attachments = collected.flatMap((item) => item.attachments)
 
           const truncated = yield* truncate.output(textParts.join("\n\n"), {}, input.agent)
           const metadata = {
-            ...result.metadata,
+            ...(isRecord(result.metadata) ? result.metadata : {}),
             truncated: truncated.truncated,
             ...(truncated.truncated && { outputPath: truncated.outputPath }),
           }
@@ -499,25 +560,32 @@ function toRecord(value: unknown) {
 
 function parseListMcpResourcesArgs(value: unknown) {
   const args = toRecord(value)
-  return { server: optionalString(args, "server") }
+  return Result.map(optionalString(args, "server"), (server) => ({ server }))
 }
 
 function parseReadMcpResourceArgs(value: unknown) {
   const args = toRecord(value)
-  return { server: requiredString(args, "server"), uri: requiredString(args, "uri") }
+  return Result.all({ server: requiredString(args, "server"), uri: requiredString(args, "uri") })
 }
 
-function optionalString(args: Record<string, unknown>, key: string) {
+// A missing, null, or empty argument is absent. Any other non-string value is an error.
+function optionalString(
+  args: Record<string, unknown>,
+  key: string,
+): Result.Result<Option.Option<string>, McpToolError> {
   const value = args[key]
-  if (value === undefined || value === null || value === "") return undefined
-  if (typeof value !== "string") throw new Error(`${key} must be a string`)
-  return value
+  if (Predicate.isNullish(value) || value === "") return Result.succeed(Option.none())
+  if (typeof value !== "string") return Result.fail(new McpToolError({ message: `${key} must be a string` }))
+  return Result.succeed(Option.some(value))
 }
 
-function requiredString(args: Record<string, unknown>, key: string) {
-  const value = optionalString(args, key)
-  if (value) return value
-  throw new Error(`${key} is required`)
+function requiredString(args: Record<string, unknown>, key: string): Result.Result<string, McpToolError> {
+  return Result.flatMap(optionalString(args, key), (value) =>
+    Option.match(value, {
+      onNone: () => Result.fail(new McpToolError({ message: `${key} is required` })),
+      onSome: (text) => Result.succeed(text),
+    }),
+  )
 }
 
 function formatMcpResource(resource: MCP.Resource) {
@@ -532,46 +600,43 @@ function formatMcpResourceTemplate(template: Record<string, unknown> & { client:
 
 function formatMcpResourceContent(server: string, uri: string, content: { contents: unknown }) {
   const items = (Array.isArray(content.contents) ? content.contents : [content.contents]).filter(isRecord)
-  const text: string[] = []
-  const attachments: Omit<SessionV1.FilePart, "id" | "sessionID" | "messageID">[] = []
-
-  for (const item of items) {
+  const collected = items.map((item): CollectedContent => {
     const itemUri = typeof item.uri === "string" ? item.uri : uri
     const mime = typeof item.mimeType === "string" ? item.mimeType : "application/octet-stream"
     if (typeof item.text === "string") {
-      text.push(`Resource: ${itemUri}\nMIME: ${mime}\n${item.text}`)
-      continue
+      return { text: [`Resource: ${itemUri}\nMIME: ${mime}\n${item.text}`], attachments: [] }
     }
-    if (typeof item.blob === "string") {
-      const size = base64Size(item.blob)
-      if (!SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES.has(mime)) {
-        text.push(
+    if (typeof item.blob !== "string") {
+      return { text: [`[MCP resource content without text or blob: ${itemUri}]`], attachments: [] }
+    }
+    const size = base64Size(item.blob)
+    if (!HashSet.has(SUPPORTED_MCP_RESOURCE_ATTACHMENT_MIMES, mime)) {
+      return {
+        text: [
           `[Binary MCP resource omitted: ${itemUri} (${mime}, ${formatBytes(size)}) is not a supported attachment type]`,
-        )
-        continue
+        ],
+        attachments: [],
       }
-      if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
-        text.push(
-          `[Binary MCP resource omitted: ${itemUri} (${mime}, ${formatBytes(size)}) exceeds ${formatBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
-        )
-        continue
-      }
-      text.push(`[Binary MCP resource attached: ${itemUri} (${mime})]`)
-      attachments.push({
-        type: "file",
-        mime,
-        url: `data:${mime};base64,${item.blob}`,
-        filename: itemUri,
-      })
-      continue
     }
-    text.push(`[MCP resource content without text or blob: ${itemUri}]`)
-  }
+    if (size > MAX_MCP_RESOURCE_BLOB_BYTES) {
+      return {
+        text: [
+          `[Binary MCP resource omitted: ${itemUri} (${mime}, ${formatBytes(size)}) exceeds ${formatBytes(MAX_MCP_RESOURCE_BLOB_BYTES)}]`,
+        ],
+        attachments: [],
+      }
+    }
+    return {
+      text: [`[Binary MCP resource attached: ${itemUri} (${mime})]`],
+      attachments: [{ type: "file", mime, url: `data:${mime};base64,${item.blob}`, filename: itemUri }],
+    }
+  })
 
   return {
     contents: items.length,
-    attachments,
-    text: text.join("\n\n") || `MCP resource ${uri} from ${server} returned no contents.`,
+    attachments: collected.flatMap((item) => item.attachments),
+    text:
+      collected.flatMap((item) => item.text).join("\n\n") || `MCP resource ${uri} from ${server} returned no contents.`,
   }
 }
 
