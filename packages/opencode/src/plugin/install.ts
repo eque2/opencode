@@ -8,11 +8,11 @@ import {
 } from "jsonc-parser"
 
 import { Array as Arr, Effect, Option, Result, Schema } from "effect"
+import { PlatformError } from "effect/PlatformError"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import * as ConfigPaths from "@/config/paths"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { isRecord } from "@/util/record"
 
@@ -106,10 +106,11 @@ const defaultInstallDeps: InstallDeps = {
   resolve: (spec) => resolvePluginTarget(spec),
 }
 
+// A failed read or write rejects with the PlatformError. A failed exists check reads as missing.
 const defaultPatchDeps: PatchDeps = {
-  readText: (file) => Filesystem.readText(file),
-  write: (file, text) => Filesystem.write(file, text),
-  exists: (file) => Filesystem.exists(file),
+  readText: (file) => runPromise(FSUtil.Service.use((fsu) => fsu.readFileString(file))),
+  write: (file, text) => runPromise(FSUtil.Service.use((fsu) => fsu.writeWithDirs(file, text))),
+  exists: (file) => runPromise(FSUtil.Service.use((fsu) => fsu.existsSafe(file))),
   files: (dir, name) => ConfigPaths.fileInDirectory(dir, name),
 }
 
@@ -158,7 +159,7 @@ function hasMainTarget(pkg: Record<string, unknown>) {
   return Boolean(main.trim())
 }
 
-function packageTargets(pkg: PluginPackage): Result.Result<Target[], unknown> {
+const packageTargets = Effect.fnUntraced(function* (pkg: PluginPackage) {
   const spec =
     typeof pkg.json.name === "string" && pkg.json.name.trim().length > 0 ? pkg.json.name.trim() : path.basename(pkg.dir)
   const server = exportTarget(pkg.json, "server")
@@ -169,13 +170,13 @@ function packageTargets(pkg: PluginPackage): Result.Result<Target[], unknown> {
       : []
 
   const tui = exportTarget(pkg.json, "tui")
-  if (Option.isSome(tui)) return Result.succeed(Arr.append(serverTargets, tui.value))
+  if (Option.isSome(tui)) return Arr.append(serverTargets, tui.value)
 
   // A package without a tui entry still installs as a tui plugin when it ships oc-themes.
-  return packageThemes(spec, pkg).pipe(
-    Result.map((themes): Target[] => (themes.length ? Arr.append(serverTargets, { kind: "tui" }) : serverTargets)),
-  )
-}
+  const themes = yield* packageThemes(spec, pkg)
+  const targets: Target[] = themes.length ? Arr.append(serverTargets, { kind: "tui" }) : serverTargets
+  return targets
+})
 
 function patch(text: string, path: Array<string | number>, value: unknown, insert = false) {
   return applyEdits(
@@ -284,7 +285,7 @@ const pluginManifest = Effect.fn("PluginInstall.pluginManifest")(function* (targ
     return failed
   }
 
-  const targets = packageTargets(pkg.success)
+  const targets = yield* Effect.result(packageTargets(pkg.success))
   if (Result.isFailure(targets)) {
     const failed: ManifestResult = {
       ok: false,
@@ -320,7 +321,9 @@ function patchName(kind: Kind): "opencode" | "tui" {
   return "tui"
 }
 
+// A custom readText rejects with a Node ENOENT error. The default one rejects with a NotFound PlatformError.
 function isMissingFile(cause: unknown) {
+  if (cause instanceof PlatformError) return cause.reason._tag === "NotFound"
   return isRecord(cause) && cause.code === "ENOENT"
 }
 
@@ -332,7 +335,8 @@ const patchOne = Effect.fn("PluginInstall.patchOne")(function* (
   dep: PatchDeps,
 ) {
   const name = patchName(target.kind)
-  yield* Flock.effect(`plug-config:${Filesystem.resolve(path.join(dir, name))}`)
+  const fsu = yield* FSUtil.Service
+  yield* Flock.effect(`plug-config:${yield* fsu.resolve(path.join(dir, name))}`)
 
   const files = dep.files(dir, name)
   // A rejected exists() check fails the whole patch, as it did before.

@@ -134,38 +134,33 @@ function packageMain(pkg: PluginPackage): Option.Option<string> {
   return next ? Option.some(next) : Option.none()
 }
 
-function resolvePackageFile(
-  spec: string,
-  raw: string,
-  kind: string,
-  pkg: PluginPackage,
-): Result.Result<string, PluginEntryError> {
-  const root = Filesystem.resolve(pkg.dir)
-  const next = Filesystem.resolve(resolveExportPath(raw, pkg.dir))
-  if (Filesystem.contains(root, next)) return Result.succeed(next)
-  return Result.fail(
-    new PluginEntryError({ message: `Plugin ${spec} resolved ${kind} entry outside plugin directory` }),
-  )
+function outsidePluginDirectory(spec: string, kind: string) {
+  return new PluginEntryError({ message: `Plugin ${spec} resolved ${kind} entry outside plugin directory` })
 }
+
+// The real path of a package entry. It must stay inside the real plugin directory.
+const resolvePackageFile = Effect.fnUntraced(function* (spec: string, raw: string, kind: string, pkg: PluginPackage) {
+  const fsu = yield* FSUtil.Service
+  const root = yield* fsu.resolve(pkg.dir)
+  const next = yield* fsu.resolve(resolveExportPath(raw, pkg.dir))
+  if (FSUtil.contains(root, next)) return next
+  return yield* outsidePluginDirectory(spec, kind)
+})
 
 function resolvePackagePath(spec: string, raw: string, kind: PluginKind, pkg: PluginPackage) {
-  return resolvePackageFile(spec, raw, kind, pkg).pipe(Result.map((file) => Option.some(pathToFileURL(file).href)))
+  return resolvePackageFile(spec, raw, kind, pkg).pipe(Effect.map((file) => Option.some(pathToFileURL(file).href)))
 }
 
-function resolvePackageEntrypoint(
-  spec: string,
-  kind: PluginKind,
-  pkg: PluginPackage,
-): Result.Result<Option.Option<string>, PluginEntryError> {
+const resolvePackageEntrypoint = Effect.fnUntraced(function* (spec: string, kind: PluginKind, pkg: PluginPackage) {
   const exports = pkg.json.exports
   const raw = isRecord(exports) ? extractExportValue(exports[`./${kind}`]) : Option.none<string>()
-  if (Option.isSome(raw) && raw.value) return resolvePackagePath(spec, raw.value, kind, pkg)
+  if (Option.isSome(raw) && raw.value) return yield* resolvePackagePath(spec, raw.value, kind, pkg)
 
-  if (kind !== "server") return Result.succeedNone
+  if (kind !== "server") return Option.none<string>()
   const main = packageMain(pkg)
-  if (Option.isNone(main)) return Result.succeedNone
-  return resolvePackagePath(spec, main.value, kind, pkg)
-}
+  if (Option.isNone(main)) return Option.none<string>()
+  return yield* resolvePackagePath(spec, main.value, kind, pkg)
+})
 
 function targetPath(target: string): Option.Option<string> {
   if (target.startsWith("file://")) return Option.some(fileURLToPath(target))
@@ -206,7 +201,7 @@ const resolvePluginEntrypoint = Effect.fnUntraced(function* (
   const hit = pkg.value
   const source = pluginSource(spec)
 
-  const entry = yield* Effect.fromResult(resolvePackageEntrypoint(spec, kind, hit))
+  const entry = yield* resolvePackageEntrypoint(spec, kind, hit)
   if (Option.isSome(entry)) return entry
 
   const dir = yield* resolveTargetDirectory(target)
@@ -342,7 +337,18 @@ export const createPluginEntry = Effect.fn("PluginShared.createPluginEntry")(fun
   return result
 })
 
-function packageTheme(spec: string, item: unknown, pkg: PluginPackage): Result.Result<string, PluginEntryError> {
+// The oc-themes entries of a package. Absent means none.
+function themeField(spec: string, pkg: PluginPackage): Result.Result<ReadonlyArray<unknown>, PluginEntryError> {
+  const field = pkg.json["oc-themes"]
+  if (field === undefined) return Result.succeed([])
+  if (!Array.isArray(field)) {
+    return Result.fail(new PluginEntryError({ message: `Plugin ${spec} has invalid oc-themes field` }))
+  }
+  return Result.succeed(field)
+}
+
+// An oc-themes entry must be a non-empty relative path.
+function themeEntry(spec: string, item: unknown): Result.Result<string, PluginEntryError> {
   if (typeof item !== "string") {
     return Result.fail(new PluginEntryError({ message: `Plugin ${spec} has invalid oc-themes entry` }))
   }
@@ -354,25 +360,36 @@ function packageTheme(spec: string, item: unknown, pkg: PluginPackage): Result.R
   if (raw.startsWith("file://") || isAbsolutePath(raw)) {
     return Result.fail(new PluginEntryError({ message: `Plugin ${spec} oc-themes entry must be relative: ${item}` }))
   }
-
-  return resolvePackageFile(spec, raw, "oc-themes", pkg)
+  return Result.succeed(raw)
 }
 
 // Resolve the oc-themes files of a package. Each entry must stay inside the plugin directory.
-export function packageThemes(spec: string, pkg: PluginPackage): Result.Result<string[], PluginEntryError> {
-  const field = pkg.json["oc-themes"]
-  if (field === undefined) return Result.succeed([])
-  if (!Array.isArray(field)) {
-    return Result.fail(new PluginEntryError({ message: `Plugin ${spec} has invalid oc-themes field` }))
-  }
-
+export const packageThemes = Effect.fn("PluginShared.packageThemes")(function* (spec: string, pkg: PluginPackage) {
+  const field = yield* Effect.fromResult(themeField(spec, pkg))
   // Stop at the first invalid entry, and keep the first occurrence of each resolved path.
-  return Result.all(field.map((item: unknown) => packageTheme(spec, item, pkg))).pipe(Result.map(Arr.dedupe))
-}
+  const files = yield* Effect.forEach(field, (item) =>
+    Effect.fromResult(themeEntry(spec, item)).pipe(
+      Effect.flatMap((raw) => resolvePackageFile(spec, raw, "oc-themes", pkg)),
+    ),
+  )
+  return Arr.dedupe(files)
+})
 
 // Sync form for callers outside Effect. It throws the PluginEntryError, as it threw a TypeError before.
+// It stays on the sync realpath of util/filesystem: its callers read the result without awaiting it.
 export function readPackageThemes(spec: string, pkg: PluginPackage) {
-  return Result.getOrThrow(packageThemes(spec, pkg))
+  const packageFile = (raw: string) => {
+    const root = Filesystem.resolve(pkg.dir)
+    const next = Filesystem.resolve(resolveExportPath(raw, pkg.dir))
+    return FSUtil.contains(root, next) ? Result.succeed(next) : Result.fail(outsidePluginDirectory(spec, "oc-themes"))
+  }
+  return themeField(spec, pkg).pipe(
+    Result.flatMap((field) =>
+      Result.all(field.map((item) => themeEntry(spec, item).pipe(Result.flatMap(packageFile)))),
+    ),
+    Result.map(Arr.dedupe),
+    Result.getOrThrow,
+  )
 }
 
 // Result form of readPluginId for callers inside Effect.
