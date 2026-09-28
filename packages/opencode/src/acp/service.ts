@@ -31,8 +31,26 @@ import {
 } from "@agentclientprotocol/sdk"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
-import type { AssistantMessage, Message, OpencodeClient, Session, SessionMessageResponse } from "@opencode-ai/sdk/v2"
-import { Context, DateTime, Effect, Layer, ManagedRuntime, Option } from "effect"
+import type {
+  AssistantMessage,
+  ConfigProvidersResponses,
+  Message,
+  OpencodeClient,
+  Session,
+  SessionMessageResponse,
+} from "@opencode-ai/sdk/v2"
+import {
+  Context,
+  DateTime,
+  Effect,
+  Layer,
+  ManagedRuntime,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Predicate,
+  Schema,
+} from "effect"
 import * as ACPError from "./error"
 import { buildConfigOptions, DEFAULT_VARIANT_VALUE, parseModelSelection } from "./config-option"
 import { promptContentToParts } from "./content"
@@ -82,14 +100,14 @@ export function make(input: {
 }): Interface {
   const session = input.session ?? makeSessionService()
   const directoryService = input.directory ?? makeDirectoryService(input.sdk)
-  const registeredMcp = new Map<string, Set<string>>()
-  const sessionSnapshots = new Map<string, Directory.Snapshot>()
-  const events = input.connection
-    ? ACPEvent.start({ sdk: input.sdk, connection: input.connection, session })
-    : undefined
-  if (events) input.eventSubscription?.(events)
+  const registeredMcp = MutableHashMap.empty<string, MutableHashSet.MutableHashSet<string>>()
+  const sessionSnapshots = MutableHashMap.empty<string, Directory.Snapshot>()
+  const events = Option.map(Option.fromNullishOr(input.connection), (connection) =>
+    ACPEvent.start({ sdk: input.sdk, connection, session }),
+  )
+  if (Option.isSome(events)) input.eventSubscription?.(events.value)
   const runUntilIdle = <A>(sessionId: string, fn: () => Promise<A>) =>
-    events ? events.runUntilIdle(sessionId, fn) : fn()
+    Option.match(events, { onNone: fn, onSome: (subscription) => subscription.runUntilIdle(sessionId, fn) })
 
   const initialize = Effect.fn("ACP.initialize")(function* (params: InitializeRequest) {
     const started = performance.now()
@@ -153,10 +171,10 @@ export function make(input: {
   })
 
   const configSnapshot = Effect.fn("ACP.configSnapshot")(function* (state: ACPSession.Info) {
-    const snapshot = sessionSnapshots.get(state.id)
-    if (snapshot) return snapshot
+    const snapshot = MutableHashMap.get(sessionSnapshots, state.id)
+    if (Option.isSome(snapshot)) return snapshot.value
     const loaded = yield* directorySnapshot(state.cwd)
-    sessionSnapshots.set(state.id, loaded)
+    MutableHashMap.set(sessionSnapshots, state.id, loaded)
     return loaded
   })
 
@@ -164,8 +182,9 @@ export function make(input: {
     const started = performance.now()
     const snapshot = yield* directorySnapshot(params.cwd)
     const selected = selectDefaultModel(snapshot)
-    const variant = selectVariant(snapshot, selected)
-    const modeId = snapshot.availableModes.length > 0 ? snapshot.defaultModeID : undefined
+    // The session store and the SDK request take plain optional fields.
+    const variant = Option.getOrUndefined(selectVariant(snapshot, selected))
+    const modeId = Option.getOrUndefined(defaultMode(snapshot))
     const created = yield* profiledRequest(
       "acp.newSession.session.create",
       () =>
@@ -191,7 +210,7 @@ export function make(input: {
       variant,
       modeId,
     })
-    sessionSnapshots.set(state.id, snapshot)
+    MutableHashMap.set(sessionSnapshots, state.id, snapshot)
 
     yield* registerMcpServers(input.sdk, registeredMcp, params.cwd, state.id, params.mcpServers)
     yield* sendAvailableCommands(input.connection, state.id, snapshot)
@@ -231,7 +250,7 @@ export function make(input: {
       variant: restored.variant,
       modeId: restored.modeId,
     })
-    sessionSnapshots.set(state.id, snapshot)
+    MutableHashMap.set(sessionSnapshots, state.id, snapshot)
 
     yield* registerMcpServers(input.sdk, registeredMcp, params.cwd, state.id, params.mcpServers)
     yield* sendAvailableCommands(input.connection, state.id, snapshot)
@@ -247,7 +266,11 @@ export function make(input: {
   })
 
   const listSessions = Effect.fn("ACP.listSessions")(function* (params: ListSessionsRequest) {
-    const cursor = params.cursor ? Number(params.cursor) : undefined
+    const cursor = Option.fromNullishOr(params.cursor).pipe(
+      Option.filter((value) => value.length > 0),
+      Option.map(Number),
+      Option.filter(Number.isFinite),
+    )
     const limit = 100
     const sessions = yield* request(
       () =>
@@ -265,10 +288,10 @@ export function make(input: {
         sessionId: item.id,
         cwd: item.directory,
         title: item.title,
-        updatedAt: new Date(item.time.updated).toISOString(),
+        updatedAt: DateTime.formatIso(DateTime.makeUnsafe(item.time.updated)),
       }),
     )
-    const liveEntries = (yield* session.list(params.cwd ?? undefined))
+    const liveEntries = (yield* session.list(Option.getOrUndefined(Option.fromNullishOr(params.cwd))))
       .filter((item) => !serverEntries.some((entry) => entry.sessionId === item.id))
       .map(
         (item): SessionInfo => ({
@@ -277,18 +300,16 @@ export function make(input: {
           updatedAt: DateTime.formatIso(item.createdAt),
         }),
       )
-    const sorted = [...liveEntries, ...serverEntries].toSorted(
-      (a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime(),
-    )
-    const filtered =
-      cursor === undefined || !Number.isFinite(cursor)
-        ? sorted
-        : sorted.filter((item) => new Date(item.updatedAt ?? 0).getTime() < cursor)
+    const sorted = [...liveEntries, ...serverEntries].toSorted((a, b) => updatedAtMillis(b) - updatedAtMillis(a))
+    const filtered = Option.match(cursor, {
+      onNone: () => sorted,
+      onSome: (before) => sorted.filter((item) => updatedAtMillis(item) < before),
+    })
     const page = filtered.slice(0, limit)
     const last = page.at(-1)
     return {
       sessions: page,
-      ...(filtered.length > limit && last ? { nextCursor: String(new Date(last.updatedAt ?? 0).getTime()) } : {}),
+      ...(filtered.length > limit && last ? { nextCursor: String(updatedAtMillis(last)) } : {}),
     }
   })
 
@@ -319,7 +340,7 @@ export function make(input: {
       variant: restored.variant,
       modeId: restored.modeId,
     })
-    sessionSnapshots.set(state.id, snapshot)
+    MutableHashMap.set(sessionSnapshots, state.id, snapshot)
 
     yield* registerMcpServers(input.sdk, registeredMcp, params.cwd, state.id, params.mcpServers ?? [])
     yield* sendAvailableCommands(input.connection, state.id, snapshot)
@@ -346,8 +367,8 @@ export function make(input: {
 
   const closeSession = Effect.fn("ACP.closeSession")(function* (params: CloseSessionRequest) {
     const removed = yield* session.remove(params.sessionId)
-    registeredMcp.delete(params.sessionId)
-    sessionSnapshots.delete(params.sessionId)
+    MutableHashMap.remove(registeredMcp, params.sessionId)
+    MutableHashMap.remove(sessionSnapshots, params.sessionId)
     if (Option.isNone(removed)) return {}
 
     yield* abortBackingSession(removed.value)
@@ -390,7 +411,7 @@ export function make(input: {
       variant: restored.variant,
       modeId: restored.modeId,
     })
-    sessionSnapshots.set(state.id, snapshot)
+    MutableHashMap.set(sessionSnapshots, state.id, snapshot)
 
     yield* registerMcpServers(input.sdk, registeredMcp, params.cwd, state.id, params.mcpServers ?? [])
     yield* sendAvailableCommands(input.connection, state.id, snapshot)
@@ -417,9 +438,10 @@ export function make(input: {
 
     if (params.configId === "model") {
       const selected = yield* parseSelectedModel(snapshot, params.value)
-      const variant = selectModelVariant(snapshot, current, selected)
+      // selectModelVariant yields none when the model has no variants, which clears the stored variant.
+      const variant = Option.getOrUndefined(selectModelVariant(snapshot, current, selected))
       const state = yield* session
-        .setVariant(params.sessionId, Directory.variants(snapshot, selected.model) ? variant : undefined)
+        .setVariant(params.sessionId, variant)
         .pipe(Effect.andThen(session.setModel(params.sessionId, selected.model)))
       const options = configOptions(snapshot, {
         model: state.model ?? selected.model,
@@ -480,7 +502,7 @@ export function make(input: {
     const snapshot = yield* configSnapshot(current)
     const selected = yield* parseSelectedModel(snapshot, params.modelId)
     const state = yield* session
-      .setVariant(params.sessionId, selectModelVariant(snapshot, current, selected))
+      .setVariant(params.sessionId, Option.getOrUndefined(selectModelVariant(snapshot, current, selected)))
       .pipe(Effect.andThen(session.setModel(params.sessionId, selected.model)))
     yield* sendConfigOptionUpdate(
       input.connection,
@@ -513,12 +535,12 @@ export function make(input: {
       if (!current.model) {
         yield* session.setModel(params.sessionId, selected)
       }
-      const variant = current.variant ?? selectVariant(snapshot, selected)
-      const modeId = current.modeId ?? (snapshot.availableModes.length > 0 ? snapshot.defaultModeID : undefined)
+      const variant = current.variant ?? Option.getOrUndefined(selectVariant(snapshot, selected))
+      const modeId = current.modeId ?? Option.getOrUndefined(defaultMode(snapshot))
       const parts = promptContentToParts(params.prompt)
-      const command = detectSlashCommand(parts)
+      const detected = detectSlashCommand(parts)
 
-      if (!command) {
+      if (Option.isNone(detected)) {
         const response = yield* request(
           () =>
             runUntilIdle(current.id, () =>
@@ -540,9 +562,10 @@ export function make(input: {
           "session",
         )
         yield* sendUsageUpdate(input.usage, input.sdk, input.connection, current.id, current.cwd)
-        return yield* promptResponse(response.info, params.messageId)
+        return yield* promptResponse(Option.some(response.info), params.messageId)
       }
 
+      const command = detected.value
       const known = snapshot.availableCommands.find((item) => item.name === command.name)
       if (known) {
         const response = yield* request(
@@ -564,7 +587,7 @@ export function make(input: {
           "session",
         )
         yield* sendUsageUpdate(input.usage, input.sdk, input.connection, current.id, current.cwd)
-        return yield* promptResponse(response.info, params.messageId)
+        return yield* promptResponse(Option.some(response.info), params.messageId)
       }
 
       if (command.name === "compact") {
@@ -586,7 +609,7 @@ export function make(input: {
       }
 
       yield* sendUsageUpdate(input.usage, input.sdk, input.connection, current.id, current.cwd)
-      return yield* promptResponse(undefined, params.messageId)
+      return yield* promptResponse(Option.none(), params.messageId)
     }),
     cancel,
   }
@@ -606,7 +629,7 @@ function makeDirectoryService(sdk: OpencodeClient) {
         Layer.succeed(
           Directory.Loader,
           Directory.Loader.of({
-            load: (directory) => request(() => loadDirectorySnapshot(sdk, directory), "directory"),
+            load: (directory) => loadDirectorySnapshot(sdk, directory),
           }),
         ),
       ],
@@ -615,29 +638,30 @@ function makeDirectoryService(sdk: OpencodeClient) {
 }
 
 function makeUsageService(sdk: OpencodeClient) {
-  const limits = new Map<string, Promise<number | undefined>>()
+  // One cached lookup per directory and model, shared by concurrent callers.
+  const limits = MutableHashMap.empty<string, Effect.Effect<number | undefined>>()
   const contextLimit: UsageService.Interface["contextLimit"] = Effect.fn("ACP.promptUsage.contextLimit")(
     function* (params) {
       const key = `${params.directory}\u0000${params.providerID}\u0000${params.modelID}`
-      const current = limits.get(key)
-      if (current) return yield* Effect.promise(() => current)
+      const current = MutableHashMap.get(limits, key)
+      if (Option.isSome(current)) return yield* current.value
 
-      const next = sdk.config
-        .providers({ directory: params.directory }, { throwOnError: true })
-        .then((response) => {
-          const providers = Object.fromEntries(
-            (response.data?.providers ?? []).map((provider) => [provider.id, provider]),
-          ) as Record<ProviderV2.ID, Provider.Info>
-          return UsageService.findContextLimit(providers, params.providerID, params.modelID)
-        })
-        .catch(() => undefined)
-      limits.set(key, next)
-      return yield* Effect.promise(() => next)
+      const next = yield* Effect.cached(
+        request(() => sdk.config.providers({ directory: params.directory }, { throwOnError: true }), "config").pipe(
+          Effect.map((data) =>
+            UsageService.findContextLimit(providerRecord(data.providers), params.providerID, params.modelID),
+          ),
+          Effect.option,
+          Effect.map(Option.getOrUndefined),
+        ),
+      )
+      MutableHashMap.set(limits, key, next)
+      return yield* next
     },
   )
 
   const sendUpdate: UsageService.Interface["sendUpdate"] = Effect.fn("ACP.promptUsage.sendUpdate")(function* (params) {
-    const messages = yield* request(
+    const loaded = yield* request(
       () =>
         sdk.session.messages(
           {
@@ -648,12 +672,13 @@ function makeUsageService(sdk: OpencodeClient) {
         ),
       "session",
     ).pipe(
-      Effect.map((messages) => messages as readonly UsageService.SessionMessage[]),
+      Effect.map((messages): Option.Option<readonly UsageService.SessionMessage[]> => Option.some(messages)),
       Effect.catch((error) =>
-        Effect.logError("failed to fetch messages for usage update", { error: error }).pipe(Effect.as(undefined)),
+        Effect.logError("failed to fetch messages for usage update", { error: error }).pipe(Effect.as(Option.none())),
       ),
     )
-    if (!messages) return
+    if (Option.isNone(loaded)) return
+    const messages = loaded.value
 
     const message = UsageService.latestAssistantMessage(messages)
     if (!message?.providerID || !message.modelID) return
@@ -665,19 +690,17 @@ function makeUsageService(sdk: OpencodeClient) {
     })
     if (!size) return
 
-    yield* Effect.promise(() =>
-      params.connection
-        .sessionUpdate({
-          sessionId: params.sessionID,
-          update: {
-            sessionUpdate: "usage_update",
-            used: UsageService.contextTokens(message),
-            size,
-            cost: { amount: UsageService.totalSessionCost(messages), currency: "USD" },
-          },
-        })
-        .catch(() => {}),
-    )
+    yield* Effect.tryPromise(() =>
+      params.connection.sessionUpdate({
+        sessionId: params.sessionID,
+        update: {
+          sessionUpdate: "usage_update",
+          used: UsageService.contextTokens(message),
+          size,
+          cost: { amount: UsageService.totalSessionCost(messages), currency: "USD" },
+        },
+      }),
+    ).pipe(Effect.ignore)
   })
 
   return UsageService.Service.of({
@@ -689,13 +712,13 @@ function makeUsageService(sdk: OpencodeClient) {
   })
 }
 
-function replayMessages(subscription: ACPEvent.Subscription | undefined, messages: SessionMessageResponse[]) {
-  if (!subscription) return Effect.void
-  return Effect.promise(async () => {
-    for (const message of messages) {
-      await subscription.replayMessage(message).catch(() => {})
-    }
-  })
+function replayMessages(subscription: Option.Option<ACPEvent.Subscription>, messages: SessionMessageResponse[]) {
+  if (Option.isNone(subscription)) return Effect.void
+  return Effect.forEach(
+    messages,
+    (message) => Effect.tryPromise(() => subscription.value.replayMessage(message)).pipe(Effect.ignore),
+    { discard: true },
+  )
 }
 
 type ConfigState = {
@@ -704,10 +727,7 @@ type ConfigState = {
   readonly modeId?: string
 }
 
-type SdkResponse<T> = {
-  readonly data?: T
-  readonly error?: unknown
-}
+type SdkProvider = ConfigProvidersResponses[200]["providers"][number]
 
 type MessageInfo = {
   readonly role?: Message["role"]
@@ -720,170 +740,213 @@ type MessageInfo = {
 }
 
 type AssistantError = NonNullable<AssistantMessage["error"]>
-type AssistantInfo = (UsageService.AssistantTokenCost & Pick<AssistantMessage, "error">) | undefined
+type AssistantInfo = UsageService.AssistantTokenCost & Pick<AssistantMessage, "error">
 
-function request<T>(fn: () => Promise<T | SdkResponse<T>>, service?: string) {
+// Every SDK call passes throwOnError, so a response always carries its data.
+function request<T>(fn: () => Promise<{ readonly data: T }>, service?: string) {
   return Effect.tryPromise({
-    try: async () => {
-      const result = await fn()
-      if (isSdkResponse<T>(result)) {
-        if (result.error) throw result.error
-        if (result.data !== undefined) return result.data
-      }
-      return result as T
-    },
+    try: fn,
     catch: (error) => fromUnknownError(error, service),
-  })
+  }).pipe(Effect.map((response) => response.data))
 }
 
-function profiledRequest<T>(name: string, fn: () => Promise<T | SdkResponse<T>>, service?: string) {
+function profiledRequest<T>(name: string, fn: () => Promise<{ readonly data: T }>, service?: string) {
   return request(() => ACPProfile.measure(name, fn), service)
 }
 
-async function loadDirectorySnapshot(sdk: OpencodeClient, directory: string) {
-  return ACPProfile.measure("acp.directory.load", async () => {
-    const [providersResponse, agentsResponse, commandsResponse, skillsResponse, configResponse] = await Promise.all([
-      ACPProfile.measure("acp.directory.provider.list", () =>
-        sdk.config.providers({ directory }, { throwOnError: true }),
-      ),
-      ACPProfile.measure("acp.directory.mode.defaultAgent.load", () =>
-        sdk.app.agents({ directory }, { throwOnError: true }),
-      ),
-      ACPProfile.measure("acp.directory.command.list", () => sdk.command.list({ directory }, { throwOnError: true })),
-      ACPProfile.measure("acp.directory.skill.list", () => sdk.app.skills({ directory }, { throwOnError: true })),
-      ACPProfile.measure("acp.directory.defaultModel.config", () =>
-        sdk.config.get({ directory }, { throwOnError: true }).catch(() => undefined),
-      ),
-    ])
-    const providersData = providersResponse.data!
-    const agents = agentsResponse.data!
-    const commandsData = commandsResponse.data!
-    const skills = skillsResponse.data!
-    const providers = Object.fromEntries(providersData.providers.map((provider) => [provider.id, provider])) as Record<
-      ProviderV2.ID,
-      Provider.Info
-    >
-    const defaultModelStarted = performance.now()
-    const defaultModel = defaultModelFromConfig(configResponse?.data?.model, providers)
-    ACPProfile.duration("acp.directory.defaultModel.resolve", defaultModelStarted, { configured: !!defaultModel })
-    const modes = agents
-      .filter((agent) => agent.mode !== "subagent" && agent.hidden !== true)
-      .map((agent) => ({
-        id: agent.name,
-        name: agent.name,
-        ...(agent.description ? { description: agent.description } : {}),
-      }))
-    const commands = [
-      ...commandsData,
-      ...skills
-        .filter((skill) => !commandsData.some((command) => command.name === skill.name))
-        .map((skill) => ({
-          name: skill.name,
-          description: skill.description,
-          source: "skill" as const,
-          template: skill.content,
-          hints: [],
-        })),
-    ] as Command.Info[]
-
-    return Directory.build({
-      directory,
-      providers,
-      modes,
-      defaultModeID: agents.find((agent) => agent.mode === "primary" && agent.hidden !== true)?.name ?? "build",
-      commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
-      ...(defaultModel ? { defaultModel } : {}),
-    })
+function loadDirectorySnapshot(sdk: OpencodeClient, directory: string) {
+  return Effect.suspend(() => {
+    const started = performance.now()
+    return buildDirectorySnapshot(sdk, directory).pipe(
+      Effect.ensuring(Effect.sync(() => ACPProfile.duration("acp.directory.load", started))),
+    )
   })
 }
 
+const buildDirectorySnapshot = Effect.fn("ACP.buildDirectorySnapshot")(function* (
+  sdk: OpencodeClient,
+  directory: string,
+) {
+  const [providersData, agents, commandsData, skills, config] = yield* Effect.all(
+    [
+      profiledRequest(
+        "acp.directory.provider.list",
+        () => sdk.config.providers({ directory }, { throwOnError: true }),
+        "directory",
+      ),
+      profiledRequest(
+        "acp.directory.mode.defaultAgent.load",
+        () => sdk.app.agents({ directory }, { throwOnError: true }),
+        "directory",
+      ),
+      profiledRequest(
+        "acp.directory.command.list",
+        () => sdk.command.list({ directory }, { throwOnError: true }),
+        "directory",
+      ),
+      profiledRequest("acp.directory.skill.list", () => sdk.app.skills({ directory }, { throwOnError: true }), "directory"),
+      // A missing config only means there is no configured default model.
+      profiledRequest(
+        "acp.directory.defaultModel.config",
+        () => sdk.config.get({ directory }, { throwOnError: true }),
+        "directory",
+      ).pipe(Effect.option),
+    ],
+    { concurrency: "unbounded" },
+  )
+  const providers = providerRecord(providersData.providers)
+  const defaultModelStarted = performance.now()
+  const defaultModel = defaultModelFromConfig(
+    Option.flatMapNullishOr(config, (value) => value.model),
+    providers,
+  )
+  ACPProfile.duration("acp.directory.defaultModel.resolve", defaultModelStarted, {
+    configured: Option.isSome(defaultModel),
+  })
+  const modes = agents
+    .filter((agent) => agent.mode !== "subagent" && agent.hidden !== true)
+    .map((agent) => ({
+      id: agent.name,
+      name: agent.name,
+      ...(agent.description ? { description: agent.description } : {}),
+    }))
+  const commands = [
+    ...commandsData,
+    ...skills
+      .filter((skill) => !commandsData.some((command) => command.name === skill.name))
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        source: "skill" as const,
+        template: skill.content,
+        hints: [],
+      })),
+  ] as Command.Info[]
+
+  return Directory.build({
+    directory,
+    providers,
+    modes,
+    defaultModeID: agents.find((agent) => agent.mode === "primary" && agent.hidden !== true)?.name ?? "build",
+    commands: commands.toSorted((a, b) => a.name.localeCompare(b.name)),
+    ...Option.match(defaultModel, { onNone: () => ({}), onSome: (model) => ({ defaultModel: model }) }),
+  })
+})
+
+// The SDK carries provider and model IDs as plain strings; brand them for the core provider shape.
+function providerRecord(providers: readonly SdkProvider[]): Record<ProviderV2.ID, Provider.Info> {
+  return Object.fromEntries(
+    providers.map((provider): [ProviderV2.ID, Provider.Info] => [
+      ProviderV2.ID.make(provider.id),
+      {
+        ...provider,
+        id: ProviderV2.ID.make(provider.id),
+        models: Object.fromEntries(
+          Object.entries(provider.models).map(([key, model]) => [
+            key,
+            { ...model, id: ModelV2.ID.make(model.id), providerID: ProviderV2.ID.make(model.providerID) },
+          ]),
+        ),
+      },
+    ]),
+  )
+}
+
 function defaultModelFromConfig(
-  configuredModel: string | undefined,
+  configuredModel: Option.Option<string>,
   providers: Record<ProviderV2.ID, Provider.Info>,
-): Directory.DefaultModel | undefined {
-  const configured = configuredModel ? Provider.parseModel(configuredModel) : undefined
-  if (configured && providers[configured.providerID]?.models[configured.modelID]) return configured
+): Option.Option<Directory.DefaultModel> {
+  const configured = configuredModel.pipe(
+    Option.filter((model) => model.length > 0),
+    Option.map(Provider.parseModel),
+  )
+  if (Option.isSome(configured) && providers[configured.value.providerID]?.models[configured.value.modelID])
+    return configured
 
   // First-session ACP startup must not scan historical sessions just to infer
   // a default. Configured model, opencode provider, then sorted best model keep
   // the protocol response deterministic without extra session/message reads.
   const opencodeProvider = providers[ProviderV2.ID.make("opencode")]
-  const opencodeModel = opencodeProvider ? Provider.sort(Object.values(opencodeProvider.models))[0] : undefined
-  if (opencodeProvider && opencodeModel) return { providerID: opencodeProvider.id, modelID: opencodeModel.id }
+  const opencodeModel = opencodeProvider && Provider.sort(Object.values(opencodeProvider.models))[0]
+  if (opencodeProvider && opencodeModel)
+    return Option.some({ providerID: opencodeProvider.id, modelID: opencodeModel.id })
 
   const best = Provider.sort(Object.values(providers).flatMap((provider) => Object.values(provider.models)))[0]
-  if (best) return { providerID: best.providerID, modelID: best.id }
-  if (configured) return configured
+  if (best) return Option.some({ providerID: best.providerID, modelID: best.id })
+  return configured
 }
 
 function selectDefaultModel(snapshot: Directory.Snapshot) {
   if (snapshot.defaultModel) return snapshot.defaultModel
   const model = snapshot.modelOptions[0]
   if (model) return { providerID: model.providerID, modelID: model.modelID }
-  return { providerID: "unknown" as ProviderV2.ID, modelID: "unknown" as ModelV2.ID }
+  return { providerID: ProviderV2.ID.make("unknown"), modelID: ModelV2.ID.make("unknown") }
 }
 
-function detectSlashCommand(parts: ReturnType<typeof promptContentToParts>) {
+function detectSlashCommand(
+  parts: ReturnType<typeof promptContentToParts>,
+): Option.Option<{ readonly name: string; readonly args: string }> {
   const text = parts
     .filter((part): part is Extract<(typeof parts)[number], { type: "text" }> => part.type === "text")
     .map((part) => part.text)
     .join("")
     .trim()
-  if (!text.startsWith("/")) return
+  if (!text.startsWith("/")) return Option.none()
 
   const [name, ...rest] = text.slice(1).split(/\s+/)
-  if (!name) return
-  return { name, args: rest.join(" ").trim() }
+  if (!name) return Option.none()
+  return Option.some({ name, args: rest.join(" ").trim() })
 }
 
 const promptResponse = Effect.fn("ACP.promptResponse")(function* (
-  info: AssistantInfo,
+  info: Option.Option<AssistantInfo>,
   messageId: string | null | undefined,
 ) {
-  if (!info?.error) {
+  if (Option.isNone(info) || !info.value.error) {
     return {
       stopReason: "end_turn" as const,
-      ...(info ? { usage: UsageService.buildUsage(info) } : {}),
+      ...Option.match(info, { onNone: () => ({}), onSome: (value) => ({ usage: UsageService.buildUsage(value) }) }),
       ...(messageId ? { userMessageId: messageId } : {}),
       _meta: {},
     }
   }
 
+  const error = info.value.error
   const base = {
-    usage: UsageService.buildUsage(info),
+    usage: UsageService.buildUsage(info.value),
     ...(messageId ? { userMessageId: messageId } : {}),
     _meta: {},
   }
 
-  if (info.error.name === "MessageAbortedError") {
+  if (error.name === "MessageAbortedError") {
     return {
       stopReason: "cancelled" as const,
       ...base,
     }
   }
 
-  if (info.error.name === "MessageOutputLengthError") {
+  if (error.name === "MessageOutputLengthError") {
     return {
       stopReason: "max_tokens" as const,
       ...base,
     }
   }
 
-  if (info.error.name === "ContentFilterError") {
+  if (error.name === "ContentFilterError") {
     return {
       stopReason: "refusal" as const,
       ...base,
     }
   }
 
-  if (info.error.name === "ProviderAuthError") {
-    return yield* new ACPError.AuthRequiredError({ providerId: info.error.data.providerID })
+  if (error.name === "ProviderAuthError") {
+    return yield* new ACPError.AuthRequiredError({ providerId: error.data.providerID })
   }
 
   return yield* new ACPError.ServiceFailureError({
     service: "session",
-    safeMessage: promptErrorMessage(info.error),
-    errorName: info.error.name,
+    safeMessage: promptErrorMessage(error),
+    errorName: error.name,
   })
 })
 
@@ -910,24 +973,35 @@ function sendUsageUpdate(
   })
 }
 
-function selectVariant(snapshot: Directory.Snapshot, model: Directory.DefaultModel) {
+function selectVariant(snapshot: Directory.Snapshot, model: Directory.DefaultModel): Option.Option<string> {
   const variants = Directory.variants(snapshot, model)
-  if (!variants) return
-  if (variants.default) return "default"
-  return Object.keys(variants)[0]
+  if (!variants) return Option.none()
+  if (variants.default) return Option.some("default")
+  return Option.fromNullishOr(Object.keys(variants)[0])
 }
 
 function selectModelVariant(
   snapshot: Directory.Snapshot,
   current: ACPSession.Info,
   selected: { model: Directory.DefaultModel; variant?: string },
-) {
+): Option.Option<string> {
   const variants = Directory.variants(snapshot, selected.model)
-  if (!variants) return
-  if (selected.variant) return selected.variant
+  if (!variants) return Option.none()
+  if (selected.variant) return Option.some(selected.variant)
   if (sameModel(selected.model, current.model) && current.variant && hasVariant(variants, current.variant))
-    return current.variant
+    return Option.some(current.variant)
   return selectVariant(snapshot, selected.model)
+}
+
+function defaultMode(snapshot: Directory.Snapshot): Option.Option<string> {
+  return snapshot.availableModes.length > 0 ? Option.some(snapshot.defaultModeID) : Option.none()
+}
+
+function updatedAtMillis(entry: SessionInfo) {
+  return Option.match(DateTime.make(entry.updatedAt ?? 0), {
+    onNone: () => Number.NaN,
+    onSome: DateTime.toEpochMillis,
+  })
 }
 
 function hasVariant(variants: Directory.ModelVariants, variant: string) {
@@ -951,17 +1025,15 @@ function sendConfigOptionUpdate(
   options: ReturnType<typeof configOptions>,
 ) {
   if (!connection) return Effect.void
-  return Effect.tryPromise({
-    try: () =>
-      connection.sessionUpdate({
-        sessionId,
-        update: {
-          sessionUpdate: "config_option_update",
-          configOptions: options,
-        },
-      }),
-    catch: () => undefined,
-  }).pipe(Effect.ignore)
+  return Effect.tryPromise(() =>
+    connection.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: options,
+      },
+    }),
+  ).pipe(Effect.ignore)
 }
 
 function parseSelectedModel(snapshot: Directory.Snapshot, modelId: string) {
@@ -994,9 +1066,11 @@ function sendAvailableCommands(
   snapshot: Directory.Snapshot,
 ) {
   if (!connection) return Effect.void
-  return Effect.sync(() => {
-    setTimeout(() => {
-      void connection.sessionUpdate({
+  // Send after a timer tick so the client receives the session response first.
+  // The update is fire-and-forget: the request must not wait for it.
+  return Effect.forkDetach(
+    Effect.tryPromise(() =>
+      connection.sessionUpdate({
         sessionId,
         update: {
           sessionUpdate: "available_commands_update",
@@ -1005,30 +1079,30 @@ function sendAvailableCommands(
             description: command.description ?? "",
           })),
         },
-      })
-    }, 0)
-  })
+      }),
+    ).pipe(Effect.delay("1 millis"), Effect.ignore),
+  ).pipe(Effect.asVoid)
 }
 
 function registerMcpServers(
   sdk: OpencodeClient,
-  registered: Map<string, Set<string>>,
+  registered: MutableHashMap.MutableHashMap<string, MutableHashSet.MutableHashSet<string>>,
   directory: string,
   sessionId: string,
   servers: readonly McpServer[],
 ) {
   const started = performance.now()
-  const current = registered.get(sessionId) ?? new Set<string>()
-  registered.set(sessionId, current)
-  const pending = new Set<string>()
+  const current = Option.getOrElse(MutableHashMap.get(registered, sessionId), () => MutableHashSet.empty<string>())
+  MutableHashMap.set(registered, sessionId, current)
+  const pending = MutableHashSet.empty<string>()
 
   return Effect.all(
     servers
       .map((server) => ({ server, config: mcpConfig(server) }))
       .filter((entry) => {
         const key = mcpRegistrationKey(entry.server.name, entry.config)
-        if (current.has(key) || pending.has(key)) return false
-        pending.add(key)
+        if (MutableHashSet.has(current, key) || MutableHashSet.has(pending, key)) return false
+        MutableHashSet.add(pending, key)
         return true
       })
       .map((entry) =>
@@ -1044,7 +1118,7 @@ function registerMcpServers(
             ),
           "mcp",
         ).pipe(
-          Effect.tap(() => Effect.sync(() => current.add(mcpRegistrationKey(entry.server.name, entry.config)))),
+          Effect.tap(() => Effect.sync(() => MutableHashSet.add(current, mcpRegistrationKey(entry.server.name, entry.config)))),
           Effect.ignore,
         ),
       ),
@@ -1053,7 +1127,7 @@ function registerMcpServers(
     Effect.tap(() =>
       Effect.sync(() =>
         ACPProfile.duration("acp.mcp.register", started, {
-          count: pending.size,
+          count: MutableHashSet.size(pending),
         }),
       ),
     ),
@@ -1062,7 +1136,20 @@ function registerMcpServers(
 }
 
 function mcpRegistrationKey(name: string, config: ReturnType<typeof mcpConfig>) {
-  return `${name}:${stableStringify(config)}`
+  return `${name}:${encodeJson(canonicalJson(config))}`
+}
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
+
+// Sort object keys so equal configs produce one registration key.
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJson)
+  if (!Predicate.isObject(value)) return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .toSorted(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, canonicalJson(item)]),
+  )
 }
 
 function mcpConfig(server: McpServer) {
@@ -1080,15 +1167,6 @@ function mcpConfig(server: McpServer) {
   }
 }
 
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`
-  if (!value || typeof value !== "object") return JSON.stringify(value)
-  return `{${Object.entries(value)
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
-    .join(",")}}`
-}
-
 function restoreSession(
   snapshot: Directory.Snapshot,
   backing: Pick<Session, "agent" | "model">,
@@ -1099,8 +1177,9 @@ function restoreSession(
   const model = restoreModel(snapshot, durable.model, history.model)
   return {
     model,
-    variant: restoreVariant(snapshot, model, durable, history),
-    modeId: restoreMode(snapshot, backing.agent, history.modeId),
+    // The session store takes plain optional fields.
+    variant: Option.getOrUndefined(restoreVariant(snapshot, model, durable, history)),
+    modeId: Option.getOrUndefined(restoreMode(snapshot, backing.agent, history.modeId)),
   }
 }
 
@@ -1130,27 +1209,33 @@ function restoreVariant(
   model: Directory.DefaultModel,
   durable: { model?: Directory.DefaultModel; variant?: string },
   history: { model?: Directory.DefaultModel; variant?: string },
-) {
+): Option.Option<string> {
   const variants = Directory.variants(snapshot, model)
-  if (!variants) return
+  if (!variants) return Option.none()
   if (sameModel(model, durable.model) && durable.variant && hasVariant(variants, durable.variant))
-    return durable.variant
+    return Option.some(durable.variant)
   if (sameModel(model, history.model) && history.variant && hasVariant(variants, history.variant))
-    return history.variant
+    return Option.some(history.variant)
   return selectVariant(snapshot, model)
 }
 
-function restoreMode(snapshot: Directory.Snapshot, durable: string | undefined, history: string | undefined) {
-  if (hasMode(snapshot, durable)) return durable
-  if (hasMode(snapshot, history)) return history
-  if (snapshot.availableModes.length > 0) return snapshot.defaultModeID
+function restoreMode(
+  snapshot: Directory.Snapshot,
+  durable: string | undefined,
+  history: string | undefined,
+): Option.Option<string> {
+  return Option.fromNullishOr(durable).pipe(
+    Option.filter((mode) => hasMode(snapshot, mode)),
+    Option.orElse(() => Option.filter(Option.fromNullishOr(history), (mode) => hasMode(snapshot, mode))),
+    Option.orElse(() => defaultMode(snapshot)),
+  )
 }
 
 function hasModel(snapshot: Directory.Snapshot, model: Directory.DefaultModel) {
   return Boolean(snapshot.providers[model.providerID]?.models[model.modelID])
 }
 
-function hasMode(snapshot: Directory.Snapshot, modeId: string | undefined) {
+function hasMode(snapshot: Directory.Snapshot, modeId: string) {
   return Boolean(modeId && snapshot.availableModes.some((mode) => mode.id === modeId))
 }
 
@@ -1164,7 +1249,7 @@ function restoreFromMessages(messages: readonly MessageInfo[]) {
   )
   if (user?.model?.providerID && user.model.modelID) {
     return {
-      model: { providerID: user.model.providerID as ProviderV2.ID, modelID: user.model.modelID as ModelV2.ID },
+      model: { providerID: ProviderV2.ID.make(user.model.providerID), modelID: ModelV2.ID.make(user.model.modelID) },
       variant: user.model.variant,
       modeId: user.agent,
     }
@@ -1173,7 +1258,7 @@ function restoreFromMessages(messages: readonly MessageInfo[]) {
   const assistant = messages.findLast((message) => message.providerID && message.modelID)
   if (assistant?.providerID && assistant.modelID) {
     return {
-      model: { providerID: assistant.providerID as ProviderV2.ID, modelID: assistant.modelID as ModelV2.ID },
+      model: { providerID: ProviderV2.ID.make(assistant.providerID), modelID: ModelV2.ID.make(assistant.modelID) },
       variant: assistant.variant,
       modeId: assistant.mode ?? assistant.agent,
     }
@@ -1182,22 +1267,17 @@ function restoreFromMessages(messages: readonly MessageInfo[]) {
   return {}
 }
 
-function isSdkResponse<T>(value: T | SdkResponse<T>): value is SdkResponse<T> {
-  return typeof value === "object" && value !== null && ("data" in value || "error" in value)
-}
-
 function fromUnknownError(error: unknown, service?: string): Error {
   if (isACPError(error)) return error
   if (isAuthRequired(error)) {
-    return new ACPError.AuthRequiredError({ providerId: findProviderID(error) })
+    return new ACPError.AuthRequiredError({ providerId: Option.getOrUndefined(findProviderID(error)) })
   }
   return new ACPError.ServiceFailureError({ safeMessage: "OpenCode service failure", service })
 }
 
 function isACPError(error: unknown): error is Error {
   return (
-    typeof error === "object" &&
-    error !== null &&
+    Predicate.isObjectOrArray(error) &&
     "_tag" in error &&
     typeof error._tag === "string" &&
     error._tag.startsWith("ACP")
@@ -1205,7 +1285,7 @@ function isACPError(error: unknown): error is Error {
 }
 
 function isAuthRequired(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false
+  if (!Predicate.isObjectOrArray(value)) return false
   if (value instanceof Error && (value.name === "ProviderAuthError" || value.name === "LoadAPIKeyError")) return true
   if (
     value instanceof Error &&
@@ -1220,10 +1300,11 @@ function isAuthRequired(value: unknown): boolean {
   return false
 }
 
-function findProviderID(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) return
-  if ("providerID" in value && typeof value.providerID === "string") return value.providerID
-  if ("providerId" in value && typeof value.providerId === "string") return value.providerId
+function findProviderID(value: unknown): Option.Option<string> {
+  if (!Predicate.isObjectOrArray(value)) return Option.none()
+  if ("providerID" in value && typeof value.providerID === "string") return Option.some(value.providerID)
+  if ("providerId" in value && typeof value.providerId === "string") return Option.some(value.providerId)
   if ("data" in value) return findProviderID(value.data)
   if ("error" in value) return findProviderID(value.error)
+  return Option.none()
 }
