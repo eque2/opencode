@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Predicate, Schema } from "effect"
+import { Config, DateTime, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
 import * as Tool from "./tool"
 import * as McpWebSearch from "./mcp-websearch"
@@ -28,6 +28,7 @@ const WebSearchProviderSchema = Schema.Literals(["exa", "parallel"])
 export type WebSearchProvider = Schema.Schema.Type<typeof WebSearchProviderSchema>
 
 export function selectWebSearchProvider(sessionID: string, flags = { exa: false, parallel: false }): WebSearchProvider {
+  // eslint-disable-next-line effect/no-process-env-use-config -- (c) sync export; test/tool/websearch.test.ts pins that it reads the live process.env override on each call
   const override = process.env.OPENCODE_WEBSEARCH_PROVIDER
   if (override === "exa" || override === "parallel") return override
   if (flags.parallel) return "parallel"
@@ -54,20 +55,22 @@ export function webSearchModelName(extra: Tool.Context["extra"]): Option.Option<
   return Option.orElse(apiID, () => id).pipe(Option.map((name) => name.slice(0, 100)))
 }
 
-function parallelAuthHeaders() {
-  const headers = { "User-Agent": `opencode/${InstallationVersion}` }
-  if (!process.env.PARALLEL_API_KEY) return headers
-  return { ...headers, Authorization: `Bearer ${process.env.PARALLEL_API_KEY}` }
-}
+const parallelAuthHeaders = Config.Redacted("PARALLEL_API_KEY").pipe(
+  Config.option,
+  Config.map((key) => ({
+    "User-Agent": `opencode/${InstallationVersion}`,
+    ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ Authorization: `Bearer ${Redacted.value(value)}` }) }),
+  })),
+)
 
-function callProvider(
+const callProvider = Effect.fnUntraced(function* (
   http: HttpClient.HttpClient,
   provider: WebSearchProvider,
   params: Schema.Schema.Type<typeof Parameters>,
   ctx: Tool.Context,
 ) {
   if (provider === "parallel") {
-    return McpWebSearch.call(
+    return yield* McpWebSearch.call(
       http,
       McpWebSearch.PARALLEL_URL,
       "web_search",
@@ -82,13 +85,13 @@ function callProvider(
         }),
       },
       "25 seconds",
-      parallelAuthHeaders(),
+      yield* parallelAuthHeaders,
     )
   }
 
-  return McpWebSearch.call(
+  return yield* McpWebSearch.call(
     http,
-    McpWebSearch.EXA_URL,
+    yield* McpWebSearch.exaUrl,
     "web_search_exa",
     McpWebSearch.SearchArgs,
     {
@@ -100,7 +103,7 @@ function callProvider(
     },
     "25 seconds",
   )
-}
+})
 
 export const WebSearchTool = Tool.define(
   "websearch",

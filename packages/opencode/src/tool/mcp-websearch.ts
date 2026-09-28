@@ -1,9 +1,18 @@
-import { Duration, Effect, Option, Schema } from "effect"
+import { Config, Duration, Effect, Option, Redacted, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 
-export const EXA_URL = process.env.EXA_API_KEY
-  ? `https://mcp.exa.ai/mcp?exaApiKey=${encodeURIComponent(process.env.EXA_API_KEY)}`
-  : "https://mcp.exa.ai/mcp"
+const EXA_BASE_URL = "https://mcp.exa.ai/mcp"
+
+/** The Exa MCP URL, carrying EXA_API_KEY when the environment sets a non-empty key. */
+export const exaUrl = Config.Redacted("EXA_API_KEY").pipe(
+  Config.option,
+  Config.map(
+    Option.match({
+      onNone: () => EXA_BASE_URL,
+      onSome: (key) => `${EXA_BASE_URL}?exaApiKey=${encodeURIComponent(Redacted.value(key))}`,
+    }),
+  ),
+)
 export const PARALLEL_URL = "https://search.parallel.ai/mcp"
 
 const McpResult = Schema.Struct({
