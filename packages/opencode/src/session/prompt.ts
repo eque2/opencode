@@ -42,7 +42,7 @@ import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
-import { Cause, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
+import { Cause, Clock, Effect, Exit, Latch, Layer, Option, Scope, Context, Schema, Types } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -279,7 +279,7 @@ const layer = Layer.effect(
         tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
         modelID: taskModel.id,
         providerID: taskModel.providerID,
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
       })
       let part: SessionV1.ToolPart = yield* sessions.updatePart({
         id: PartID.ascending(),
@@ -296,7 +296,7 @@ const layer = Layer.effect(
             subagent_type: task.agent,
             command: task.command,
           },
-          time: { start: Date.now() },
+          time: { start: yield* Clock.currentTimeMillis },
         },
       })
       const taskArgs = {
@@ -362,7 +362,7 @@ const layer = Layer.effect(
             Effect.gen(function* () {
               taskAbort.abort()
               assistantMessage.finish = "tool-calls"
-              assistantMessage.time.completed = Date.now()
+              assistantMessage.time.completed = yield* Clock.currentTimeMillis
               yield* sessions.updateMessage(assistantMessage)
               if (part.state.status === "running") {
                 yield* sessions.updatePart({
@@ -370,7 +370,7 @@ const layer = Layer.effect(
                   state: {
                     status: "error",
                     error: "Cancelled",
-                    time: { start: part.state.time.start, end: Date.now() },
+                    time: { start: part.state.time.start, end: yield* Clock.currentTimeMillis },
                     metadata: part.state.metadata,
                     input: part.state.input,
                   },
@@ -394,7 +394,7 @@ const layer = Layer.effect(
       )
 
       assistantMessage.finish = "tool-calls"
-      assistantMessage.time.completed = Date.now()
+      assistantMessage.time.completed = yield* Clock.currentTimeMillis
       yield* sessions.updateMessage(assistantMessage)
 
       if (result && part.state.status === "running") {
@@ -407,7 +407,7 @@ const layer = Layer.effect(
             metadata: result.metadata,
             output: result.output,
             attachments,
-            time: { ...part.state.time, end: Date.now() },
+            time: { ...part.state.time, end: yield* Clock.currentTimeMillis },
           },
         } satisfies SessionV1.ToolPart)
       }
@@ -419,8 +419,8 @@ const layer = Layer.effect(
             status: "error",
             error: error ? `Tool execution failed: ${error.message}` : "Tool execution failed",
             time: {
-              start: part.state.status === "running" ? part.state.time.start : Date.now(),
-              end: Date.now(),
+              start: part.state.status === "running" ? part.state.time.start : yield* Clock.currentTimeMillis,
+              end: yield* Clock.currentTimeMillis,
             },
             metadata: part.state.status === "pending" ? undefined : part.state.metadata,
             input: part.state.input,
@@ -434,7 +434,7 @@ const layer = Layer.effect(
         id: MessageID.ascending(),
         sessionID,
         role: "user",
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
         agent: lastUser.agent,
         model: lastUser.model,
       }
@@ -471,7 +471,7 @@ const layer = Layer.effect(
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
               sessionID: input.sessionID,
-              time: { created: Date.now() },
+              time: { created: yield* Clock.currentTimeMillis },
               role: "user",
               agent: input.agent,
               model: { providerID: model.providerID, modelID: model.modelID },
@@ -495,14 +495,14 @@ const layer = Layer.effect(
               agent: input.agent,
               cost: 0,
               path: { cwd: ctx.directory, root: ctx.worktree },
-              time: { created: Date.now() },
+              time: { created: yield* Clock.currentTimeMillis },
               role: "assistant",
               tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
               modelID: model.modelID,
               providerID: model.providerID,
             }
             yield* sessions.updateMessage(msg)
-            const started = Date.now()
+            const started = yield* Clock.currentTimeMillis
             const part: SessionV1.ToolPart = {
               type: "tool",
               id: PartID.ascending(),
@@ -531,7 +531,7 @@ const layer = Layer.effect(
               if (aborted) {
                 output += "\n\n" + ["<metadata>", "User aborted the command", "</metadata>"].join("\n")
               }
-              const completed = Date.now()
+              const completed = yield* Clock.currentTimeMillis
               if (!msg.time.completed) {
                 msg.time.completed = completed
                 yield* sessions.updateMessage(msg)
@@ -658,7 +658,7 @@ const layer = Layer.effect(
         id: input.messageID ?? MessageID.ascending(),
         role: "user",
         sessionID: input.sessionID,
-        time: { created: Date.now() },
+        time: { created: yield* Clock.currentTimeMillis },
         tools: input.tools,
         agent: ag.name,
         model: {
@@ -1196,7 +1196,7 @@ const layer = Layer.effect(
             tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
             modelID: model.id,
             providerID: model.providerID,
-            time: { created: Date.now() },
+            time: { created: yield* Clock.currentTimeMillis },
             sessionID,
           }
           yield* sessions.updateMessage(msg)
@@ -1207,7 +1207,7 @@ const layer = Layer.effect(
               providerID: msg.providerID,
               aborted: true,
             })
-            msg.time.completed = Date.now()
+            msg.time.completed = yield* Clock.currentTimeMillis
             yield* sessions.updateMessage(msg)
           })
 
