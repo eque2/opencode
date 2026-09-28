@@ -38,17 +38,24 @@ import { or } from "drizzle-orm"
 import { MessageTable, PartTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { ProviderError } from "@/provider/error"
 import { iife } from "@/util/iife"
+import { isRecord } from "@/util/record"
 import { errorMessage } from "@/util/error"
 import { isMedia } from "@/util/media"
-import type { SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { Array as Arr, Effect, MutableHashSet, Option, Predicate, Record, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
 interface FetchDecompressionError extends Error {
   code: "ZlibError"
-  errno: number
-  path: string
+}
+
+function isFetchDecompressionError(value: unknown): value is FetchDecompressionError {
+  return value instanceof Error && Predicate.hasProperty(value, "code") && value.code === "ZlibError"
+}
+
+// Bun SystemError fields are optional strings; report a missing one as "".
+function stringProperty(value: object, key: string) {
+  return Predicate.hasProperty(value, key) && typeof value[key] === "string" ? value[key] : ""
 }
 
 export const SYNTHETIC_ATTACHMENT_PROMPT = "Attached media from tool result:"
@@ -135,6 +142,17 @@ function hydrate(db: Database.Interface["db"], rows: (typeof MessageTable.$infer
   })
 }
 
+// Tool outputs carry media attachments as data URLs; other attachment shapes are not sent to the model.
+function isDataURLAttachment(value: unknown): value is { mime: string; url: string } {
+  return (
+    isRecord(value) &&
+    typeof value.mime === "string" &&
+    typeof value.url === "string" &&
+    value.url.startsWith("data:") &&
+    value.url.includes(",")
+  )
+}
+
 // The AI SDK accepts only JSON objects as provider metadata entries. Session part
 // metadata is open JSON, so keep the entries that have the provider shape.
 function toProviderMetadata(metadata: Record.ReadonlyRecord<string, unknown>): ProviderMetadata {
@@ -189,19 +207,16 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       return { type: "text", value: output }
     }
 
-    if (typeof output === "object") {
-      const outputObject = output as {
-        text: string
-        attachments?: Array<{ mime: string; url: string }>
-      }
-      const attachments = (outputObject.attachments ?? []).filter((attachment) => {
-        return attachment.url.startsWith("data:") && attachment.url.includes(",")
-      })
+    if (Predicate.isObjectOrArray(output)) {
+      const text = Predicate.hasProperty(output, "text") && typeof output.text === "string" ? output.text : ""
+      const attachments = (
+        Predicate.hasProperty(output, "attachments") && Array.isArray(output.attachments) ? output.attachments : []
+      ).filter(isDataURLAttachment)
 
       return {
         type: "content",
         value: [
-          ...(outputObject.text ? [{ type: "text", text: outputObject.text }] : []),
+          ...(text ? [{ type: "text", text }] : []),
           ...attachments.map((attachment) => ({
             type: "media",
             mediaType: attachment.mime,
@@ -214,7 +229,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
       }
     }
 
-    return { type: "json", value: output as never }
+    return { type: "json", value: output }
   }
 
   for (const msg of input) {
@@ -339,7 +354,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
                 : outputText
 
             assistantMessage.parts.push({
-              type: ("tool-" + part.tool) as `tool-${string}`,
+              type: `tool-${part.tool}` as const,
               state: "output-available",
               toolCallId: part.callID,
               input: part.state.input,
@@ -352,7 +367,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const metadata = part.state.metadata
             if (metadata?.interrupted === true && typeof metadata.output === "string") {
               assistantMessage.parts.push({
-                type: ("tool-" + part.tool) as `tool-${string}`,
+                type: `tool-${part.tool}` as const,
                 state: "output-available",
                 toolCallId: part.callID,
                 input: part.state.input,
@@ -362,7 +377,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
               })
             } else {
               assistantMessage.parts.push({
-                type: ("tool-" + part.tool) as `tool-${string}`,
+                type: `tool-${part.tool}` as const,
                 state: "output-error",
                 toolCallId: part.callID,
                 input: part.state.input,
@@ -376,7 +391,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
           // Anthropic/Claude APIs require every tool_use to have a corresponding tool_result
           if (part.state.status === "pending" || part.state.status === "running")
             assistantMessage.parts.push({
-              type: ("tool-" + part.tool) as `tool-${string}`,
+              type: `tool-${part.tool}` as const,
               state: "output-error",
               toolCallId: part.callID,
               input: part.state.input,
@@ -659,20 +674,20 @@ export function fromError(
         },
         { cause: e },
       ).toObject()
-    case (e as SystemError)?.code === "ECONNRESET":
+    case Predicate.hasProperty(e, "code") && e.code === "ECONNRESET":
       return new APIError(
         {
           message: "Connection reset by server",
           isRetryable: true,
           metadata: {
-            code: (e as SystemError).code ?? "",
-            syscall: (e as SystemError).syscall ?? "",
-            message: (e as SystemError).message ?? "",
+            code: e.code,
+            syscall: stringProperty(e, "syscall"),
+            message: stringProperty(e, "message"),
           },
         },
         { cause: e },
       ).toObject()
-    case e instanceof Error && (e as FetchDecompressionError).code === "ZlibError":
+    case isFetchDecompressionError(e):
       if (ctx.aborted) {
         return new AbortedError({ message: e.message }, { cause: e }).toObject()
       }
@@ -681,7 +696,7 @@ export function fromError(
           message: "Response decompression failed",
           isRetryable: true,
           metadata: {
-            code: (e as FetchDecompressionError).code,
+            code: e.code,
             message: e.message,
           },
         },

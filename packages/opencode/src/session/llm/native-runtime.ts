@@ -149,9 +149,12 @@ export function stream(input: StreamInput): StreamResult {
 function providerFetch(input: Pick<StreamInput, "provider" | "auth">): typeof globalThis.fetch | undefined {
   if (input.provider.id !== "openai" || input.auth?.type !== "oauth") return undefined
   const value: unknown = input.provider.options.fetch
-  if (typeof value !== "function") return undefined
-  return value as typeof globalThis.fetch
+  if (!isFetch(value)) return undefined
+  return value
 }
+
+// Provider options are untyped config; the OAuth plugin stores a fetch-compatible function here.
+const isFetch = (value: unknown): value is typeof globalThis.fetch => typeof value === "function"
 
 function providerHeaders(value: unknown): Record<string, string> | undefined {
   if (!isRecord(value)) return undefined
