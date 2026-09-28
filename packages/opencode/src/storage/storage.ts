@@ -55,6 +55,11 @@ const decodeSession = Schema.decodeUnknownOption(SessionFile)
 const decodeMessage = Schema.decodeUnknownOption(MessageFile)
 const decodeSummary = Schema.decodeUnknownOption(SummaryFile)
 
+// Storage files hold arbitrary JSON, pretty-printed with two spaces.
+const encodeJsonText = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
+// A value that JSON cannot represent is a programming defect, as it was with JSON.stringify.
+const jsonText = (value: unknown) => encodeJsonText(value).pipe(Effect.orDie)
+
 export interface Interface {
   readonly remove: (key: string[]) => Effect.Effect<void, FSUtil.Error>
   readonly read: <T>(key: string[]) => Effect.Effect<T, Error>
@@ -125,19 +130,15 @@ const MIGRATIONS: Migration[] = [
 
         yield* fs.writeWithDirs(
           path.join(dir, "project", projectID + ".json"),
-          JSON.stringify(
-            {
-              id,
-              vcs: "git",
-              worktree,
-              time: {
-                created: Date.now(),
-                initialized: Date.now(),
-              },
+          yield* jsonText({
+            id,
+            vcs: "git",
+            worktree,
+            time: {
+              created: Date.now(),
+              initialized: Date.now(),
             },
-            null,
-            2,
-          ),
+          }),
         )
 
         yield* Effect.logInfo(`migrating sessions for project ${projectID}`)
@@ -149,7 +150,7 @@ const MIGRATIONS: Migration[] = [
           yield* Effect.logInfo("copying", { sessionFile, dest })
           const session = yield* fs.readJson(sessionFile)
           const info = decodeSession(session, { onExcessProperty: "ignore" })
-          yield* fs.writeWithDirs(dest, JSON.stringify(session, null, 2))
+          yield* fs.writeWithDirs(dest, yield* jsonText(session))
           if (Option.isNone(info)) continue
           yield* Effect.logInfo(`migrating messages for session ${info.value.id}`)
           for (const msgFile of yield* fs.scan(`storage/session/message/${info.value.id}/*.json`, {
@@ -163,7 +164,7 @@ const MIGRATIONS: Migration[] = [
             })
             const message = yield* fs.readJson(msgFile)
             const item = decodeMessage(message, { onExcessProperty: "ignore" })
-            yield* fs.writeWithDirs(next, JSON.stringify(message, null, 2))
+            yield* fs.writeWithDirs(next, yield* jsonText(message))
             if (Option.isNone(item)) continue
 
             yield* Effect.logInfo(`migrating parts for message ${item.value.id}`)
@@ -177,7 +178,7 @@ const MIGRATIONS: Migration[] = [
                 partFile,
                 dest: out,
               })
-              yield* fs.writeWithDirs(out, JSON.stringify(part, null, 2))
+              yield* fs.writeWithDirs(out, yield* jsonText(part))
             }
           }
         }
@@ -193,23 +194,16 @@ const MIGRATIONS: Migration[] = [
       const session = decodeSummary(raw, { onExcessProperty: "ignore" })
       if (Option.isNone(session)) continue
       const diffs = session.value.summary.diffs
-      yield* fs.writeWithDirs(
-        path.join(dir, "session_diff", session.value.id + ".json"),
-        JSON.stringify(diffs, null, 2),
-      )
+      yield* fs.writeWithDirs(path.join(dir, "session_diff", session.value.id + ".json"), yield* jsonText(diffs))
       yield* fs.writeWithDirs(
         path.join(dir, "session", session.value.projectID, session.value.id + ".json"),
-        JSON.stringify(
-          {
-            ...(raw as Record<string, unknown>),
-            summary: {
-              additions: diffs.reduce((sum, x) => sum + x.additions, 0),
-              deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
-            },
+        yield* jsonText({
+          ...(raw as Record<string, unknown>),
+          summary: {
+            additions: diffs.reduce((sum, x) => sum + x.additions, 0),
+            deletions: diffs.reduce((sum, x) => sum + x.deletions, 0),
           },
-          null,
-          2,
-        ),
+        }),
       )
     }
   }),
@@ -254,7 +248,7 @@ const layer = Layer.effect(
       body.pipe(Effect.catchIf(missing, () => fail(target)))
 
     const writeJson = Effect.fnUntraced(function* (target: string, content: unknown) {
-      yield* fs.writeWithDirs(target, JSON.stringify(content, null, 2))
+      yield* fs.writeWithDirs(target, yield* jsonText(content))
     })
 
     const withResolved = <A, E>(
