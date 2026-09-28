@@ -91,11 +91,13 @@ describe("plugin.config-hook-error-isolation", () => {
   test("config hooks are individually error-isolated in the layer factory", async () => {
     const src = await Bun.file(file).text()
 
-    // Each hook's config call is wrapped in Effect.tryPromise with error logging + Effect.ignore
+    // Each hook's config call is wrapped in settle (a typed Effect.try/tryPromise) with error logging + Effect.ignore
     expect(src).toContain("plugin config hook failed")
 
     const pattern =
-      /for\s*\(const hook of hooks\)\s*\{[\s\S]*?Effect\.tryPromise[\s\S]*?\.config\?\.\([\s\S]*?plugin config hook failed[\s\S]*?Effect\.ignore/
+      /for\s*\(const hook of hooks\)\s*\{[\s\S]*?hook\.config[\s\S]*?settle\(\(\)\s*=>\s*configHook\([\s\S]*?plugin config hook failed[\s\S]*?Effect\.ignore/
     expect(pattern.test(src)).toBe(true)
+    // settle turns both a synchronous throw and a rejected Promise into the Effect error channel
+    expect(src).toMatch(/function settle<A>[\s\S]*?Effect\.try\([\s\S]*?Effect\.tryPromise\(/)
   })
 })
