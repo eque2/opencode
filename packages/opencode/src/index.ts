@@ -30,6 +30,7 @@ import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 import { Cause, Effect, Option } from "effect"
+import { Datadog } from "@opencode-ai/core/observability/datadog"
 
 const args = hideBin(process.argv)
 
@@ -161,10 +162,15 @@ Effect.runFork(
     // Most notably, some docker-container-based MCP servers don't handle such signals unless
     // run using `docker run --init`.
     // Explicitly exit to avoid any hanging subprocesses.
+    // process.exit() skips the runtime finalizers, so the log sinks send their last batch first.
     Effect.ensuring(
-      Effect.sync((): void => {
-        process.exit()
-      }),
+      Datadog.flushAll.pipe(
+        Effect.andThen(
+          Effect.sync((): void => {
+            process.exit()
+          }),
+        ),
+      ),
     ),
   ),
 )

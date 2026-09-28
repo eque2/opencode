@@ -9,6 +9,7 @@ import { writeHeapSnapshot } from "node:v8"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Effect, Stream } from "effect"
+import { Datadog } from "@opencode-ai/core/observability/datadog"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 
 // The heap monitor is a detached fiber; the TUI ends this worker with terminate().
@@ -86,6 +87,8 @@ export const rpc = {
       const store = yield* InstanceStore.Service
       yield* store.disposeAll()
       yield* stopServer
+      // The main thread terminates this worker next, which skips the runtime finalizers.
+      yield* Datadog.flushAll
       process.off("unhandledRejection", onUnhandledRejection)
       process.off("uncaughtException", onUncaughtException)
     }),
