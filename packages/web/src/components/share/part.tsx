@@ -1,5 +1,5 @@
 import map from "lang-map"
-import { DateTime } from "luxon"
+import { DateTime, Duration } from "effect"
 import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
 import {
   IconHashtag,
@@ -33,6 +33,28 @@ import type { Diagnostic } from "vscode-languageserver-types"
 import styles from "./part.module.css"
 
 const MIN_DURATION = 2000
+
+// The same Intl options as luxon's DateTime.DATETIME_MED and DATETIME_FULL_WITH_SECONDS,
+// so the rendered text stays identical after the move to effect DateTime.
+const TIMESTAMP_FORMATS = {
+  medium: { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "numeric" },
+  full: {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    timeZoneName: "short",
+  },
+} satisfies Record<string, Intl.DateTimeFormatOptions>
+
+export function formatTimestamp(millis: number, locale: string, style: keyof typeof TIMESTAMP_FORMATS) {
+  return DateTime.formatLocal(DateTime.makeUnsafe(millis), {
+    ...TIMESTAMP_FORMATS[style],
+    locale: normalizeLocale(locale),
+  })
+}
 
 export interface PartProps {
   index: number
@@ -141,13 +163,9 @@ export function Part(props: PartProps) {
             </div>
             {props.last && props.message.role === "assistant" && props.message.time.completed && (
               <Footer
-                title={DateTime.fromMillis(props.message.time.completed)
-                  .setLocale(normalizeLocale(messages.locale))
-                  .toLocaleString(DateTime.DATETIME_FULL_WITH_SECONDS)}
+                title={formatTimestamp(props.message.time.completed, messages.locale, "full")}
               >
-                {DateTime.fromMillis(props.message.time.completed)
-                  .setLocale(normalizeLocale(messages.locale))
-                  .toLocaleString(DateTime.DATETIME_MED)}
+                {formatTimestamp(props.message.time.completed, messages.locale, "medium")}
               </Footer>
             )}
           </div>
@@ -283,9 +301,12 @@ export function Part(props: PartProps) {
                 </Switch>
               </div>
               <ToolFooter
-                time={DateTime.fromMillis(props.part.state.time.end)
-                  .diff(DateTime.fromMillis(props.part.state.time.start))
-                  .toMillis()}
+                time={Duration.toMillis(
+                  DateTime.distance(
+                    DateTime.makeUnsafe(props.part.state.time.start),
+                    DateTime.makeUnsafe(props.part.state.time.end),
+                  ),
+                )}
               />
             </>
           )}

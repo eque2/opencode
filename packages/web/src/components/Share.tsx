@@ -1,14 +1,13 @@
 import { For, Show, onMount, Suspense, onCleanup, createMemo, createSignal, SuspenseList } from "solid-js"
-import { DateTime } from "luxon"
 import { createStore, reconcile } from "solid-js/store"
 import { IconArrowDown } from "./icons"
 import { IconOpencode } from "./icons/custom"
-import { ShareI18nProvider, formatCurrency, formatNumber, normalizeLocale } from "./share/common"
+import { ShareI18nProvider, formatCurrency, formatNumber } from "./share/common"
 import styles from "./share.module.css"
 import type { MessageV2 } from "opencode/session/message-v2"
 import type { Message } from "opencode/session/message"
 import type { Session } from "opencode/session/index"
-import { Part, ProviderIcon } from "./share/part"
+import { Part, ProviderIcon, formatTimestamp } from "./share/part"
 
 type MessageWithParts = MessageV2.Info & { parts: MessageV2.Part[] }
 
@@ -333,13 +332,9 @@ export default function Share(props: {
               </ul>
               <div
                 data-component="header-time"
-                title={DateTime.fromMillis(data().created || 0)
-                  .setLocale(normalizeLocale(props.messages.locale))
-                  .toLocaleString(DateTime.DATETIME_FULL_WITH_SECONDS)}
+                title={formatTimestamp(data().created || 0, props.messages.locale, "full")}
               >
-                {DateTime.fromMillis(data().created || 0)
-                  .setLocale(normalizeLocale(props.messages.locale))
-                  .toLocaleString(DateTime.DATETIME_MED)}
+                {formatTimestamp(data().created || 0, props.messages.locale, "medium")}
               </div>
             </div>
           </div>
