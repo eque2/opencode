@@ -35,6 +35,11 @@ const cliEntry = path.join(opencodeRoot, "src/index.ts")
 
 export const testModelID = "test/test-model"
 
+/** `opencode serve` did not print its listening line in time; `message` carries the stderr tail. */
+export class ServeNotReadyError extends Schema.TaggedError<ServeNotReadyError>()("ServeNotReadyError", {
+  message: Schema.String,
+}) {}
+
 // Wrap a Bun subprocess pipe (or any ReadableStream<Uint8Array>) as a Stream.
 // Centralizes the `evaluate` + `onError` boilerplate and tags errors with the
 // stream name so a stderr/stdout failure is greppable in logs.
@@ -367,10 +372,11 @@ export function withCliFixture<A, E>(
           duration: Duration.millis(readyTimeoutMs),
           orElse: () =>
             Effect.fail(
-              new Error(
-                `opencode serve did not become ready within ${readyTimeoutMs}ms\n` +
+              new ServeNotReadyError({
+                message:
+                  `opencode serve did not become ready within ${readyTimeoutMs}ms\n` +
                   `stderr (last 2000):\n${stderrChunks.join("").slice(-2000)}`,
-              ),
+              }),
             ),
         }),
       )
