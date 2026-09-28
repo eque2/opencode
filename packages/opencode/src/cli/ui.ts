@@ -1,5 +1,6 @@
 import { EOL } from "os"
-import { Schema } from "effect"
+import { createInterface } from "readline"
+import { Effect, Schema } from "effect"
 import { logo as glyphs } from "./logo"
 
 const wordmark = [
@@ -88,20 +89,21 @@ export function logo(pad?: string) {
   return result.join("").trimEnd()
 }
 
-export async function input(prompt: string): Promise<string> {
-  const readline = require("readline")
-  const rl = readline.createInterface({
+export const input = Effect.fn("UI.input")(function* (prompt: string) {
+  const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
   })
 
-  return new Promise((resolve) => {
+  return yield* Effect.callback<string>((resume) => {
     rl.question(prompt, (answer: string) => {
       rl.close()
-      resolve(answer.trim())
+      resume(Effect.succeed(answer.trim()))
     })
+    // Close the prompt when the fiber is interrupted before an answer arrives.
+    return Effect.sync(() => rl.close())
   })
-}
+})
 
 export function error(message: string) {
   if (message.startsWith("Error: ")) {
