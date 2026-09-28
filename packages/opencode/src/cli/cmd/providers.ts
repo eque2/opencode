@@ -25,6 +25,17 @@ const promptValue = <Value>(value: Option.Option<Value>) => {
   return Effect.succeed(value.value)
 }
 
+// @clack/prompts accepts the input when validate returns undefined and shows a returned string as the error.
+function required(value: string | undefined) {
+  if (value && value.length > 0) return undefined
+  return "Required"
+}
+
+function providerID(value: string | undefined) {
+  if (value && value.match(/^[0-9a-z-]+$/)) return undefined
+  return "a-z, 0-9 and hyphens only"
+}
+
 const put = Effect.fn("Cli.providers.put")(function* (key: string, info: Auth.Info) {
   const auth = yield* Auth.Service
   yield* Effect.orDie(auth.set(key, info))
@@ -83,10 +94,11 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
         inputs[prompt.key] = yield* promptValue(value)
         continue
       }
+      const validate = prompt.validate
       const value = yield* Prompt.text({
         message: prompt.message,
         placeholder: prompt.placeholder,
-        validate: prompt.validate ? (v) => prompt.validate!(v ?? "") : undefined,
+        ...(validate ? { validate: (v: string | undefined) => validate(v ?? "") } : {}),
       })
       inputs[prompt.key] = yield* promptValue(value)
     }
@@ -135,7 +147,7 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
     if (authorize.method === "code") {
       const code = yield* Prompt.text({
         message: "Paste the authorization code here: ",
-        validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+        validate: required,
       })
       const authorizationCode = yield* promptValue(code)
       const result = yield* cliTry("Failed to authorize: ", () => authorize.callback(authorizationCode))
@@ -172,7 +184,7 @@ const handlePluginAuth = Effect.fn("Cli.providers.pluginAuth")(function* (
   if (method.type === "api") {
     const key = yield* Prompt.password({
       message: "Enter your API key",
-      validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+      validate: required,
     })
     const apiKey = yield* promptValue(key)
 
@@ -430,7 +442,7 @@ export const ProvidersLoginCommand = effectCmd({
       provider = (yield* promptValue(
         yield* Prompt.text({
           message: "Enter provider id",
-          validate: (x) => (x && x.match(/^[0-9a-z-]+$/) ? undefined : "a-z, 0-9 and hyphens only"),
+          validate: providerID,
         }),
       )).replace(/^@ai-sdk\//, "")
 
@@ -471,7 +483,7 @@ export const ProvidersLoginCommand = effectCmd({
 
     const key = yield* Prompt.password({
       message: "Enter your API key",
-      validate: (x) => (x && x.length > 0 ? undefined : "Required"),
+      validate: required,
     })
     const apiKey = yield* promptValue(key)
     yield* Effect.orDie(authSvc.set(provider, { type: "api", key: apiKey }))
