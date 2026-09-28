@@ -253,7 +253,7 @@ export const ProvidersCommand = cmd({
   describe: "manage AI providers and credentials",
   builder: (yargs) =>
     yargs.command(ProvidersListCommand).command(ProvidersLoginCommand).command(ProvidersLogoutCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
 
 export const ProvidersListCommand = effectCmd({
