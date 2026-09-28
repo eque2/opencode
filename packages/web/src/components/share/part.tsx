@@ -75,7 +75,7 @@ export function Part(props: PartProps) {
       data-component="part"
       data-type={props.part.type}
       data-role={props.message.role}
-      data-copied={copied() ? true : undefined}
+      bool:data-copied={copied()}
     >
       <div data-component="decoration">
         <div data-slot="anchor" title={messages.link_to_message}>
