@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
-import { Effect } from "effect"
+import { Effect, Predicate } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Session } from "@/session/session"
@@ -50,8 +50,7 @@ describe("StructuredOutput Integration", () => {
           expect(result.info.structured).toBeDefined()
           expect(typeof result.info.structured).toBe("object")
 
-          const output = result.info.structured as any
-          expect(output.answer).toBe(4)
+          expect(result.info.structured).toMatchObject({ answer: 4 })
 
           // Verify no error was set
           expect(result.info.error).toBeUndefined()
@@ -108,13 +107,11 @@ describe("StructuredOutput Integration", () => {
         expect(result.info.role).toBe("assistant")
         if (result.info.role === "assistant") {
           expect(result.info.structured).toBeDefined()
-          const output = result.info.structured as any
+          const output = result.info.structured
 
-          expect(output.company).toBeDefined()
-          expect(output.company.name).toBe("Anthropic")
-          expect(typeof output.company.founded).toBe("number")
+          expect(output).toMatchObject({ company: { name: "Anthropic", founded: expect.any(Number) } })
 
-          if (output.products) {
+          if (Predicate.hasProperty(output, "products") && output.products) {
             expect(Array.isArray(output.products)).toBe(true)
           }
 

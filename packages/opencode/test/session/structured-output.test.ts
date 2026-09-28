@@ -1,8 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
-import { Exit, Schema } from "effect"
+import { Exit, Predicate, Schema } from "effect"
+import { asSchema } from "ai"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionID, MessageID } from "../../src/session/schema"
+
+// The JSON schema that the AI SDK sends for a tool input. The structured output tool builds it synchronously.
+function inputJsonSchema(schema: Parameters<typeof asSchema>[0]) {
+  const json = asSchema(schema).jsonSchema
+  if (Predicate.isPromiseLike(json)) throw new Error("expected a synchronous JSON schema")
+  return json
+}
 
 const decodeFormat = Schema.decodeUnknownExit(SessionV1.Format)
 const decodeUser = Schema.decodeUnknownExit(SessionV1.User)
@@ -188,9 +196,9 @@ describe("structured-output.createStructuredOutputTool", () => {
 
     // AI SDK wraps schema in { jsonSchema: {...} }
     expect(tool.inputSchema).toBeDefined()
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.properties?.company).toBeDefined()
-    expect(inputSchema.jsonSchema?.properties?.founded).toBeDefined()
+    const inputSchema = inputJsonSchema(tool.inputSchema)
+    expect(inputSchema.properties?.company).toBeDefined()
+    expect(inputSchema.properties?.founded).toBeDefined()
   })
 
   test("strips $schema property from inputSchema", () => {
@@ -206,8 +214,7 @@ describe("structured-output.createStructuredOutputTool", () => {
     })
 
     // AI SDK wraps schema in { jsonSchema: {...} }
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.$schema).toBeUndefined()
+    expect(inputJsonSchema(tool.inputSchema).$schema).toBeUndefined()
   })
 
   test("execute calls onSuccess with valid args", async () => {
@@ -225,7 +232,6 @@ describe("structured-output.createStructuredOutputTool", () => {
     const result = await tool.execute!(testArgs, {
       toolCallId: "test-call-id",
       messages: [],
-      abortSignal: undefined as any,
     })
 
     expect(capturedOutput).toEqual(testArgs)
@@ -251,9 +257,9 @@ describe("structured-output.createStructuredOutputTool", () => {
 
     // The schema requires both 'name' and 'age'
     expect(tool.inputSchema).toBeDefined()
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.required).toContain("name")
-    expect(inputSchema.jsonSchema?.required).toContain("age")
+    const inputSchema = inputJsonSchema(tool.inputSchema)
+    expect(inputSchema.required).toContain("name")
+    expect(inputSchema.required).toContain("age")
   })
 
   test("AI SDK validates schema types before execute - wrong type", async () => {
@@ -273,8 +279,7 @@ describe("structured-output.createStructuredOutputTool", () => {
 
     // The schema defines 'count' as a number
     expect(tool.inputSchema).toBeDefined()
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.properties?.count?.type).toBe("number")
+    expect(inputJsonSchema(tool.inputSchema).properties?.count).toMatchObject({ type: "number" })
   })
 
   test("execute handles nested objects", async () => {
@@ -306,7 +311,6 @@ describe("structured-output.createStructuredOutputTool", () => {
       {
         toolCallId: "test-call-id",
         messages: [],
-        abortSignal: undefined as any,
       },
     )
 
@@ -314,10 +318,11 @@ describe("structured-output.createStructuredOutputTool", () => {
     expect(validResult.metadata.valid).toBe(true)
 
     // Verify schema has correct nested structure
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.properties?.user?.type).toBe("object")
-    expect(inputSchema.jsonSchema?.properties?.user?.properties?.name?.type).toBe("string")
-    expect(inputSchema.jsonSchema?.properties?.user?.required).toContain("name")
+    expect(inputJsonSchema(tool.inputSchema).properties?.user).toMatchObject({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: expect.arrayContaining(["name"]),
+    })
   })
 
   test("execute handles arrays", async () => {
@@ -345,7 +350,6 @@ describe("structured-output.createStructuredOutputTool", () => {
       {
         toolCallId: "test-call-id",
         messages: [],
-        abortSignal: undefined as any,
       },
     )
 
@@ -353,9 +357,10 @@ describe("structured-output.createStructuredOutputTool", () => {
     expect(validResult.metadata.valid).toBe(true)
 
     // Verify schema has correct array structure
-    const inputSchema = tool.inputSchema as any
-    expect(inputSchema.jsonSchema?.properties?.tags?.type).toBe("array")
-    expect(inputSchema.jsonSchema?.properties?.tags?.items?.type).toBe("string")
+    expect(inputJsonSchema(tool.inputSchema).properties?.tags).toMatchObject({
+      type: "array",
+      items: { type: "string" },
+    })
   })
 
   test("toModelOutput returns text value", async () => {

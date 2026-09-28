@@ -17,6 +17,9 @@ import { Plugin } from "@/plugin"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Effect, Layer, Schema } from "effect"
 import { testEffect } from "../lib/effect"
+import { ProviderTest } from "../fake/provider"
+import { ProjectV2 } from "@opencode-ai/core/project"
+import type { TaskPromptOps } from "@/tool/task"
 
 const callID = "call-test"
 const sessionID = SessionID.make("ses_test")
@@ -30,16 +33,31 @@ const agent: Agent.Info = {
   permission: [{ permission: "*", pattern: "*", action: "allow" }],
 }
 
-const model = {
+// A non-OpenAI npm package and a plain provider ID keep ProviderTransform.schema a pass-through.
+const model: Provider.Model = ProviderTest.model({
+  id: ModelV2.ID.make("test-model"),
   providerID: ProviderV2.ID.make("test"),
-  api: { id: "test-model" },
-} as Provider.Model
+  api: { id: "test-model", url: "https://example.com", npm: "@ai-sdk/anthropic" },
+})
 
-function fakeMcp() {
-  return MCP.Service.of({
-    tools: () => Effect.succeed({}),
-    clients: () => Effect.succeed({}),
-  } as Partial<MCP.Interface> as MCP.Interface)
+const session: Session.Info = {
+  id: sessionID,
+  slug: "test-session",
+  projectID: ProjectV2.ID.global,
+  directory: "/tmp",
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  title: "Test session",
+  version: "1.0.0",
+  time: { created: 1, updated: 1 },
+  permission: [],
+}
+
+// The timing tool never starts a subtask.
+const promptOps: TaskPromptOps = {
+  cancel: () => Effect.die("unused"),
+  resolvePromptParts: () => Effect.die("unused"),
+  prompt: () => Effect.die("unused"),
 }
 
 const fakePlugin = Plugin.Service.of({
@@ -64,7 +82,10 @@ const fakeTruncate = Truncate.Service.of({
 const layer = Layer.mergeAll(
   Layer.succeed(Plugin.Service, fakePlugin),
   Layer.succeed(Permission.Service, fakePermission),
-  Layer.succeed(MCP.Service, fakeMcp()),
+  Layer.mock(MCP.Service)({
+    tools: () => Effect.succeed({}),
+    clients: () => Effect.succeed({}),
+  }),
   Layer.succeed(Truncate.Service, fakeTruncate),
   RuntimeFlags.layer(),
   Layer.succeed(
@@ -138,11 +159,11 @@ it.effect("preserves running tool start time across metadata updates", () =>
     const tools = yield* SessionTools.resolve({
       agent,
       model,
-      session: { id: sessionID, permission: [] } as unknown as Session.Info,
+      session,
       processor,
       bypassAgentCheck: false,
       messages: [],
-      promptOps: {} as never,
+      promptOps,
     })
     const execute = tools.timing.execute
     if (!execute) throw new Error("timing tool is missing execute")
