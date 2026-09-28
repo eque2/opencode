@@ -182,7 +182,7 @@ const layer = Layer.effect(
     const readConfigFile = (filepath: string) => fs.readFileStringSafe(filepath).pipe(Effect.orDie)
 
     const decodeConfig = Effect.fnUntraced(function* (input: unknown, source: string) {
-      const result = ConfigV2Compat.lower(normalizeLoadedConfig(input), source)
+      const result = yield* ConfigV2Compat.lower(normalizeLoadedConfig(input), source)
       yield* Effect.forEach(result.diagnostics, (diagnostic) =>
         Effect.logWarning("configuration compatibility diagnostic", {
           source,
@@ -191,7 +191,7 @@ const layer = Layer.effect(
           action: diagnostic.message,
         }),
       )
-      return ConfigParse.schema(ConfigV1.Info, result.value, source)
+      return yield* ConfigParse.decodeSchema(ConfigV1.Info, result.value, source)
     })
 
     const fetchRemoteJson = Effect.fnUntraced(function* <S extends Schema.Top>(
@@ -227,16 +227,20 @@ const layer = Layer.effect(
     ) {
       const source = "path" in options ? options.path : options.source
       const expanded = yield* ConfigVariable.substitute(
-        "path" in options ? { text, type: "path", path: options.path, env } : { text, type: "virtual", ...options, env },
+        "path" in options
+          ? { text, type: "path", path: options.path, env }
+          : { text, type: "virtual", ...options, env },
       ).pipe(Effect.provideService(FSUtil.Service, fs))
-      const parsed = ConfigParse.jsonc(expanded, source)
+      const parsed = yield* ConfigParse.parseJsonc(expanded, source)
       const data = yield* decodeConfig(parsed, source)
       if (!("path" in options)) return data
 
       if (data.plugin) {
         // Normalize path-like plugin specs while we still know which config file declared them.
         // This prevents `./plugin.ts` from being reinterpreted relative to some later merge location.
-        data.plugin = yield* Effect.forEach(data.plugin, (plugin) => ConfigPlugin.resolvePluginSpec(plugin, options.path))
+        data.plugin = yield* Effect.forEach(data.plugin, (plugin) =>
+          ConfigPlugin.resolvePluginSpec(plugin, options.path),
+        )
       }
       if (!data.$schema) {
         data.$schema = "https://opencode.ai/config.json"
@@ -642,14 +646,15 @@ const layer = Layer.effect(
       const file = path.join(dir, "config.json")
       const existing = yield* loadFile(file)
       const text = yield* readConfigFile(file)
-      const original = text ? ConfigParse.jsonc(text, file) : writable(existing)
+      const original = text ? yield* ConfigParse.parseJsonc(text, file) : writable(existing)
       yield* fs
         .writeFileString(
           file,
           JSON.stringify(mergeDeep(isRecord(original) ? original : writable(existing), writable(config)), null, 2),
         )
         .pipe(Effect.orDie)
-    })
+      // A parse failure was a defect before (a sync throw); keep it one.
+    }, Effect.orDie)
 
     const invalidate = Effect.fn("Config.invalidate")(function* () {
       yield* invalidateGlobal
@@ -663,8 +668,9 @@ const layer = Layer.effect(
       let next: Info
       let changed: boolean
       if (!file.endsWith(".jsonc")) {
-        const existing = ConfigParse.jsonc(before, file)
-        ConfigParse.schema(ConfigV1.Info, ConfigV2Compat.lower(normalizeLoadedConfig(existing), file).value, file)
+        const existing = yield* ConfigParse.parseJsonc(before, file)
+        const lowered = yield* ConfigV2Compat.lower(normalizeLoadedConfig(existing), file)
+        yield* ConfigParse.decodeSchema(ConfigV1.Info, lowered.value, file)
         const merged = mergeDeep(isRecord(existing) ? existing : {}, patch)
         const serialized = JSON.stringify(merged, null, 2)
         next = yield* decodeConfig(merged, file)
@@ -672,14 +678,15 @@ const layer = Layer.effect(
         if (changed) yield* fs.writeFileString(file, serialized).pipe(Effect.orDie)
       } else {
         const updated = patchJsonc(before, patch)
-        next = yield* decodeConfig(ConfigParse.jsonc(updated, file), file)
+        next = yield* decodeConfig(yield* ConfigParse.parseJsonc(updated, file), file)
         changed = updated !== before
         if (changed) yield* fs.writeFileString(file, updated).pipe(Effect.orDie)
       }
 
       if (changed) yield* invalidate()
       return { info: next, changed }
-    })
+      // A parse or validation failure was a defect before (a sync throw); keep it one.
+    }, Effect.orDie)
 
     return Service.of({
       get,

@@ -104,12 +104,12 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
         path: configFilepath,
         missing: "empty",
       }).pipe(Effect.provideService(FSUtil.Service, afs))
-      const data = ConfigParse.jsonc(expanded, configFilepath)
+      const data = yield* ConfigParse.parseJsonc(expanded, configFilepath)
       if (!isRecord(data)) return {} as Info
       // Flatten a nested "tui" key so users who wrote `{ "tui": { ... } }` inside tui.json
       // (mirroring the old opencode.json shape) still get their settings applied.
       const normalized = dropUnknownKeybinds(normalize(data))
-      const parsed = ConfigParse.schema(Info, normalized, configFilepath)
+      const parsed = yield* ConfigParse.decodeSchema(Info, normalized, configFilepath)
       const validated = parsed.attention?.sounds
         ? {
             ...parsed,
@@ -121,8 +121,8 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory: 
         : parsed
       return yield* resolvePlugins(validated, configFilepath)
     }).pipe(
-      // catchCause (not tapErrorCause + orElseSucceed) because JSONC parsing and validation
-      // can sync-throw — those become defects, which orElseSucceed wouldn't catch.
+      // catchCause (not tapErrorCause + orElseSucceed) so that a defect from substitution or plugin
+      // resolution also skips the file, as do JSONC parse and validation failures.
       Effect.catchCause((cause) =>
         Effect.logWarning("skipping invalid tui config", {
           path: configFilepath,

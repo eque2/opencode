@@ -5,56 +5,85 @@ import { Cause, Exit, Schema as EffectSchema, SchemaIssue } from "effect"
 import type { DeepMutable } from "@opencode-ai/core/schema"
 import { InvalidError, JsonError } from "@opencode-ai/core/v1/config/error"
 
-export function jsonc(text: string, filepath: string): unknown {
+/** Parses JSONC text. The Exit is an Effect, so Effect code can `yield*` it. */
+export function parseJsonc(text: string, filepath: string): Exit.Exit<unknown, InstanceType<typeof JsonError>> {
   const errors: JsoncParseError[] = []
   const data = parseJsoncImpl(text, errors, { allowTrailingComma: true })
-  if (errors.length) {
-    const lines = text.split("\n")
-    const issues = errors
-      .map((e) => {
-        const beforeOffset = text.substring(0, e.offset).split("\n")
-        const line = beforeOffset.length
-        const column = beforeOffset[beforeOffset.length - 1].length + 1
-        const problemLine = lines[line - 1]
+  if (!errors.length) return Exit.succeed(data)
 
-        const error = `${printParseErrorCode(e.error)} at line ${line}, column ${column}`
-        if (!problemLine) return error
+  const lines = text.split("\n")
+  const issues = errors
+    .map((e) => {
+      const beforeOffset = text.substring(0, e.offset).split("\n")
+      const line = beforeOffset.length
+      const column = beforeOffset[beforeOffset.length - 1].length + 1
+      const problemLine = lines[line - 1]
 
-        return `${error}\n   Line ${line}: ${problemLine}\n${"".padStart(column + 9)}^`
-      })
-      .join("\n")
-    throw new JsonError({
+      const error = `${printParseErrorCode(e.error)} at line ${line}, column ${column}`
+      if (!problemLine) return error
+
+      return `${error}\n   Line ${line}: ${problemLine}\n${"".padStart(column + 9)}^`
+    })
+    .join("\n")
+  return Exit.fail(
+    new JsonError({
       path: filepath,
       message: `\n--- JSONC Input ---\n${text}\n--- Errors ---\n${issues}\n--- End ---`,
-    })
-  }
-
-  return data
+    }),
+  )
 }
 
-export function schema<S extends EffectSchema.Decoder<unknown, never>>(
+/** Decodes config data with a schema. The Exit is an Effect, so Effect code can `yield*` it. */
+export function decodeSchema<S extends EffectSchema.Decoder<unknown>>(
   schema: S,
   data: unknown,
   source: string,
-): DeepMutable<S["Type"]> {
+): Exit.Exit<DeepMutable<S["Type"]>, InstanceType<typeof InvalidError>> {
   const decoded = EffectSchema.decodeUnknownExit(schema)(data, {
     errors: "all",
     onExcessProperty: "ignore",
   })
-  if (Exit.isSuccess(decoded)) return decoded.value as DeepMutable<S["Type"]>
+  if (Exit.isSuccess(decoded)) return Exit.succeed(decoded.value as DeepMutable<S["Type"]>)
   const error = Cause.squash(decoded.cause)
 
-  throw new InvalidError(
-    {
-      path: source,
-      issues: EffectSchema.isSchemaError(error)
-        ? SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues.map((issue) => ({
-            ...issue,
-            message: issue.message,
-            path: issue.path?.map(String) ?? [],
-          }))
-        : [{ message: String(error), path: [] }],
-    },
-    { cause: error },
+  return Exit.fail(
+    new InvalidError(
+      {
+        path: source,
+        issues: EffectSchema.isSchemaError(error)
+          ? SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues.map((issue) => ({
+              ...issue,
+              message: issue.message,
+              path: issue.path?.map(String) ?? [],
+            }))
+          : [{ message: String(error), path: [] }],
+      },
+      { cause: error },
+    ),
   )
+}
+
+/**
+ * Synchronous form of {@link parseJsonc} for callers outside Effect. It throws the JsonError.
+ * @deprecated Use {@link parseJsonc}.
+ */
+export function jsonc(text: string, filepath: string): unknown {
+  return valueOrThrow(parseJsonc(text, filepath))
+}
+
+/**
+ * Synchronous form of {@link decodeSchema} for callers outside Effect. It throws the InvalidError.
+ * @deprecated Use {@link decodeSchema}.
+ */
+export function schema<S extends EffectSchema.Decoder<unknown>>(
+  schema: S,
+  data: unknown,
+  source: string,
+): DeepMutable<S["Type"]> {
+  return valueOrThrow(decodeSchema(schema, data, source))
+}
+
+function valueOrThrow<A, E>(exit: Exit.Exit<A, E>): A {
+  if (Exit.isSuccess(exit)) return exit.value
+  throw Cause.squash(exit.cause)
 }

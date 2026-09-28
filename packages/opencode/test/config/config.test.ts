@@ -366,7 +366,8 @@ it.instance("updates config and preserves empty shell sentinel", () =>
       "config.json",
     )
 
-    yield* Config.Service.use((svc) => svc.update(ConfigParse.schema(ConfigV1.Info, { shell: "" }, "test:config")))
+    const patch = yield* ConfigParse.decodeSchema(ConfigV1.Info, { shell: "" }, "test:config")
+    yield* Config.Service.use((svc) => svc.update(patch))
 
     const writtenConfig = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
     expect(writtenConfig).toMatchObject({ shell: "" })
@@ -391,7 +392,11 @@ it.effect("updates global config and omits empty shell key in jsonc", () =>
 
       const file = path.join(dir, "opencode.jsonc")
       const writtenConfig = yield* FSUtil.use.readFileString(file)
-      const parsed = ConfigParse.schema(ConfigV1.Info, ConfigParse.jsonc(writtenConfig, file), file)
+      const parsed = yield* ConfigParse.decodeSchema(
+        ConfigV1.Info,
+        yield* ConfigParse.parseJsonc(writtenConfig, file),
+        file,
+      )
       expect(writtenConfig).not.toContain('"shell"')
       expect(parsed.shell).toBeUndefined()
       expect(parsed.model).toBe("test/model")
@@ -450,7 +455,7 @@ for (const input of globalInputs) {
         const fs = yield* FSUtil.Service
         const file = path.join(dir, `opencode${extension}`)
         yield* fs.writeFileString(file, yield* fs.readFileString(path.join(updateFixtures, input)))
-        const patch = ConfigParse.schema(ConfigV1.Info, yield* fs.readJson(`${prefix}-patch.json`), input)
+        const patch = yield* ConfigParse.decodeSchema(ConfigV1.Info, yield* fs.readJson(`${prefix}-patch.json`), input)
         const updated = yield* Config.use.updateGlobal(patch)
         const written = yield* fs.readFileString(file)
 
@@ -470,14 +475,11 @@ for (const input of projectInputs) {
       const fs = yield* FSUtil.Service
       const file = path.join(instance.directory, "config.json")
       yield* fs.writeFileString(file, yield* fs.readFileString(path.join(updateFixtures, input)))
-      const patch = ConfigParse.schema(ConfigV1.Info, yield* fs.readJson(`${prefix}-patch.json`), input)
+      const patch = yield* ConfigParse.decodeSchema(ConfigV1.Info, yield* fs.readJson(`${prefix}-patch.json`), input)
       yield* Config.use.update(patch)
       const written = yield* fs.readFileString(file)
-      const normalized = ConfigParse.schema(
-        ConfigV1.Info,
-        ConfigV2Compat.lower(ConfigParse.jsonc(written, file)).value,
-        file,
-      )
+      const lowered = yield* ConfigV2Compat.lower(yield* ConfigParse.parseJsonc(written, file))
+      const normalized = yield* ConfigParse.decodeSchema(ConfigV1.Info, lowered.value, file)
 
       yield* Effect.promise(() => snapshot(`${prefix}-output.json`, written))
       yield* Effect.promise(() => snapshot(`${prefix}-normalized.json`, JSON.stringify(normalized, null, 2) + "\n"))
@@ -1080,9 +1082,8 @@ Nested command template`,
 it.instance("updates config and writes to file", () =>
   Effect.gen(function* () {
     const test = yield* TestInstance
-    yield* Config.Service.use((svc) =>
-      svc.update(ConfigParse.schema(ConfigV1.Info, { model: "updated/model" }, "test:config")),
-    )
+    const patch = yield* ConfigParse.decodeSchema(ConfigV1.Info, { model: "updated/model" }, "test:config")
+    yield* Config.Service.use((svc) => svc.update(patch))
 
     const writtenConfig = yield* FSUtil.use.readJson(path.join(test.directory, "config.json"))
     expect(writtenConfig).toMatchObject({ model: "updated/model" })
@@ -1862,7 +1863,9 @@ describe("resolvePluginSpec", () => {
   test("keeps package specs unchanged", async () => {
     await using tmp = await tmpdir()
     const file = path.join(tmp.path, "opencode.json")
-    expect(await Effect.runPromise(ConfigPlugin.resolvePluginSpec("oh-my-opencode@2.4.3", file))).toBe("oh-my-opencode@2.4.3")
+    expect(await Effect.runPromise(ConfigPlugin.resolvePluginSpec("oh-my-opencode@2.4.3", file))).toBe(
+      "oh-my-opencode@2.4.3",
+    )
     expect(await Effect.runPromise(ConfigPlugin.resolvePluginSpec("@scope/pkg", file))).toBe("@scope/pkg")
   })
 

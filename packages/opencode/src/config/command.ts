@@ -35,7 +35,9 @@ export const load = Effect.fn("ConfigCommand.load")(function* (dir: string) {
       result[config.name] = parsed.value
       continue
     }
-    throw new InvalidError({ path: item, message: Cause.pretty(parsed.cause) }, { cause: Cause.squash(parsed.cause) })
+    return yield* Effect.fail(
+      new InvalidError({ path: item, message: Cause.pretty(parsed.cause) }, { cause: Cause.squash(parsed.cause) }),
+    )
   }
   return result
 })

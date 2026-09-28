@@ -1,7 +1,7 @@
 export * as ConfigV2Compat from "./v2-compat"
 
 import { isDeepStrictEqual } from "node:util"
-import { HashSet, Option, Schema } from "effect"
+import { Exit, HashSet, Option, Schema } from "effect"
 import { NonNegativeInt, PositiveInt } from "@opencode-ai/core/schema"
 import { ConfigAttachmentV1 } from "@opencode-ai/core/v1/config/attachment"
 import { ConfigLSPV1 } from "@opencode-ai/core/v1/config/lsp"
@@ -98,9 +98,13 @@ const decodeSelection = Schema.decodeUnknownOption(Selection, decodeOptions)
 const decodeTimeout = Schema.decodeUnknownOption(Timeout, decodeOptions)
 const builtinServers = HashSet.fromIterable<string>(ConfigLSPV1.builtinServerIds)
 
-export function lower(input: unknown, source = "configuration"): Lowered {
+/**
+ * Lowers V2 configuration into the V1 shape. A native V2 permission field fails with an InvalidError.
+ * The Exit is an Effect, so Effect code can `yield*` it.
+ */
+export function lower(input: unknown, source = "configuration"): Exit.Exit<Lowered, InstanceType<typeof InvalidError>> {
   const parsed = decodeRecord(input)
-  if (Option.isNone(parsed)) return { value: input, diagnostics: [] }
+  if (Option.isNone(parsed)) return Exit.succeed({ value: input, diagnostics: [] })
 
   const permissions = [
     ...(Object.hasOwn(parsed.value, "permissions") ? [["permissions"]] : []),
@@ -114,13 +118,15 @@ export function lower(input: unknown, source = "configuration"): Lowered {
     }),
   ]
   if (permissions.length)
-    throw new InvalidError({
-      path: source,
-      issues: permissions.map((path) => ({
-        path,
-        message: 'V2 permissions are not supported by OpenCode V1. Use V1 "permission" rules or run opencode2.',
-      })),
-    })
+    return Exit.fail(
+      new InvalidError({
+        path: source,
+        issues: permissions.map((path) => ({
+          path,
+          message: 'V2 permissions are not supported by OpenCode V1. Use V1 "permission" rules or run opencode2.',
+        })),
+      }),
+    )
 
   const result: Record<string, unknown> = { ...parsed.value }
   // Each step writes into result in order, so the spread order is also the diagnostic order.
@@ -140,7 +146,7 @@ export function lower(input: unknown, source = "configuration"): Lowered {
     ...normalizeLsp(parsed.value, result),
   ]
 
-  return { value: result, diagnostics }
+  return Exit.succeed({ value: result, diagnostics })
 }
 
 function normalizeSettings(input: Record<string, unknown>, result: Record<string, unknown>): readonly Diagnostic[] {

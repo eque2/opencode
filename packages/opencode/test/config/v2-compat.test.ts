@@ -22,7 +22,12 @@ import { testEffect } from "../lib/effect"
 import { snapshot } from "./snapshot"
 
 const source = "test:v2-compat"
-const lower = (input: unknown) => ConfigParse.schema(ConfigV1.Info, ConfigV2Compat.lower(input, source).value, source)
+const lower = (input: unknown) =>
+  Effect.runSync(
+    ConfigV2Compat.lower(input, source).pipe(
+      Effect.flatMap((result) => ConfigParse.decodeSchema(ConfigV1.Info, result.value, source)),
+    ),
+  )
 
 const it = testEffect(
   LayerNode.compile(LayerNode.group([Config.node, FSUtil.node, Env.node, CrossSpawnSpawner.node]), [
@@ -49,11 +54,11 @@ describe("V2 compatibility read fixtures", () => {
   cases.forEach((name) => {
     test(name, async () => {
       const source = path.join(directory, `${name}-input.jsonc`)
-      const input = ConfigParse.jsonc(await Bun.file(source).text(), source)
+      const input = Effect.runSync(ConfigParse.parseJsonc(await Bun.file(source).text(), source))
       const original = structuredClone(input)
-      const result = ConfigV2Compat.lower(input, source)
+      const result = Effect.runSync(ConfigV2Compat.lower(input, source))
       expect(input).toEqual(original)
-      const config = ConfigParse.schema(ConfigV1.Info, result.value, source)
+      const config = Effect.runSync(ConfigParse.decodeSchema(ConfigV1.Info, result.value, source))
       await snapshot(path.join(directory, `${name}-output.json`), JSON.stringify(config, null, 2) + "\n")
     })
   })
@@ -61,16 +66,18 @@ describe("V2 compatibility read fixtures", () => {
 
 describe("ConfigV2Compat.lower", () => {
   test("returns structured invalid diagnostics while retaining supported siblings", () => {
-    const result = ConfigV2Compat.lower({
-      mcp: {
-        servers: {
-          broken: { type: "local", command: "not-an-array" },
-          working: { type: "local", command: ["working-mcp"] },
+    const result = Effect.runSync(
+      ConfigV2Compat.lower({
+        mcp: {
+          servers: {
+            broken: { type: "local", command: "not-an-array" },
+            working: { type: "local", command: ["working-mcp"] },
+          },
         },
-      },
-      agents: { broken: { steps: "many" } },
-      commands: { broken: { template: 42 } },
-    })
+        agents: { broken: { steps: "many" } },
+        commands: { broken: { template: 42 } },
+      }),
+    )
 
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
@@ -79,34 +86,36 @@ describe("ConfigV2Compat.lower", () => {
         expect.objectContaining({ kind: "invalid", path: ["commands", "broken"] }),
       ]),
     )
-    expect(ConfigParse.schema(ConfigV1.Info, result.value, source).mcp).toEqual({
+    expect(Effect.runSync(ConfigParse.decodeSchema(ConfigV1.Info, result.value, source)).mcp).toEqual({
       working: { type: "local", command: ["working-mcp"], enabled: true },
     })
   })
 
   test("reports unsupported settings and lossy conversions without their values", () => {
     const secret = "do-not-log-credentials"
-    const result = ConfigV2Compat.lower({
-      model: { providerID: "example", model: "model", variant: "high" },
-      plugins: [{ package: "native-plugin", options: { token: secret } }],
-      providers: { example: { settings: { apiKey: secret } } },
-      websearch: secret,
-      warming: true,
-      experimental: { portable_shell_scanner: true },
-      agents: { reviewer: { request: { headers: { Authorization: secret } } } },
-      mcp: {
-        servers: {
-          remote: {
-            type: "remote",
-            url: `https://example.com/?token=${secret}`,
-            oauth: { client_secret: secret },
-            codemode: false,
-            timeout: { execution: 60000 },
+    const result = Effect.runSync(
+      ConfigV2Compat.lower({
+        model: { providerID: "example", model: "model", variant: "high" },
+        plugins: [{ package: "native-plugin", options: { token: secret } }],
+        providers: { example: { settings: { apiKey: secret } } },
+        websearch: secret,
+        warming: true,
+        experimental: { portable_shell_scanner: true },
+        agents: { reviewer: { request: { headers: { Authorization: secret } } } },
+        mcp: {
+          servers: {
+            remote: {
+              type: "remote",
+              url: `https://example.com/?token=${secret}`,
+              oauth: { client_secret: secret },
+              codemode: false,
+              timeout: { execution: 60000 },
+            },
           },
         },
-      },
-      lsp: { custom: { command: ["custom-lsp"] } },
-    })
+        lsp: { custom: { command: ["custom-lsp"] } },
+      }),
+    )
 
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
@@ -126,17 +135,19 @@ describe("ConfigV2Compat.lower", () => {
   })
 
   test("reports conflicting forms while retaining the V1 value", () => {
-    const result = ConfigV2Compat.lower({
-      snapshot: false,
-      snapshots: true,
-      command: { review: { template: "Legacy review" } },
-      commands: { review: { template: "Native review" } },
-      mcp: {
-        shared: { type: "local", command: ["legacy"] },
-        servers: { shared: { type: "local", command: ["native"] } },
-      },
-    })
-    const config = ConfigParse.schema(ConfigV1.Info, result.value, source)
+    const result = Effect.runSync(
+      ConfigV2Compat.lower({
+        snapshot: false,
+        snapshots: true,
+        command: { review: { template: "Legacy review" } },
+        commands: { review: { template: "Native review" } },
+        mcp: {
+          shared: { type: "local", command: ["legacy"] },
+          servers: { shared: { type: "local", command: ["native"] } },
+        },
+      }),
+    )
+    const config = Effect.runSync(ConfigParse.decodeSchema(ConfigV1.Info, result.value, source))
 
     expect(config.snapshot).toBe(false)
     expect(config.command?.review.template).toBe("Legacy review")
@@ -145,11 +156,13 @@ describe("ConfigV2Compat.lower", () => {
   })
 
   test("does not diagnose ordinary V1 configuration or reject invalid V1 roots early", () => {
-    expect(ConfigV2Compat.lower({ snapshot: false, mcp: { existing: { enabled: false } } }).diagnostics).toEqual([])
-    expect(ConfigV2Compat.lower({ snapshot: false, snapshots: false }).diagnostics).toEqual([])
-    const result = ConfigV2Compat.lower(null)
+    expect(
+      Effect.runSync(ConfigV2Compat.lower({ snapshot: false, mcp: { existing: { enabled: false } } })).diagnostics,
+    ).toEqual([])
+    expect(Effect.runSync(ConfigV2Compat.lower({ snapshot: false, snapshots: false })).diagnostics).toEqual([])
+    const result = Effect.runSync(ConfigV2Compat.lower(null))
     expect(result.value).toBeNull()
-    expect(() => ConfigParse.schema(ConfigV1.Info, result.value, source)).toThrow()
+    expect(() => Effect.runSync(ConfigParse.decodeSchema(ConfigV1.Info, result.value, source))).toThrow()
     expect(() => lower({ snapshot: "invalid", snapshots: true })).toThrow()
   })
 
@@ -182,16 +195,18 @@ describe("ConfigV2Compat.lower", () => {
 
   test("keeps secrets out of invalid and conflict diagnostics", () => {
     const secret = "secret-never-in-diagnostics"
-    const result = ConfigV2Compat.lower({
-      commands: { malformed: { template: { token: secret } } },
-      mcp: {
-        shared: { type: "remote", url: "https://example.com", headers: { Authorization: secret } },
-        servers: {
-          shared: { type: "remote", url: "https://example.com", headers: { Authorization: `${secret}-changed` } },
-          malformed: { type: "remote", url: `https://example.com?token=${secret}`, disabled: secret },
+    const result = Effect.runSync(
+      ConfigV2Compat.lower({
+        commands: { malformed: { template: { token: secret } } },
+        mcp: {
+          shared: { type: "remote", url: "https://example.com", headers: { Authorization: secret } },
+          servers: {
+            shared: { type: "remote", url: "https://example.com", headers: { Authorization: `${secret}-changed` } },
+            malformed: { type: "remote", url: `https://example.com?token=${secret}`, disabled: secret },
+          },
         },
-      },
-    })
+      }),
+    )
 
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
