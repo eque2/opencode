@@ -11,7 +11,7 @@ export const Tokens = Schema.Struct({
   refreshToken: Schema.mutableKey(Schema.optional(Schema.String)),
   expiresAt: Schema.mutableKey(Schema.optional(Schema.Number)),
   scope: Schema.mutableKey(Schema.optional(Schema.String)),
-})
+}).annotate({ identifier: "McpAuthTokens" })
 export type Tokens = Schema.Schema.Type<typeof Tokens>
 
 export const ClientInfo = Schema.Struct({
@@ -19,7 +19,7 @@ export const ClientInfo = Schema.Struct({
   clientSecret: Schema.mutableKey(Schema.optional(Schema.String)),
   clientIdIssuedAt: Schema.mutableKey(Schema.optional(Schema.Number)),
   clientSecretExpiresAt: Schema.mutableKey(Schema.optional(Schema.Number)),
-})
+}).annotate({ identifier: "McpAuthClientInfo" })
 export type ClientInfo = Schema.Schema.Type<typeof ClientInfo>
 
 export const Entry = Schema.Struct({
@@ -28,7 +28,7 @@ export const Entry = Schema.Struct({
   codeVerifier: Schema.mutableKey(Schema.optional(Schema.String)),
   oauthState: Schema.mutableKey(Schema.optional(Schema.String)),
   serverUrl: Schema.mutableKey(Schema.optional(Schema.String)),
-})
+}).annotate({ identifier: "McpAuthEntry" })
 export type Entry = Schema.Schema.Type<typeof Entry>
 
 const decodeAuthData = Schema.decodeUnknownOption(Schema.Record(Schema.String, Entry))
