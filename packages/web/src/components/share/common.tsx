@@ -83,7 +83,7 @@ export function createOverflow() {
     get status() {
       return overflow()
     },
-    ref(el: HTMLElement) {
+    ref: (el: HTMLElement) => {
       const sync = () => {
         setOverflow(el.scrollHeight > el.clientHeight + 1)
       }
