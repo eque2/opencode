@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro"
 import { getCollection } from "astro:content"
-import { Predicate } from "effect"
+import { Effect, Predicate } from "effect"
 
 function notFoundText(locals: unknown) {
   if (!Predicate.hasProperty(locals, "t")) {
@@ -17,19 +17,23 @@ function notFoundText(locals: unknown) {
   return "share.not_found"
 }
 
-export const GET: APIRoute = async ({ params, locals }) => {
-  const slug = params.slug || "index"
-  const docs = await getCollection("docs")
-  const doc = docs.find((d) => d.id === slug)
-  const notFound = notFoundText(locals)
+// Astro calls GET and awaits the Promise, so the route runs its Effect at this boundary.
+export const GET: APIRoute = ({ params, locals }) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const slug = params.slug || "index"
+      const docs = yield* Effect.promise(() => getCollection("docs"))
+      const doc = docs.find((d) => d.id === slug)
+      const notFound = notFoundText(locals)
 
-  if (!doc) {
-    return new Response(notFound, { status: 404, statusText: notFound })
-  }
+      if (!doc) {
+        return new Response(notFound, { status: 404, statusText: notFound })
+      }
 
-  return new Response(doc.body, {
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-    },
-  })
-}
+      return new Response(doc.body, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+        },
+      })
+    }),
+  )
