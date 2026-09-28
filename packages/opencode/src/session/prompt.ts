@@ -1517,7 +1517,7 @@ const layer = Layer.effect(
 const ModelRef = Schema.Struct({
   providerID: ProviderV2.ID,
   modelID: ModelV2.ID,
-})
+}).annotate({ description: "Provider and model that answer a prompt" })
 
 export const PromptInput = Schema.Struct({
   sessionID: SessionID,
@@ -1553,7 +1553,7 @@ export const ShellInput = Schema.Struct({
   agent: Schema.String,
   model: Schema.optional(ModelRef),
   command: Schema.String,
-})
+}).annotate({ description: "Shell command that a user runs in a session" })
 export type ShellInput = Schema.Schema.Type<typeof ShellInput>
 
 export const CommandInput = Schema.Struct({
