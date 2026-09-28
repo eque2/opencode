@@ -488,7 +488,7 @@ const layer = Layer.effect(
 
     const create = Effect.fn("Workspace.create")(function* (input: CreateInput) {
       const id = WorkspaceV2.ID.ascending(input.id)
-      const adapter = getAdapter(input.projectID, input.type)
+      const adapter = yield* getAdapter(input.projectID, input.type)
       const config = yield* WorkspaceAdapterRuntime.configure(adapter, {
         ...input,
         id,

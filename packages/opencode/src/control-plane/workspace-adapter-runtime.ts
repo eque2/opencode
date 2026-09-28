@@ -13,7 +13,7 @@ const context = Effect.gen(function* () {
 
 export const target = (info: WorkspaceInfo) =>
   Effect.gen(function* () {
-    const adapter = getAdapter(info.projectID, info.type)
+    const adapter = yield* getAdapter(info.projectID, info.type)
     const ctx = yield* context
     return yield* EffectBridge.fromPromise(() => adapter.target(info, ctx))
   })
@@ -38,12 +38,12 @@ export const create = (
 export const list = (adapter: WorkspaceAdapter) =>
   Effect.gen(function* () {
     const ctx = yield* context
-    return yield* EffectBridge.fromPromise(() => Promise.resolve(adapter.list?.(ctx) ?? []))
+    return yield* EffectBridge.fromPromise(() => adapter.list?.(ctx) ?? [])
   })
 
 export const remove = (info: WorkspaceInfo) =>
   Effect.gen(function* () {
-    const adapter = getAdapter(info.projectID, info.type)
+    const adapter = yield* getAdapter(info.projectID, info.type)
     const ctx = yield* context
     return yield* EffectBridge.fromPromise(() => adapter.remove(info, ctx))
   })
