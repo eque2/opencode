@@ -230,20 +230,16 @@ const layer = Layer.effect(
               state.data.length ? [{ data: state.data.join("\n"), id: state.id, retry: state.retry }] : [],
           },
         ),
-        Stream.map((event) => {
-          try {
-            return JSON.parse(event.data) as unknown
-          } catch {
-            return {
-              type: "sse.message",
-              properties: {
-                data: event.data,
-                ...(event.id ? { id: event.id } : {}),
-                retry: event.retry,
-              },
-            }
-          }
-        }),
+        Stream.map((event) =>
+          Option.getOrElse(decodeSSEData(event.data), () => ({
+            type: "sse.message",
+            properties: {
+              data: event.data,
+              ...(event.id ? { id: event.id } : {}),
+              retry: event.retry,
+            },
+          })),
+        ),
         Stream.runForEach(onEvent),
       )
     })
@@ -920,6 +916,9 @@ const RemoteSyncEvent = Schema.Struct({
   type: Schema.String,
   data: Schema.Record(Schema.String, Schema.Json),
 }).annotate({ identifier: "WorkspaceRemoteSyncEvent" })
+
+// SSE data that is not JSON is forwarded as an "sse.message" event instead.
+const decodeSSEData = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Json))
 
 const RemotePayloadType = Schema.Struct({ type: Schema.String }).annotate({ identifier: "WorkspaceRemotePayloadType" })
 const decodeRemotePayloadType = Schema.decodeUnknownOption(RemotePayloadType)
