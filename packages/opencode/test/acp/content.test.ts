@@ -188,6 +188,7 @@ describe("acp content conversion", () => {
 
   test("unsupported blocks are ignored", () => {
     expect(promptContentToParts([{ type: "audio", data: "AAAA", mimeType: "audio/wav" }])).toEqual([])
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (b) foreign value domain: an ACP client can send a block type outside the ContentBlock union, and the test must build that wire value
     expect(promptContentToParts([{ type: "unknown", text: "skip" } as unknown as ContentBlock])).toEqual([])
   })
 })
