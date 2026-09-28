@@ -3,15 +3,17 @@ import * as prompts from "@clack/prompts"
 import { UI } from "../ui"
 import { Global } from "@opencode-ai/core/global"
 import path from "path"
-import fs from "fs/promises"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import matter from "gray-matter"
 import { EOL } from "os"
 import type { Argv } from "yargs"
-import { Effect } from "effect"
+import { Cause, Console, Effect, Option, Schema } from "effect"
 import { effectCmd } from "../effect-cmd"
+import * as Prompt from "../effect/prompt"
 
 type AgentMode = "all" | "primary" | "subagent"
+
+const encodePrettyJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 // Permission keys (not raw tool names). Multiple tools can map to a single
 // permission — e.g. write/edit/apply_patch all gate on `edit` — so we configure
@@ -62,103 +64,81 @@ const AgentCreateCommand = effectCmd({
     const { InstanceRef } = yield* Effect.promise(() => import("@/effect/instance-ref"))
     const { Agent } = yield* Effect.promise(() => import("../../agent/agent"))
     const { Provider } = yield* Effect.promise(() => import("@/provider/provider"))
-    const maybeCtx = yield* InstanceRef
-    if (!maybeCtx) return yield* Effect.die("InstanceRef not provided")
-    const ctx = maybeCtx
+    // effectCmd always provides the instance for this command; a missing one is a defect.
+    const ctx = yield* Effect.fromNullishOr(yield* InstanceRef).pipe(
+      Effect.catch(() => Effect.die("InstanceRef not provided")),
+    )
     const agentSvc = yield* Agent.Service
-    const runLocalEffect = <A, E>(effect: Effect.Effect<A, E>) =>
-      Effect.runPromise(effect.pipe(Effect.provideService(InstanceRef, ctx)))
-    yield* Effect.promise(async () => {
-      const cliPath = args.path
-      const cliDescription = args.description
-      const cliMode = args.mode as AgentMode | undefined
-      const perms = args.permissions
+    const fs = yield* FSUtil.Service
+    const perms = args.permissions
 
-      const isFullyNonInteractive = cliPath && cliDescription && cliMode && perms !== undefined
+    const isFullyNonInteractive = Boolean(args.path && args.description && args.mode && perms !== undefined)
 
-      if (!isFullyNonInteractive) {
-        UI.empty()
-        prompts.intro("Create agent")
-      }
+    if (!isFullyNonInteractive) {
+      yield* Effect.sync(() => UI.empty())
+      yield* Prompt.intro("Create agent")
+    }
 
-      const project = ctx.project
+    // Determine scope/path
+    const targetPath = args.path
+      ? path.join(args.path, "agents")
+      : path.join(
+          (ctx.project.vcs === "git" ? yield* selectScope(ctx.worktree) : "global") === "global"
+            ? Global.Path.config
+            : path.join(ctx.worktree, ".opencode"),
+          "agents",
+        )
 
-      // Determine scope/path
-      let targetPath: string
-      if (cliPath) {
-        targetPath = path.join(cliPath, "agents")
-      } else {
-        let scope: "global" | "project" = "global"
-        if (project.vcs === "git") {
-          const scopeResult = await prompts.select({
-            message: "Location",
-            options: [
-              {
-                label: "Current project",
-                value: "project" as const,
-                hint: ctx.worktree,
-              },
-              {
-                label: "Global",
-                value: "global" as const,
-                hint: Global.Path.config,
-              },
-            ],
-          })
-          if (prompts.isCancel(scopeResult)) throw new UI.CancelledError()
-          scope = scopeResult
-        }
-        targetPath = path.join(scope === "global" ? Global.Path.config : path.join(ctx.worktree, ".opencode"), "agents")
-      }
-
-      // Get description
-      let description: string
-      if (cliDescription) {
-        description = cliDescription
-      } else {
-        const query = await prompts.text({
+    // Get description
+    const description = args.description
+      ? args.description
+      : yield* Prompt.text({
           message: "Description",
           placeholder: "What should this agent do?",
-          validate: (x) => (x && x.length > 0 ? undefined : "Required"),
-        })
-        if (prompts.isCancel(query)) throw new UI.CancelledError()
-        description = query
-      }
+          validate: (x) => {
+            if (x && x.length > 0) return undefined
+            return "Required"
+          },
+        }).pipe(Effect.flatMap(required))
 
-      // Generate agent
-      const spinner = prompts.spinner()
-      spinner.start("Generating agent configuration...")
-      const model = args.model ? Provider.parseModel(args.model) : undefined
-      const generated = await runLocalEffect(agentSvc.generate({ description, model })).catch((error) => {
-        spinner.stop(`LLM failed to generate agent: ${error.message}`, 1)
-        if (isFullyNonInteractive) process.exit(1)
-        throw new UI.CancelledError()
-      })
-      spinner.stop(`Agent ${generated.identifier} generated`)
+    // Generate agent
+    const spinner = Prompt.spinner()
+    yield* spinner.start("Generating agent configuration...")
+    const generated = yield* agentSvc
+      .generate({ description, ...(args.model ? { model: Provider.parseModel(args.model) } : {}) })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = Cause.squash(cause)
+            yield* spinner.stop(`LLM failed to generate agent: ${error instanceof Error ? error.message : String(error)}`, 1)
+            if (isFullyNonInteractive) yield* exit(1)
+            return yield* cancelled()
+          }),
+        ),
+      )
+    yield* spinner.stop(`Agent ${generated.identifier} generated`)
 
-      // Select permissions to allow
-      let selected: string[]
-      if (perms !== undefined) {
-        selected = perms ? perms.split(",").map((t) => t.trim()) : AVAILABLE_PERMISSIONS
-      } else {
-        const result = await prompts.multiselect({
-          message: "Select permissions to allow (Space to toggle)",
-          options: AVAILABLE_PERMISSIONS.map((permission) => ({
-            label: permission,
-            value: permission,
-          })),
-          initialValues: AVAILABLE_PERMISSIONS,
-        })
-        if (prompts.isCancel(result)) throw new UI.CancelledError()
-        selected = result
-      }
+    // Select permissions to allow
+    const selected =
+      perms !== undefined
+        ? perms
+          ? perms.split(",").map((t) => t.trim())
+          : AVAILABLE_PERMISSIONS
+        : yield* Effect.promise(() =>
+            prompts.multiselect({
+              message: "Select permissions to allow (Space to toggle)",
+              options: AVAILABLE_PERMISSIONS.map((permission) => ({
+                label: permission,
+                value: permission,
+              })),
+              initialValues: AVAILABLE_PERMISSIONS,
+            }),
+          ).pipe(Effect.flatMap((result) => (prompts.isCancel(result) ? cancelled() : Effect.succeed(result))))
 
-      // Get mode
-      let mode: AgentMode
-      if (cliMode) {
-        mode = cliMode
-      } else {
-        const modeResult = await prompts.select({
+    // Get mode
+    const mode: AgentMode = args.mode
+      ? args.mode
+      : yield* Prompt.select({
           message: "Agent mode",
           options: [
             {
@@ -178,57 +158,77 @@ const AgentCreateCommand = effectCmd({
             },
           ],
           initialValue: "all" as const,
-        })
-        if (prompts.isCancel(modeResult)) throw new UI.CancelledError()
-        mode = modeResult
-      }
+        }).pipe(Effect.flatMap(required))
 
-      // Build permissions config — deny anything not explicitly selected.
-      const permissions: Record<string, "deny"> = {}
-      for (const permission of AVAILABLE_PERMISSIONS) {
-        if (!selected.includes(permission)) {
-          permissions[permission] = "deny"
-        }
-      }
+    // Build permissions config — deny anything not explicitly selected.
+    const permissions: Record<string, "deny"> = Object.fromEntries(
+      AVAILABLE_PERMISSIONS.filter((permission) => !selected.includes(permission)).map((permission) => [
+        permission,
+        "deny" as const,
+      ]),
+    )
 
-      // Build frontmatter
-      const frontmatter: {
-        description: string
-        mode: AgentMode
-        permission?: Record<string, "deny">
-      } = {
-        description: generated.whenToUse,
-        mode,
-      }
-      if (Object.keys(permissions).length > 0) {
-        frontmatter.permission = permissions
-      }
+    // Build frontmatter
+    const frontmatter: {
+      description: string
+      mode: AgentMode
+      permission?: Record<string, "deny">
+    } = {
+      description: generated.whenToUse,
+      mode,
+      ...(Object.keys(permissions).length > 0 ? { permission: permissions } : {}),
+    }
 
-      // Write file
-      const content = matter.stringify(generated.systemPrompt, frontmatter)
-      const filePath = path.join(targetPath, `${generated.identifier}.md`)
+    // Write file
+    const content = matter.stringify(generated.systemPrompt, frontmatter)
+    const filePath = path.join(targetPath, `${generated.identifier}.md`)
 
-      await fs.mkdir(targetPath, { recursive: true })
+    yield* fs.ensureDir(targetPath).pipe(Effect.orDie)
 
-      if (await Filesystem.exists(filePath)) {
-        if (isFullyNonInteractive) {
-          console.error(`Error: Agent file already exists: ${filePath}`)
-          process.exit(1)
-        }
-        prompts.log.error(`Agent file already exists: ${filePath}`)
-        throw new UI.CancelledError()
-      }
+    if (yield* fs.existsSafe(filePath)) yield* fileExists(filePath, isFullyNonInteractive)
 
-      await Filesystem.write(filePath, content)
+    yield* fs.writeWithDirs(filePath, content).pipe(Effect.orDie)
 
-      if (isFullyNonInteractive) {
-        console.log(filePath)
-      } else {
-        prompts.log.success(`Agent created: ${filePath}`)
-        prompts.outro("Done")
-      }
-    })
+    if (isFullyNonInteractive) {
+      yield* Console.log(filePath)
+    } else {
+      yield* Prompt.log.success(`Agent created: ${filePath}`)
+      yield* Prompt.outro("Done")
+    }
   }),
+})
+
+const cancelled = () => Effect.die(new UI.CancelledError())
+
+const required = <A>(value: Option.Option<A>) => Option.match(value, { onNone: cancelled, onSome: Effect.succeed })
+
+// process.exit returns never; the void annotation keeps the thunk from reading as a Promise-returning one.
+const exit = (code: number) => Effect.sync((): void => process.exit(code))
+
+const selectScope = (worktree: string) =>
+  Prompt.select({
+    message: "Location",
+    options: [
+      {
+        label: "Current project",
+        value: "project" as const,
+        hint: worktree,
+      },
+      {
+        label: "Global",
+        value: "global" as const,
+        hint: Global.Path.config,
+      },
+    ],
+  }).pipe(Effect.flatMap(required))
+
+const fileExists = Effect.fnUntraced(function* (filePath: string, isFullyNonInteractive: boolean) {
+  if (isFullyNonInteractive) {
+    yield* Console.error(`Error: Agent file already exists: ${filePath}`)
+    yield* exit(1)
+  }
+  yield* Prompt.log.error(`Agent file already exists: ${filePath}`)
+  yield* cancelled()
 })
 
 const AgentListCommand = effectCmd({
@@ -244,10 +244,18 @@ const AgentListCommand = effectCmd({
       return a.name.localeCompare(b.name)
     })
 
-    for (const agent of sortedAgents) {
-      process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
-      process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
-    }
+    yield* Effect.forEach(
+      sortedAgents,
+      (agent) =>
+        Effect.gen(function* () {
+          const permission = yield* encodePrettyJson(agent.permission).pipe(Effect.orDie)
+          yield* Effect.sync(() => {
+            process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
+            process.stdout.write(`  ${permission}` + EOL)
+          })
+        }),
+      { discard: true },
+    )
   }),
 })
 
@@ -255,5 +263,5 @@ export const AgentCommand = cmd({
   command: "agent",
   describe: "manage agents",
   builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).demandCommand(),
-  async handler() {},
+  handler() {},
 })
