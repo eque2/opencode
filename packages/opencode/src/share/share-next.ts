@@ -35,8 +35,11 @@ export type Req = {
   baseUrl: string
 }
 
+// The share service assigns this id; the sync and remove endpoints take it.
+const ShareID = Schema.String.pipe(Schema.brand("ShareNext.ShareID"))
+
 const ShareSchema = Schema.Struct({
-  id: Schema.String,
+  id: ShareID,
   url: Schema.String,
   secret: Schema.String,
 }).annotate({ identifier: "ShareNext.Share", description: "A share that the share service created for a session" })
@@ -234,7 +237,7 @@ const layer = Layer.effect(
         .pipe(Effect.orDie)
       return Option.map(
         Option.fromNullishOr(row),
-        (found): Share => ({ id: found.id, secret: found.secret, url: found.url }),
+        (found): Share => ({ id: ShareID.make(found.id), secret: found.secret, url: found.url }),
       )
     })
 
@@ -313,7 +316,7 @@ const layer = Layer.effect(
     })
 
     const create = Effect.fn("ShareNext.create")(function* (sessionID: SessionID) {
-      if (disabled) return { id: "", url: "", secret: "" }
+      if (disabled) return { id: ShareID.make(""), url: "", secret: "" }
       yield* Effect.logInfo("creating share", { sessionID: sessionID })
       const req = yield* request()
       const result = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.create}`).pipe(

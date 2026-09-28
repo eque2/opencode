@@ -157,7 +157,7 @@ describe("ShareNext", () => {
 
           const result = yield* (yield* ShareNext.Service).create(session.id)
 
-          expect(result.id).toBe("shr_abc")
+          expect<string>(result.id).toBe("shr_abc")
           expect(result.url).toBe("https://legacy-share.example.com/share/abc")
           expect(result.secret).toBe("sec_123")
 
