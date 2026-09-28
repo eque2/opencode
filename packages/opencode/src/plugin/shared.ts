@@ -277,11 +277,16 @@ export const checkPluginCompatibility = Effect.fn("PluginShared.checkPluginCompa
     Option.map((engines) => engines.opencode),
     Option.filter(Predicate.isString),
   )
-  if (Option.isSome(range) && !semver.satisfies(opencodeVersion, range.value)) {
-    yield* new PluginCompatibilityError({
-      message: `Plugin requires opencode ${range.value} but running ${opencodeVersion}`,
-    })
-  }
+  yield* Option.match(
+    Option.filter(range, (value) => !semver.satisfies(opencodeVersion, value)),
+    {
+      onNone: () => Effect.void,
+      onSome: (value) =>
+        Effect.fail(
+          new PluginCompatibilityError({ message: `Plugin requires opencode ${value} but running ${opencodeVersion}` }),
+        ),
+    },
+  )
 })
 
 // Resolve a plugin spec to a local target: a path plugin resolves on disk, an npm plugin installs.
