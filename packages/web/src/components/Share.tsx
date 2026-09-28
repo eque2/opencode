@@ -1,5 +1,6 @@
 import { For, Show, onMount, Suspense, onCleanup, createMemo, createSignal, SuspenseList } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { Duration, Effect, Fiber, Option } from "effect"
 import { IconArrowDown } from "./icons"
 import { IconOpencode } from "./icons/custom"
 import { ShareI18nProvider, formatCurrency, formatNumber } from "./share/common"
@@ -18,6 +19,10 @@ function scrollToAnchor(id: string) {
   if (!el) return
 
   el.scrollIntoView({ behavior: "smooth" })
+}
+
+function interruptFiber(fiber: Option.Option<Fiber.Fiber<void>>) {
+  if (Option.isSome(fiber)) Effect.runFork(Fiber.interrupt(fiber.value))
 }
 
 function getStatusText(status: [Status, string?], messages: Record<string, string>): string {
@@ -45,7 +50,7 @@ export default function Share(props: {
 }) {
   let lastScrollY = 0
   let hasScrolledToAnchor = false
-  let scrollTimeout: number | undefined
+  let hideScrollButtonFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
   let scrollSentinel: HTMLElement | undefined
   let scrollObserver: IntersectionObserver | undefined
 
@@ -93,7 +98,7 @@ export default function Share(props: {
       return
     }
 
-    let reconnectTimer: number | undefined
+    let reconnectFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
     let socket: WebSocket | null = null
 
     // Function to create and set up WebSocket with auto-reconnect
@@ -158,8 +163,10 @@ export default function Share(props: {
         setConnectionStatus(["reconnecting"])
 
         // Try to reconnect after 2 seconds
-        clearTimeout(reconnectTimer)
-        reconnectTimer = window.setTimeout(setupWebSocket, 2000) as unknown as number
+        interruptFiber(reconnectFiber)
+        reconnectFiber = Option.some(
+          Effect.runFork(Effect.sleep("2 seconds").pipe(Effect.andThen(Effect.sync(setupWebSocket)))),
+        )
       }
     }
 
@@ -171,9 +178,26 @@ export default function Share(props: {
       if (socket) {
         socket.close()
       }
-      clearTimeout(reconnectTimer)
+      interruptFiber(reconnectFiber)
     })
   })
+
+  // Hide the button after the delay unless it is hovered.
+  function scheduleHideScrollButton(delay: Duration.Input) {
+    hideScrollButtonFiber = Option.some(
+      Effect.runFork(
+        Effect.sleep(delay).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              if (!isButtonHovered()) {
+                setShowScrollButton(false)
+              }
+            }),
+          ),
+        ),
+      ),
+    )
+  }
 
   function checkScrollNeed() {
     const currentScrollY = window.scrollY
@@ -189,21 +213,13 @@ export default function Share(props: {
     if (shouldShow) {
       setShowScrollButton(true)
       // Clear existing timeout
-      if (scrollTimeout) {
-        clearTimeout(scrollTimeout)
-      }
-      // Hide button after 3 seconds of no scrolling (unless hovered)
-      scrollTimeout = window.setTimeout(() => {
-        if (!isButtonHovered()) {
-          setShowScrollButton(false)
-        }
-      }, 1500)
+      interruptFiber(hideScrollButtonFiber)
+      // Hide button after 1.5 seconds of no scrolling (unless hovered)
+      scheduleHideScrollButton("1500 millis")
     } else if (!isButtonHovered()) {
       // Only hide if not hovered (to prevent disappearing while user is about to click)
       setShowScrollButton(false)
-      if (scrollTimeout) {
-        clearTimeout(scrollTimeout)
-      }
+      interruptFiber(hideScrollButtonFiber)
     }
   }
 
@@ -246,9 +262,7 @@ export default function Share(props: {
       document.body.removeChild(scrollSentinel)
     }
 
-    if (scrollTimeout) {
-      clearTimeout(scrollTimeout)
-    }
+    interruptFiber(hideScrollButtonFiber)
   })
 
   const data = createMemo(() => {
@@ -469,18 +483,12 @@ export default function Share(props: {
               onClick={() => document.body.scrollIntoView({ behavior: "smooth", block: "end" })}
               onMouseEnter={() => {
                 setIsButtonHovered(true)
-                if (scrollTimeout) {
-                  clearTimeout(scrollTimeout)
-                }
+                interruptFiber(hideScrollButtonFiber)
               }}
               onMouseLeave={() => {
                 setIsButtonHovered(false)
                 if (showScrollButton()) {
-                  scrollTimeout = window.setTimeout(() => {
-                    if (!isButtonHovered()) {
-                      setShowScrollButton(false)
-                    }
-                  }, 3000)
+                  scheduleHideScrollButton("3 seconds")
                 }
               }}
               title={props.messages.scroll_to_bottom}
