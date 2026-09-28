@@ -43,9 +43,14 @@ const waitReady = Effect.fn("WorktreeTest.waitReady")(function* () {
 const removeCreatedWorktree = (directory: string) =>
   Effect.gen(function* () {
     const svc = yield* Worktree.Service
-    const ok = yield* svc.remove({ directory })
-    if (!ok) return yield* Effect.fail(new Error(`failed to remove worktree ${directory}`))
-  })
+    return yield* svc.remove({ directory })
+  }).pipe(
+    Effect.filterOrFail(
+      (ok) => ok,
+      () => new Error(`failed to remove worktree ${directory}`),
+    ),
+    Effect.asVoid,
+  )
 
 const withCreatedWorktree = <A, E, R>(
   input: Parameters<Worktree.Interface["create"]>[0],
