@@ -48,13 +48,7 @@ export const parseManagedPlist = Effect.fn("ConfigManaged.parseManagedPlist")(fu
 export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPreferences")(function* () {
   if (process.platform !== "darwin") return Option.none<{ source: string; text: string }>()
 
-  const user = (() => {
-    try {
-      return os.userInfo().username || "user"
-    } catch {
-      return "user"
-    }
-  })()
+  const user = yield* Effect.try(() => os.userInfo().username || "user").pipe(Effect.orElseSucceed(() => "user"))
   const paths = [
     path.join("/Library/Managed Preferences", user, `${MANAGED_PLIST_DOMAIN}.plist`),
     path.join("/Library/Managed Preferences", `${MANAGED_PLIST_DOMAIN}.plist`),

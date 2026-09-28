@@ -596,12 +596,15 @@ const layer = Layer.effect(
         }
 
         if (!result.username) {
-          try {
-            result.username = os.userInfo().username || "user"
-          } catch (err) {
-            yield* Effect.logWarning("failed to read system username, using fallback", { err })
-            result.username = "user"
-          }
+          result.username = yield* Effect.try({
+            try: () => os.userInfo().username || "user",
+            // Keep the raw error for the log, as the catch clause did.
+            catch: (err) => err,
+          }).pipe(
+            Effect.catch((err) =>
+              Effect.logWarning("failed to read system username, using fallback", { err }).pipe(Effect.as("user")),
+            ),
+          )
         }
 
         if (result.autoshare === true && !result.share) {
