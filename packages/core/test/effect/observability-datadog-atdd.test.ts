@@ -11,7 +11,7 @@ import { Datadog } from "../../src/observability/datadog"
 import { fileLogger } from "../../src/observability/logging"
 import { ConfigV1 } from "../../src/v1/config/config"
 
-type Received = { at: number; encoding: string | null; body: Array<Record<string, any>> }
+type Received = { at: number; key: string | null; encoding: string | null; body: Array<Record<string, any>> }
 
 // Replies with the queued statuses in order, then 202.
 function intake(statuses: Array<{ status: number; headers?: Record<string, string> }> = []) {
@@ -22,7 +22,7 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
       const raw = new Uint8Array(await request.arrayBuffer())
       const encoding = request.headers.get("content-encoding")
       const text = new TextDecoder().decode(encoding === "gzip" ? Bun.gunzipSync(raw) : raw)
-      requests.push({ at: Date.now(), encoding, body: JSON.parse(text) })
+      requests.push({ at: Date.now(), key: request.headers.get("DD-API-KEY"), encoding, body: JSON.parse(text) })
       const next = statuses.shift() ?? { status: 202 }
       return new Response(null, next)
     },
@@ -76,40 +76,56 @@ test.skip("AC-1 a global config file configures the sink and env overrides it", 
   expect(overridden.content).toBe("hash")
 })
 
-test.skip("AC-2 an apiKey in a config file never enables the sink", async () => {
+test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async () => {
   await using temp = await tempDir()
+  const target = intake()
+  await using _ = target.server
   await Bun.write(
     path.join(temp.dir, "opencode.json"),
-    JSON.stringify({ observability: { datadog: { apiKey: "from-file" } } }),
+    JSON.stringify({
+      observability: { datadog: { apiKey: "from-file", api_key: "from-file", DD_API_KEY: "from-file" } },
+    }),
   )
-  const resolved = await Effect.runPromise(
-    // @ts-expect-error AC-2 red phase: Datadog.provider lands in stage 3.
-    Datadog.provider({ env: {}, configDir: temp.dir }).pipe(
-      Effect.flatMap((provider: ConfigProvider.ConfigProvider) =>
-        Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider))),
+  const resolve = async (env: Record<string, string>): Promise<Datadog.Settings | undefined> =>
+    Effect.runPromise(
+      // @ts-expect-error AC-2 red phase: Datadog.provider lands in stage 3.
+      Datadog.provider({ env, configDir: temp.dir }).pipe(
+        Effect.flatMap((provider: ConfigProvider.ConfigProvider) =>
+          Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(provider))),
+        ),
       ),
-    ),
-  )
-  expect(resolved).toBeUndefined()
-  const decoded = Schema.decodeUnknownExit(ConfigV1.Info)(
-    { observability: { datadog: { apiKey: "from-file" } } },
-    { onExcessProperty: "error" },
-  )
-  expect(decoded._tag).toBe("Failure")
+    )
+  const config = required(await resolve({ DD_API_KEY: "env-key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  await ship(config, Effect.logInfo("keyed").pipe(Effect.annotateLogs({ category: "llm.request" })))
+  expect(target.requests[0].key).toBe("env-key")
+  expect(await resolve({})).toBeUndefined()
+  // The production loader ignores excess keys, so the rest of the config still loads.
+  const decoded = Schema.decodeUnknownExit(ConfigV1.Info)({
+    model: "anthropic/claude",
+    observability: { datadog: { apiKey: "from-file", categories: "llm" } },
+  })
+  expect(decoded._tag).toBe("Success")
 })
 
-test.skip("AC-3 LogPolicy content full ships content only inside its scope", async () => {
+test.skip("AC-3 withPolicy content full ships content only inside its scope and keeps secrets redacted", async () => {
   const target = intake()
   await using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  const secret = "sk-" + "e5".repeat(12)
+  const withPolicy: (patch: {
+    content?: "omit" | "hash" | "full"
+    categories?: string
+  }) => <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R> =
+    // @ts-expect-error AC-3 red phase: Datadog.withPolicy lands in stage 3.
+    Datadog.withPolicy
   await ship(
     config,
     Effect.gen(function* () {
-      yield* Effect.logInfo("scoped", { prompt: "visible prompt" }).pipe(
-        Effect.annotateLogs({ category: "llm.request" }),
-        // @ts-expect-error AC-3 red phase: Datadog.LogPolicy lands in stage 3.
-        Effect.provideService(Datadog.LogPolicy, { content: "full" }),
-      )
+      yield* Effect.logInfo("scoped", {
+        prompt: "visible prompt",
+        apiKey: "raw-key",
+        note: `Bearer abc.def ${secret}`,
+      }).pipe(Effect.annotateLogs({ category: "llm.request" }), withPolicy({ content: "full" }))
       yield* Effect.logInfo("outside", { prompt: "hidden prompt" }).pipe(
         Effect.annotateLogs({ category: "llm.request" }),
       )
@@ -118,6 +134,9 @@ test.skip("AC-3 LogPolicy content full ships content only inside its scope", asy
   const [scoped, outside] = target.requests[0].body
   expect(scoped.prompt).toBe("visible prompt")
   expect(outside.prompt).toMatch(/^\[OMITTED/)
+  expect(scoped.apiKey).toBe("[REDACTED]")
+  expect(scoped.note).not.toContain(secret)
+  expect(scoped.note).not.toContain("abc.def")
 })
 
 test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async () => {
@@ -130,7 +149,7 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
   )
   await Effect.gen(function* () {
     const datadog = yield* Datadog.logger(config)
-    yield* Effect.logDebug("debug only").pipe(
+    yield* Effect.all([Effect.logDebug("debug only"), Effect.logInfo("info too")]).pipe(
       Effect.annotateLogs({ category: "llm.request" }),
       Effect.provide(
         // @ts-expect-error AC-4 red phase: fileLogger gains a level argument in stage 3.
@@ -151,18 +170,21 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
     .catch(() => "")
   expect(text).not.toContain("debug only")
   expect(target.requests[0].body[0].message).toBe("debug only")
+  expect(text).toContain("info too")
 })
 
-test.skip("AC-5 a 429 with Retry-After 1 delays the next attempt by at least one second", async () => {
-  const target = intake([{ status: 429, headers: { "Retry-After": "1" } }])
+test.skip("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seconds", async () => {
+  const target = intake([{ status: 429, headers: { "Retry-After": "2" } }])
   await using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   await ship(config, Effect.logInfo("rate limited").pipe(Effect.annotateLogs({ category: "llm.request" })))
-  expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(950)
+  expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(1900)
 }, 20_000)
 
-test.skip("AC-6 after retries fail the sink sends nothing for 60 seconds", async () => {
-  const target = intake(Array.from({ length: 50 }, () => ({ status: 503 })))
+test.skip("AC-6 after retries fail the sink sends nothing until the cooldown ends", async () => {
+  // One attempt plus 3 retries fail, then the intake recovers.
+  const failures = 4
+  const target = intake(Array.from({ length: failures }, () => ({ status: 503 })))
   await using _ = target.server
   const config = required(
     await settings({
@@ -171,19 +193,25 @@ test.skip("AC-6 after retries fail the sink sends nothing for 60 seconds", async
       OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis",
     }),
   )
-  await ship(
-    config,
-    Effect.gen(function* () {
-      yield* Effect.logInfo("first").pipe(Effect.annotateLogs({ category: "llm.request" }))
-      yield* Effect.promise(() => until(() => target.requests.length >= 4))
-      yield* Effect.sleep("300 millis")
-      const failed = target.requests.length
-      yield* Effect.logInfo("second").pipe(Effect.annotateLogs({ category: "llm.request" }))
-      yield* Effect.sleep("500 millis")
-      expect(target.requests.length).toBe(failed)
-    }),
-  )
-}, 20_000)
+  await Effect.gen(function* () {
+    // @ts-expect-error AC-6 red phase: the cooldown option lands in stage 3.
+    const logger = yield* Datadog.logger(config, { cooldown: "2 seconds" })
+    const log = (message: string) =>
+      Effect.logInfo(message).pipe(
+        Effect.annotateLogs({ category: "llm.request" }),
+        Effect.provide(Logger.layer([logger])),
+      )
+    yield* log("first")
+    yield* Effect.promise(() => until(() => target.requests.length >= failures))
+    yield* log("second")
+    yield* Effect.sleep("500 millis")
+    expect(target.requests.length).toBe(failures)
+    yield* Effect.sleep("2 seconds")
+    yield* log("third")
+    yield* Effect.promise(() => until(() => target.requests.length > failures, 3_000))
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
+}, 30_000)
 
 test.skip("AC-7 every request is gzip-compressed", async () => {
   const target = intake()
@@ -210,7 +238,7 @@ test.skip("AC-8 disposing the runtime flushes buffered records", async () => {
   expect(target.requests.map((request) => request.body[0].message)).toEqual(["last words"])
 })
 
-test.skip("AC-9 secret shapes inside string values never reach the intake", async () => {
+test.skip("AC-9 secret shapes anywhere in a record never reach the intake and the surrounding text survives", async () => {
   const target = intake()
   await using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
@@ -221,19 +249,37 @@ test.skip("AC-9 secret shapes inside string values never reach the intake", asyn
     "ghp_" + "c3".repeat(12),
     "xoxb-" + "123-456-" + "d4".repeat(6),
     "zz" + "9".repeat(14),
+    "yy" + "8".repeat(14),
   ]
+  const ordinary = ["task-0123456789abcdef", "risk-assessment-document", "monkey=1", "tokenizer"]
+  const line = `ran ${secrets[0]} ${secrets[1]} ${secrets[2]} ${secrets[3]} https://api.test/v1?api_key=${secrets[4]}&exaApiKey=${secrets[5]}`
   await ship(
     config,
-    Effect.logInfo(
-      `ran ${secrets[0]} ${secrets[1]} ${secrets[2]} ${secrets[3]} https://api.test/v1?api_key=${secrets[4]}`,
-    ).pipe(Effect.annotateLogs({ category: "tool.error" })),
+    Effect.logError(line, {
+      detail: line,
+      nested: { deeper: [line] },
+      error: new Error(line),
+      prose: ordinary.join(" "),
+      inputTokens: 42,
+    }).pipe(Effect.annotateLogs({ category: "tool.error" })),
   )
   const payload = JSON.stringify(target.requests[0].body)
   expect(secrets.filter((secret) => payload.includes(secret))).toEqual([])
+  const [entry] = target.requests[0].body
+  expect(entry.message).toStartWith("ran [REDACTED]")
+  expect(entry.detail).toContain("https://api.test/v1?api_key=[REDACTED]")
+  expect(entry.prose).toBe(ordinary.join(" "))
+  expect(entry.inputTokens).toBe(42)
 })
 
-test.skip("AC-10 question and pty records are excluded by default", async () => {
-  const include = Datadog.categoryFilter(required(await settings({ DD_API_KEY: "key" })).categories)
+test.skip("AC-10 a Question.reply-shaped record sends no answer text by default", async () => {
+  const target = intake()
+  await using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  // Same shape as packages/opencode/src/question/index.ts:125, which sets no category.
+  await ship(config, Effect.logInfo("replied", { requestID: "que_1", answers: [["my private answer"]] }))
+  expect(JSON.stringify(target.requests[0].body)).not.toContain("my private answer")
+  const include = Datadog.categoryFilter(config.categories)
   expect(["question.asked", "pty.write"].filter(include)).toEqual([])
   expect(include("llm.request")).toBe(true)
 })
