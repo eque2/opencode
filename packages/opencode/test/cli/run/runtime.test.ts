@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { OpencodeClient } from "@opencode-ai/sdk/v2"
+import { Effect } from "effect"
 import { runInteractiveMode } from "@/cli/cmd/run/runtime"
 import type { FooterApi, RunProvider } from "@/cli/cmd/run/types"
 
@@ -177,54 +178,56 @@ describe("run interactive runtime", () => {
     )
     // Reject only when called. mockRejectedValue builds its rejected Promise
     // at setup, so an unused mock fails the test as an unhandled rejection.
-    spyOn(sdk.session, "get").mockImplementation(() => Promise.reject(new Error("not needed")))
+    spyOn(sdk.session, "get").mockImplementation((): Promise<never> => Promise.reject(new Error("not needed")))
     spyOn(sdk.app, "agents").mockImplementation(() => ok([]))
     spyOn(sdk.experimental.resource, "list").mockImplementation(() => ok({}))
     spyOn(sdk.command, "list").mockImplementation(() => ok([]))
 
-    const task = runInteractiveMode(
-      {
-        sdk,
-        directory: "/tmp",
-        sessionID: "ses-1",
-        sessionTitle: "Session",
-        resume: true,
-        replay: true,
-        replayLimit: 100,
-        agent: "build",
-        model: {
-          providerID: "openai",
-          modelID: "gpt-5",
-        },
-        variant: undefined,
-        files: [],
-        thinking: true,
-        backgroundSubagents: false,
-      },
-      {
-        createRuntimeLifecycle: async () => ({
-          footer: footer(),
-          onResize: () => () => {},
-          refreshTheme: () => {},
-          resetForReplay: () => Promise.resolve(),
-          close: () => Promise.resolve(),
-        }),
-        streamTransport: Promise.resolve({
-          createSessionTransport: async (input: { providers?: () => RunProvider[]; footer: FooterApi }) => {
-            transportProviders.push(input.providers?.() ?? [])
-            setTimeout(() => {
-              input.footer.close()
-            }, 0)
-            return {
-              runPromptTurn: async () => {},
-              selectSubagent: () => {},
-              replayOnResize: async () => false,
-              close: async () => {},
-            }
+    const task = Effect.runPromise(
+      runInteractiveMode(
+        {
+          sdk,
+          directory: "/tmp",
+          sessionID: "ses-1",
+          sessionTitle: "Session",
+          resume: true,
+          replay: true,
+          replayLimit: 100,
+          agent: "build",
+          model: {
+            providerID: "openai",
+            modelID: "gpt-5",
           },
-          formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
-        }),
-      },
+          variant: undefined,
+          files: [],
+          thinking: true,
+          backgroundSubagents: false,
+        },
+        {
+          createRuntimeLifecycle: async () => ({
+            footer: footer(),
+            onResize: () => () => {},
+            refreshTheme: () => {},
+            resetForReplay: () => Promise.resolve(),
+            close: () => Promise.resolve(),
+          }),
+          streamTransport: Promise.resolve({
+            createSessionTransport: async (input: { providers?: () => RunProvider[]; footer: FooterApi }) => {
+              transportProviders.push(input.providers?.() ?? [])
+              setTimeout(() => {
+                input.footer.close()
+              }, 0)
+              return {
+                runPromptTurn: async () => {},
+                selectSubagent: () => {},
+                replayOnResize: async () => false,
+                close: async () => {},
+              }
+            },
+            formatUnknownError: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+          }),
+        },
+      ),
     )
 
     await providersStarted.promise

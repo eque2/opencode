@@ -16,15 +16,14 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import type { Argv } from "yargs"
 import path from "path"
 import { pathToFileURL } from "url"
-import { open } from "node:fs/promises"
-import { Effect } from "effect"
+import { Clock, Config, Console, Effect, Fiber, type FileSystem, MutableHashSet, Option, Schema, Stream } from "effect"
 import { UI } from "../ui"
-import { effectCmd } from "../effect-cmd"
+import { CliError, effectCmd, fail } from "../effect-cmd"
 import { EOL } from "os"
 import { Filesystem } from "@/util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
 import { FormatError, FormatUnknownError } from "../error"
-import { INTERACTIVE_INPUT_ERROR, resolveInteractiveStdin } from "./run/runtime.stdin"
+import { InteractiveInputError, interactiveStdin } from "./run/runtime.stdin"
 
 type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
@@ -37,16 +36,21 @@ function pick(value: string | undefined): ModelInput | undefined {
   } as ModelInput
 }
 
-function resolveRunInput(value?: string, piped?: string): string | undefined {
+// Joins the message and the piped stdin text. An empty piped text counts as absent.
+function resolveRunInput(value: string, piped: Option.Option<string>): Option.Option<string> {
   if (!value) {
     return piped
   }
 
-  if (!piped) {
-    return value
-  }
-
-  return value + "\n" + piped
+  return Option.some(
+    Option.match(
+      Option.filter(piped, (text) => text.length > 0),
+      {
+        onNone: () => value,
+        onSome: (text) => value + "\n" + text,
+      },
+    ),
+  )
 }
 
 type FilePart = {
@@ -70,6 +74,9 @@ type SessionInfo = {
   directory?: string
 }
 
+// The JSON event lines of `--format json`, as JSON.stringify wrote them.
+const encodeEvent = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
+
 function inline(info: Inline) {
   const suffix = info.description ? UI.Style.TEXT_DIM + ` ${info.description}` + UI.Style.TEXT_NORMAL : ""
   UI.println(UI.Style.TEXT_NORMAL + info.icon, UI.Style.TEXT_NORMAL + info.title + suffix)
@@ -87,40 +94,66 @@ function formatRunError(error: unknown) {
   return FormatError(error) ?? FormatUnknownError(error)
 }
 
-async function tool(part: ToolPart) {
-  try {
-    const { toolInlineInfo } = await import("./run/tool")
-    const next = toolInlineInfo(part)
-    if (next.mode === "block") {
-      block(next, next.body)
-      return
-    }
-
-    inline(next)
-  } catch {
-    inline({
-      icon: "\u2699",
-      title: part.tool,
-    })
-  }
+// The inline summary of a tool part, or None when the renderer cannot load or draw it.
+function toolInfo(part: ToolPart) {
+  return Effect.tryPromise(() => import("./run/tool")).pipe(
+    Effect.flatMap((mod) => Effect.try(() => mod.toolInlineInfo(part))),
+    Effect.option,
+  )
 }
 
-async function toolError(part: ToolPart) {
-  try {
-    const { toolInlineInfo } = await import("./run/tool")
-    const next = toolInlineInfo(part)
-    inline({
-      icon: "✗",
-      title: `${next.title} failed`,
-      ...(next.description && { description: next.description }),
-    })
-    return
-  } catch {
-    inline({
-      icon: "✗",
-      title: `${part.tool} failed`,
-    })
+function tool(part: ToolPart) {
+  return toolInfo(part).pipe(
+    Effect.map(
+      Option.match({
+        onNone: () =>
+          inline({
+            icon: "⚙",
+            title: part.tool,
+          }),
+        onSome: (next) => (next.mode === "block" ? block(next, next.body) : inline(next)),
+      }),
+    ),
+  )
+}
+
+function toolError(part: ToolPart) {
+  return toolInfo(part).pipe(
+    Effect.map(
+      Option.match({
+        onNone: () =>
+          inline({
+            icon: "✗",
+            title: `${part.tool} failed`,
+          }),
+        onSome: (next) =>
+          inline({
+            icon: "✗",
+            title: `${next.title} failed`,
+            ...(next.description && { description: next.description }),
+          }),
+      }),
+    ),
+  )
+}
+
+// The terminal check reports a missing controlling terminal as a user-facing
+// failure. Every other defect keeps propagating to the top-level handler.
+function interactiveFailure(defect: unknown) {
+  return defect instanceof InteractiveInputError ? fail(defect.message) : Effect.die(defect)
+}
+
+// Reads a whole regular file through one handle, so the size and type checks
+// apply to the bytes that are read.
+function readAll(file: FileSystem.File, buffer: Buffer, offset: number): Effect.Effect<number> {
+  if (offset >= buffer.length) {
+    return Effect.succeed(offset)
   }
+
+  return file.read(buffer.subarray(offset)).pipe(
+    Effect.orDie,
+    Effect.flatMap((read) => (read === 0 ? Effect.succeed(offset) : readAll(file, buffer, offset + read))),
+  )
 }
 
 export const RunCommand = effectCmd({
@@ -268,699 +301,674 @@ export const RunCommand = effectCmd({
     const agentSvc = yield* Agent.Service
     const flags = yield* RuntimeFlags.Service
     const localInstance = yield* InstanceRef
-    yield* Effect.promise(async () => {
-      const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
-      const interactive = args.mini
-      const auto = args.auto || args.yolo || args["dangerously-skip-permissions"]
-      const thinking = interactive ? (args.thinking ?? true) : (args.thinking ?? false)
-      const die = (message: string): never => {
-        UI.error(message)
-        process.exit(1)
-      }
-      const dieInteractive = (error: unknown): never => {
-        if (error instanceof Error && error.message === INTERACTIVE_INPUT_ERROR) {
-          die(error.message)
-        }
+    const fsys = yield* FSUtil.Service
+    const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
+    const interactive = args.mini
+    const auto = args.auto || args.yolo || args["dangerously-skip-permissions"]
+    const thinking = interactive ? (args.thinking ?? true) : (args.thinking ?? false)
 
-        throw error
-      }
+    const quoted = [...args.message, ...(args["--"] || [])]
+      .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
+      .join(" ")
 
-      let message = [...args.message, ...(args["--"] || [])]
-        .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
-        .join(" ")
+    if (interactive && args.command) {
+      return yield* fail("--mini cannot be used with --command")
+    }
 
-      if (interactive && args.command) {
-        die("--mini cannot be used with --command")
-      }
+    if (interactive && args._?.[0] !== "mini") {
+      return yield* fail("--mini must be used without the run subcommand")
+    }
 
-      if (interactive && args._?.[0] !== "mini") {
-        die("--mini must be used without the run subcommand")
-      }
+    if (args.demo && !interactive) {
+      return yield* fail("--demo requires --mini")
+    }
 
-      if (args.demo && !interactive) {
-        die("--demo requires --mini")
-      }
+    if (interactive && args.format === "json") {
+      return yield* fail("--mini cannot be used with --format json")
+    }
 
-      if (interactive && args.format === "json") {
-        die("--mini cannot be used with --format json")
-      }
+    if (args["replay-limit"] !== undefined && !interactive) {
+      return yield* fail("--replay-limit requires --mini")
+    }
 
-      if (args["replay-limit"] !== undefined && !interactive) {
-        die("--replay-limit requires --mini")
-      }
+    if (args["replay-limit"] !== undefined && (!Number.isInteger(args["replay-limit"]) || args["replay-limit"] <= 0)) {
+      return yield* fail("--replay-limit must be a positive integer")
+    }
 
-      if (
-        args["replay-limit"] !== undefined &&
-        (!Number.isInteger(args["replay-limit"]) || args["replay-limit"] <= 0)
-      ) {
-        die("--replay-limit must be a positive integer")
-      }
+    if (interactive && !process.stdout.isTTY) {
+      return yield* fail("--mini requires a TTY stdout")
+    }
 
-      if (interactive && !process.stdout.isTTY) {
-        die("--mini requires a TTY stdout")
-      }
+    if (interactive) {
+      yield* Effect.fromResult(interactiveStdin()).pipe(
+        Effect.map((stdin) => stdin.cleanup?.()),
+        Effect.catchTag("InteractiveInputError", (error) => fail(error.message)),
+      )
+    }
 
-      if (interactive) {
-        try {
-          resolveInteractiveStdin().cleanup?.()
-        } catch (error) {
-          dieInteractive(error)
-        }
-      }
+    const replay = args.replay
 
-      const replay = args.replay === false ? false : args.replay || args["replay-limit"] !== undefined
+    // An unreadable PWD counts as not set, as a missing one does.
+    const pwd = yield* Config.option(Config.String("PWD")).pipe(Effect.orElseSucceed(() => Option.none<string>()))
+    const root = Filesystem.resolve(Option.getOrElse(pwd, () => process.cwd()))
+    const target = args.dir
+    const directory = yield* Effect.suspend(() => {
+      if (!target) return Effect.succeed(args.attach ? Option.none<string>() : Option.some(root))
+      if (args.attach) return Effect.succeed(Option.some(target))
 
-      const root = Filesystem.resolve(process.env.PWD ?? process.cwd())
-      const directory = (() => {
-        if (!args.dir) return args.attach ? undefined : root
-        if (args.attach) return args.dir
+      return Effect.try({
+        try: () => {
+          process.chdir(path.isAbsolute(target) ? target : path.join(root, target))
+          return Option.some(process.cwd())
+        },
+        catch: () => new CliError({ message: "Failed to change directory to " + target, exitCode: 1 }),
+      })
+    })
+    const localDirectory = Option.getOrElse(directory, () => root)
+    const attachHeaders = args.attach
+      ? Option.fromNullishOr(yield* ServerAuth.headers({ password: args.password, username: args.username }))
+      : Option.none<{ Authorization: string }>()
+    const attachSDK = (baseUrl: string, dir: Option.Option<string>) =>
+      createOpencodeClient({
+        baseUrl,
+        ...(Option.isSome(dir) ? { directory: dir.value } : {}),
+        ...(Option.isSome(attachHeaders) ? { headers: attachHeaders.value } : {}),
+      })
 
-        try {
-          process.chdir(path.isAbsolute(args.dir) ? args.dir : path.join(root, args.dir))
-          return process.cwd()
-        } catch {
-          UI.error("Failed to change directory to " + args.dir)
-          process.exit(1)
-        }
-      })()
-      const attachHeaders = args.attach
-        ? await Effect.runPromise(ServerAuth.headers({ password: args.password, username: args.username }))
-        : undefined
-      const attachSDK = (dir?: string) => {
-        return createOpencodeClient({
-          baseUrl: args.attach!,
-          directory: dir,
-          headers: attachHeaders,
-        })
+    const attachFile = Effect.fn("Cli.run.attachFile")(function* (filePath: string) {
+      const resolvedPath = path.resolve(args.attach ? root : localDirectory, filePath)
+      if (!(yield* fsys.existsSafe(resolvedPath))) {
+        return yield* fail(`File not found: ${filePath}`)
       }
 
-      const files: FilePart[] = []
-      if (args.file) {
-        const list = Array.isArray(args.file) ? args.file : [args.file]
-
-        for (const filePath of list) {
-          const resolvedPath = path.resolve(args.attach ? root : (directory ?? root), filePath)
-          if (!(await Filesystem.exists(resolvedPath))) {
-            UI.error(`File not found: ${filePath}`)
-            process.exit(1)
-          }
-
-          const stat = Filesystem.stat(resolvedPath)
-          const isDirectory = stat?.isDirectory() ?? false
-          if (args.attach && isDirectory) {
-            UI.error(`Cannot attach local directory without a shared filesystem: ${filePath}`)
-            process.exit(1)
-          }
-
-          const content = await (async () => {
-            if (!args.attach) return
-            const handle = await open(resolvedPath, "r")
-            try {
-              const opened = await handle.stat()
-              if (!opened.isFile() || Number(opened.size) > ATTACH_FILE_MAX_BYTES) {
-                UI.error(`Cannot attach local file larger than 10 MiB or a special file: ${filePath}`)
-                process.exit(1)
-              }
-              if (opened.size === 0) return Buffer.alloc(0)
-              const buffer = Buffer.alloc(Number(opened.size))
-              let offset = 0
-              while (offset < buffer.length) {
-                const read = await handle.read(buffer, offset, buffer.length - offset, offset)
-                if (read.bytesRead === 0) break
-                offset += read.bytesRead
-              }
-              return buffer.subarray(0, offset)
-            } finally {
-              await handle.close()
-            }
-          })()
-          const detected = FSUtil.mimeType(resolvedPath)
-          const text = content?.toString("utf8")
-          const mime = !args.attach
-            ? isDirectory
-              ? "application/x-directory"
-              : "text/plain"
-            : content && text !== undefined && Buffer.from(text, "utf8").equals(content)
-              ? "text/plain"
-              : detected
-
-          files.push({
-            type: "file",
-            url: content ? `data:${mime};base64,${content.toString("base64")}` : pathToFileURL(resolvedPath).href,
-            filename: path.basename(resolvedPath),
-            mime,
-          })
-        }
+      const info = yield* fsys.stat(resolvedPath).pipe(Effect.option)
+      const isDirectory = Option.exists(info, (item) => item.type === "Directory")
+      if (args.attach && isDirectory) {
+        return yield* fail(`Cannot attach local directory without a shared filesystem: ${filePath}`)
       }
 
-      const piped = process.stdin.isTTY ? undefined : await Bun.stdin.text()
-      message = resolveRunInput(message, piped) ?? ""
-      const initialInput = resolveRunInput(rawMessage, piped)
+      const content = args.attach
+        ? Option.some(
+            yield* Effect.scoped(
+              Effect.gen(function* () {
+                const file = yield* fsys.open(resolvedPath, { flag: "r" }).pipe(Effect.orDie)
+                const opened = yield* file.stat.pipe(Effect.orDie)
+                const size = Number(opened.size)
+                if (opened.type !== "File" || size > ATTACH_FILE_MAX_BYTES) {
+                  return yield* fail(`Cannot attach local file larger than 10 MiB or a special file: ${filePath}`)
+                }
+                if (size === 0) return Buffer.alloc(0)
+                const buffer = Buffer.alloc(size)
+                return buffer.subarray(0, yield* readAll(file, buffer, 0))
+              }),
+            ),
+          )
+        : Option.none<Buffer>()
+      const detected = FSUtil.mimeType(resolvedPath)
+      const mime = !args.attach
+        ? isDirectory
+          ? "application/x-directory"
+          : "text/plain"
+        : Option.exists(content, (bytes) => Buffer.from(bytes.toString("utf8"), "utf8").equals(bytes))
+          ? "text/plain"
+          : detected
 
-      if (message.trim().length === 0 && !args.command && !interactive) {
-        UI.error("You must provide a message or a command")
-        process.exit(1)
+      const part: FilePart = {
+        type: "file",
+        url: Option.match(content, {
+          onNone: () => pathToFileURL(resolvedPath).href,
+          onSome: (bytes) => `data:${mime};base64,${bytes.toString("base64")}`,
+        }),
+        filename: path.basename(resolvedPath),
+        mime,
       }
+      return part
+    })
 
-      if (args.fork && !args.continue && !args.session) {
-        UI.error("--fork requires --continue or --session")
-        process.exit(1)
-      }
+    const files = args.file ? yield* Effect.forEach(Array.isArray(args.file) ? args.file : [args.file], attachFile) : []
 
-      const rules: PermissionV1.Ruleset = interactive
-        ? []
-        : [
-            {
-              permission: "question",
-              action: "deny",
-              pattern: "*",
-            },
-            {
-              permission: "plan_enter",
-              action: "deny",
-              pattern: "*",
-            },
-            {
-              permission: "plan_exit",
-              action: "deny",
-              pattern: "*",
-            },
-          ]
+    const piped = process.stdin.isTTY
+      ? Option.none<string>()
+      : Option.some(yield* Effect.promise(() => Bun.stdin.text()))
+    const message = Option.getOrElse(resolveRunInput(quoted, piped), () => "")
+    const initialInput = resolveRunInput(rawMessage, piped)
 
-      function title() {
-        if (args.title === undefined) return
-        if (args.title !== "") return args.title
-        return message.slice(0, 50) + (message.length > 50 ? "..." : "")
-      }
+    if (message.trim().length === 0 && !args.command && !interactive) {
+      return yield* fail("You must provide a message or a command")
+    }
 
-      async function session(sdk: OpencodeClient): Promise<SessionInfo | undefined> {
-        if (args.session) {
-          const current = await sdk.session
-            .get({
-              sessionID: args.session,
-            })
-            .catch(() => undefined)
+    if (args.fork && !args.continue && !args.session) {
+      return yield* fail("--fork requires --continue or --session")
+    }
 
-          if (!current?.data) {
-            UI.error("Session not found")
-            process.exit(1)
-          }
+    const rules: PermissionV1.Ruleset = interactive
+      ? []
+      : [
+          {
+            permission: "question",
+            action: "deny",
+            pattern: "*",
+          },
+          {
+            permission: "plan_enter",
+            action: "deny",
+            pattern: "*",
+          },
+          {
+            permission: "plan_exit",
+            action: "deny",
+            pattern: "*",
+          },
+        ]
 
-          if (args.fork) {
-            const forked = await sdk.session.fork({
-              sessionID: args.session,
-            })
-            const id = forked.data?.id
-            if (!id) {
-              return
-            }
+    function title() {
+      if (args.title === undefined) return Option.none<string>()
+      if (args.title !== "") return Option.some(args.title)
+      return Option.some(message.slice(0, 50) + (message.length > 50 ? "..." : ""))
+    }
 
-            return {
-              id,
-              title: forked.data?.title ?? current.data.title,
-              directory: forked.data?.directory ?? current.data.directory,
-            }
-          }
+    // The fork of a session, or None when the server returned no fork id.
+    function forkedInfo(
+      forked: { id: string; title: string; directory: string } | undefined,
+      base: { title: string; directory: string },
+    ) {
+      return Option.fromNullishOr(forked).pipe(
+        Option.filter((item) => !!item.id),
+        Option.map(
+          (item): SessionInfo => ({
+            id: item.id,
+            title: item.title ?? base.title,
+            directory: item.directory ?? base.directory,
+          }),
+        ),
+      )
+    }
 
-          return {
-            id: current.data.id,
-            title: current.data.title,
-            directory: current.data.directory,
-          }
-        }
-
-        const base = args.continue ? (await sdk.session.list()).data?.find((item) => !item.parentID) : undefined
-
-        if (base && args.fork) {
-          const forked = await sdk.session.fork({
-            sessionID: base.id,
-          })
-          const id = forked.data?.id
-          if (!id) {
-            return
-          }
-
-          return {
-            id,
-            title: forked.data?.title ?? base.title,
-            directory: forked.data?.directory ?? base.directory,
-          }
-        }
-
-        if (base) {
-          return {
-            id: base.id,
-            title: base.title,
-            directory: base.directory,
-          }
-        }
-
-        const name = title()
-        const result = await sdk.session.create({
-          title: name,
-          permission: [...rules],
-        })
-        const id = result.data?.id
-        if (!id) {
-          return
-        }
-
-        return {
-          id,
-          title: result.data?.title ?? name,
-          directory: result.data?.directory,
-        }
-      }
-
-      async function share(sdk: OpencodeClient, sessionID: string) {
-        const cfg = await sdk.config.get()
-        if (!cfg.data) return
-        if (cfg.data.share !== "auto" && !flags.autoShare && !args.share) return
-        const res = await sdk.session.share({ sessionID }).catch((error) => {
-          if (error instanceof Error && error.message.includes("disabled")) {
-            UI.println(UI.Style.TEXT_DANGER_BOLD + "!  " + error.message)
-          }
-          return { error }
-        })
-        if (!res.error && "data" in res && res.data?.share?.url) {
-          UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + res.data.share.url)
-        }
-      }
-
-      async function createFreshSession(
-        sdk: OpencodeClient,
-        input: { agent: string | undefined; model: ModelInput | undefined; variant: string | undefined },
-      ): Promise<SessionInfo> {
-        const result = await sdk.session.create({
-          title: args.title !== undefined && args.title !== "" ? args.title : undefined,
-          agent: input.agent,
-          model: input.model
-            ? {
-                providerID: input.model.providerID,
-                id: input.model.modelID,
-                variant: input.variant,
-              }
-            : undefined,
-          permission: [...rules],
-        })
-        const id = result.data?.id
-        if (!id) {
-          throw new Error("Failed to create session")
-        }
-
-        void share(sdk, id).catch(() => {})
-        return {
-          id,
-          title: result.data?.title,
-        }
-      }
-
-      async function current(sdk: OpencodeClient): Promise<string> {
-        if (!args.attach) {
-          return directory ?? root
-        }
-
-        const next = await sdk.path
-          .get()
-          .then((x) => x.data?.directory)
-          .catch(() => undefined)
-        if (next) {
-          return next
-        }
-
-        UI.error("Failed to resolve remote directory")
-        process.exit(1)
-      }
-
-      async function localAgent() {
-        if (!args.agent) return undefined
-        const name = args.agent
-
-        const entry = await Effect.runPromise(
-          agentSvc.get(name).pipe(Effect.provideService(InstanceRef, localInstance)),
+    const session = Effect.fn("Cli.run.session")(function* (sdk: OpencodeClient) {
+      const sessionID = args.session
+      if (sessionID) {
+        const current = yield* Effect.tryPromise(() => sdk.session.get({ sessionID })).pipe(
+          Effect.map((result) => Option.fromNullishOr(result.data)),
+          Effect.orElseSucceed(() => Option.none()),
         )
-        if (!entry) {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${name}" not found. Falling back to default agent`,
-          )
-          return undefined
+        if (Option.isNone(current)) {
+          return yield* fail("Session not found")
         }
-        if (entry.mode === "subagent") {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${name}" is a subagent, not a primary agent. Falling back to default agent`,
-          )
-          return undefined
+
+        if (args.fork) {
+          const forked = yield* Effect.promise(() => sdk.session.fork({ sessionID }))
+          return forkedInfo(forked.data, current.value)
         }
-        return name
+
+        return Option.some<SessionInfo>({
+          id: current.value.id,
+          title: current.value.title,
+          directory: current.value.directory,
+        })
       }
 
-      async function attachAgent(sdk: OpencodeClient) {
-        if (!args.agent) return undefined
-        const name = args.agent
+      const base = args.continue
+        ? Option.fromNullishOr((yield* Effect.promise(() => sdk.session.list())).data?.find((item) => !item.parentID))
+        : Option.none()
 
-        const modes = await sdk.app
-          .agents(undefined, { throwOnError: true })
-          .then((x) => x.data ?? [])
-          .catch(() => undefined)
-
-        if (!modes) {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `failed to list agents from ${args.attach}. Falling back to default agent`,
-          )
-          return undefined
-        }
-
-        const agent = modes.find((a) => a.name === name)
-        if (!agent) {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${name}" not found. Falling back to default agent`,
-          )
-          return undefined
-        }
-
-        if (agent.mode === "subagent") {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${name}" is a subagent, not a primary agent. Falling back to default agent`,
-          )
-          return undefined
-        }
-
-        return name
+      if (Option.isSome(base) && args.fork) {
+        const forked = yield* Effect.promise(() => sdk.session.fork({ sessionID: base.value.id }))
+        return forkedInfo(forked.data, base.value)
       }
 
-      async function pickAgent(sdk: OpencodeClient) {
-        if (!args.agent) return undefined
-        if (args.attach) {
-          return attachAgent(sdk)
-        }
-
-        return localAgent()
+      if (Option.isSome(base)) {
+        return Option.some<SessionInfo>({
+          id: base.value.id,
+          title: base.value.title,
+          directory: base.value.directory,
+        })
       }
 
-      async function execute(sdk: OpencodeClient) {
-        const sess = await session(sdk)
-        if (!sess?.id) {
-          UI.error("Session not found")
-          process.exit(1)
-        }
-        const sessionID = sess.id
+      const name = title()
+      const result = yield* Effect.promise(() =>
+        sdk.session.create({
+          ...(Option.isSome(name) ? { title: name.value } : {}),
+          permission: [...rules],
+        }),
+      )
+      return Option.fromNullishOr(result.data).pipe(
+        Option.filter((item) => !!item.id),
+        Option.map(
+          (item): SessionInfo => ({
+            id: item.id,
+            title: item.title ?? Option.getOrUndefined(name),
+            directory: item.directory,
+          }),
+        ),
+      )
+    })
 
-        function emit(type: string, data: Record<string, unknown>) {
-          if (args.format === "json") {
-            process.stdout.write(
-              JSON.stringify({
-                type,
-                timestamp: Date.now(),
-                sessionID,
-                ...data,
-              }) + EOL,
-            )
-            return true
-          }
-          return false
-        }
-
-        // Consume one subscribed event stream for the active session and mirror it
-        // to stdout/UI. `client` is passed explicitly because attach mode may
-        // rebind the SDK to the session's directory after the subscription is
-        // created, and replies issued from inside the loop must use that client.
-        async function loop(client: OpencodeClient, events: Awaited<ReturnType<typeof sdk.event.subscribe>>) {
-          const toggles = new Map<string, boolean>()
-          const sessions = new Set([sessionID])
-          let error: string | undefined
-
-          for await (const event of events.stream) {
-            if (event.type === "session.created" && event.properties.info.parentID) {
-              if (sessions.has(event.properties.info.parentID)) sessions.add(event.properties.info.id)
+    const share = Effect.fn("Cli.run.share")(function* (sdk: OpencodeClient, sessionID: string) {
+      const cfg = yield* Effect.promise(() => sdk.config.get())
+      if (!cfg.data) return
+      if (cfg.data.share !== "auto" && !flags.autoShare && !args.share) return
+      const url = yield* Effect.tryPromise({
+        try: () => sdk.session.share({ sessionID }),
+        catch: (error) => error,
+      }).pipe(
+        Effect.map((res) => (res.error ? Option.none<string>() : Option.fromNullishOr(res.data?.share?.url))),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            if (error instanceof Error && error.message.includes("disabled")) {
+              UI.println(UI.Style.TEXT_DANGER_BOLD + "!  " + error.message)
             }
+            return Option.none<string>()
+          }),
+        ),
+      )
+      if (Option.isSome(url) && url.value) {
+        UI.println(UI.Style.TEXT_INFO_BOLD + "~  " + url.value)
+      }
+    })
 
-            if (
-              event.type === "message.updated" &&
-              event.properties.sessionID === sessionID &&
-              event.properties.info.role === "assistant" &&
-              args.format !== "json" &&
-              toggles.get("start") !== true
-            ) {
-              UI.empty()
-              UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
-              UI.empty()
-              toggles.set("start", true)
-            }
+    const createFreshSession = Effect.fn("Cli.run.createFreshSession")(function* (
+      sdk: OpencodeClient,
+      input: { agent: string | undefined; model: ModelInput | undefined; variant: string | undefined },
+    ) {
+      const { RunSessionError } = yield* Effect.promise(() => import("./run/runtime"))
+      const result = yield* Effect.promise(() =>
+        sdk.session.create({
+          ...(args.title ? { title: args.title } : {}),
+          agent: input.agent,
+          ...(input.model
+            ? {
+                model: {
+                  providerID: input.model.providerID,
+                  id: input.model.modelID,
+                  variant: input.variant,
+                },
+              }
+            : {}),
+          permission: [...rules],
+        }),
+      )
+      const id = result.data?.id
+      if (!id) {
+        return yield* new RunSessionError({ message: "Failed to create session" })
+      }
 
-            if (event.type === "message.part.updated") {
-              const part = event.properties.part
-              if (part.sessionID !== sessionID) continue
+      yield* Effect.forkDetach(share(sdk, id).pipe(Effect.ignoreCause), { startImmediately: true })
+      return {
+        id,
+        title: result.data?.title,
+      }
+    })
 
-              if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
-                if (emit("tool_use", { part })) continue
-                if (part.state.status === "completed") {
-                  await tool(part)
-                  continue
+    const current = Effect.fn("Cli.run.current")(function* (sdk: OpencodeClient) {
+      if (!args.attach) {
+        return localDirectory
+      }
+
+      const next = yield* Effect.tryPromise(() => sdk.path.get()).pipe(
+        Effect.map((result) => Option.fromNullishOr(result.data?.directory).pipe(Option.filter((dir) => !!dir))),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      )
+      if (Option.isSome(next)) {
+        return next.value
+      }
+
+      return yield* fail("Failed to resolve remote directory")
+    })
+
+    const warnAgent = (text: string) => UI.println(UI.Style.TEXT_WARNING_BOLD + "!", UI.Style.TEXT_NORMAL, text)
+
+    const localAgent = Effect.fn("Cli.run.localAgent")(function* () {
+      if (!args.agent) return Option.none<string>()
+      const name = args.agent
+
+      const entry = yield* agentSvc.get(name).pipe(Effect.provideService(InstanceRef, localInstance))
+      if (!entry) {
+        warnAgent(`agent "${name}" not found. Falling back to default agent`)
+        return Option.none<string>()
+      }
+      if (entry.mode === "subagent") {
+        warnAgent(`agent "${name}" is a subagent, not a primary agent. Falling back to default agent`)
+        return Option.none<string>()
+      }
+      return Option.some(name)
+    })
+
+    const attachAgent = Effect.fn("Cli.run.attachAgent")(function* (sdk: OpencodeClient) {
+      if (!args.agent) return Option.none<string>()
+      const name = args.agent
+
+      const modes = yield* Effect.tryPromise(() => sdk.app.agents({}, { throwOnError: true })).pipe(
+        Effect.map((result) => Option.some(result.data ?? [])),
+        Effect.orElseSucceed(() => Option.none()),
+      )
+
+      if (Option.isNone(modes)) {
+        warnAgent(`failed to list agents from ${args.attach}. Falling back to default agent`)
+        return Option.none<string>()
+      }
+
+      const agent = modes.value.find((item) => item.name === name)
+      if (!agent) {
+        warnAgent(`agent "${name}" not found. Falling back to default agent`)
+        return Option.none<string>()
+      }
+
+      if (agent.mode === "subagent") {
+        warnAgent(`agent "${name}" is a subagent, not a primary agent. Falling back to default agent`)
+        return Option.none<string>()
+      }
+
+      return Option.some(name)
+    })
+
+    const pickAgent = (sdk: OpencodeClient) => {
+      if (!args.agent) return Effect.succeed(Option.none<string>())
+      return args.attach ? attachAgent(sdk) : localAgent()
+    }
+
+    const execute = Effect.fn("Cli.run.execute")(function* (sdk: OpencodeClient) {
+      const sess = yield* session(sdk)
+      if (Option.isNone(sess)) {
+        return yield* fail("Session not found")
+      }
+      const sessionID = sess.value.id
+
+      const emit = (type: string, data: Record<string, unknown>) => {
+        if (args.format !== "json") return Effect.succeed(false)
+        return Effect.gen(function* () {
+          const timestamp = yield* Clock.currentTimeMillis
+          const line = yield* encodeEvent({ type, timestamp, sessionID, ...data }).pipe(Effect.orDie)
+          yield* Effect.sync(() => process.stdout.write(line + EOL))
+          return true
+        })
+      }
+
+      // Consume one subscribed event stream for the active session and mirror it
+      // to stdout/UI. `client` is passed explicitly because attach mode may
+      // rebind the SDK to the session's directory after the subscription is
+      // created, and replies issued from inside the loop must use that client.
+      const loop = (client: OpencodeClient, events: Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>>) =>
+        Effect.gen(function* () {
+          const toggles = MutableHashSet.empty<string>()
+          const sessions = MutableHashSet.make(sessionID)
+          let error = ""
+
+          // Each event returns true to keep reading and false to stop at idle.
+          yield* Stream.fromAsyncIterable(events.stream, (error) => error).pipe(
+            Stream.runForEachWhile((event) =>
+              Effect.gen(function* () {
+                if (event.type === "session.created" && event.properties.info.parentID) {
+                  if (MutableHashSet.has(sessions, event.properties.info.parentID)) {
+                    MutableHashSet.add(sessions, event.properties.info.id)
+                  }
                 }
-                await toolError(part)
-                UI.error(part.state.error)
-              }
 
-              if (
-                part.type === "tool" &&
-                part.tool === "task" &&
-                part.state.status === "running" &&
-                args.format !== "json"
-              ) {
-                if (toggles.get(part.id) === true) continue
-                await tool(part)
-                toggles.set(part.id, true)
-              }
-
-              if (part.type === "step-start") {
-                if (emit("step_start", { part })) continue
-              }
-
-              if (part.type === "step-finish") {
-                if (emit("step_finish", { part })) continue
-              }
-
-              if (part.type === "text" && part.time?.end) {
-                if (emit("text", { part })) continue
-                const text = part.text.trim()
-                if (!text) continue
-                if (!process.stdout.isTTY) {
-                  process.stdout.write(text + EOL)
-                  continue
-                }
-                UI.empty()
-                UI.println(text)
-                UI.empty()
-              }
-
-              if (part.type === "reasoning" && part.time?.end && thinking) {
-                if (emit("reasoning", { part })) continue
-                const text = part.text.trim()
-                if (!text) continue
-                const line = `Thinking: ${text}`
-                if (process.stdout.isTTY) {
+                if (
+                  event.type === "message.updated" &&
+                  event.properties.sessionID === sessionID &&
+                  event.properties.info.role === "assistant" &&
+                  args.format !== "json" &&
+                  !MutableHashSet.has(toggles, "start")
+                ) {
                   UI.empty()
-                  UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
+                  UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
                   UI.empty()
-                  continue
+                  MutableHashSet.add(toggles, "start")
                 }
-                process.stdout.write(line + EOL)
-              }
-            }
 
-            if (event.type === "session.error") {
-              const props = event.properties
-              if (props.sessionID !== sessionID || !props.error) continue
-              let err = String(props.error.name)
-              const data = props.error.data
-              if (data && typeof data === "object" && "message" in data) {
-                err = String(data.message)
-              }
-              error = error ? error + EOL + err : err
-              if (emit("error", { error: props.error })) continue
-              UI.error(err)
-            }
+                if (event.type === "message.part.updated") {
+                  const part = event.properties.part
+                  if (part.sessionID !== sessionID) return true
 
-            if (
-              event.type === "session.status" &&
-              event.properties.sessionID === sessionID &&
-              event.properties.status.type === "idle"
-            ) {
-              break
-            }
+                  if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
+                    if (yield* emit("tool_use", { part })) return true
+                    if (part.state.status === "completed") {
+                      yield* tool(part)
+                      return true
+                    }
+                    yield* toolError(part)
+                    UI.error(part.state.error)
+                  }
 
-            if (event.type === "permission.asked") {
-              const permission = event.properties
-              if (!sessions.has(permission.sessionID)) continue
+                  if (
+                    part.type === "tool" &&
+                    part.tool === "task" &&
+                    part.state.status === "running" &&
+                    args.format !== "json"
+                  ) {
+                    if (MutableHashSet.has(toggles, part.id)) return true
+                    yield* tool(part)
+                    MutableHashSet.add(toggles, part.id)
+                  }
 
-              if (auto) {
-                await client.permission.reply({
-                  requestID: permission.id,
-                  reply: "once",
-                })
-              } else {
-                UI.println(
-                  UI.Style.TEXT_WARNING_BOLD + "!",
-                  UI.Style.TEXT_NORMAL +
-                    `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
-                )
-                await client.permission.reply({
-                  requestID: permission.id,
-                  reply: "reject",
-                })
-              }
-            }
-          }
+                  if (part.type === "step-start") {
+                    if (yield* emit("step_start", { part })) return true
+                  }
+
+                  if (part.type === "step-finish") {
+                    if (yield* emit("step_finish", { part })) return true
+                  }
+
+                  if (part.type === "text" && part.time?.end) {
+                    if (yield* emit("text", { part })) return true
+                    const text = part.text.trim()
+                    if (!text) return true
+                    if (!process.stdout.isTTY) {
+                      process.stdout.write(text + EOL)
+                      return true
+                    }
+                    UI.empty()
+                    UI.println(text)
+                    UI.empty()
+                  }
+
+                  if (part.type === "reasoning" && part.time?.end && thinking) {
+                    if (yield* emit("reasoning", { part })) return true
+                    const text = part.text.trim()
+                    if (!text) return true
+                    const line = `Thinking: ${text}`
+                    if (process.stdout.isTTY) {
+                      UI.empty()
+                      UI.println(`${UI.Style.TEXT_DIM}\u001b[3m${line}\u001b[0m${UI.Style.TEXT_NORMAL}`)
+                      UI.empty()
+                      return true
+                    }
+                    process.stdout.write(line + EOL)
+                  }
+                }
+
+                if (event.type === "session.error") {
+                  const props = event.properties
+                  if (props.sessionID !== sessionID || !props.error) return true
+                  const data = props.error.data
+                  const err =
+                    data && typeof data === "object" && "message" in data ? String(data.message) : props.error.name
+                  error = error ? error + EOL + err : err
+                  if (yield* emit("error", { error: props.error })) return true
+                  UI.error(err)
+                }
+
+                if (
+                  event.type === "session.status" &&
+                  event.properties.sessionID === sessionID &&
+                  event.properties.status.type === "idle"
+                ) {
+                  return false
+                }
+
+                if (event.type === "permission.asked") {
+                  const permission = event.properties
+                  if (!MutableHashSet.has(sessions, permission.sessionID)) return true
+
+                  if (!auto) {
+                    UI.println(
+                      UI.Style.TEXT_WARNING_BOLD + "!",
+                      UI.Style.TEXT_NORMAL +
+                        `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
+                    )
+                  }
+                  yield* Effect.promise(() =>
+                    client.permission.reply({
+                      requestID: permission.id,
+                      reply: auto ? "once" : "reject",
+                    }),
+                  )
+                }
+
+                return true
+              }),
+            ),
+          )
           return error
-        }
-        const cwd = args.attach ? (directory ?? sess.directory ?? (await current(sdk))) : (directory ?? root)
-        const client = args.attach ? attachSDK(cwd) : sdk
+        })
 
-        // Validate agent if specified
-        const agent = await pickAgent(client)
+      const cwd = args.attach
+        ? Option.isSome(directory)
+          ? directory.value
+          : (sess.value.directory ?? (yield* current(sdk)))
+        : localDirectory
+      const client = args.attach ? attachSDK(args.attach, Option.some(cwd)) : sdk
 
-        await share(client, sessionID)
+      // Validate agent if specified
+      const agent = Option.getOrUndefined(yield* pickAgent(client))
 
-        if (!interactive) {
-          const events = await client.event.subscribe()
-          const completed = loop(client, events).catch((e) => {
-            console.error(e)
-            process.exitCode = 1
-          })
-          async function finish() {
-            if (args.attach) return
-            const error = await completed
-            if (error) process.exitCode = 1
-          }
+      yield* share(client, sessionID)
 
-          if (args.command) {
-            const result = await client.session.command({
+      if (!interactive) {
+        const events = yield* Effect.promise(() => client.event.subscribe())
+        const report = (error: unknown) =>
+          Console.error(error).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                process.exitCode = 1
+              }),
+            ),
+            Effect.as(""),
+          )
+        const completed = yield* Effect.forkChild(
+          loop(client, events).pipe(Effect.catch(report), Effect.catchDefect(report)),
+          { startImmediately: true },
+        )
+        const finish = Effect.gen(function* () {
+          if (args.attach) return
+          const error = yield* Fiber.join(completed)
+          if (error) process.exitCode = 1
+        })
+
+        const command = args.command
+        if (command) {
+          const result = yield* Effect.promise(() =>
+            client.session.command({
               sessionID,
               agent,
               model: args.model,
-              command: args.command,
+              command,
               arguments: message,
               variant: args.variant,
-            })
-            if (result.error) {
-              if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
-              process.exitCode = 1
-              return
-            }
-            await finish()
+            }),
+          )
+          if (result.error) {
+            if (!(yield* emit("error", { error: result.error }))) UI.error(formatRunError(result.error))
+            process.exitCode = 1
             return
           }
+          yield* finish
+          return
+        }
 
-          const model = pick(args.model)
-          const result = await client.session.prompt({
+        const model = pick(args.model)
+        const result = yield* Effect.promise(() =>
+          client.session.prompt({
             sessionID,
             agent,
             model,
             variant: args.variant,
             parts: [...files, { type: "text", text: message }],
-          })
-          if (result.error) {
-            if (!emit("error", { error: result.error })) UI.error(formatRunError(result.error))
-            process.exitCode = 1
-            return
-          }
-          await finish()
+          }),
+        )
+        if (result.error) {
+          if (!(yield* emit("error", { error: result.error }))) UI.error(formatRunError(result.error))
+          process.exitCode = 1
           return
         }
-
-        const model = pick(args.model)
-        const { runInteractiveMode } = await import("./run/runtime")
-        try {
-          await runInteractiveMode({
-            sdk: client,
-            directory: cwd,
-            sessionID,
-            sessionTitle: sess.title,
-            resume: Boolean(args.session || args.continue) && !args.fork,
-            replay,
-            replayLimit: args["replay-limit"],
-            agent,
-            model,
-            variant: args.variant,
-            files,
-            initialInput,
-            createSession: createFreshSession,
-            thinking,
-            backgroundSubagents: flags.experimentalBackgroundSubagents,
-            demo: args.demo,
-          })
-        } catch (error) {
-          dieInteractive(error)
-        }
+        yield* finish
         return
       }
 
-      if (interactive && !args.attach && !args.session && !args.continue) {
-        const model = pick(args.model)
-        const { runInteractiveLocalMode } = await import("./run/runtime")
-        const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-          const { Server } = await import("@/server/server")
-          const request = new Request(input, init)
-          const headers = new Headers(request.headers)
-          const auth = await Effect.runPromise(ServerAuth.header())
-          if (auth) headers.set("Authorization", auth)
-          return Server.Default().app.fetch(new Request(request, { headers }))
-        }) as typeof globalThis.fetch
-
-        try {
-          return await runInteractiveLocalMode({
-            directory: directory ?? root,
-            fetch: fetchFn,
-            resolveAgent: localAgent,
-            session,
-            share,
-            createSession: createFreshSession,
-            agent: args.agent,
-            model,
-            variant: args.variant,
-            replay,
-            replayLimit: args["replay-limit"],
-            files,
-            initialInput,
-            thinking,
-            backgroundSubagents: flags.experimentalBackgroundSubagents,
-            demo: args.demo,
-          })
-        } catch (error) {
-          dieInteractive(error)
-        }
-      }
-
-      if (args.attach) {
-        const sdk = attachSDK(directory)
-        return await execute(sdk)
-      }
-
-      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-        const { Server } = await import("@/server/server")
-        const request = new Request(input, init)
-        const headers = new Headers(request.headers)
-        const auth = await Effect.runPromise(ServerAuth.header())
-        if (auth) headers.set("Authorization", auth)
-        return Server.Default().app.fetch(new Request(request, { headers }))
-      }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({
-        baseUrl: "http://opencode.internal",
-        fetch: fetchFn,
-        directory,
-      })
-      await execute(sdk)
+      const model = pick(args.model)
+      const { runInteractiveMode } = yield* Effect.promise(() => import("./run/runtime"))
+      yield* runInteractiveMode({
+        sdk: client,
+        directory: cwd,
+        sessionID,
+        sessionTitle: sess.value.title,
+        resume: Boolean(args.session || args.continue) && !args.fork,
+        replay,
+        replayLimit: args["replay-limit"],
+        agent,
+        model,
+        variant: args.variant,
+        files,
+        initialInput: Option.getOrUndefined(initialInput),
+        createSession: createFreshSession,
+        thinking,
+        backgroundSubagents: flags.experimentalBackgroundSubagents,
+        demo: args.demo,
+      }).pipe(Effect.orDie, Effect.catchDefect(interactiveFailure))
     })
+
+    // The SDK calls the in-process server through this fetch. The SDK fetch
+    // setting is typeof fetch, which includes Bun's preconnect helper.
+    const localFetch = Object.assign(
+      (input: RequestInfo | URL, init?: RequestInit) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const { Server } = yield* Effect.promise(() => import("@/server/server"))
+            const request = new Request(input, init)
+            const headers = new Headers(request.headers)
+            const auth = yield* ServerAuth.header()
+            if (auth) headers.set("Authorization", auth)
+            const response = Server.Default().app.fetch(new Request(request, { headers }))
+            return response instanceof Response ? response : yield* Effect.promise(() => response)
+          }),
+        ),
+      { preconnect: fetch.preconnect },
+    )
+
+    if (interactive && !args.attach && !args.session && !args.continue) {
+      const model = pick(args.model)
+      const { runInteractiveLocalMode } = yield* Effect.promise(() => import("./run/runtime"))
+      return yield* runInteractiveLocalMode({
+        directory: localDirectory,
+        fetch: localFetch,
+        resolveAgent: localAgent(),
+        // Local mode starts without --session and --continue, so the session is always new.
+        session: (sdk: OpencodeClient) => session(sdk).pipe(Effect.orDie),
+        share,
+        createSession: createFreshSession,
+        agent: args.agent,
+        model,
+        variant: args.variant,
+        replay,
+        replayLimit: args["replay-limit"],
+        files,
+        initialInput: Option.getOrUndefined(initialInput),
+        thinking,
+        backgroundSubagents: flags.experimentalBackgroundSubagents,
+        demo: args.demo,
+      }).pipe(Effect.orDie, Effect.catchDefect(interactiveFailure))
+    }
+
+    if (args.attach) {
+      return yield* execute(attachSDK(args.attach, directory))
+    }
+
+    const sdk = createOpencodeClient({
+      baseUrl: "http://opencode.internal",
+      fetch: localFetch,
+      ...(Option.isSome(directory) ? { directory: directory.value } : {}),
+    })
+    yield* execute(sdk)
   }),
 })
 
@@ -980,28 +988,37 @@ type MiniCommandInput = {
   demo?: boolean
 }
 
-export async function runMini(input: MiniCommandInput) {
-  if (!RunCommand.handler) throw new Error("Mini command handler is unavailable")
-  await RunCommand.handler({
+// tui.ts and attach.ts await this entry for `--mini`. It runs the same yargs
+// handler as `opencode run --mini`, so the instance load and disposal stay in
+// effectCmd.
+export function runMini(input: MiniCommandInput): Promise<void> {
+  const run = RunCommand.handler({
     $0: "opencode",
     _: ["mini"],
     message: input.prompt ? [input.prompt] : [],
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     command: undefined,
     continue: input.continue,
     session: input.session,
     fork: input.fork,
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     share: undefined,
     model: input.model,
     agent: input.agent,
     format: "default",
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     file: undefined,
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     title: undefined,
     attach: input.attach,
     password: input.password,
     username: input.username,
     dir: input.directory,
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     port: undefined,
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     variant: undefined,
+    // eslint-disable-next-line effect/no-undefined-use-option -- (a) yargs types each declared option as a required key, and an unset option is the JS undefined value
     thinking: undefined,
     mini: true,
     interactive: false,
@@ -1014,4 +1031,6 @@ export async function runMini(input: MiniCommandInput) {
     dangerouslySkipPermissions: false,
     demo: input.demo ?? false,
   })
+  // effectCmd handlers are async; the yargs type also allows a synchronous result.
+  return run instanceof Promise ? run : Effect.runPromise(Effect.void)
 }

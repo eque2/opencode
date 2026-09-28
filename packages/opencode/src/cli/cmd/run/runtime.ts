@@ -61,7 +61,10 @@ type CreateSessionInput = {
   variant: string | undefined
 }
 
-type CreateSession = (sdk: RunInput["sdk"], input: CreateSessionInput) => Promise<{ id: string; title?: string }>
+type CreateSession = (
+  sdk: RunInput["sdk"],
+  input: CreateSessionInput,
+) => Effect.Effect<{ id: string; title?: string }, RunSessionError>
 
 type ResolvedSession = {
   sessionID: string
@@ -85,9 +88,9 @@ type RunRuntimeInput = {
 type RunLocalInput = {
   directory: string
   fetch: typeof globalThis.fetch
-  resolveAgent: () => Promise<string | undefined>
-  session: (sdk: RunInput["sdk"]) => Promise<{ id: string; title?: string } | undefined>
-  share: (sdk: RunInput["sdk"], sessionID: string) => Promise<void>
+  resolveAgent: Effect.Effect<Option.Option<string>>
+  session: (sdk: RunInput["sdk"]) => Effect.Effect<Option.Option<{ id: string; title?: string }>>
+  share: (sdk: RunInput["sdk"], sessionID: string) => Effect.Effect<void>
   createSession?: CreateSession
   agent: RunInput["agent"]
   model: RunInput["model"]
@@ -124,7 +127,7 @@ function createSessionResolver(fn?: CreateSession) {
   }
 
   return (ctx: BootContext, input: CreateSessionInput) =>
-    Effect.promise(() => fn(ctx.sdk, input)).pipe(
+    fn(ctx.sdk, input).pipe(
       Effect.flatMap((created) =>
         created.id
           ? Effect.succeed<ResolvedSession>({
@@ -910,11 +913,7 @@ const runInteractiveRuntime = Effect.fnUntraced(function* (input: RunRuntimeInpu
 
 // Local in-process mode. Creates an SDK client backed by a direct fetch to
 // the in-process server, so no external HTTP server is needed.
-export function runInteractiveLocalMode(input: RunLocalInput): Promise<void> {
-  return Effect.runPromise(runLocal(input))
-}
-
-const runLocal = Effect.fnUntraced(function* (input: RunLocalInput) {
+export const runInteractiveLocalMode = Effect.fnUntraced(function* (input: RunLocalInput) {
   const sdk = createOpencodeClient({
     baseUrl: "http://opencode.internal",
     fetch: input.fetch,
@@ -923,22 +922,20 @@ const runLocal = Effect.fnUntraced(function* (input: RunLocalInput) {
   // The first caller resolves the session; later callers share the result.
   const session = yield* Effect.cached(
     Effect.gen(function* () {
-      const [agent, next] = yield* Effect.all(
-        [Effect.promise(() => input.resolveAgent()), Effect.promise(() => input.session(sdk))],
-        { concurrency: "unbounded" },
-      )
-      if (!next?.id) {
+      const [agent, found] = yield* Effect.all([input.resolveAgent, input.session(sdk)], {
+        concurrency: "unbounded",
+      })
+      const next = Option.filter(found, (item) => !!item.id)
+      if (Option.isNone(next)) {
         return yield* new RunSessionError({ message: "Session not found" })
       }
 
-      yield* Effect.forkDetach(
-        settle(() => input.share(sdk, next.id)),
-        { startImmediately: true },
-      )
+      const sessionID = next.value.id
+      yield* Effect.forkDetach(input.share(sdk, sessionID).pipe(Effect.ignoreCause), { startImmediately: true })
       const resolved: ResolvedSession = {
-        sessionID: next.id,
-        sessionTitle: next.title,
-        agent,
+        sessionID,
+        sessionTitle: next.value.title,
+        agent: Option.getOrUndefined(agent),
       }
       return resolved
     }),
@@ -970,33 +967,28 @@ const runLocal = Effect.fnUntraced(function* (input: RunLocalInput) {
 })
 
 // Attach mode. Uses the caller-provided SDK client directly.
-export function runInteractiveMode(
-  input: RunInput & { createSession?: CreateSession },
-  deps: RunRuntimeDeps = {},
-): Promise<void> {
-  return Effect.runPromise(
-    runInteractiveRuntime(
-      {
-        files: input.files,
-        initialInput: input.initialInput,
-        thinking: input.thinking,
-        backgroundSubagents: input.backgroundSubagents,
-        replay: input.replay,
-        replayLimit: input.replayLimit,
-        demo: input.demo,
-        boot: {
-          sdk: input.sdk,
-          directory: input.directory,
-          sessionID: input.sessionID,
-          sessionTitle: input.sessionTitle,
-          resume: input.resume,
-          agent: input.agent,
-          model: input.model,
-          variant: input.variant,
-        },
-        createSession: createSessionResolver(input.createSession),
+export function runInteractiveMode(input: RunInput & { createSession?: CreateSession }, deps: RunRuntimeDeps = {}) {
+  return runInteractiveRuntime(
+    {
+      files: input.files,
+      initialInput: input.initialInput,
+      thinking: input.thinking,
+      backgroundSubagents: input.backgroundSubagents,
+      replay: input.replay,
+      replayLimit: input.replayLimit,
+      demo: input.demo,
+      boot: {
+        sdk: input.sdk,
+        directory: input.directory,
+        sessionID: input.sessionID,
+        sessionTitle: input.sessionTitle,
+        resume: input.resume,
+        agent: input.agent,
+        model: input.model,
+        variant: input.variant,
       },
-      deps,
-    ),
+      createSession: createSessionResolver(input.createSession),
+    },
+    deps,
   )
 }
