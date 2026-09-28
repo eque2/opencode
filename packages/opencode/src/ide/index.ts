@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { Process } from "@/util/process"
 import { IdeEvent } from "@opencode-ai/schema/ide-event"
@@ -33,22 +33,30 @@ export function alreadyInstalled() {
   return process.env["OPENCODE_CALLER"] === "vscode" || process.env["OPENCODE_CALLER"] === "vscode-insiders"
 }
 
-export async function install(ide: (typeof SUPPORTED_IDES)[number]["name"]) {
-  const cmd = SUPPORTED_IDES.find((i) => i.name === ide)?.cmd
-  if (!cmd) throw new Error(`Unknown IDE: ${ide}`)
+/** The IDE name has no entry in SUPPORTED_IDES. */
+export class UnknownIdeError extends Schema.TaggedError<UnknownIdeError>()("UnknownIdeError", {
+  ide: Schema.String,
+}) {
+  override get message() {
+    return `Unknown IDE: ${this.ide}`
+  }
+}
 
-  const p = await Process.run([cmd, "--install-extension", "sst-dev.opencode"], {
-    nothrow: true,
-  })
+export const install = Effect.fn("Ide.install")(function* (ide: (typeof SUPPORTED_IDES)[number]["name"]) {
+  const entry = SUPPORTED_IDES.find((i) => i.name === ide)
+  if (!entry) return yield* new UnknownIdeError({ ide })
+
+  // nothrow turns every spawn or exit failure into a result, so this Promise does not reject.
+  const p = yield* Effect.promise(() =>
+    Process.run([entry.cmd, "--install-extension", "sst-dev.opencode"], {
+      nothrow: true,
+    }),
+  )
   const stdout = p.stdout.toString()
   const stderr = p.stderr.toString()
 
-  if (p.code !== 0) {
-    throw new InstallFailedError({ stderr })
-  }
-  if (stdout.includes("already installed")) {
-    throw new AlreadyInstalledError({})
-  }
-}
+  if (p.code !== 0) return yield* Effect.fail(new InstallFailedError({ stderr }))
+  return yield* stdout.includes("already installed") ? Effect.fail(new AlreadyInstalledError({})) : Effect.void
+})
 
 export * as Ide from "."
