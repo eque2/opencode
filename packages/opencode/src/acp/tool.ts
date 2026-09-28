@@ -1,5 +1,6 @@
 import { isAbsolute, resolve } from "path"
 import type { ToolCall, ToolCallContent, ToolCallLocation, ToolCallUpdate, ToolKind } from "@agentclientprotocol/sdk"
+import { Array as Arr, Predicate } from "effect"
 
 export type ToolInput = Record<string, unknown>
 
@@ -144,18 +145,6 @@ export function runningToolUpdate(input: {
   readonly output?: string
   readonly cwd?: string
 }): ToolCallUpdate {
-  const content = input.output
-    ? [
-        {
-          type: "content" as const,
-          content: {
-            type: "text" as const,
-            text: input.output,
-          },
-        },
-      ]
-    : undefined
-
   return {
     toolCallId: input.toolCallId,
     status: "in_progress",
@@ -163,7 +152,7 @@ export function runningToolUpdate(input: {
     title: toolTitle(input.toolName, input.state.input, input.state.title),
     locations: toLocations(input.toolName, input.state.input, input.cwd),
     rawInput: rawInput(input.toolName, input.state.input, input.cwd),
-    ...(content ? { content } : {}),
+    ...(input.output ? { content: [{ type: "content", content: { type: "text", text: input.output } }] } : {}),
   }
 }
 
@@ -208,7 +197,7 @@ export function errorToolUpdate(input: {
     toolCallId: input.toolCallId,
     status: "failed",
     kind: toToolKind(input.toolName),
-    title: toolTitle(input.toolName, input.state.input, undefined),
+    title: toolTitle(input.toolName, input.state.input),
     locations: toLocations(input.toolName, input.state.input, input.cwd),
     rawInput: rawInput(input.toolName, input.state.input, input.cwd),
     content: [
@@ -256,13 +245,13 @@ export function extractImageAttachments(attachments: ReadonlyArray<ToolAttachmen
 }
 
 export function shellOutputSnapshot(state: { readonly metadata?: unknown }) {
-  if (!state.metadata || typeof state.metadata !== "object") return undefined
-  return stringValue((state.metadata as Record<string, unknown>).output)
+  if (!Predicate.hasProperty(state.metadata, "output")) return undefined
+  return stringValue(state.metadata.output)
 }
 
 // For shell tools, surface the actual command as the title so it stays visible
 // before output lands; non-shell tools keep their model-provided title.
-function toolTitle(toolName: string, input: ToolInput, fallback: string | undefined) {
+function toolTitle(toolName: string, input: ToolInput, fallback?: string) {
   if (isShell(toolName)) return shellCommand(input) ?? fallback ?? toolName
   return fallback || toolName
 }
@@ -308,18 +297,15 @@ export const buildCompletedToolUpdate = completedToolUpdate
 export const buildErrorToolUpdate = errorToolUpdate
 
 function locationFrom(...values: unknown[]): ToolCallLocation[] {
-  return Array.from(
-    new Set(
-      values.flatMap((value): string[] => {
-        if (Array.isArray(value)) {
-          return value.filter((item): item is string => typeof item === "string" && item.length > 0)
-        }
-        const path = stringValue(value)
-        return path ? [path] : []
-      }),
-    ),
-    (path) => ({ path }),
-  )
+  return Arr.dedupe(
+    values.flatMap((value): string[] => {
+      if (Array.isArray(value)) {
+        return value.filter((item): item is string => typeof item === "string" && item.length > 0)
+      }
+      const path = stringValue(value)
+      return path ? [path] : []
+    }),
+  ).map((path) => ({ path }))
 }
 
 function diffContent(input: ToolInput): ToolCallContent[] {
@@ -338,12 +324,14 @@ function diffContent(input: ToolInput): ToolCallContent[] {
 }
 
 function readDisplayText(metadata: unknown) {
-  if (!metadata || typeof metadata !== "object") return undefined
-  const display = (metadata as Record<string, unknown>).display
-  if (!display || typeof display !== "object") return undefined
-  const info = display as Record<string, unknown>
-  if (info.type === "file") return stringValue(info.text)
-  if (info.type === "directory" && Array.isArray(info.entries)) {
+  if (!Predicate.hasProperty(metadata, "display")) return undefined
+  const info = metadata.display
+  if (!Predicate.hasProperty(info, "type")) return undefined
+  if (info.type === "file") {
+    if (!Predicate.hasProperty(info, "text")) return undefined
+    return stringValue(info.text)
+  }
+  if (info.type === "directory" && Predicate.hasProperty(info, "entries") && Array.isArray(info.entries)) {
     return info.entries.filter((item): item is string => typeof item === "string").join("\n")
   }
   return undefined
@@ -360,5 +348,6 @@ function dataUrlImage(attachment: ToolAttachment) {
 }
 
 function stringValue(value: unknown) {
-  return typeof value === "string" ? value : undefined
+  if (typeof value === "string") return value
+  return undefined
 }
