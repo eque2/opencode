@@ -8,7 +8,8 @@ import type {
 } from "@agentclientprotocol/sdk"
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
 import { applyPatch } from "diff"
-import { exists, readText } from "@/util/filesystem"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import type { ACPSession } from "./session"
 import { pendingToolCall, toLocations, type ToolInput } from "./tool"
 import { Array as Arr, Deferred, Effect, MutableHashMap, Option, Predicate, Schema } from "effect"
@@ -26,6 +27,8 @@ export class PermissionBridgeError extends Schema.TaggedError<PermissionBridgeEr
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {}
+
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
 
 const permissionOptions: PermissionOption[] = [
   { optionId: "once", kind: "allow_once", name: "Allow once" },
@@ -48,6 +51,7 @@ export class Handler {
     Effect.runFork(
       Option.match(previous, { onNone: () => Effect.void, onSome: Deferred.await }).pipe(
         Effect.andThen(processPermission(this.input, event)),
+        Effect.provide(fileSystemLayer),
         Effect.catchCause(() => Effect.void),
         Effect.ensuring(
           Effect.andThen(
@@ -238,15 +242,11 @@ const patchFile = Effect.fn("ACPPermission.patchFile")(function* (
   diff: string,
   displayPath: string = filepath,
 ) {
-  const present = yield* Effect.tryPromise({
-    try: () => exists(filepath),
-    catch: (cause) => new PermissionBridgeError({ message: `failed to check ${filepath}`, cause }),
-  })
-  const content = present
-    ? yield* Effect.tryPromise({
-        try: () => readText(filepath),
-        catch: (cause) => new PermissionBridgeError({ message: `failed to read ${filepath}`, cause }),
-      })
+  const fsu = yield* FSUtil.Service
+  const content = (yield* fsu.existsSafe(filepath))
+    ? yield* fsu
+        .readFileString(filepath)
+        .pipe(Effect.mapError((cause) => new PermissionBridgeError({ message: `failed to read ${filepath}`, cause })))
     : ""
   const next = yield* Effect.try({
     try: () => applyPatch(content, diff),
