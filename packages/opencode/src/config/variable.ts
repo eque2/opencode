@@ -2,7 +2,8 @@ export * as ConfigVariable from "./variable"
 
 import path from "path"
 import os from "os"
-import { Effect, Schema } from "effect"
+import { Array as Arr, Config, Effect, Option, Schema } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InvalidError } from "@opencode-ai/core/v1/config/error"
 
@@ -38,8 +39,17 @@ function dir(input: ParseSource) {
 export const substitute = Effect.fn("ConfigVariable.substitute")(function* (input: SubstituteInput) {
   const fs = yield* FSUtil.Service
   const missing = input.missing ?? "error"
-  const text = input.text.replace(/\{env:([^}]+)\}/g, (_, varName) => {
-    return (input.env?.[varName] ?? process.env[varName]) || ""
+  // The process environment is read live for each name, as the former process.env reads were.
+  const names = Arr.dedupe(Array.from(input.text.matchAll(/\{env:([^}]+)\}/g), (match) => match[1]))
+  const processEnv = Object.fromEntries(
+    yield* Effect.forEach(names, (name) =>
+      readEnvSnapshot(Config.option(Config.String(name))).pipe(
+        Effect.map((value) => [name, Option.getOrElse(value, () => "")] as const),
+      ),
+    ),
+  )
+  const text = input.text.replace(/\{env:([^}]+)\}/g, (_, varName: string) => {
+    return (input.env?.[varName] ?? processEnv[varName]) || ""
   })
 
   const fileMatches = Array.from(text.matchAll(/\{file:[^}]+\}/g))
@@ -70,25 +80,23 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
 
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.resolve(configDir, filePath)
     const errMsg = `bad file reference: "${token}"`
-    const fileContent = (
-      yield* fs.readFileString(resolvedPath).pipe(
-        Effect.catch((error) => {
-          if (missing === "empty") return Effect.succeed("")
-          if (error.reason._tag === "NotFound") {
-            return Effect.fail(
-              new InvalidError(
-                {
-                  path: configSource,
-                  message: errMsg + ` ${resolvedPath} does not exist`,
-                },
-                { cause: error },
-              ),
-            )
-          }
-          return Effect.fail(new InvalidError({ path: configSource, message: errMsg }, { cause: error }))
-        }),
-      )
-    ).trim()
+    const fileContent = (yield* fs.readFileString(resolvedPath).pipe(
+      Effect.catch((error) => {
+        if (missing === "empty") return Effect.succeed("")
+        if (error.reason._tag === "NotFound") {
+          return Effect.fail(
+            new InvalidError(
+              {
+                path: configSource,
+                message: errMsg + ` ${resolvedPath} does not exist`,
+              },
+              { cause: error },
+            ),
+          )
+        }
+        return Effect.fail(new InvalidError({ path: configSource, message: errMsg }, { cause: error }))
+      }),
+    )).trim()
 
     // The file text goes inside a JSON string literal, so it is escaped as a JSON string and unquoted.
     out += (yield* encodeJsonString(fileContent)).slice(1, -1)

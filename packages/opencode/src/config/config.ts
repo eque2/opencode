@@ -521,6 +521,8 @@ const layer = Layer.effect(
               { concurrency: 2 },
             )
             if (Option.isSome(tokenOpt)) {
+              // Spawned shell, MCP and LSP processes copy process.env, and later {env:} templates read it.
+              // eslint-disable-next-line effect/no-process-env-use-config -- (a) external boundary: child processes (shell, MCP, LSP) inherit the console token through process.env
               process.env["OPENCODE_CONSOLE_TOKEN"] = tokenOpt.value
               yield* env.set("OPENCODE_CONSOLE_TOKEN", tokenOpt.value)
             }
@@ -544,7 +546,7 @@ const layer = Layer.effect(
           )
         }
 
-        const managedDir = ConfigManaged.managedConfigDir()
+        const managedDir = yield* ConfigManaged.managedConfigDir()
         if (yield* fs.existsSafe(managedDir)) {
           for (const file of ["opencode.json", "opencode.jsonc"]) {
             const source = path.join(managedDir, file)

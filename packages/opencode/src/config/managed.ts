@@ -2,7 +2,8 @@ export * as ConfigManaged from "./managed"
 
 import os from "os"
 import path from "path"
-import { Effect, HashSet, Option, Schema } from "effect"
+import { Config, Effect, HashSet, Option, Schema } from "effect"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Process } from "@/util/process"
 
@@ -18,20 +19,30 @@ const PLIST_META = HashSet.make(
   "_manualProfile",
 )
 
-function systemManagedConfigDir(): string {
+// A variable read from the live environment. An empty value counts as not set, as the former `||` reads did.
+const envVar = (name: string) =>
+  readEnvSnapshot(Config.option(Config.String(name))).pipe(Effect.map(Option.filter((value) => value !== "")))
+
+const systemManagedConfigDir = Effect.fnUntraced(function* () {
   switch (process.platform) {
     case "darwin":
       return "/Library/Application Support/opencode"
     case "win32":
-      return path.join(process.env.ProgramData || "C:\\ProgramData", "opencode")
+      return path.join(
+        Option.getOrElse(yield* envVar("ProgramData"), () => "C:\\ProgramData"),
+        "opencode",
+      )
     default:
       return "/etc/opencode"
   }
-}
+})
 
-export function managedConfigDir() {
-  return process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR || systemManagedConfigDir()
-}
+/** The managed config directory. Tests move it with OPENCODE_TEST_MANAGED_CONFIG_DIR. */
+export const managedConfigDir = Effect.fn("ConfigManaged.managedConfigDir")(function* () {
+  const testDir = yield* envVar("OPENCODE_TEST_MANAGED_CONFIG_DIR")
+  if (Option.isSome(testDir)) return testDir.value
+  return yield* systemManagedConfigDir()
+})
 
 // plutil prints the plist dictionary as a JSON object.
 const PlistJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
