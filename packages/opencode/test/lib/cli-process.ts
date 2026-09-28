@@ -409,7 +409,11 @@ export function withCliFixture<A, E>(
           // window to exit, then SIGTERM. The Effect.timeoutOrElse expresses
           // exactly that race without raw setTimeout or Promise.race.
           Effect.gen(function* () {
-            yield* Effect.sync(() => p.stdin.end())
+            yield* Effect.sync(() => {
+              // end() returns a Promise while Bun flushes buffered input. Shutdown does not wait for
+              // the flush; the timed exit wait below covers it.
+              void p.stdin.end()
+            })
             yield* Effect.promise(() => p.exited).pipe(
               Effect.timeoutOrElse({
                 duration: Duration.seconds(2),
