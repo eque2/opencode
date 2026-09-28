@@ -11,7 +11,8 @@ import { AppRuntime } from "@/effect/app-runtime"
 import { Effect } from "effect"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 
-Heap.start()
+// The heap monitor is a detached fiber; the TUI ends this worker with terminate().
+Effect.runFork(Heap.start())
 
 const onUnhandledRejection = (_error: unknown) => {}
 

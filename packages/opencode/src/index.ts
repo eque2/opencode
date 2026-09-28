@@ -29,6 +29,7 @@ import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
+import { Effect } from "effect"
 
 const args = hideBin(process.argv)
 
@@ -70,7 +71,7 @@ const cli = yargs(args)
       process.env.OPENCODE_PURE = "1"
     }
 
-    Heap.start()
+    Effect.runFork(Heap.start())
 
     process.env.AGENT = "1"
     process.env.OPENCODE = "1"
