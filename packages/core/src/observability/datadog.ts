@@ -1,6 +1,8 @@
 import {
   Array as Arr,
+  Clock,
   Config,
+  DateTime,
   Duration,
   Effect,
   Formatter,
@@ -10,7 +12,6 @@ import {
   Option,
   Predicate,
   Redacted,
-  Schedule,
   Schema,
 } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
@@ -79,6 +80,10 @@ const MAX_BYTES = 4_500_000
 const MAX_ENTRY_BYTES = 1_000_000
 const TRUNCATED = "[TRUNCATED]"
 
+const RETRIES = 3
+const BACKOFF = Duration.millis(500)
+const MAX_RETRY_AFTER = 30_000
+
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
 /** Resolves the settings, or none when the sink must not run. */
@@ -100,23 +105,42 @@ export function logger(settings: Settings) {
       : Option.none(),
   )
   return Effect.gen(function* () {
-    const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
-    const send = (batch: Array<Entry>) =>
+    const http = yield* HttpClient.HttpClient
+    const post = (body: Uint8Array) =>
       http
         .execute(
           HttpClientRequest.post(url).pipe(
             HttpClientRequest.setHeader("DD-API-KEY", apiKey),
             HttpClientRequest.setHeader("Content-Encoding", "gzip"),
-            HttpClientRequest.bodyUint8Array(Bun.gzipSync(encodeJson(batch)), "application/json"),
+            HttpClientRequest.bodyUint8Array(body, "application/json"),
           ),
         )
         .pipe(
-          Effect.retry({ times: 3, schedule: Schedule.exponential("500 millis") }),
-          // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
-          Effect.ignore,
-          // The export request must not create spans or logs, or the sink feeds itself.
-          Effect.withTracerEnabled(false),
+          Effect.map((response) => ({
+            verdict: verdict(response.status),
+            retryAfter: Option.fromNullishOr(response.headers["retry-after"]),
+          })),
+          // A transport error is retried like a 5xx.
+          Effect.orElseSucceed(() => ({ verdict: "retry" as const, retryAfter: Option.none<string>() })),
         )
+    // Each wait, from Retry-After or the backoff, uses one of the retries.
+    const deliver = (body: Uint8Array, attempt = 0): Effect.Effect<"sent" | "dropped" | "failed"> =>
+      Effect.flatMap(post(body), (result) => {
+        if (result.verdict !== "retry") return Effect.succeed(result.verdict)
+        if (attempt >= RETRIES) return Effect.succeed("failed" as const)
+        return retryDelay(result.retryAfter).pipe(
+          Effect.map(Option.getOrElse(() => Duration.times(BACKOFF, 2 ** attempt))),
+          Effect.flatMap(Effect.sleep),
+          Effect.andThen(Effect.suspend(() => deliver(body, attempt + 1))),
+        )
+      })
+    const send = (batch: Array<Entry>) =>
+      deliver(Bun.gzipSync(encodeJson(batch))).pipe(
+        // ponytail: drops the batch after retries; add a disk spool when log loss is unacceptable.
+        Effect.asVoid,
+        // The export request must not create spans or logs, or the sink feeds itself.
+        Effect.withTracerEnabled(false),
+      )
     return yield* Logger.batched(format, {
       window: settings.flushInterval,
       flush: (items) => Effect.forEach(chunks(Arr.getSomes(items)), send, { discard: true }),
@@ -194,6 +218,31 @@ function redact(input: unknown, content: Settings["content"], key = ""): unknown
   if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
   if (!Predicate.isObject(input)) return input
   return Object.fromEntries(Object.entries(input).map(([name, value]) => [name, redact(value, content, name)]))
+}
+
+/** What an intake status means. `failed` stops the sink: 401 and 403 mean a bad key, and retrying cannot fix it. */
+function verdict(status: number) {
+  if (status >= 200 && status < 300) return "sent"
+  if (status === 401 || status === 403) return "failed"
+  if (status === 408 || status === 429 || status >= 500) return "retry"
+  return "dropped"
+}
+
+/** The Retry-After wait in seconds or as an HTTP-date, capped at 30 seconds. Any other value falls back to the backoff. */
+function retryDelay(header: Option.Option<string>) {
+  return Effect.map(Clock.currentTimeMillis, (now) =>
+    header.pipe(
+      Option.flatMap((value) =>
+        /^\d+$/.test(value)
+          ? Option.some(Number(value) * 1000)
+          : /[a-z]/i.test(value)
+            ? Option.map(DateTime.make(value), (date) => DateTime.toEpochMillis(date) - now)
+            : Option.none(),
+      ),
+      Option.filter((wait) => wait >= 0),
+      Option.map((wait) => Duration.millis(Math.min(wait, MAX_RETRY_AFTER))),
+    ),
+  )
 }
 
 function secretKey(key: string) {

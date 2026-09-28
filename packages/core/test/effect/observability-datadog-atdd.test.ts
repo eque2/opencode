@@ -7,6 +7,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
+import * as TestClock from "effect/testing/TestClock"
 import { Datadog } from "../../src/observability/datadog"
 import { fileLogger } from "../../src/observability/logging"
 import { ConfigV1 } from "../../src/v1/config/config"
@@ -177,11 +178,20 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
   expect(text).toContain("info too")
 })
 
-test.skip("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seconds", async () => {
+test("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seconds", async () => {
   const target = intake([{ status: 429, headers: { "Retry-After": "2" } }])
   using _ = target.server
-  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
-  await ship(config, Effect.logInfo("rate limited").pipe(Effect.annotateLogs({ category: "llm.request" })))
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "50 millis" }),
+  )
+  // The periodic flush retries; the final flush at scope close makes one attempt only.
+  await ship(
+    config,
+    Effect.logInfo("rate limited").pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+      Effect.andThen(Effect.promise(() => until(() => target.requests.length >= 2))),
+    ),
+  )
   expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(1900)
 }, 20_000)
 
@@ -350,3 +360,54 @@ test("AC-7b an entry above 1,000,000 bytes has its message truncated", async () 
   expect(entry.message.startsWith("éé")).toBe(true)
   expect(Buffer.byteLength(JSON.stringify(entry))).toBeLessThanOrEqual(1_000_000)
 }, 30_000)
+
+// Sends one record that gets a 429 with the given Retry-After, under TestClock. Returns the request count after
+// `before` of virtual time, then after `after` more.
+async function retryGap(retryAfter: (now: number) => string, before: string, after: string) {
+  const target = intake([{ status: 429, headers: { "Retry-After": retryAfter(1_000) } }])
+  using _ = target.server
+  const config = required(
+    await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_FLUSH_INTERVAL: "1 second" }),
+  )
+  return await Effect.gen(function* () {
+    const logger = yield* Datadog.logger(config)
+    yield* Effect.logInfo("limited").pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+      Effect.provide(Logger.layer([logger])),
+    )
+    yield* TestClock.adjust("1 second")
+    yield* Effect.promise(() => until(() => target.requests.length >= 1))
+    // Let the client read the response and start its wait before virtual time moves.
+    yield* Effect.promise(() => Bun.sleep(100))
+    yield* TestClock.adjust(before)
+    yield* Effect.promise(() => Bun.sleep(200))
+    const early = target.requests.length
+    yield* TestClock.adjust(after)
+    yield* Effect.promise(() => until(() => target.requests.length >= 2, 3_000))
+    return [early, target.requests.length]
+  }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+}
+
+test("AC-5b an HTTP-date Retry-After is honoured", async () => {
+  // TestClock starts at 0 and the flush runs at 1 second, so this date is a 10-second wait.
+  expect(await retryGap(() => new Date(11_000).toUTCString(), "9 seconds", "1 second")).toEqual([1, 2])
+})
+
+test("AC-5b a Retry-After of 45 is capped at 30 seconds", async () => {
+  expect(await retryGap(() => "45", "29500 millis", "500 millis")).toEqual([1, 2])
+})
+
+test("AC-5b a Retry-After of -1 falls back to the exponential backoff", async () => {
+  expect(await retryGap(() => "-1", "400 millis", "100 millis")).toEqual([1, 2])
+})
+
+test("AC-5b 400, 401, 403 and 413 drop the batch with no retry", async () => {
+  for (const status of [400, 401, 403, 413]) {
+    const target = intake([{ status }])
+    using _ = target.server
+    const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+    await ship(config, Effect.logInfo("rejected").pipe(Effect.annotateLogs({ category: "llm.request" })))
+    await Bun.sleep(700)
+    expect([status, target.requests.length]).toEqual([status, 1])
+  }
+})
