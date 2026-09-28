@@ -4,8 +4,9 @@ import { which } from "@opencode-ai/core/util/which"
 import type { Hooks } from "@opencode-ai/plugin"
 import { Clock, Config, DateTime, Effect, MutableHashMap, Option, Schema } from "effect"
 import { OAUTH_DUMMY_KEY } from "../auth"
-import { errorMessage } from "../util/error"
-import { Process } from "../util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 
 const AZURE_COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 const AZURE_FOUNDRY_SCOPE = "https://ai.azure.com/.default"
@@ -37,14 +38,19 @@ type AuthMethod = NonNullable<Hooks["auth"]>["methods"][number]
 
 const nonEmpty = (value: string) => value.length > 0
 
-const runAzure = Effect.fn("AzureAuth.runAzure")(function* (args: ReadonlyArray<string>) {
-  const az = Option.getOrElse(yield* which("az"), () => "az")
-  const result = yield* Effect.tryPromise({
-    try: () => Process.run([az, ...args]),
-    catch: (cause) => new AzureAuthError({ message: errorMessage(cause), cause }),
-  })
-  return yield* decodeAzureCliOutput(result.stdout.toString())
-})
+// The plugin runs outside the app layers, so the command provides its own AppProcess.
+const runAzure = Effect.fn("AzureAuth.runAzure")(
+  function* (args: ReadonlyArray<string>) {
+    const az = Option.getOrElse(yield* which("az"), () => "az")
+    const appProcess = yield* AppProcess.Service
+    const result = yield* appProcess.run(ChildProcess.make(az, args, { stdin: "ignore" })).pipe(
+      Effect.flatMap(AppProcess.requireSuccess),
+      Effect.mapError((cause) => new AzureAuthError({ message: cause.message, cause })),
+    )
+    return yield* decodeAzureCliOutput(result.stdout.toString())
+  },
+  Effect.provide(LayerNode.compile(AppProcess.node)),
+)
 
 export function AzureAuthPlugin(): Promise<Hooks> {
   return Effect.runPromise(
