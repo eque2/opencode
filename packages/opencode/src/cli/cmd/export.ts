@@ -6,7 +6,7 @@ import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
-import { Effect, Option, Schema } from "effect"
+import { DateTime, Effect, Option, Schema } from "effect"
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
@@ -258,6 +258,16 @@ const run = Effect.fn("Cli.export.body")(function* (args: { sessionID?: string; 
   }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID}`)))
 })
 
+// The fields that Date.prototype.toLocaleString() prints by default.
+const localeDateTime = {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+} as const
+
 // Prompts for a session when none was given. None means there is nothing to export.
 const selectSession = Effect.fn("Cli.export.selectSession")(function* () {
   const svc = yield* Session.Service
@@ -281,7 +291,7 @@ const selectSession = Effect.fn("Cli.export.selectSession")(function* () {
       options: sessions.map((session) => ({
         label: session.title,
         value: session.id,
-        hint: `${new Date(session.time.updated).toLocaleString()} • ${session.id.slice(-8)}`,
+        hint: `${DateTime.formatLocal(DateTime.makeUnsafe(session.time.updated), localeDateTime)} • ${session.id.slice(-8)}`,
       })),
       output: process.stderr,
     }),
