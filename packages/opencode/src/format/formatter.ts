@@ -1,7 +1,7 @@
 import { Npm } from "@opencode-ai/core/npm"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import type { InstanceContext } from "../project/instance-context"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { which } from "@opencode-ai/core/util/which"
 import { AppProcess } from "@opencode-ai/core/process"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -19,30 +19,41 @@ export interface Info {
   enabled: (context: Context) => Effect.Effect<Option.Option<string[]>>
 }
 
-interface PackageJson {
-  dependencies?: Record<string, string>
-  devDependencies?: Record<string, string>
-}
+// Manifests map each dependency name to a version range.
+const Dependencies = Schema.optional(Schema.Record(Schema.String, Schema.String))
 
-interface ComposerJson {
-  require?: Record<string, string>
-  "require-dev"?: Record<string, string>
-}
+const PackageJson = Schema.Struct({
+  dependencies: Dependencies,
+  devDependencies: Dependencies,
+}).annotate({ identifier: "FormatterPackageJson" })
+
+const ComposerJson = Schema.Struct({
+  require: Dependencies,
+  "require-dev": Dependencies,
+}).annotate({ identifier: "FormatterComposerJson" })
 
 // Gives the command for a binary on PATH, or None when the binary is not installed.
 const onPath = (bin: string, ...args: string[]) =>
   which(bin).pipe(Effect.map(Option.map((match) => [match, ...args])))
 
-// The Filesystem and Npm helpers below are Promise APIs. A rejection is a defect,
-// as it was when the enabled checks were async functions.
+// Info.enabled has no service requirements (Format calls it directly), so the file helpers provide
+// their own FSUtil. A read or JSON parse failure is a defect, as it was with the former Promise helpers.
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
 const findUp = (target: string, context: Context) =>
-  Effect.promise(() => Filesystem.findUp(target, context.directory, context.worktree))
+  FSUtil.use.findUp(target, context.directory, context.worktree).pipe(Effect.orDie, Effect.provide(fileSystemLayer))
 
-const readJson = <T>(file: string) => Effect.promise(() => Filesystem.readJson<T>(file))
+// A manifest whose dependency fields are not string maps is None: it names no dependencies.
+const readManifest = <T>(schema: Schema.Decoder<T>, file: string) =>
+  FSUtil.use.readJson(file).pipe(
+    Effect.orDie,
+    Effect.flatMap((json) => Effect.option(Schema.decodeUnknownEffect(schema)(json))),
+    Effect.provide(fileSystemLayer),
+  )
 
-const readText = (file: string) => Effect.promise(() => Filesystem.readText(file))
+const readText = (file: string) => FSUtil.use.readFileString(file).pipe(Effect.orDie, Effect.provide(fileSystemLayer))
 
-// Npm.which recovers every failure as a missing binary, so it does not reject.
+// Npm.which is a Promise API. It recovers every failure as a missing binary, so it does not reject.
 const npmBin = (pkg: string) => Effect.promise(() => Npm.which(pkg)).pipe(Effect.map(Option.fromNullishOr))
 
 // Info.enabled has no service requirements (Format calls it directly), so the probe provides its own
@@ -102,8 +113,8 @@ export const prettier: Info = {
   enabled: Effect.fnUntraced(function* (context: Context) {
     const items = yield* findUp("package.json", context)
     for (const item of items) {
-      const json = yield* readJson<PackageJson>(item)
-      if (json.dependencies?.prettier || json.devDependencies?.prettier) {
+      const json = yield* readManifest(PackageJson, item)
+      if (Option.exists(json, (pkg) => Boolean(pkg.dependencies?.prettier || pkg.devDependencies?.prettier))) {
         const bin = yield* npmBin("prettier")
         if (Option.isSome(bin)) return Option.some([bin.value, "--write", "$FILE"])
       }
@@ -122,8 +133,8 @@ export const oxfmt: Info = {
     if (!context.experimentalOxfmt) return Option.none()
     const items = yield* findUp("package.json", context)
     for (const item of items) {
-      const json = yield* readJson<PackageJson>(item)
-      if (json.dependencies?.oxfmt || json.devDependencies?.oxfmt) {
+      const json = yield* readManifest(PackageJson, item)
+      if (Option.exists(json, (pkg) => Boolean(pkg.dependencies?.oxfmt || pkg.devDependencies?.oxfmt))) {
         const bin = yield* npmBin("oxfmt")
         if (Option.isSome(bin)) return Option.some([bin.value, "$FILE"])
       }
@@ -337,8 +348,12 @@ export const pint: Info = {
   enabled: Effect.fnUntraced(function* (context: Context) {
     const items = yield* findUp("composer.json", context)
     for (const item of items) {
-      const json = yield* readJson<ComposerJson>(item)
-      if (json.require?.["laravel/pint"] || json["require-dev"]?.["laravel/pint"])
+      const json = yield* readManifest(ComposerJson, item)
+      if (
+        Option.exists(json, (composer) =>
+          Boolean(composer.require?.["laravel/pint"] || composer["require-dev"]?.["laravel/pint"]),
+        )
+      )
         return Option.some(["./vendor/bin/pint", "$FILE"])
     }
     return Option.none()
