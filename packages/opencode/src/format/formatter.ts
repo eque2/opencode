@@ -2,8 +2,10 @@ import { Npm } from "@opencode-ai/core/npm"
 import { Effect, Option } from "effect"
 import type { InstanceContext } from "../project/instance-context"
 import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
 import { which } from "@opencode-ai/core/util/which"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 
 export interface Context extends Pick<InstanceContext, "directory" | "worktree"> {
   experimentalOxfmt: boolean
@@ -31,7 +33,7 @@ interface ComposerJson {
 const onPath = (bin: string, ...args: string[]) =>
   which(bin).pipe(Effect.map(Option.map((match) => [match, ...args])))
 
-// The Filesystem, Npm and Process helpers below are Promise APIs. A rejection is a defect,
+// The Filesystem and Npm helpers below are Promise APIs. A rejection is a defect,
 // as it was when the enabled checks were async functions.
 const findUp = (target: string, context: Context) =>
   Effect.promise(() => Filesystem.findUp(target, context.directory, context.worktree))
@@ -42,6 +44,15 @@ const readText = (file: string) => Effect.promise(() => Filesystem.readText(file
 
 // Npm.which recovers every failure as a missing binary, so it does not reject.
 const npmBin = (pkg: string) => Effect.promise(() => Npm.which(pkg)).pipe(Effect.map(Option.fromNullishOr))
+
+// Info.enabled has no service requirements (Format calls it directly), so the probe provides its own
+// AppProcess. A command that cannot start counts as a failed one, with exit code 1 and no output.
+const probe = (cmd: string, args: ReadonlyArray<string>) =>
+  AppProcess.Service.use((appProcess) => appProcess.run(ChildProcess.make(cmd, args, { stdin: "ignore" }))).pipe(
+    Effect.map((result) => ({ code: result.exitCode, text: result.stdout.toString() })),
+    Effect.orElseSucceed(() => ({ code: 1, text: "" })),
+    Effect.provide(LayerNode.compile(AppProcess.node)),
+  )
 
 export const gofmt: Info = {
   name: "gofmt",
@@ -225,8 +236,7 @@ export const rlang: Info = {
     const air = yield* which("air")
     if (Option.isNone(air)) return Option.none()
 
-    // Process.text with nothrow reports a spawn failure as a non-zero code, so it does not reject.
-    const output = yield* Effect.promise(() => Process.text([air.value, "--help"], { nothrow: true }))
+    const output = yield* probe(air.value, ["--help"])
 
     // Check for "Air: An R language server and formatter"
     const firstLine = output.text.split("\n")[0]
@@ -244,8 +254,7 @@ export const uvformat: Info = {
     if (Option.isSome(yield* ruff.enabled(context))) return Option.none()
     const uv = yield* which("uv")
     if (Option.isNone(uv)) return Option.none()
-    // Process.run with nothrow reports a spawn failure as a non-zero code, so it does not reject.
-    const output = yield* Effect.promise(() => Process.run([uv.value, "format", "--help"], { nothrow: true }))
+    const output = yield* probe(uv.value, ["format", "--help"])
     if (output.code === 0) return Option.some([uv.value, "format", "--", "$FILE"])
     return Option.none()
   }),
