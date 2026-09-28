@@ -54,7 +54,8 @@ export function createAcpClient(acp: AcpHandle): AcpClient {
       while (true) {
         const received = yield* acp.receive.pipe(Effect.timeout(Duration.millis(timeoutMs)))
         if (!isJsonRpcNotification<T>(received)) continue
-        if (received.method === method && predicate(received.params as T)) return received
+        if (received.method !== method || received.params === undefined) continue
+        if (predicate(received.params)) return received
       }
     })
 
@@ -68,7 +69,9 @@ export function createAcpClient(acp: AcpHandle): AcpClient {
 export function expectOk<T>(response: JsonRpcResponse<T>) {
   expect(response.error).toBeUndefined()
   expect(response.result).toBeDefined()
-  return response.result as T
+  // Unreachable after the assertion above; it narrows the result for the caller.
+  if (response.result === undefined) throw new Error("JSON-RPC response has no result")
+  return response.result
 }
 
 export function selectConfigOption(options: SessionConfigOption[] | null | undefined, id: string) {
