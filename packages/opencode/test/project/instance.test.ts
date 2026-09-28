@@ -130,8 +130,7 @@ describe("InstanceStore", () => {
       yield* setBootstrap(
         Effect.sync(() => {
           attempts++
-          throw new Error("init failed")
-        }),
+        }).pipe(Effect.andThen(Effect.die(new Error("init failed")))),
       )
       const failed = yield* store.load({ directory: dir }).pipe(
         Effect.as(false),
