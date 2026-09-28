@@ -6,7 +6,6 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Session } from "@/session/session"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageV2 } from "../../src/session/message-v2"
 import { testEffect } from "../lib/effect"
 
 // Skip tests if no API key is available
