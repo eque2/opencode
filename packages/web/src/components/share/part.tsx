@@ -1,5 +1,5 @@
 import map from "lang-map"
-import { DateTime, Duration } from "effect"
+import { Array as Arr, DateTime, Duration, Predicate } from "effect"
 import { For, Show, Match, Switch, type JSX, createMemo, createSignal, type ParentProps } from "solid-js"
 import {
   IconHashtag,
@@ -777,31 +777,19 @@ export function FallbackTool(props: ToolProps) {
 // Converts nested objects/arrays into [path, value] pairs.
 // E.g. {a:{b:{c:1}}, d:[{e:2}, 3]} => [["a.b.c",1], ["d[0].e",2], ["d[1]",3]]
 function flattenToolArgs(obj: unknown, prefix: string = ""): Array<[string, unknown]> {
-  const entries: Array<[string, unknown]> = []
-  if (typeof obj !== "object" || obj === null) return entries
+  if (!Predicate.isObjectOrArray(obj)) return []
 
-  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+  return Arr.flatMap(Object.entries(obj), ([key, value]): Array<[string, unknown]> => {
     const path = prefix ? `${prefix}.${key}` : key
 
-    if (value !== null && typeof value === "object") {
-      if (Array.isArray(value)) {
-        value.forEach((item, index) => {
-          const arrayPath = `${path}[${index}]`
-          if (item !== null && typeof item === "object") {
-            entries.push(...flattenToolArgs(item, arrayPath))
-          } else {
-            entries.push([arrayPath, item])
-          }
-        })
-      } else {
-        entries.push(...flattenToolArgs(value, path))
-      }
-    } else {
-      entries.push([path, value])
+    if (Array.isArray(value)) {
+      return Arr.flatMap(value, (item, index): Array<[string, unknown]> => {
+        const arrayPath = `${path}[${index}]`
+        return Predicate.isObjectOrArray(item) ? flattenToolArgs(item, arrayPath) : [[arrayPath, item]]
+      })
     }
-  }
-
-  return entries
+    return Predicate.isObjectOrArray(value) ? flattenToolArgs(value, path) : [[path, value]]
+  })
 }
 
 function getProvider(model: string) {
