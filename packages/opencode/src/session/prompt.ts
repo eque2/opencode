@@ -42,21 +42,7 @@ import { Truncate } from "@/tool/truncate"
 import { Image } from "@/image/image"
 import { decodeDataUrl } from "@/util/data-url"
 import { Process } from "@/util/process"
-import {
-  Array as Arr,
-  Cause,
-  Clock,
-  Effect,
-  Exit,
-  HashSet,
-  Latch,
-  Layer,
-  Option,
-  Scope,
-  Context,
-  Schema,
-  Types,
-} from "effect"
+import { Array as Arr, Cause, Clock, Effect, Exit, HashSet, Latch, Layer, Option, Scope, Context, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
 import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
@@ -191,6 +177,18 @@ const layer = Layer.effect(
         resolvePromptParts: (template: string) => resolvePromptParts(template),
         prompt: (input: PromptInput) => prompt(input).pipe(Effect.catch(Effect.die)),
       } satisfies TaskPromptOps
+    })
+
+    // Publishes a session error that lists the visible agents, then dies with it.
+    const agentNotFound = Effect.fn("SessionPrompt.agentNotFound")(function* (
+      name: string | undefined,
+      sessionID: SessionID,
+    ) {
+      const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
+      const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
+      const error = new NamedError.Unknown({ message: `Agent not found: "${name}".${hint}` })
+      yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
+      return yield* Effect.die(error)
     })
 
     const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
@@ -348,14 +346,7 @@ const layer = Layer.effect(
         { args: taskArgs },
       )
 
-      const taskAgent = yield* agents.get(task.agent)
-      if (!taskAgent) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${task.agent}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-        return yield* Effect.die(error)
-      }
+      const taskAgent = (yield* agents.get(task.agent)) ?? (yield* agentNotFound(task.agent, sessionID))
 
       let failure = Option.none<string>()
       const taskAbort = new AbortController()
@@ -468,25 +459,26 @@ const layer = Layer.effect(
         } satisfies SessionV1.ToolPart)
       }
 
-      if (!task.command) return
-
-      const summaryUserMsg: SessionV1.User = {
-        id: MessageID.ascending(),
-        sessionID,
-        role: "user",
-        time: { created: yield* Clock.currentTimeMillis },
-        agent: lastUser.agent,
-        model: lastUser.model,
+      // A command subtask asks the model to summarize the task output next.
+      if (task.command) {
+        const summaryUserMsg: SessionV1.User = {
+          id: MessageID.ascending(),
+          sessionID,
+          role: "user",
+          time: { created: yield* Clock.currentTimeMillis },
+          agent: lastUser.agent,
+          model: lastUser.model,
+        }
+        yield* sessions.updateMessage(summaryUserMsg)
+        yield* sessions.updatePart({
+          id: PartID.ascending(),
+          messageID: summaryUserMsg.id,
+          sessionID,
+          type: "text",
+          text: "Summarize the task tool output above and continue with your task.",
+          synthetic: true,
+        } satisfies SessionV1.TextPart)
       }
-      yield* sessions.updateMessage(summaryUserMsg)
-      yield* sessions.updatePart({
-        id: PartID.ascending(),
-        messageID: summaryUserMsg.id,
-        sessionID,
-        type: "text",
-        text: "Summarize the task tool output above and continue with your task.",
-        synthetic: true,
-      } satisfies SessionV1.TextPart)
     })
 
     const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, ready?: Latch.Latch) {
@@ -499,14 +491,7 @@ const layer = Layer.effect(
             if (session.revert) {
               yield* revert.cleanup(session)
             }
-            const agent = yield* agents.get(input.agent)
-            if (!agent) {
-              const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-              const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-              const error = new NamedError.Unknown({ message: `Agent not found: "${input.agent}".${hint}` })
-              yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-              return yield* Effect.die(error)
-            }
+            const agent = (yield* agents.get(input.agent)) ?? (yield* agentNotFound(input.agent, input.sessionID))
             const model = input.model ?? agent.model ?? (yield* currentModel(input.sessionID))
             const userMsg: SessionV1.User = {
               id: input.messageID ?? MessageID.ascending(),
@@ -675,14 +660,9 @@ const layer = Layer.effect(
 
     const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
       const agentName = input.agent
-      const ag = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
-      if (!ag) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        return yield* Effect.die(error)
-      }
+      const ag =
+        (agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()) ??
+        (yield* agentNotFound(agentName, input.sessionID))
 
       const model = input.model ?? ag.model ?? (yield* currentModel(input.sessionID))
       const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
@@ -690,7 +670,10 @@ const layer = Layer.effect(
         !input.variant && ag.variant && same
           ? yield* provider.getModel(model.providerID, model.modelID).pipe(
               Effect.map(Option.some),
-              Effect.catchIf(Provider.ModelNotFoundError.isInstance, () => Effect.succeedNone),
+              Effect.catchIf(
+                (error): error is Provider.ModelNotFoundError => Provider.ModelNotFoundError.isInstance(error),
+                () => Effect.succeedNone,
+              ),
             )
           : Option.none<Provider.Model>()
       const variant =
@@ -1213,14 +1196,7 @@ const layer = Layer.effect(
             continue
           }
 
-          const agent = yield* agents.get(lastUser.agent)
-          if (!agent) {
-            const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-            const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-            const error = new NamedError.Unknown({ message: `Agent not found: "${lastUser.agent}".${hint}` })
-            yield* events.publish(Session.Event.Error, { sessionID, error: error.toObject() })
-            return yield* Effect.die(error)
-          }
+          const agent = (yield* agents.get(lastUser.agent)) ?? (yield* agentNotFound(lastUser.agent, sessionID))
           const maxSteps = agent.steps ?? Infinity
           const isLastStep = step >= maxSteps
           msgs = yield* applyReminders({ messages: msgs, agent, session })
@@ -1455,14 +1431,9 @@ const layer = Layer.effect(
 
       yield* getModel(taskModel.providerID, taskModel.modelID, input.sessionID)
 
-      const agent = agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()
-      if (!agent) {
-        const available = (yield* agents.list()).filter((a) => !a.hidden).map((a) => a.name)
-        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-        const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
-        yield* events.publish(Session.Event.Error, { sessionID: input.sessionID, error: error.toObject() })
-        return yield* Effect.die(error)
-      }
+      const agent =
+        (agentName ? yield* agents.get(agentName) : yield* agents.defaultInfo()) ??
+        (yield* agentNotFound(agentName, input.sessionID))
 
       const templateParts = yield* resolvePromptParts(template)
       const inputFiles = HashSet.fromIterable(
