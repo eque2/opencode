@@ -22,7 +22,7 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
-import { Deferred, Duration, Effect, Layer, Queue, Schedule, Scope, Stream } from "effect"
+import { Deferred, Duration, Effect, Layer, Queue, Schedule, Schema, Scope, Stream } from "effect"
 import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { ChildProcess } from "effect/unstable/process"
 import path from "node:path"
@@ -485,12 +485,14 @@ export function withCliFixture<A, E>(
   )
 }
 
+const decodeJsonEvent = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))
+
 function parseJsonEvents(stdout: string): Array<Record<string, unknown>> {
   return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .map((line) => decodeJsonEvent(line))
 }
 
 function normalizeLines(value: string) {
