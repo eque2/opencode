@@ -8,7 +8,7 @@ import { Permission } from "../../src/permission"
 import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
 import { TestInstance, tmpdirScoped } from "../fixture/fixture"
-import { testEffect } from "../lib/effect"
+import { awaitWithTimeout, testEffect } from "../lib/effect"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
@@ -35,17 +35,16 @@ const rejectAll = (message?: string) =>
 const waitForPending = (count: number) =>
   Effect.gen(function* () {
     const permission = yield* Permission.Service
-    return yield* Effect.gen(function* () {
-      while (true) {
-        const list = yield* permission.list()
-        if (list.length === count) return list
-        yield* Effect.sleep("10 millis")
-      }
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: "1 second",
-        orElse: () => Effect.fail(new Error(`timed out waiting for ${count} pending permission request(s)`)),
+    return yield* awaitWithTimeout(
+      Effect.gen(function* () {
+        while (true) {
+          const list = yield* permission.list()
+          if (list.length === count) return list
+          yield* Effect.sleep("10 millis")
+        }
       }),
+      `timed out waiting for ${count} pending permission request(s)`,
+      "1 second",
     )
   })
 
@@ -676,12 +675,7 @@ it.instance(
 
       expect(yield* waitForPending(1)).toHaveLength(1)
       expect(
-        yield* Deferred.await(seen).pipe(
-          Effect.timeoutOrElse({
-            duration: "1 second",
-            orElse: () => Effect.fail(new Error("timed out waiting for permission asked event")),
-          }),
-        ),
+        yield* awaitWithTimeout(Deferred.await(seen), "timed out waiting for permission asked event", "1 second"),
       ).toMatchObject({
         sessionID: SessionID.make("session_test"),
         permission: "bash",
@@ -948,12 +942,7 @@ it.instance(
       yield* reply({ requestID: PermissionV1.ID.make("per_test7"), reply: "once" })
       yield* Fiber.join(fiber)
       expect(
-        yield* Deferred.await(seen).pipe(
-          Effect.timeoutOrElse({
-            duration: "1 second",
-            orElse: () => Effect.fail(new Error("timed out waiting for permission replied event")),
-          }),
-        ),
+        yield* awaitWithTimeout(Deferred.await(seen), "timed out waiting for permission replied event", "1 second"),
       ).toEqual({
         sessionID: SessionID.make("session_test"),
         requestID: PermissionV1.ID.make("per_test7"),
