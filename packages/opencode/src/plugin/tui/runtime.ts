@@ -19,7 +19,7 @@ import { errorData, errorMessage } from "@opencode-ai/tui/util/error"
 import { isRecord } from "@opencode-ai/tui/util/record"
 import { resolveHostAttentionSoundPaths } from "@/config/tui-host-attention"
 import {
-  readPackageThemes,
+  packageThemes,
   readPluginId,
   readV1Plugin,
   resolvePluginId,
@@ -31,7 +31,8 @@ import { PluginMeta } from "@/plugin/meta"
 import { installPlugin as installModulePlugin, patchPluginConfig, readPluginManifest } from "@/plugin/install"
 import { hasTheme, upsertTheme } from "@opencode-ai/tui/context/theme"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { AppProcess } from "@opencode-ai/core/process"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
@@ -137,6 +138,13 @@ const EMPTY_TUI: TuiPluginModule = {
 }
 
 const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
+const fileSystemLayer = LayerNode.compile(FSUtil.node)
+
+// The TUI host and the plugin API take Promise callbacks. Each Promise edge provides the filesystem layer to its own run.
+function runPromise<A, E>(effect: Effect.Effect<A, E, FSUtil.Service>) {
+  return Effect.runPromise(effect.pipe(Effect.provide(fileSystemLayer)))
+}
 
 const attempt = <A>(run: () => PromiseLike<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new PluginStepError({ cause }) })
@@ -257,7 +265,9 @@ const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
   plugin: PluginEntry,
   file: string,
 ) {
-  const src = Filesystem.resolveFilePath(root, file)
+  const fsu = yield* FSUtil.Service
+  const raw = file.startsWith("file://") ? fileURLToPath(file) : file
+  const src = path.isAbsolute(raw) ? raw : path.resolve(root, raw)
   const name = path.basename(src, path.extname(src))
   const source_dir = path.dirname(meta.source)
   const local_dir =
@@ -267,15 +277,20 @@ const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
   const dest_dir = meta.scope === "local" ? local_dir : path.join(Global.Path.config, "themes")
   const dest = path.join(dest_dir, `${name}.json`)
   // A stat failure other than a missing file is a defect: the install call rejects with it.
-  const stat = Option.fromNullishOr(yield* Effect.promise(() => Filesystem.statAsync(src)))
+  const stat = yield* fsu.stat(src).pipe(
+    Effect.map(Option.some),
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+    Effect.orDie,
+  )
+  // The Date time of the stat is the floor of its sub-millisecond mtimeMs.
   const info: PluginMeta.Theme = {
     src,
     dest,
     ...Option.match(stat, {
       onNone: () => ({}),
       onSome: (value) => ({
-        mtime: Math.floor(typeof value.mtimeMs === "bigint" ? Number(value.mtimeMs) : value.mtimeMs),
-        size: typeof value.size === "bigint" ? Number(value.size) : value.size,
+        ...Option.match(value.mtime, { onNone: () => ({}), onSome: (date) => ({ mtime: date.getTime() }) }),
+        size: Number(value.size),
       }),
     }),
   }
@@ -290,7 +305,7 @@ const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
     const prev = Option.fromNullishOr(plugin.themes[name])
     if (exists) {
       if (plugin.meta.state !== "updated") {
-        if (Option.isNone(prev) && (yield* Effect.promise(() => Filesystem.exists(dest)))) yield* save
+        if (Option.isNone(prev) && (yield* fsu.existsSafe(dest))) yield* save
         return
       }
       if (
@@ -302,15 +317,15 @@ const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
         return
     }
 
-    const text = yield* Effect.option(attempt(() => Filesystem.readText(src)))
+    const text = yield* Effect.option(fsu.readFileString(src))
     if (Option.isNone(text)) return
 
     const data = decodeJson(text.value)
     if (Option.isNone(data)) return
     if (!isTheme(data.value)) return
 
-    if (exists || !(yield* Effect.promise(() => Filesystem.exists(dest)))) {
-      yield* Effect.ignore(attempt(() => Filesystem.write(dest, text.value)))
+    if (exists || !(yield* fsu.existsSafe(dest))) {
+      yield* Effect.ignore(fsu.writeWithDirs(dest, text.value))
     }
 
     upsertTheme(name, data.value)
@@ -324,7 +339,7 @@ const installTheme = Effect.fn("TuiPluginRuntime.installTheme")(function* (
 })
 
 function createThemeInstaller(meta: ConfigPlugin.Origin, root: string, plugin: PluginEntry): TuiTheme["install"] {
-  return (file) => Effect.runPromise(installTheme(meta, root, plugin, file))
+  return (file) => runPromise(installTheme(meta, root, plugin, file))
 }
 
 const createMeta = Effect.fn("TuiPluginRuntime.createMeta")(function* (
@@ -380,12 +395,13 @@ function loadInternalPlugin(item: InternalTuiPlugin): PluginLoad {
 
 function readThemeFiles(spec: string, pkg?: PluginPackage) {
   if (!pkg) return Effect.succeed<string[]>([])
-  return attemptSync(() => readPackageThemes(spec, pkg)).pipe(
-    Effect.catch((error) =>
+  // Any failure, a realpath defect included, skips the themes with a warning, as the sync throw did before.
+  return packageThemes(spec, pkg).pipe(
+    Effect.catchCause((cause) =>
       warn("invalid tui plugin oc-themes", {
         path: spec,
         pkg: pkg.pkg,
-        error: error.cause,
+        error: Cause.squash(cause),
       }).pipe(Effect.as<string[]>([])),
     ),
   )
@@ -656,16 +672,16 @@ function pluginApi(runtime: RuntimeState, plugin: PluginEntry, scope: PluginScop
         return listPluginStatus(runtime)
       },
       activate(id) {
-        return Effect.runPromise(activatePluginById(runtime, id, true))
+        return runPromise(activatePluginById(runtime, id, true))
       },
       deactivate(id) {
-        return Effect.runPromise(deactivatePluginById(runtime, id, true))
+        return runPromise(deactivatePluginById(runtime, id, true))
       },
       add(spec) {
-        return Effect.runPromise(addPluginBySpec(runtime, spec))
+        return runPromise(addPluginBySpec(runtime, spec))
       },
       install(spec, options) {
-        return Effect.runPromise(installPluginBySpec(runtime, spec, options?.global))
+        return runPromise(installPluginBySpec(runtime, spec, options?.global))
       },
     },
     lifecycle: scope.lifecycle,
@@ -798,9 +814,9 @@ function resolveExternalPlugins(list: ConfigPlugin.Origin[]) {
       kind: "tui",
       wait: () => Effect.runPromise(Effect.ignore(attempt(() => TuiConfig.waitForDependencies()))),
       finish: (loaded, origin, retry) =>
-        Effect.runPromise(finishExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
+        runPromise(finishExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
       missing: (loaded, origin, retry) =>
-        Effect.runPromise(missingExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
+        runPromise(missingExternalPlugin(loaded, origin, retry).pipe(Effect.map(Option.getOrUndefined))),
       report: {
         start() {},
         missing(candidate, retry, message) {
@@ -1063,7 +1079,7 @@ export function init(input: {
 
   dir = cwd
   const next = setup({ ...input, runtime: input.runtime ?? createPluginRuntime() })
-  const task = Effect.runPromise(load(next, input.config))
+  const task = runPromise(load(next, input.config))
   loaded = Option.some(task)
   return task
 }
@@ -1100,8 +1116,8 @@ export function dispose() {
   return Effect.runPromise(disposeRuntime(task))
 }
 
-function withRuntime<A>(missing: A, run: (state: RuntimeState) => Effect.Effect<A>) {
-  return Effect.runPromise(
+function withRuntime<A>(missing: A, run: (state: RuntimeState) => Effect.Effect<A, never, FSUtil.Service>) {
+  return runPromise(
     Option.match(runtime, {
       onNone: () => Effect.succeed(missing),
       onSome: run,
