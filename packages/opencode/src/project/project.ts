@@ -10,7 +10,7 @@ import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
 import { Command } from "@/command"
 import { InstanceState } from "@/effect/instance-state"
-import { Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
+import { Clock, Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -159,6 +159,7 @@ const layer = Layer.effect(
         .transaction(
           (d) =>
             Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis
               const oldProject = yield* d.select().from(ProjectTable).where(eq(ProjectTable.id, oldID)).get()
               const newProject = yield* d.select().from(ProjectTable).where(eq(ProjectTable.id, newID)).get()
               if (oldProject && !newProject) {
@@ -167,7 +168,7 @@ const layer = Layer.effect(
                   .values({
                     ...oldProject,
                     id: newID,
-                    time_updated: Date.now(),
+                    time_updated: now,
                   })
                   .run()
               }
@@ -224,6 +225,7 @@ const layer = Layer.effect(
       const projectID = ProjectV2.ID.make(data.id)
       yield* migrateProjectId(data.previous ? Option.some(ProjectV2.ID.make(data.previous)) : Option.none(), projectID)
       const row = yield* db.select().from(ProjectTable).where(eq(ProjectTable.id, projectID)).get().pipe(Effect.orDie)
+      const now = yield* Clock.currentTimeMillis
       const existing = row
         ? fromRow(row)
         : {
@@ -231,7 +233,7 @@ const layer = Layer.effect(
             worktree,
             vcs: data.vcs?.type ?? fakeVcs,
             sandboxes: [] as string[],
-            time: { created: Date.now(), updated: Date.now() },
+            time: { created: now, updated: now },
           }
 
       if (flags.experimentalIconDiscovery) yield* discover(existing).pipe(Effect.ignore, Effect.forkIn(scope))
@@ -240,7 +242,7 @@ const layer = Layer.effect(
         ...existing,
         worktree: projectID === ProjectV2.ID.global ? worktree : existing.worktree,
         vcs: data.vcs?.type ?? fakeVcs,
-        time: { ...existing.time, updated: Date.now() },
+        time: { ...existing.time, updated: now },
       }
       if (
         projectID !== ProjectV2.ID.global &&
@@ -341,6 +343,7 @@ const layer = Layer.effect(
     })
 
     const update = Effect.fn("Project.update")(function* (input: UpdateInput) {
+      const now = yield* Clock.currentTimeMillis
       const result = yield* db
         .update(ProjectTable)
         .set({
@@ -349,7 +352,7 @@ const layer = Layer.effect(
           icon_url_override: input.icon?.override,
           icon_color: input.icon?.color,
           commands: input.commands,
-          time_updated: Date.now(),
+          time_updated: now,
         })
         .where(eq(ProjectTable.id, input.projectID))
         .returning()
@@ -375,7 +378,7 @@ const layer = Layer.effect(
     const setInitialized = Effect.fn("Project.setInitialized")(function* (id: ProjectV2.ID) {
       yield* db
         .update(ProjectTable)
-        .set({ time_initialized: Date.now() })
+        .set({ time_initialized: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .run()
         .pipe(Effect.orDie)
@@ -414,7 +417,7 @@ const layer = Layer.effect(
       if (!sboxes.includes(sandbox)) sboxes.push(sandbox)
       const result = yield* db
         .update(ProjectTable)
-        .set({ sandboxes: sboxes, time_updated: Date.now() })
+        .set({ sandboxes: sboxes, time_updated: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .returning()
         .get()
@@ -430,7 +433,7 @@ const layer = Layer.effect(
       const sboxes = row.sandboxes.filter((s) => s !== sandbox)
       const result = yield* db
         .update(ProjectTable)
-        .set({ sandboxes: sboxes, time_updated: Date.now() })
+        .set({ sandboxes: sboxes, time_updated: yield* Clock.currentTimeMillis })
         .where(eq(ProjectTable.id, id))
         .returning()
         .get()
