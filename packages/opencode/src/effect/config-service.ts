@@ -41,27 +41,26 @@ export type ServiceClass<Self, Id extends string, Service> = Context.ServiceClas
  */
 export const Service =
   <Self>() =>
-  <const Id extends string, const Fields extends ConfigMap>(id: Id, fields: Fields) => {
-    class ConfigTag extends Context.Service<Self, Shape<Fields>>()(id) {
-      static configLayer(input: Shape<Fields>) {
-        return Layer.succeed(this, this.of(input))
-      }
-
-      static get layer() {
-        const tag = this
-        return Layer.effect(
+  <const Id extends string, const Fields extends ConfigMap>(
+    id: Id,
+    fields: Fields,
+  ): ServiceClass<Self, Id, Shape<Fields>> => {
+    // eslint-disable-next-line effect/require-service-identifier -- (d) the identifier is the caller's string literal, passed through this factory's typed `Id extends string` parameter; the rule accepts only an inline literal.
+    const tag = Context.Service<Self, Shape<Fields>>()(id)
+    return Object.assign(tag, {
+      configLayer: (input: Shape<Fields>) => Layer.succeed(tag, tag.of(input)),
+      // Fresh, so each use site parses config from its own ConfigProvider instead of sharing a memoized build.
+      layer: Layer.fresh(
+        Layer.effect(
           tag,
           Effect.gen(function* () {
             const config = yield* Config.all(fields)
-            // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- Config.all preserves the field shape, but its conditional return type also supports iterable inputs.
+            // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) Config.all returns a conditional type (tuple, iterable, or record) that TypeScript cannot resolve for the generic Fields; for a record input it is exactly Shape<Fields>.
             return tag.of(config as Shape<Fields>)
           }),
-        )
-      }
-    }
-
-    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- The generated class carries typed static helpers.
-    return ConfigTag as ServiceClass<Self, Id, Shape<Fields>>
+        ),
+      ),
+    })
   }
 
 export * as ConfigService from "./config-service"
