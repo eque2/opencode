@@ -55,22 +55,23 @@ type State = {
   shared: MutableHashMap.MutableHashMap<SessionID, Option.Option<Share>>
 }
 
+// The share service receives these values as JSON, so the event data types serve as they are.
 type Data =
   | {
       type: "session"
-      data: SDK.Session
+      data: EventV2.Data<typeof Session.Event.Updated>["info"]
     }
   | {
       type: "message"
-      data: SDK.Message
+      data: EventV2.Data<typeof MessageV2.Event.Updated>["info"]
     }
   | {
       type: "part"
-      data: SDK.Part
+      data: EventV2.Data<typeof MessageV2.Event.PartUpdated>["part"]
     }
   | {
       type: "session_diff"
-      data: SDK.SnapshotFileDiff[]
+      data: EventV2.Data<typeof Session.Event.Diff>["diff"]
     }
   | {
       type: "model"
@@ -186,23 +187,23 @@ const layer = Layer.effect(
         yield* watch(Session.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.id, [{ type: "session", data: structuredClone(info) as SDK.Session }])
+            yield* sync(info.id, [{ type: "session", data: structuredClone(info) }])
           }),
         )
         yield* watch(MessageV2.Event.Updated, (data) =>
           Effect.gen(function* () {
             const info = data.info
-            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) as SDK.Message }])
+            yield* sync(info.sessionID, [{ type: "message", data: structuredClone(info) }])
             if (info.role !== "user") return
             const model = yield* provider.getModel(info.model.providerID, info.model.modelID)
             yield* sync(info.sessionID, [{ type: "model", data: [model] }])
           }),
         )
         yield* watch(MessageV2.Event.PartUpdated, (data) =>
-          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) as SDK.Part }]),
+          sync(data.part.sessionID, [{ type: "part", data: structuredClone(data.part) }]),
         )
         yield* watch(Session.Event.Diff, (data) =>
-          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) as SDK.SnapshotFileDiff[] }]),
+          sync(data.sessionID, [{ type: "session_diff", data: structuredClone(data.diff) }]),
         )
         yield* watch(Session.Event.Deleted, (data) => remove(data.sessionID))
 
@@ -288,8 +289,7 @@ const layer = Layer.effect(
         Array.from(
           MutableHashMap.fromIterable(
             messages
-              .filter((msg) => msg.info.role === "user")
-              .map((msg) => (msg.info as SDK.UserMessage).model)
+              .flatMap((msg) => (msg.info.role === "user" ? [msg.info.model] : []))
               .map((item) => [`${item.providerID}/${item.modelID}`, item] as const),
           ).pipe(MutableHashMap.values),
         ),
