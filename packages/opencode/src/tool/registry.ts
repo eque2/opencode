@@ -424,10 +424,9 @@ function normalizeZodJsonSchema(value: unknown): unknown {
   if (!Predicate.isObjectOrArray(value)) return value
   return Object.fromEntries(
     Object.entries(value)
-      .filter((entry) =>
-        (entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"
-          ? false
-          : true,
+      .filter(
+        (entry) =>
+          !((entry[0] === "exclusiveMaximum" || entry[0] === "exclusiveMinimum") && typeof entry[1] === "boolean"),
       )
       .map(([key, item]) => [key, normalizeZodJsonSchema(item)]),
   )
