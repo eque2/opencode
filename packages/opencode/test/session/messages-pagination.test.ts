@@ -5,7 +5,7 @@ import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { Effect, Option } from "effect"
 import { Session as SessionNs } from "@/session/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID, type SessionID } from "../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 
 import { NotFoundError } from "@/storage/storage"
 import { testEffect } from "../lib/effect"
@@ -27,6 +27,9 @@ const withSession = <A, E, R>(
     (input) => input.session.remove(input.sessionID).pipe(Effect.ignore),
   )
 
+// Text of a text part; other part types have none.
+const text = (part: SessionV1.Part | undefined) => (part?.type === "text" ? part.text : undefined)
+
 // Helper functions using Effect.gen
 const fill = Effect.fn("Test.fill")(function* (
   sessionID: SessionID,
@@ -44,10 +47,9 @@ const fill = Effect.fn("Test.fill")(function* (
       role: "user",
       time: { created: time(i) },
       agent: "test",
-      model: { providerID: "test", modelID: "test" },
+      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
       tools: {},
-      mode: "",
-    } as unknown as SessionV1.Info)
+    } satisfies SessionV1.User)
     yield* session.updatePart({
       id: PartID.ascending(),
       sessionID,
@@ -68,10 +70,9 @@ const addUser = Effect.fn("Test.addUser")(function* (sessionID: SessionID, text?
     role: "user",
     time: { created: Date.now() },
     agent: "test",
-    model: { providerID: "test", modelID: "test" },
+    model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
     tools: {},
-    mode: "",
-  } as unknown as SessionV1.Info)
+  } satisfies SessionV1.User)
   if (text) {
     yield* session.updatePart({
       id: PartID.ascending(),
@@ -107,7 +108,7 @@ const addAssistant = Effect.fn("Test.addAssistant")(function* (
     summary: opts?.summary,
     finish: opts?.finish,
     error: opts?.error,
-  } as unknown as SessionV1.Info)
+  } satisfies SessionV1.Assistant)
   return id
 })
 
@@ -124,7 +125,7 @@ const addCompactionPart = Effect.fn("Test.addCompactionPart")(function* (
     type: "compaction",
     auto: true,
     tail_start_id: tailStartID,
-  } as any)
+  } satisfies SessionV1.CompactionPart)
 })
 
 describe("MessageV2.page", () => {
@@ -188,7 +189,7 @@ describe("MessageV2.page", () => {
 
   it.instance("fails with NotFoundError for non-existent session", () =>
     Effect.gen(function* () {
-      const fake = "non-existent-session" as SessionID
+      const fake = SessionID.make("ses_non-existent-session")
       const error = yield* Effect.flip(MessageV2.page({ sessionID: fake, limit: 10 }))
       expect(error).toBeInstanceOf(NotFoundError)
       expect(error.message).toBe(`Session not found: ${fake}`)
@@ -387,7 +388,7 @@ describe("MessageV2.parts", () => {
         const result = yield* MessageV2.parts(id)
         expect(result).toHaveLength(1)
         expect(result[0].type).toBe("text")
-        expect((result[0] as SessionV1.TextPart).text).toBe("m0")
+        expect(text(result[0])).toBe("m0")
       }),
     ),
   )
@@ -425,9 +426,9 @@ describe("MessageV2.parts", () => {
 
         const result = yield* MessageV2.parts(id)
         expect(result).toHaveLength(3)
-        expect((result[0] as SessionV1.TextPart).text).toBe("m0")
-        expect((result[1] as SessionV1.TextPart).text).toBe("second")
-        expect((result[2] as SessionV1.TextPart).text).toBe("third")
+        expect(text(result[0])).toBe("m0")
+        expect(text(result[1])).toBe("second")
+        expect(text(result[2])).toBe("third")
       }),
     ),
   )
@@ -464,7 +465,7 @@ describe("MessageV2.get", () => {
         expect(result.info.sessionID).toBe(sessionID)
         expect(result.info.role).toBe("user")
         expect(result.parts).toHaveLength(1)
-        expect((result.parts[0] as SessionV1.TextPart).text).toBe("m0")
+        expect(text(result.parts[0])).toBe("m0")
       }),
     ),
   )
@@ -534,7 +535,7 @@ describe("MessageV2.get", () => {
         const result = yield* MessageV2.get({ sessionID, messageID: aid })
         expect(result.info.role).toBe("assistant")
         expect(result.parts).toHaveLength(1)
-        expect((result.parts[0] as SessionV1.TextPart).text).toBe("response")
+        expect(text(result.parts[0])).toBe("response")
       }),
     ),
   )
@@ -566,7 +567,7 @@ describe("Session.messages", () => {
   it.instance("fails with NotFoundError for non-existent session", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
-      const fake = "non-existent-session" as SessionID
+      const fake = SessionID.make("ses_non-existent-session")
       const error = yield* Effect.flip(session.messages({ sessionID: fake }))
       expect(error).toBeInstanceOf(NotFoundError)
       expect(error.message).toBe(`Session not found: ${fake}`)
@@ -588,7 +589,7 @@ describe("Session.findMessage", () => {
   it.instance("fails with NotFoundError for non-existent session", () =>
     Effect.gen(function* () {
       const session = yield* SessionNs.Service
-      const fake = "non-existent-session" as SessionID
+      const fake = SessionID.make("ses_non-existent-session")
       const error = yield* Effect.flip(session.findMessage(fake, () => true))
       expect(error).toBeInstanceOf(NotFoundError)
       expect(error.message).toBe(`Session not found: ${fake}`)
@@ -953,13 +954,15 @@ describe("MessageV2.filterCompacted", () => {
       {
         info: {
           id,
-          sessionID: "s1",
+          sessionID: SessionID.make("ses_s1"),
           role: "user",
           time: { created: 1 },
           agent: "test",
-          model: { providerID: "test", modelID: "test" },
-        } as unknown as SessionV1.Info,
-        parts: [{ type: "text", text: "hello" }] as unknown as SessionV1.Part[],
+          model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+        },
+        parts: [
+          { id: PartID.ascending(), sessionID: SessionID.make("ses_s1"), messageID: id, type: "text", text: "hello" },
+        ],
       },
     ]
     const result = MessageV2.filterCompacted(items)
@@ -998,7 +1001,7 @@ describe("MessageV2 consistency", () => {
 
         const paged = yield* MessageV2.page({ sessionID, limit: 10 })
         for (const item of paged.items) {
-          const got = yield* MessageV2.get({ sessionID, messageID: item.info.id as MessageID })
+          const got = yield* MessageV2.get({ sessionID, messageID: item.info.id })
           expect(got.info).toEqual(item.info)
           expect(got.parts).toEqual(item.parts)
         }
