@@ -11,7 +11,13 @@ import { Datadog } from "../../src/observability/datadog"
 import { fileLogger } from "../../src/observability/logging"
 import { ConfigV1 } from "../../src/v1/config/config"
 
-type Received = { at: number; key: string | null; encoding: string | null; body: Array<Record<string, any>> }
+type Received = {
+  at: number
+  key: string | null
+  encoding: string | null
+  bytes: number
+  body: Array<Record<string, any>>
+}
 
 // Replies with the queued statuses in order, then 202.
 function intake(statuses: Array<{ status: number; headers?: Record<string, string> }> = []) {
@@ -21,8 +27,9 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
     async fetch(request) {
       const raw = new Uint8Array(await request.arrayBuffer())
       const encoding = request.headers.get("content-encoding")
-      const text = new TextDecoder().decode(encoding === "gzip" ? Bun.gunzipSync(raw) : raw)
-      requests.push({ at: Date.now(), key: request.headers.get("DD-API-KEY"), encoding, body: JSON.parse(text) })
+      const decoded = encoding === "gzip" ? Bun.gunzipSync(raw) : raw
+      const body = JSON.parse(new TextDecoder().decode(decoded))
+      requests.push({ at: Date.now(), key: request.headers.get("DD-API-KEY"), encoding, bytes: decoded.length, body })
       const next = statuses.shift() ?? { status: 202 }
       return new Response(null, next)
     },
@@ -210,7 +217,7 @@ test.skip("AC-6 after retries fail the sink sends nothing until the cooldown end
   expect(target.requests.at(-1)?.body.map((entry) => entry.message)).toEqual(["third"])
 }, 30_000)
 
-test.skip("AC-7 every request is gzip-compressed", async () => {
+test("AC-7 every request is gzip-compressed", async () => {
   const target = intake()
   using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
@@ -315,3 +322,31 @@ test("AC-9b secret shapes in the pretty cause are scrubbed in every content mode
     expect(JSON.stringify(target.requests[0].body)).not.toContain(secret)
   }
 })
+
+test("AC-7b a multi-byte batch splits into gzip chunks measured in UTF-8 bytes", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  // 900,000 UTF-8 bytes but only 450,000 UTF-16 units each, so a length-based count would pack 9 MB per chunk.
+  const message = "é".repeat(450_000)
+  await ship(
+    config,
+    Effect.forEach(Array.from({ length: 12 }), () => Effect.logInfo(message), { discard: true }).pipe(
+      Effect.annotateLogs({ category: "llm.request" }),
+    ),
+  )
+  expect(target.requests.length).toBeGreaterThanOrEqual(3)
+  expect(target.requests.every((request) => request.encoding === "gzip" && request.bytes < 4_500_000)).toBe(true)
+  expect(target.requests.flatMap((request) => request.body).length).toBe(12)
+}, 30_000)
+
+test("AC-7b an entry above 1,000,000 bytes has its message truncated", async () => {
+  const target = intake()
+  using _ = target.server
+  const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
+  await ship(config, Effect.logInfo("é".repeat(700_000)).pipe(Effect.annotateLogs({ category: "llm.request" })))
+  const [entry] = target.requests[0].body
+  expect(entry.message).toEndWith("[TRUNCATED]")
+  expect(entry.message.startsWith("éé")).toBe(true)
+  expect(Buffer.byteLength(JSON.stringify(entry))).toBeLessThanOrEqual(1_000_000)
+}, 30_000)

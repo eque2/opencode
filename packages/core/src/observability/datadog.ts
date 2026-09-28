@@ -73,9 +73,11 @@ const CONTENT = HashSet.make(
   "cmd",
 )
 
-// Datadog intake limits: 1000 entries and 5 MB per request.
+// Datadog intake limits: 1000 entries and 5 MB uncompressed per request, 1 MB per entry.
 const MAX_ENTRIES = 1000
 const MAX_BYTES = 4_500_000
+const MAX_ENTRY_BYTES = 1_000_000
+const TRUNCATED = "[TRUNCATED]"
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))
 
@@ -104,7 +106,8 @@ export function logger(settings: Settings) {
         .execute(
           HttpClientRequest.post(url).pipe(
             HttpClientRequest.setHeader("DD-API-KEY", apiKey),
-            HttpClientRequest.bodyText(encodeJson(batch), "application/json"),
+            HttpClientRequest.setHeader("Content-Encoding", "gzip"),
+            HttpClientRequest.bodyUint8Array(Bun.gzipSync(encodeJson(batch)), "application/json"),
           ),
         )
         .pipe(
@@ -212,8 +215,8 @@ function hash(input: unknown) {
 
 function chunks(items: Array<Entry>) {
   return items
-    .reduce<Array<{ items: Array<Entry>; bytes: number }>>((result, item) => {
-      const bytes = encodeJson(item).length
+    .map(fit)
+    .reduce<Array<{ items: Array<Entry>; bytes: number }>>((result, { item, bytes }) => {
       const last = result.at(-1)
       if (last && last.items.length < MAX_ENTRIES && last.bytes + bytes < MAX_BYTES) {
         last.items.push(item)
@@ -223,6 +226,18 @@ function chunks(items: Array<Entry>) {
       return [...result, { items: [item], bytes }]
     }, [])
     .map((chunk) => chunk.items)
+}
+
+/** Measures an entry in UTF-8 bytes, and cuts its message when the entry is above the 1 MB entry limit. */
+function fit(item: Entry) {
+  const bytes = Buffer.byteLength(encodeJson(item))
+  if (bytes <= MAX_ENTRY_BYTES || typeof item.message !== "string") return { item, bytes }
+  const message = Buffer.from(item.message)
+  // ponytail: the JSON escaping of the kept text is not counted, so a message full of quotes can stay slightly above the limit.
+  const keep = Math.max(0, message.length - (bytes - MAX_ENTRY_BYTES) - Buffer.byteLength(TRUNCATED))
+  // A cut inside a multi-byte character decodes to U+FFFD, so drop it.
+  const cut = { ...item, message: message.subarray(0, keep).toString().replace(/�$/, "") + TRUNCATED }
+  return { item: cut, bytes: Buffer.byteLength(encodeJson(cut)) }
 }
 
 function decimal(hex: string) {
