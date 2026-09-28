@@ -78,6 +78,20 @@ function at(value: unknown, ...path: Array<string | number>): unknown {
   }, value)
 }
 
+// Parses the JSON body of a captured fetch call. The AI SDKs send each body as a JSON string.
+function requestJson(init: RequestInit | undefined) {
+  const body = init?.body
+  if (typeof body !== "string") throw new Error("expected a JSON string request body")
+  return JSON.parse(body)
+}
+
+// Returns the URL of a captured fetch call.
+function requestUrl(input: Parameters<typeof fetch>[0]) {
+  if (typeof input === "string") return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
 describe("ProviderTransform.options - setCacheKey", () => {
   const sessionID = "test-session-123"
 
@@ -1163,7 +1177,7 @@ describe("ProviderTransform.providerOptions", () => {
         apiKey: "test-key",
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
-            sent = { headers: new Headers(args[1]?.headers), body: JSON.parse(String(args[1]?.body)) }
+            sent = { headers: new Headers(args[1]?.headers), body: requestJson(args[1]) }
             return Response.json({
               type: "message",
               id: "msg_1",
@@ -1205,9 +1219,9 @@ describe("ProviderTransform.providerOptions", () => {
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
             sent = {
-              url: String(args[0]),
+              url: requestUrl(args[0]),
               headers: new Headers(args[1]?.headers),
-              body: JSON.parse(String(args[1]?.body)),
+              body: requestJson(args[1]),
             }
             return Response.json({
               type: "message",
@@ -1249,7 +1263,7 @@ describe("ProviderTransform.providerOptions", () => {
         region: "us-east-1",
         fetch: Object.assign(
           async (...args: Parameters<typeof fetch>) => {
-            body = JSON.parse(String(args[1]?.body))
+            body = requestJson(args[1])
             return Response.json({
               output: { message: { role: "assistant", content: [{ text: "ok" }] } },
               stopReason: "end_turn",
@@ -2832,7 +2846,7 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
           region: "us-east-1",
           fetch: Object.assign(
             async (...args: Parameters<typeof fetch>) => {
-              const body = JSON.parse(String(args[1]?.body))
+              const body = requestJson(args[1])
               expect(body.messages).toEqual([
                 { role: "user", content: [{ text: "Think" }] },
                 {
@@ -3979,7 +3993,7 @@ describe("ProviderTransform.reasoningVariants", () => {
       region: "us-east-1",
       fetch: Object.assign(
         async (...args: Parameters<typeof fetch>) => {
-          sent.push(JSON.parse(String(args[1]?.body)))
+          sent.push(requestJson(args[1]))
           return Response.json({
             output: { message: { role: "assistant", content: [{ text: "ok" }] } },
             stopReason: "end_turn",
