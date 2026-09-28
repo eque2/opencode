@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Fiber } from "effect"
+import { Context, Effect, Fiber, Option, Predicate } from "effect"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import type { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
@@ -8,32 +8,22 @@ export interface Shape {
   readonly promise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>
   readonly fork: <A, E, R>(effect: Effect.Effect<A, E, R>) => Fiber.Fiber<A, E>
   readonly run: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E>
-  readonly bind: <Args extends readonly unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result
 }
 
-function restoreWorkspace<R>(workspace: WorkspaceV2.ID | undefined, fn: () => R): R {
-  if (workspace !== undefined) return WorkspaceContext.restore(workspace, fn)
-  return fn()
+function restoreWorkspace<R>(workspace: Option.Option<WorkspaceV2.ID>, fn: () => R): R {
+  return Option.match(workspace, {
+    onNone: fn,
+    onSome: (id) => WorkspaceContext.restore(id, fn),
+  })
 }
 
 function captureSync() {
-  const fiber = Fiber.getCurrent()
-  const instance = fiber ? Context.get(fiber.context, InstanceRef) : undefined
-  const workspace = (fiber ? Context.get(fiber.context, WorkspaceRef) : undefined) ?? WorkspaceContext.workspaceID
+  const fiber = Option.fromNullishOr(Fiber.getCurrent())
+  const instance = Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, InstanceRef))
+  const workspace = Option.flatMapNullishOr(fiber, (current) => Context.get(current.context, WorkspaceRef)).pipe(
+    Option.orElse(() => Option.fromNullishOr(WorkspaceContext.workspaceID)),
+  )
   return { instance, workspace }
-}
-
-export const bind = <Args extends readonly unknown[], Result>(fn: (...args: Args) => Result) => {
-  const captured = captureSync()
-  return (...args: Args) =>
-    restoreWorkspace(captured.workspace, () =>
-      Effect.runSync(
-        attachWith(
-          Effect.sync(() => fn(...args)),
-          captured,
-        ),
-      ),
-    )
 }
 
 /**
@@ -46,18 +36,21 @@ export const bind = <Args extends readonly unknown[], Result>(fn: (...args: Args
  */
 export const fromPromise = <T>(fn: () => Promise<T> | T): Effect.Effect<T> =>
   Effect.gen(function* () {
-    const workspace = yield* WorkspaceRef
-    return yield* Effect.promise(() => Promise.resolve(restoreWorkspace(workspace, () => fn())))
+    const workspace = Option.fromNullishOr(yield* WorkspaceRef)
+    return yield* Effect.suspend(() => {
+      const result = restoreWorkspace(workspace, fn)
+      return Predicate.isPromiseLike(result) ? Effect.promise(() => result) : Effect.succeed(result)
+    })
   })
 
 export function make(): Effect.Effect<Shape> {
   return Effect.gen(function* () {
     const ctx = yield* Effect.context()
     const captured = captureSync()
-    const instance = (yield* InstanceRef) ?? captured.instance
-    const workspace = (yield* WorkspaceRef) ?? captured.workspace
+    const instance = Option.fromNullishOr(yield* InstanceRef).pipe(Option.orElse(() => captured.instance))
+    const workspace = Option.fromNullishOr(yield* WorkspaceRef).pipe(Option.orElse(() => captured.workspace))
     const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      attachWith(effect.pipe(Effect.provide(ctx)) as Effect.Effect<A, E, never>, { instance, workspace })
+      attachWith(effect.pipe(Effect.provide(ctx)) as Effect.Effect<A, E>, { instance, workspace })
 
     return {
       promise: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -66,16 +59,8 @@ export function make(): Effect.Effect<Shape> {
         restoreWorkspace(workspace, () => Effect.runFork(wrap(effect))),
       run: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         Effect.callback<A, E>((resume) => {
-          restoreWorkspace(workspace, () =>
-            Effect.runPromiseExit(wrap(effect)).then((exit) =>
-              resume(Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause)),
-            ),
-          )
+          restoreWorkspace(workspace, () => Effect.runFork(wrap(effect)).addObserver(resume))
         }),
-      bind:
-        <Args extends readonly unknown[], Result>(fn: (...args: Args) => Result) =>
-        (...args: Args) =>
-          restoreWorkspace(workspace, () => Effect.runSync(wrap(Effect.sync(() => fn(...args))))),
     } satisfies Shape
   })
 }
