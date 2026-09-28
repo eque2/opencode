@@ -74,6 +74,7 @@ class FakeKV {
   }
 
   get<Value = unknown>(key: string, fallback?: Value) {
+    // oxlint-disable-next-line typescript-eslint/no-unsafe-type-assertion -- (a) external boundary: the @opencode-ai/plugin TuiKV.get<Value> signature returns a caller-chosen Value from untyped storage, so a KV fake cannot prove the stored type
     return (this.store[key] ?? fallback) as Value
   }
 
