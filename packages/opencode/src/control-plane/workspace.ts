@@ -2,6 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import {
   Clock,
+  Config,
   Context,
   Effect,
   FiberMap,
@@ -46,6 +47,7 @@ import { InstanceStore } from "@/project/instance-store"
 import { WorkspaceAdapterRuntime } from "./workspace-adapter-runtime"
 import { AppNodeBuilderV1 } from "@/effect/app-node-builder-v1"
 import { WorkspaceEvent } from "@opencode-ai/schema/workspace-event"
+import { readEnvSnapshot } from "@opencode-ai/core/plugin/provider/env-snapshot"
 
 export const Info = Schema.Struct({
   ...WorkspaceInfoSchema.fields,
@@ -546,9 +548,9 @@ const layer = Layer.effect(
         OPENCODE_AUTH_CONTENT: JSON.stringify(yield* auth.all()),
         OPENCODE_WORKSPACE_ID: config.id,
         OPENCODE_EXPERIMENTAL_WORKSPACES: "true",
-        OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS,
-        OTEL_EXPORTER_OTLP_ENDPOINT: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-        OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES,
+        OTEL_EXPORTER_OTLP_HEADERS: yield* forwardedEnv("OTEL_EXPORTER_OTLP_HEADERS"),
+        OTEL_EXPORTER_OTLP_ENDPOINT: yield* forwardedEnv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+        OTEL_RESOURCE_ATTRIBUTES: yield* forwardedEnv("OTEL_RESOURCE_ATTRIBUTES"),
       }
 
       yield* WorkspaceAdapterRuntime.create(adapter, config, env)
@@ -911,6 +913,11 @@ const layer = Layer.effect(
 )
 
 const TIMEOUT = 5000
+
+// The adapter hands this env to the workspace server it starts, where an
+// unset variable stays undefined. Each read takes a fresh env snapshot.
+const forwardedEnv = (name: string) =>
+  readEnvSnapshot(Config.option(Config.String(name))).pipe(Effect.map(Option.getOrUndefined))
 
 // Wire shape of the remote /sync/history response, as HistoryEvent in
 // server/routes/instance/httpapi/groups/sync.ts declares it (importing that
