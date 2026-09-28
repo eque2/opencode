@@ -1,5 +1,19 @@
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Cause, Duration, Effect, Layer, Schedule, Schema, Semaphore, Context } from "effect"
+import {
+  Array as Arr,
+  Cause,
+  Duration,
+  Effect,
+  HashSet,
+  Layer,
+  MutableHashMap,
+  MutableHashSet,
+  Option,
+  Schedule,
+  Schema,
+  Semaphore,
+  Context,
+} from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { formatPatch, structuredPatch } from "diff"
 import path from "path"
@@ -14,7 +28,7 @@ import { Info } from "@opencode-ai/schema/file-diff"
 export const Patch = Schema.Struct({
   hash: Schema.String,
   files: Schema.mutable(Schema.Array(Schema.String)),
-})
+}).annotate({ identifier: "SnapshotPatch", description: "The files that changed since a snapshot hash" })
 export type Patch = typeof Patch.Type
 
 export const FileDiff = Info
@@ -31,7 +45,9 @@ interface GitResult {
   readonly stderr: string
 }
 
-type State = Omit<Interface, "init">
+type State = Omit<Interface, "init" | "track"> & {
+  readonly track: () => Effect.Effect<Option.Option<string>>
+}
 
 export interface Interface {
   readonly init: () => Effect.Effect<void>
@@ -52,14 +68,14 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
     const fs = yield* FSUtil.Service
     const appProcess = yield* AppProcess.Service
     const config = yield* Config.Service
-    const locks = new Map<string, Semaphore.Semaphore>()
+    const locks = MutableHashMap.empty<string, Semaphore.Semaphore>()
 
     const lock = (key: string) => {
-      const hit = locks.get(key)
-      if (hit) return hit
+      const hit = MutableHashMap.get(locks, key)
+      if (Option.isSome(hit)) return hit.value
 
       const next = Semaphore.makeUnsafe(1)
-      locks.set(key, next)
+      MutableHashMap.set(locks, key, next)
       return next
     }
 
@@ -94,13 +110,13 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
             Effect.succeed({
               code: ChildProcessSpawner.ExitCode(1),
               text: "",
-              stderr: err instanceof Error ? err.message : String(err),
+              stderr: err.message,
             }),
           ),
         )
 
         const ignore = Effect.fnUntraced(function* (files: string[]) {
-          if (!files.length) return new Set<string>()
+          if (!files.length) return HashSet.empty<string>()
           // check-ignore treats a leading colon as pathspec magic but accepts and echoes a protective ./ prefix.
           const checkIgnorePaths = files.map((item) => (item.startsWith(":") ? `./${item}` : item))
           const check = yield* git(
@@ -120,8 +136,8 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               stdin: encodeNulTerminatedPaths(checkIgnorePaths),
             },
           )
-          if (check.code !== 0 && check.code !== 1) return new Set<string>()
-          return new Set(
+          if (check.code !== 0 && check.code !== 1) return HashSet.empty<string>()
+          return HashSet.fromIterable(
             check.text
               .split("\0")
               .filter(Boolean)
@@ -174,16 +190,16 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
             cwd: state.worktree,
           })
           const file = result.text.trim()
-          if (!file) return
-          if (!(yield* exists(file))) return
-          return file
+          if (!file) return Option.none<string>()
+          if (!(yield* exists(file))) return Option.none<string>()
+          return Option.some(file)
         })
 
         const sync = Effect.fnUntraced(function* (list: string[] = []) {
           const file = yield* excludes()
           const target = path.join(state.gitdir, "info", "exclude")
           const text = [
-            file ? (yield* read(file)).trimEnd() : "",
+            Option.isSome(file) ? (yield* read(file.value)).trimEnd() : "",
             ...list.map((item) => `/${item.replaceAll("\\", "/")}`),
           ]
             .filter(Boolean)
@@ -213,10 +229,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
             .split("\n")
             .map((line) => line.trim())
             .filter(Boolean)
-          const alternates: string[] = []
-          for (const candidate of [sourceObjects, ...chained]) {
-            if (yield* exists(candidate)) alternates.push(candidate)
-          }
+          const alternates = yield* Effect.filter([sourceObjects, ...chained], (candidate) => exists(candidate))
           if (!alternates.length) return
 
           yield* fs.ensureDir(path.join(state.gitdir, "objects", "info")).pipe(Effect.orDie)
@@ -257,7 +270,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
 
           const tracked = diff.text.split("\0").filter(Boolean)
           const untracked = other.text.split("\0").filter(Boolean)
-          const all = Array.from(new Set([...tracked, ...untracked]))
+          const all = Arr.dedupe([...tracked, ...untracked])
           if (!all.length) return
 
           // Resolve source-repo ignore rules against the exact candidate set.
@@ -265,36 +278,40 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
           const ignored = yield* ignore(all)
 
           // Remove newly-ignored files from snapshot index to prevent re-adding
-          if (ignored.size > 0) {
+          if (HashSet.size(ignored) > 0) {
             const ignoredFiles = Array.from(ignored)
             yield* Effect.logInfo("removing gitignored files from snapshot", { count: ignoredFiles.length })
             yield* drop(ignoredFiles)
           }
 
-          const allow = all.filter((item) => !ignored.has(item))
+          const allow = all.filter((item) => !HashSet.has(ignored, item))
           if (!allow.length) return
 
-          const large = new Set(
-            (yield* Effect.all(
-              allow.map((item) =>
-                fs
-                  .stat(path.join(state.worktree, item))
-                  .pipe(Effect.catch(() => Effect.void))
-                  .pipe(
-                    Effect.map((stat) => {
-                      if (!stat || stat.type !== "File") return
-                      const size = typeof stat.size === "bigint" ? Number(stat.size) : stat.size
-                      return size > limit ? item : undefined
-                    }),
+          const large = HashSet.fromIterable(
+            Arr.getSomes(
+              yield* Effect.all(
+                allow.map((item) =>
+                  fs.stat(path.join(state.worktree, item)).pipe(
+                    Effect.option,
+                    Effect.map((stat) =>
+                      stat.pipe(
+                        Option.filter((info) => info.type === "File"),
+                        Option.filter(
+                          (info) => (typeof info.size === "bigint" ? Number(info.size) : info.size) > limit,
+                        ),
+                        Option.as(item),
+                      ),
+                    ),
                   ),
+                ),
+                { concurrency: 8 },
               ),
-              { concurrency: 8 },
-            )).filter((item): item is string => Boolean(item)),
+            ),
           )
-          const block = new Set(untracked.filter((item) => large.has(item)))
+          const block = HashSet.fromIterable(untracked.filter((item) => HashSet.has(large, item)))
           yield* sync(Array.from(block))
           // Stage only the allowed candidate paths so snapshot updates stay scoped.
-          yield* stage(allow.filter((item) => !block.has(item)))
+          yield* stage(allow.filter((item) => !HashSet.has(block, item)))
         })
 
         const cleanup = Effect.fnUntraced(function* () {
@@ -318,7 +335,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
         const track = Effect.fnUntraced(function* () {
           return yield* locked(
             Effect.gen(function* () {
-              if (!(yield* enabled())) return
+              if (!(yield* enabled())) return Option.none<string>()
               const existed = yield* exists(state.gitdir)
               yield* fs.ensureDir(state.gitdir).pipe(Effect.orDie)
               if (!existed) {
@@ -341,7 +358,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               const result = yield* git(args(["write-tree"]), { cwd: state.directory })
               const hash = result.text.trim()
               yield* Effect.logInfo("tracking", { hash, cwd: state.directory, git: state.gitdir })
-              return hash
+              return Option.some(hash)
             }),
           )
         })
@@ -372,7 +389,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               return {
                 hash,
                 files: files
-                  .filter((item) => !ignored.has(item))
+                  .filter((item) => !HashSet.has(ignored, item))
                   .map((x) => path.join(state.worktree, x).replaceAll("\\", "/")),
               }
             }),
@@ -408,19 +425,21 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
         const revert = Effect.fnUntraced(function* (patches: Patch[]) {
           return yield* locked(
             Effect.gen(function* () {
-              const ops: { hash: string; file: string; rel: string }[] = []
-              const seen = new Set<string>()
-              for (const item of patches) {
-                for (const file of item.files) {
-                  if (seen.has(file)) continue
-                  seen.add(file)
-                  ops.push({
-                    hash: item.hash,
-                    file,
-                    rel: path.relative(state.worktree, file).replaceAll("\\", "/"),
-                  })
-                }
-              }
+              // Keep the first patch that names each file.
+              const seen = MutableHashSet.empty<string>()
+              const ops = patches.flatMap((item) =>
+                item.files.flatMap((file) => {
+                  if (MutableHashSet.has(seen, file)) return []
+                  MutableHashSet.add(seen, file)
+                  return [
+                    {
+                      hash: item.hash,
+                      file,
+                      rel: path.relative(state.worktree, file).replaceAll("\\", "/"),
+                    },
+                  ]
+                }),
+              )
 
               const single = Effect.fnUntraced(function* (op: (typeof ops)[number]) {
                 yield* Effect.logInfo("reverting", { file: op.file, hash: op.hash })
@@ -445,12 +464,12 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
               const clash = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
 
               for (let i = 0; i < ops.length; ) {
-                const first = ops[i]!
+                const first = ops[i]
                 const run = [first]
                 let j = i + 1
                 // Only batch adjacent files when their paths cannot affect each other.
                 while (j < ops.length && run.length < 100) {
-                  const next = ops[j]!
+                  const next = ops[j]
                   if (next.hash !== first.hash) break
                   if (run.some((item) => clash(item.rel, next.rel))) break
                   run.push(next)
@@ -482,14 +501,14 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                   continue
                 }
 
-                const have = new Set(
+                const have = HashSet.fromIterable(
                   tree.text
                     .trim()
                     .split("\n")
                     .map((item) => item.trim())
                     .filter(Boolean),
                 )
-                const list = run.filter((item) => have.has(item.rel))
+                const list = run.filter((item) => HashSet.has(have, item.rel))
                 if (list.length) {
                   yield* Effect.logInfo("reverting", { hash: first.hash, files: list.length })
                   const result = yield* git(
@@ -512,7 +531,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                 }
 
                 for (const op of run) {
-                  if (have.has(op.rel)) continue
+                  if (HashSet.has(have, op.rel)) continue
                   yield* Effect.logInfo("file did not exist in snapshot, deleting", { file: op.file, hash: op.hash })
                   yield* remove(op.file)
                 }
@@ -599,7 +618,8 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                       { file: row.file, side: "after", ref: `${to}:${row.file}` } satisfies Ref,
                     ]
                   })
-                  if (!refs.length) return new Map<string, { before: string; after: string }>()
+                  if (!refs.length)
+                    return Option.some(MutableHashMap.empty<string, { before: string; after: string }>())
 
                   const batch = yield* appProcess.run(
                     ChildProcess.make("git", [...cfg, ...args(["cat-file", "--batch"])], {
@@ -616,73 +636,60 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                         refs: refs.length,
                       },
                     )
-                    return
+                    return Option.none()
                   }
                   const out = batch.stdout
 
-                  const fail = (msg: string, extra?: Record<string, string>) => {
-                    return undefined
-                  }
-
-                  const map = new Map<string, { before: string; after: string }>()
+                  // Each Option.none() below falls back to per-file git show.
+                  const map = MutableHashMap.empty<string, { before: string; after: string }>()
                   const dec = new TextDecoder()
                   let i = 0
                   for (const ref of refs) {
                     let end = i
                     while (end < out.length && out[end] !== 10) end += 1
-                    if (end >= out.length) {
-                      return fail(
-                        "git cat-file --batch returned a truncated header during snapshot diff, falling back to per-file git show",
-                      )
-                    }
+                    // A truncated header.
+                    if (end >= out.length) return Option.none()
 
                     const head = dec.decode(out.slice(i, end))
                     i = end + 1
-                    const hit = map.get(ref.file) ?? { before: "", after: "" }
+                    const hit = Option.getOrElse(MutableHashMap.get(map, ref.file), () => ({ before: "", after: "" }))
                     if (head.endsWith(" missing")) {
-                      map.set(ref.file, hit)
+                      MutableHashMap.set(map, ref.file, hit)
                       continue
                     }
 
                     const match = head.match(/^[0-9a-f]+ blob (\d+)$/)
-                    if (!match) {
-                      return fail(
-                        "git cat-file --batch returned an unexpected header during snapshot diff, falling back to per-file git show",
-                        { head },
-                      )
-                    }
+                    // An unexpected header.
+                    if (!match) return Option.none()
 
                     const size = Number(match[1])
+                    // Truncated content.
                     if (!Number.isInteger(size) || size < 0 || i + size >= out.length || out[i + size] !== 10) {
-                      return fail(
-                        "git cat-file --batch returned truncated content during snapshot diff, falling back to per-file git show",
-                        { head },
-                      )
+                      return Option.none()
                     }
 
                     const text = dec.decode(out.slice(i, i + size))
                     if (ref.side === "before") hit.before = text
                     if (ref.side === "after") hit.after = text
-                    map.set(ref.file, hit)
+                    MutableHashMap.set(map, ref.file, hit)
                     i += size + 1
                   }
 
-                  if (i !== out.length) {
-                    return fail(
-                      "git cat-file --batch returned trailing data during snapshot diff, falling back to per-file git show",
-                    )
-                  }
+                  // Trailing data.
+                  if (i !== out.length) return Option.none()
 
-                  return map
+                  return Option.some(map)
                 },
                 Effect.scoped,
                 Effect.catch(() =>
-                  Effect.succeed<Map<string, { before: string; after: string }> | undefined>(undefined),
+                  Effect.succeed(
+                    Option.none<MutableHashMap.MutableHashMap<string, { before: string; after: string }>>(),
+                  ),
                 ),
               )
 
               const result: FileDiff[] = []
-              const status = new Map<string, "added" | "deleted" | "modified">()
+              const status = MutableHashMap.empty<string, "added" | "deleted" | "modified">()
 
               const statuses = yield* git(
                 [...quote, ...args(["diff", "--no-ext-diff", "--name-status", "--no-renames", from, to, "--", "."])],
@@ -693,7 +700,11 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                 if (!line) continue
                 const [code, file] = line.split("\t")
                 if (!code || !file) continue
-                status.set(file, code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified")
+                MutableHashMap.set(
+                  status,
+                  file,
+                  code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified",
+                )
               }
 
               const numstat = yield* git(
@@ -703,7 +714,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                 },
               )
 
-              const rows = numstat.text
+              const listed = numstat.text
                 .trim()
                 .split("\n")
                 .filter(Boolean)
@@ -716,7 +727,7 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                   return [
                     {
                       file,
-                      status: status.get(file) ?? "modified",
+                      status: Option.getOrElse(MutableHashMap.get(status, file), () => "modified" as const),
                       binary,
                       additions: Number.isFinite(additions) ? additions : 0,
                       deletions: Number.isFinite(deletions) ? deletions : 0,
@@ -725,12 +736,8 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                 })
 
               // Hide ignored-file removals from the user-facing diff output.
-              const ignored = yield* ignore(rows.map((r) => r.file))
-              if (ignored.size > 0) {
-                const filtered = rows.filter((r) => !ignored.has(r.file))
-                rows.length = 0
-                rows.push(...filtered)
-              }
+              const ignored = yield* ignore(listed.map((r) => r.file))
+              const rows = HashSet.size(ignored) > 0 ? listed.filter((r) => !HashSet.has(ignored, r.file)) : listed
 
               const step = 100
               const patch = (file: string, before: string, after: string) =>
@@ -741,8 +748,14 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
                 const text = yield* load(run)
 
                 for (const row of run) {
-                  const hit = text?.get(row.file) ?? { before: "", after: "" }
-                  const [before, after] = row.binary ? ["", ""] : text ? [hit.before, hit.after] : yield* show(row)
+                  const [before, after] = row.binary
+                    ? ["", ""]
+                    : Option.isSome(text)
+                      ? Option.match(MutableHashMap.get(text.value, row.file), {
+                          onNone: () => ["", ""],
+                          onSome: (hit) => [hit.before, hit.after],
+                        })
+                      : yield* show(row)
                   result.push({
                     file: row.file,
                     patch: row.binary ? "" : patch(row.file, before, after),
@@ -777,7 +790,8 @@ const layer: Layer.Layer<Service, never, FSUtil.Service | AppProcess.Service | C
         return yield* InstanceState.useEffect(state, (s) => s.cleanup())
       }),
       track: Effect.fn("Snapshot.track")(function* () {
-        return yield* InstanceState.useEffect(state, (s) => s.track())
+        // The service interface still returns `undefined` when snapshots are disabled; its callers read it that way.
+        return Option.getOrUndefined(yield* InstanceState.useEffect(state, (s) => s.track()))
       }),
       patch: Effect.fn("Snapshot.patch")(function* (hash: string) {
         return yield* InstanceState.useEffect(state, (s) => s.patch(hash))
