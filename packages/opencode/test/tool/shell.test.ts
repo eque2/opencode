@@ -8,7 +8,6 @@ import path from "path"
 import { Config } from "@/config/config"
 import { Shell } from "@opencode-ai/core/shell"
 import { ShellTool } from "../../src/tool/shell"
-import { Filesystem } from "@/util/filesystem"
 import { provideInstance, testInstanceStoreLayer, tmpdirScoped } from "../fixture/fixture"
 import { Agent } from "../../src/agent/agent"
 import { Truncate } from "@/tool/truncate"
@@ -119,15 +118,15 @@ const fill = Effect.fn("ShellToolTest.fill")(function* (mode: "lines" | "bytes",
   return text
 })
 const glob = (p: string) =>
-  process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
+  process.platform === "win32" ? FSUtil.use.normalizePathPattern(p) : Effect.succeed(p.replaceAll("\\", "/"))
 
-const forms = (dir: string) => {
+const forms = Effect.fnUntraced(function* (dir: string) {
   if (process.platform !== "win32") return [dir]
-  const full = Filesystem.normalizePath(dir)
+  const full = yield* FSUtil.use.normalizePath(dir)
   const slash = full.replaceAll("\\", "/")
   const root = slash.replace(/^[A-Za-z]:/, "")
   return Array.from(new Set([full, slash, root, root.toLowerCase()]))
-}
+})
 
 const withShell = <A, E, R>(item: { label: string; shell: string }, self: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -321,7 +320,7 @@ describe("tool.shell permissions", () => {
         const err = new Error("stop after permission")
         const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
         const file = process.platform === "win32" ? `${process.env.WINDIR!.replaceAll("\\", "/")}/*` : "/etc/*"
-        const want = process.platform === "win32" ? glob(path.join(process.env.WINDIR!, "*")) : "/etc/*"
+        const want = process.platform === "win32" ? yield* glob(path.join(process.env.WINDIR!, "*")) : "/etc/*"
         expect(
           yield* fail(
             {
@@ -359,7 +358,7 @@ describe("tool.shell permissions", () => {
                 const extDirReq = requests.find((r) => r.permission === "external_directory")
                 const bashReq = requests.find((r) => r.permission === "bash")
                 expect(extDirReq).toBeDefined()
-                expect(extDirReq!.patterns).toContain(glob(path.join(outerTmp, "*")))
+                expect(extDirReq!.patterns).toContain(yield* glob(path.join(outerTmp, "*")))
                 expect(bashReq).toBeDefined()
                 expect(bashReq!.patterns).toContain(`cat "${file}"`)
               }),
@@ -388,7 +387,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               expect(extDirReq).toBeDefined()
-              expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+              expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
             }),
           ),
         ),
@@ -413,7 +412,7 @@ describe("tool.shell permissions", () => {
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               const bashReq = requests.find((r) => r.permission === "bash")
               expect(extDirReq).toBeDefined()
-              expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+              expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
               expect(bashReq).toBeDefined()
               expect(bashReq!.patterns).toContain(`Get-Content ${file}`)
             }),
@@ -443,7 +442,7 @@ describe("tool.shell permissions", () => {
                 ).toMatchObject({ message: err.message })
                 expect(requests[0]?.permission).toBe("external_directory")
                 if (requests[0]?.permission !== "external_directory") return
-                expect(requests[0].patterns).toContain(glob(path.join(path.dirname(tmp), "*")))
+                expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(tmp), "*")))
               }),
             )
           }),
@@ -470,7 +469,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
-              expect(requests[0].patterns).toContain(glob(path.join(os.homedir(), ".ssh", "*")))
+              expect(requests[0].patterns).toContain(yield* glob(path.join(os.homedir(), ".ssh", "*")))
             }),
           ),
         ),
@@ -498,7 +497,7 @@ describe("tool.shell permissions", () => {
                 ).toMatchObject({ message: err.message })
                 expect(requests[0]?.permission).toBe("external_directory")
                 if (requests[0]?.permission !== "external_directory") return
-                expect(requests[0].patterns).toContain(glob(path.join(path.dirname(tmp), "*")))
+                expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(tmp), "*")))
               }),
             )
           }),
@@ -525,7 +524,7 @@ describe("tool.shell permissions", () => {
               ).toMatchObject({ message: err.message })
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
-              expect(requests[0].patterns).toContain(glob(path.join(path.dirname(item.shell), "*")))
+              expect(requests[0].patterns).toContain(yield* glob(path.join(path.dirname(item.shell), "*")))
             }),
           ),
         ),
@@ -560,7 +559,7 @@ describe("tool.shell permissions", () => {
                   ).toMatchObject({ message: err.message })
                   const extDirReq = requests.find((r) => r.permission === "external_directory")
                   expect(extDirReq).toBeDefined()
-                  expect(extDirReq!.patterns).toContain(glob(path.join(process.env.WINDIR!, "*")))
+                  expect(extDirReq!.patterns).toContain(yield* glob(path.join(process.env.WINDIR!, "*")))
                 }),
               ),
             ({ key, prev }) =>
@@ -590,7 +589,7 @@ describe("tool.shell permissions", () => {
               const extDirReq = requests.find((r) => r.permission === "external_directory")
               expect(extDirReq).toBeDefined()
               expect(extDirReq!.patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -618,7 +617,7 @@ describe("tool.shell permissions", () => {
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
               expect(requests[0].patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -646,7 +645,7 @@ describe("tool.shell permissions", () => {
               expect(requests[0]?.permission).toBe("external_directory")
               if (requests[0]?.permission !== "external_directory") return
               expect(requests[0].patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
             }),
           ),
@@ -672,7 +671,7 @@ describe("tool.shell permissions", () => {
               const bashReq = requests.find((r) => r.permission === "bash")
               expect(extDirReq).toBeDefined()
               expect(extDirReq!.patterns).toContain(
-                Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
+                yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")),
               )
               expect(bashReq).toBeUndefined()
             }),
@@ -722,7 +721,7 @@ describe("tool.shell permissions", () => {
             )
             const extDirReq = requests.find((r) => r.permission === "external_directory")
             expect(extDirReq).toBeDefined()
-            expect(extDirReq!.patterns).toContain(Filesystem.normalizePathPattern(path.join(process.env.WINDIR!, "*")))
+            expect(extDirReq!.patterns).toContain(yield* FSUtil.use.normalizePathPattern(path.join(process.env.WINDIR!, "*")))
           }),
         ),
       ),
@@ -771,7 +770,7 @@ describe("tool.shell permissions", () => {
           ).toMatchObject({ message: err.message })
           const extDirReq = requests.find((r) => r.permission === "external_directory")
           expect(extDirReq).toBeDefined()
-          expect(extDirReq!.patterns).toContain(glob(path.join(os.tmpdir(), "*")))
+          expect(extDirReq!.patterns).toContain(yield* glob(path.join(os.tmpdir(), "*")))
         }),
       )
     }),
@@ -786,9 +785,9 @@ describe("tool.shell permissions", () => {
         yield* runIn(
           tmp,
           Effect.gen(function* () {
-            const want = Filesystem.normalizePathPattern(path.join(outerTmp, "*"))
+            const want = yield* FSUtil.use.normalizePathPattern(path.join(outerTmp, "*"))
 
-            for (const dir of forms(outerTmp)) {
+            for (const dir of yield* forms(outerTmp)) {
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
               expect(
                 yield* fail(
@@ -821,7 +820,7 @@ describe("tool.shell permissions", () => {
             Effect.gen(function* () {
               const err = new Error("stop after permission")
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
-              const want = glob(path.join(os.tmpdir(), "*"))
+              const want = yield* glob(path.join(os.tmpdir(), "*"))
               expect(
                 yield* fail(
                   {
@@ -849,7 +848,7 @@ describe("tool.shell permissions", () => {
             Effect.gen(function* () {
               const err = new Error("stop after permission")
               const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
-              const want = glob(path.join(os.tmpdir(), "*"))
+              const want = yield* glob(path.join(os.tmpdir(), "*"))
               expect(
                 yield* fail(
                   {
@@ -890,7 +889,7 @@ describe("tool.shell permissions", () => {
             ),
           ).toMatchObject({ message: err.message })
           const extDirReq = requests.find((r) => r.permission === "external_directory")
-          const expected = glob(path.join(outerTmp, "*"))
+          const expected = yield* glob(path.join(outerTmp, "*"))
           expect(extDirReq).toBeDefined()
           expect(extDirReq!.patterns).toContain(expected)
           expect(extDirReq!.always).toContain(expected)

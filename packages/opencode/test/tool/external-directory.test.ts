@@ -7,7 +7,6 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import type { Tool } from "@/tool/tool"
 import { assertExternalDirectoryEffect } from "../../src/tool/external-directory"
-import { Filesystem } from "@/util/filesystem"
 import { TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { testEffect } from "../lib/effect"
@@ -25,7 +24,7 @@ const baseCtx: Omit<Tool.Context, "ask"> = {
 }
 
 const glob = (p: string) =>
-  process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
+  process.platform === "win32" ? FSUtil.use.normalizePathPattern(p) : Effect.succeed(p.replaceAll("\\", "/"))
 
 function makeCtx() {
   const requests: Array<Omit<PermissionV1.Request, "id" | "sessionID" | "tool">> = []
@@ -67,7 +66,7 @@ describe("tool.assertExternalDirectory", () => {
       const { requests, ctx } = makeCtx()
 
       const target = path.join(path.dirname(test.directory), "outside", "file.txt")
-      const expected = glob(path.join(path.dirname(target), "*"))
+      const expected = yield* glob(path.join(path.dirname(target), "*"))
 
       yield* assertExternalDirectoryEffect(ctx, target)
 
@@ -84,7 +83,7 @@ describe("tool.assertExternalDirectory", () => {
       const { requests, ctx } = makeCtx()
 
       const target = path.join(path.dirname(test.directory), "outside")
-      const expected = glob(path.join(target, "*"))
+      const expected = yield* glob(path.join(target, "*"))
 
       yield* assertExternalDirectoryEffect(ctx, target, { kind: "directory" })
 
@@ -124,7 +123,7 @@ describe("tool.assertExternalDirectory", () => {
           yield* assertExternalDirectoryEffect(ctx, alt)
 
           const req = requests.find((r) => r.permission === "external_directory")
-          const expected = glob(path.join(outerTmp, "*"))
+          const expected = yield* glob(path.join(outerTmp, "*"))
           expect(req).toBeDefined()
           expect(req!.patterns).toEqual([expected])
           expect(req!.always).toEqual([expected])

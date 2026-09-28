@@ -4,7 +4,6 @@ import { Effect, Predicate } from "effect"
 import path from "path"
 import { unlink } from "fs/promises"
 import { Global } from "@opencode-ai/core/global"
-import { Filesystem } from "@/util/filesystem"
 import { Env } from "../../src/env"
 import { Provider } from "@/provider/provider"
 
@@ -65,17 +64,17 @@ const withAuthJson = (contents: string) =>
       const authPath = path.join(Global.Path.data, "auth.json")
       let original: string | undefined
       try {
-        original = await Filesystem.readText(authPath)
+        original = await Bun.file(authPath).text()
       } catch {
         original = undefined
       }
-      await Filesystem.write(authPath, contents)
+      await Bun.write(authPath, contents)
       return { authPath, original }
     }),
     ({ authPath, original }) =>
       Effect.promise(async () => {
         if (original !== undefined) {
-          await Filesystem.write(authPath, original)
+          await Bun.write(authPath, original)
           return
         }
         await unlink(authPath).catch(() => undefined)

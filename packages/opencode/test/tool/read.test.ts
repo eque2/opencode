@@ -14,7 +14,6 @@ import { Instruction } from "../../src/session/instruction"
 import { ReadTool } from "../../src/tool/read"
 import { Truncate } from "@/tool/truncate"
 import { Tool } from "@/tool/tool"
-import { Filesystem } from "@/util/filesystem"
 import {
   disposeAllInstances,
   provideInstance,
@@ -90,9 +89,9 @@ const fail = Effect.fn("ReadToolTest.fail")(function* (
   throw new Error("expected read to fail")
 })
 
-const full = (p: string) => (process.platform === "win32" ? Filesystem.normalizePath(p) : p)
+const full = (p: string) => (process.platform === "win32" ? FSUtil.use.normalizePath(p) : Effect.succeed(p))
 const glob = (p: string) =>
-  process.platform === "win32" ? Filesystem.normalizePathPattern(p) : p.replaceAll("\\", "/")
+  process.platform === "win32" ? FSUtil.use.normalizePathPattern(p) : Effect.succeed(p.replaceAll("\\", "/"))
 const put = Effect.fn("ReadToolTest.put")(function* (p: string, content: string | Buffer | Uint8Array) {
   const fs = yield* FSUtil.Service
   yield* fs.writeWithDirs(p, content)
@@ -147,7 +146,7 @@ describe("tool.read external_directory permission", () => {
       yield* exec(dir, { filePath: path.join(outer, "secret.txt") }, next)
       const ext = items.find((item) => item.permission === "external_directory")
       expect(ext).toBeDefined()
-      expect(ext!.patterns).toContain(glob(path.join(outer, "*")))
+      expect(ext!.patterns).toContain(yield* glob(path.join(outer, "*")))
     }),
   )
 
@@ -167,7 +166,7 @@ describe("tool.read external_directory permission", () => {
         yield* exec(dir, { filePath: alt }, next)
         const read = items.find((item) => item.permission === "read")
         expect(read).toBeDefined()
-        expect(read!.patterns).toEqual([path.relative(dir, full(target))])
+        expect(read!.patterns).toEqual([path.relative(dir, yield* full(target))])
       }),
     )
   }
@@ -196,7 +195,7 @@ describe("tool.read external_directory permission", () => {
       yield* exec(dir, { filePath: path.join(outer, "external") }, next)
       const ext = items.find((item) => item.permission === "external_directory")
       expect(ext).toBeDefined()
-      expect(ext!.patterns).toContain(glob(path.join(outer, "external", "*")))
+      expect(ext!.patterns).toContain(yield* glob(path.join(outer, "external", "*")))
     }),
   )
 
