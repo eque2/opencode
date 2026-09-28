@@ -10,6 +10,8 @@ import { isRecord } from "@/util/record"
 
 const TUI_SCHEMA_URL = "https://opencode.ai/tui.json"
 
+// The migrated tui.json is written as JSON.stringify(payload, null, 2) wrote it.
+const TuiJsonFile = Schema.fromJsonString(Schema.Unknown, { space: 2 })
 const decodeTheme = Schema.decodeUnknownOption(Schema.String)
 // A plain object (not an array) is the only keybinds or tui shape worth moving.
 const decodeRecord = Option.liftPredicate(isRecord)
@@ -62,7 +64,8 @@ export const migrateTuiConfig = Effect.fn("TuiConfig.migrate")(function* (input:
     if (extracted.keybinds !== undefined) payload.keybinds = extracted.keybinds
     if (tui) Object.assign(payload, tui)
 
-    const wrote = yield* fs.writeWithDirs(target, JSON.stringify(payload, null, 2)).pipe(
+    const text = yield* Schema.encodeEffect(TuiJsonFile)(payload).pipe(Effect.orDie)
+    const wrote = yield* fs.writeWithDirs(target, text).pipe(
       Effect.as(true),
       Effect.orElseSucceed(() => false),
     )

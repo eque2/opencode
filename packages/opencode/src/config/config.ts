@@ -104,6 +104,16 @@ const configContent = readEnvSnapshot(FlagConfig.OPENCODE_CONFIG_CONTENT).pipe(
 // OPENCODE_CONFIG reads the ambient ConfigProvider. It is optional, so a ConfigError is a defect.
 const customConfigFile = FlagConfig.OPENCODE_CONFIG.pipe(Effect.orDie)
 
+// Config text is JSON.stringify output: compact for text handed to loadConfig, and indented by two
+// spaces for files. A value that JSON cannot encode (a cycle, a bigint) is a defect, as the throw was.
+const encodeJsonText = (value: unknown) =>
+  Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(Effect.orDie)
+const encodeConfigFile = (value: unknown) =>
+  Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(value).pipe(Effect.orDie)
+
+// OPENCODE_PERMISSION holds permission rules as JSON text.
+const decodePermissionText = Schema.decodeEffect(Schema.fromJsonString(ConfigPermissionV1.Info))
+
 type Info = ConfigV1.Info & {
   // plugin_origins is derived state, not a persisted config field. It keeps each winning plugin spec together
   // with the file and scope it came from so later runtime code can make location-sensitive decisions.
@@ -271,7 +281,7 @@ const layer = Layer.effect(
         const file = globalConfigFile()
         if (!existsSync(file)) {
           yield* fs
-            .writeWithDirs(file, JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2))
+            .writeWithDirs(file, yield* encodeConfigFile({ $schema: "https://opencode.ai/config.json" }))
             .pipe(Effect.catch(() => Effect.void))
         }
       }
@@ -287,7 +297,7 @@ const layer = Layer.effect(
           if (provider && model) result.model = `${provider}/${model}`
           result["$schema"] = "https://opencode.ai/config.json"
           result = mergeConfig(result, rest)
-          yield* fs.writeFileString(path.join(Global.Path.config, "config.json"), JSON.stringify(result, null, 2))
+          yield* fs.writeFileString(path.join(Global.Path.config, "config.json"), yield* encodeConfigFile(result))
           yield* fs.remove(legacy)
           // The legacy migration is best effort: any failure, thrown or typed, leaves the config as loaded.
         }).pipe(Effect.ignoreCause)
@@ -399,7 +409,7 @@ const layer = Layer.effect(
             if (!remoteConfig.$schema) remoteConfig.$schema = "https://opencode.ai/config.json"
             const source = wellknownURL
             const next = yield* loadConfig(
-              JSON.stringify(remoteConfig),
+              yield* encodeJsonText(remoteConfig),
               {
                 dir: path.dirname(source),
                 source,
@@ -513,7 +523,7 @@ const layer = Layer.effect(
 
             if (Option.isSome(configOpt)) {
               const source = `${url}/api/config`
-              const next = yield* loadConfig(JSON.stringify(configOpt.value), {
+              const next = yield* loadConfig(yield* encodeJsonText(configOpt.value), {
                 dir: path.dirname(source),
                 source,
               })
@@ -565,11 +575,11 @@ const layer = Layer.effect(
           (text) => text !== "",
         )
         if (Option.isSome(permission)) {
-          try {
-            result.permission = mergeDeep(result.permission ?? {}, JSON.parse(permission.value))
-          } catch (err) {
-            yield* Effect.logWarning("OPENCODE_PERMISSION contains invalid JSON, skipping", { err })
-          }
+          const parsed = yield* decodePermissionText(permission.value).pipe(
+            Effect.tapError((err) => Effect.logWarning("OPENCODE_PERMISSION contains invalid JSON, skipping", { err })),
+            Effect.option,
+          )
+          if (Option.isSome(parsed)) result.permission = mergeDeep(result.permission ?? {}, parsed.value)
         }
 
         if (result.tools) {
@@ -651,12 +661,10 @@ const layer = Layer.effect(
       const existing = yield* loadFile(file)
       const text = yield* readConfigFile(file)
       const original = text ? yield* ConfigParse.parseJsonc(text, file) : writable(existing)
-      yield* fs
-        .writeFileString(
-          file,
-          JSON.stringify(mergeDeep(isRecord(original) ? original : writable(existing), writable(config)), null, 2),
-        )
-        .pipe(Effect.orDie)
+      const serialized = yield* encodeConfigFile(
+        mergeDeep(isRecord(original) ? original : writable(existing), writable(config)),
+      )
+      yield* fs.writeFileString(file, serialized).pipe(Effect.orDie)
       // A parse failure was a defect before (a sync throw); keep it one.
     }, Effect.orDie)
 
@@ -676,7 +684,7 @@ const layer = Layer.effect(
         const lowered = yield* ConfigV2Compat.lower(normalizeLoadedConfig(existing), file)
         yield* ConfigParse.decodeSchema(ConfigV1.Info, lowered.value, file)
         const merged = mergeDeep(isRecord(existing) ? existing : {}, patch)
-        const serialized = JSON.stringify(merged, null, 2)
+        const serialized = yield* encodeConfigFile(merged)
         next = yield* decodeConfig(merged, file)
         changed = serialized !== before
         if (changed) yield* fs.writeFileString(file, serialized).pipe(Effect.orDie)

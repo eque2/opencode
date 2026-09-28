@@ -3,7 +3,7 @@ export * as ConfigManaged from "./managed"
 import { existsSync } from "fs"
 import os from "os"
 import path from "path"
-import { Effect, HashSet, Option } from "effect"
+import { Effect, HashSet, Option, Schema } from "effect"
 import { Process } from "@/util/process"
 
 const MANAGED_PLIST_DOMAIN = "ai.opencode.managed"
@@ -33,13 +33,16 @@ export function managedConfigDir() {
   return process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR || systemManagedConfigDir()
 }
 
-export function parseManagedPlist(json: string): string {
-  const raw = JSON.parse(json)
-  for (const key of Object.keys(raw)) {
-    if (HashSet.has(PLIST_META, key)) delete raw[key]
-  }
-  return JSON.stringify(raw)
-}
+// plutil prints the plist dictionary as a JSON object.
+const PlistJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json))
+
+/** Converts plutil JSON output into config JSON text without the MDM metadata keys. */
+export const parseManagedPlist = Effect.fn("ConfigManaged.parseManagedPlist")(function* (json: string) {
+  const raw = yield* Schema.decodeEffect(PlistJson)(json)
+  return yield* Schema.encodeEffect(PlistJson)(
+    Object.fromEntries(Object.entries(raw).filter(([key]) => !HashSet.has(PLIST_META, key))),
+  )
+})
 
 /** Reads the macOS managed preferences (.mobileconfig deployed via MDM). Other platforms have none. */
 export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPreferences")(function* () {
@@ -65,7 +68,8 @@ export const readManagedPreferences = Effect.fn("ConfigManaged.readManagedPrefer
     if (result.code !== 0) continue
     return Option.some({
       source: `mobileconfig:${plist}`,
-      text: parseManagedPlist(result.stdout.toString()),
+      // Output that does not parse was a defect before (a sync throw); keep it one.
+      text: yield* parseManagedPlist(result.stdout.toString()).pipe(Effect.orDie),
     })
   }
 

@@ -2,7 +2,7 @@ export * as ConfigVariable from "./variable"
 
 import path from "path"
 import os from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InvalidError } from "@opencode-ai/core/v1/config/error"
 
@@ -22,6 +22,9 @@ type SubstituteInput = ParseSource & {
   missing?: "error" | "empty"
   env?: Record<string, string>
 }
+
+const encodeJsonString = (text: string) =>
+  Schema.encodeEffect(Schema.fromJsonString(Schema.String))(text).pipe(Effect.orDie)
 
 function source(input: ParseSource) {
   return input.type === "path" ? input.path : input.source
@@ -87,7 +90,8 @@ export const substitute = Effect.fn("ConfigVariable.substitute")(function* (inpu
       )
     ).trim()
 
-    out += JSON.stringify(fileContent).slice(1, -1)
+    // The file text goes inside a JSON string literal, so it is escaped as a JSON string and unquoted.
+    out += (yield* encodeJsonString(fileContent)).slice(1, -1)
     cursor = index + token.length
   }
 

@@ -339,7 +339,7 @@ function isDirectServer(value: Record<string, unknown>) {
   // Object-valued entries can be servers literally named "type" or "enabled".
   return ["type", "enabled"].some(
     (key) =>
-      Object.hasOwn(value, key) && (value[key] === null || typeof value[key] !== "object" || Array.isArray(value[key])),
+      Object.hasOwn(value, key) && !isRecord(value[key]),
   )
 }
 
