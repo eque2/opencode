@@ -5,11 +5,16 @@ import type {
   OAuthClientInformation,
   OAuthClientInformationFull,
 } from "@modelcontextprotocol/sdk/shared/auth.js"
-import { Effect } from "effect"
+import { NodeCrypto } from "@effect/platform-node"
+import { Clock, Crypto, Effect, Encoding, Option, Predicate, Schema } from "effect"
 import { McpAuth } from "./auth"
 
 const OAUTH_CALLBACK_PORT = 19876
 const OAUTH_CALLBACK_PATH = "/mcp/oauth/callback"
+
+export class McpOAuthProviderError extends Schema.TaggedError<McpOAuthProviderError>()("McpOAuthProviderError", {
+  message: Schema.String,
+}) {}
 
 export interface McpOAuthConfig {
   clientId?: string
@@ -23,6 +28,16 @@ export interface McpOAuthCallbacks {
   onRedirect: (url: URL) => void | Promise<void>
 }
 
+const nowSeconds = Clock.currentTimeMillis.pipe(Effect.map((millis) => millis / 1000))
+
+// The OAuth state guards against CSRF, so it needs cryptographically secure bytes.
+const randomState = Effect.gen(function* () {
+  const cryptoService = yield* Crypto.Crypto
+  return Encoding.encodeHex(yield* cryptoService.randomBytes(32).pipe(Effect.orDie))
+}).pipe(Effect.provide(NodeCrypto.layer))
+
+// OAuthClientProvider from @modelcontextprotocol/sdk is a Promise-based interface. Each method
+// runs its Effect once at this boundary with Effect.runPromise.
 export class McpOAuthProvider implements OAuthClientProvider {
   constructor(
     protected mcpName: string,
@@ -52,34 +67,38 @@ export class McpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  async clientInformation(): Promise<OAuthClientInformation | undefined> {
-    if (this.config.clientId) {
-      return {
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-      }
-    }
+  clientInformation(): Promise<OAuthClientInformation | undefined> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        if (this.config.clientId) {
+          return {
+            client_id: this.config.clientId,
+            client_secret: this.config.clientSecret,
+          }
+        }
 
-    // Check stored client info (from dynamic registration)
-    // Use getForUrl to validate credentials are for the current server URL
-    const entry = await Effect.runPromise(this.auth.getForUrl(this.mcpName, this.serverUrl))
-    if (entry?.clientInfo) {
-      // Check if client secret has expired
-      if (entry.clientInfo.clientSecretExpiresAt && entry.clientInfo.clientSecretExpiresAt < Date.now() / 1000) {
+        // Check stored client info (from dynamic registration)
+        // Use getForUrl to validate credentials are for the current server URL
+        const entry = yield* this.auth.getForUrl(this.mcpName, this.serverUrl)
+        if (entry?.clientInfo) {
+          // Check if client secret has expired
+          if (entry.clientInfo.clientSecretExpiresAt && entry.clientInfo.clientSecretExpiresAt < (yield* nowSeconds)) {
+            return undefined
+          }
+          return {
+            client_id: entry.clientInfo.clientId,
+            client_secret: entry.clientInfo.clientSecret,
+          }
+        }
+
+        // No client info or URL changed - will trigger dynamic registration
         return undefined
-      }
-      return {
-        client_id: entry.clientInfo.clientId,
-        client_secret: entry.clientInfo.clientSecret,
-      }
-    }
-
-    // No client info or URL changed - will trigger dynamic registration
-    return undefined
+      }),
+    )
   }
 
-  async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
-    await Effect.runPromise(
+  saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    return Effect.runPromise(
       this.auth.updateClientInfo(
         this.mcpName,
         {
@@ -93,146 +112,193 @@ export class McpOAuthProvider implements OAuthClientProvider {
     )
   }
 
-  async tokens(): Promise<OAuthTokens | undefined> {
-    // Use getForUrl to validate tokens are for the current server URL
-    const entry = await Effect.runPromise(this.auth.getForUrl(this.mcpName, this.serverUrl))
-    if (!entry?.tokens) return undefined
+  tokens(): Promise<OAuthTokens | undefined> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        // Use getForUrl to validate tokens are for the current server URL
+        const entry = yield* this.auth.getForUrl(this.mcpName, this.serverUrl)
+        if (!entry?.tokens) return undefined
 
-    return {
-      access_token: entry.tokens.accessToken,
-      token_type: "Bearer",
-      refresh_token: entry.tokens.refreshToken,
-      expires_in: entry.tokens.expiresAt
-        ? Math.max(0, Math.floor(entry.tokens.expiresAt - Date.now() / 1000))
-        : undefined,
-      scope: entry.tokens.scope,
-    }
-  }
-
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await Effect.runPromise(
-      this.auth.updateTokens(
-        this.mcpName,
-        {
-          accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
-          expiresAt: tokens.expires_in ? Date.now() / 1000 + tokens.expires_in : undefined,
-          scope: tokens.scope,
-        },
-        this.serverUrl,
-      ),
+        const expiresAt = entry.tokens.expiresAt
+        const now = yield* nowSeconds
+        return {
+          access_token: entry.tokens.accessToken,
+          token_type: "Bearer",
+          refresh_token: entry.tokens.refreshToken,
+          ...(expiresAt ? { expires_in: Math.max(0, Math.floor(expiresAt - now)) } : {}),
+          scope: entry.tokens.scope,
+        }
+      }),
     )
   }
 
-  async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.callbacks.onRedirect(authorizationUrl)
+  saveTokens(tokens: OAuthTokens): Promise<void> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const expiresIn = tokens.expires_in
+        const now = yield* nowSeconds
+        yield* this.auth.updateTokens(
+          this.mcpName,
+          {
+            accessToken: tokens.access_token,
+            refreshToken: tokens.refresh_token,
+            ...(expiresIn ? { expiresAt: now + expiresIn } : {}),
+            scope: tokens.scope,
+          },
+          this.serverUrl,
+        )
+      }),
+    )
   }
 
-  async saveCodeVerifier(codeVerifier: string): Promise<void> {
-    await Effect.runPromise(this.auth.updateCodeVerifier(this.mcpName, codeVerifier))
+  redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    return Effect.runPromise(
+      Effect.suspend(() => {
+        const redirected = this.callbacks.onRedirect(authorizationUrl)
+        // Effect.promise keeps a rejection as a defect, so the SDK receives the callback's own error.
+        return Predicate.isPromise(redirected) ? Effect.promise(() => redirected) : Effect.void
+      }),
+    )
   }
 
-  async codeVerifier(): Promise<string> {
-    const entry = await Effect.runPromise(this.auth.get(this.mcpName))
-    if (!entry?.codeVerifier) {
-      throw new Error(`No code verifier saved for MCP server: ${this.mcpName}`)
-    }
-    return entry.codeVerifier
+  saveCodeVerifier(codeVerifier: string): Promise<void> {
+    return Effect.runPromise(this.auth.updateCodeVerifier(this.mcpName, codeVerifier))
   }
 
-  async saveState(state: string): Promise<void> {
-    await Effect.runPromise(this.auth.updateOAuthState(this.mcpName, state))
+  codeVerifier(): Promise<string> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const entry = yield* this.auth.get(this.mcpName)
+        if (!entry?.codeVerifier) {
+          return yield* new McpOAuthProviderError({ message: `No code verifier saved for MCP server: ${this.mcpName}` })
+        }
+        return entry.codeVerifier
+      }),
+    )
   }
 
-  async state(): Promise<string> {
-    const entry = await Effect.runPromise(this.auth.get(this.mcpName))
-    if (entry?.oauthState) {
-      return entry.oauthState
-    }
-
-    // Generate a new state if none exists — the SDK calls state() as a
-    // generator, not just a reader, so we need to produce a value even when
-    // startAuth() hasn't pre-saved one (e.g. during automatic auth on first
-    // connect).
-    const newState = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")
-    await Effect.runPromise(this.auth.updateOAuthState(this.mcpName, newState))
-    return newState
+  saveState(state: string): Promise<void> {
+    return Effect.runPromise(this.auth.updateOAuthState(this.mcpName, state))
   }
 
-  async invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
-    const entry = await Effect.runPromise(this.auth.get(this.mcpName))
-    if (!entry) return
-    switch (type) {
-      case "all":
-        await Effect.runPromise(this.auth.remove(this.mcpName))
-        break
-      case "client":
-        delete entry.clientInfo
-        await Effect.runPromise(this.auth.set(this.mcpName, entry))
-        break
-      case "tokens":
-        delete entry.tokens
-        await Effect.runPromise(this.auth.set(this.mcpName, entry))
-        break
-    }
+  state(): Promise<string> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const entry = yield* this.auth.get(this.mcpName)
+        if (entry?.oauthState) {
+          return entry.oauthState
+        }
+
+        // Generate a new state if none exists — the SDK calls state() as a
+        // generator, not just a reader, so we need to produce a value even when
+        // startAuth() hasn't pre-saved one (e.g. during automatic auth on first
+        // connect).
+        const newState = yield* randomState
+        yield* this.auth.updateOAuthState(this.mcpName, newState)
+        return newState
+      }),
+    )
+  }
+
+  invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        const entry = yield* this.auth.get(this.mcpName)
+        if (!entry) return
+        switch (type) {
+          case "all":
+            yield* this.auth.remove(this.mcpName)
+            break
+          case "client":
+            delete entry.clientInfo
+            yield* this.auth.set(this.mcpName, entry)
+            break
+          case "tokens":
+            delete entry.tokens
+            yield* this.auth.set(this.mcpName, entry)
+            break
+        }
+      }),
+    )
   }
 }
 
 export class McpOAuthPendingProvider extends McpOAuthProvider {
-  private pendingClientInfo?: OAuthClientInformationFull
-  private pendingTokens?: OAuthTokens
+  private pendingClientInfo = Option.none<OAuthClientInformationFull>()
+  private pendingTokens = Option.none<OAuthTokens>()
 
-  override async clientInformation(): Promise<OAuthClientInformation | undefined> {
-    if (!this.config.clientId) return this.pendingClientInfo
-    return {
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-    }
+  override clientInformation(): Promise<OAuthClientInformation | undefined> {
+    return Effect.runPromise(
+      Effect.sync(() => {
+        if (!this.config.clientId) return Option.getOrUndefined(this.pendingClientInfo)
+        return {
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+        }
+      }),
+    )
   }
 
-  override async saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
-    this.pendingClientInfo = info
+  override saveClientInformation(info: OAuthClientInformationFull): Promise<void> {
+    return Effect.runPromise(
+      Effect.sync(() => {
+        this.pendingClientInfo = Option.some(info)
+      }),
+    )
   }
 
-  override async tokens(): Promise<OAuthTokens | undefined> {
-    return this.pendingTokens
+  override tokens(): Promise<OAuthTokens | undefined> {
+    return Effect.runPromise(Effect.sync(() => Option.getOrUndefined(this.pendingTokens)))
   }
 
-  override async saveTokens(tokens: OAuthTokens): Promise<void> {
-    this.pendingTokens = tokens
+  override saveTokens(tokens: OAuthTokens): Promise<void> {
+    return Effect.runPromise(
+      Effect.sync(() => {
+        this.pendingTokens = Option.some(tokens)
+      }),
+    )
   }
 
-  override async invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
-    if (type === "all" || type === "client") this.pendingClientInfo = undefined
-    if (type === "all" || type === "tokens") this.pendingTokens = undefined
+  override invalidateCredentials(type: "all" | "client" | "tokens"): Promise<void> {
+    return Effect.runPromise(
+      Effect.sync(() => {
+        if (type === "all" || type === "client") this.pendingClientInfo = Option.none()
+        if (type === "all" || type === "tokens") this.pendingTokens = Option.none()
+      }),
+    )
   }
 
-  async commit(): Promise<void> {
-    if (!this.pendingTokens) return
-    await Effect.runPromise(
-      this.auth.set(
-        this.mcpName,
-        {
-          tokens: {
-            accessToken: this.pendingTokens.access_token,
-            refreshToken: this.pendingTokens.refresh_token,
-            expiresAt: this.pendingTokens.expires_in ? Date.now() / 1000 + this.pendingTokens.expires_in : undefined,
-            scope: this.pendingTokens.scope,
-          },
-          clientInfo:
-            this.pendingClientInfo && !this.config.clientId
+  commit(): Promise<void> {
+    return Effect.runPromise(
+      Effect.gen({ self: this }, function* () {
+        if (Option.isNone(this.pendingTokens)) return
+        const tokens = this.pendingTokens.value
+        const clientInfo = this.config.clientId ? Option.none() : this.pendingClientInfo
+        const expiresIn = tokens.expires_in
+        const now = yield* nowSeconds
+        yield* this.auth.set(
+          this.mcpName,
+          {
+            tokens: {
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token,
+              ...(expiresIn ? { expiresAt: now + expiresIn } : {}),
+              scope: tokens.scope,
+            },
+            ...(Option.isSome(clientInfo)
               ? {
-                  clientId: this.pendingClientInfo.client_id,
-                  clientSecret: this.pendingClientInfo.client_secret,
-                  clientIdIssuedAt: this.pendingClientInfo.client_id_issued_at,
-                  clientSecretExpiresAt: this.pendingClientInfo.client_secret_expires_at,
+                  clientInfo: {
+                    clientId: clientInfo.value.client_id,
+                    clientSecret: clientInfo.value.client_secret,
+                    clientIdIssuedAt: clientInfo.value.client_id_issued_at,
+                    clientSecretExpiresAt: clientInfo.value.client_secret_expires_at,
+                  },
                 }
-              : undefined,
-        },
-        this.serverUrl,
-      ),
+              : {}),
+          },
+          this.serverUrl,
+        )
+      }),
     )
   }
 }
@@ -248,12 +314,12 @@ export function parseRedirectUri(redirectUri?: string): { port: number; path: st
     return { port: OAUTH_CALLBACK_PORT, path: OAUTH_CALLBACK_PATH }
   }
 
-  try {
-    const url = new URL(redirectUri)
-    const port = url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80
-    const path = url.pathname || OAUTH_CALLBACK_PATH
-    return { port, path }
-  } catch {
+  if (!URL.canParse(redirectUri)) {
     return { port: OAUTH_CALLBACK_PORT, path: OAUTH_CALLBACK_PATH }
   }
+
+  const url = new URL(redirectUri)
+  const port = url.port ? parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80
+  const path = url.pathname || OAUTH_CALLBACK_PATH
+  return { port, path }
 }
