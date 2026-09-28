@@ -6,7 +6,7 @@ import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
@@ -20,6 +20,14 @@ function data<Value extends object>(kind: string, id: string, value: Value | und
   return Object.keys(value).length ? { redacted: `${kind}:${id}` } : value
 }
 
+// SessionV1 marks these fields optional, so an absent value stays absent in the export.
+function redactOptional(kind: string, id: string, value: string | undefined) {
+  return Option.fromUndefinedOr(value).pipe(
+    Option.map((item) => redact(kind, id, item)),
+    Option.getOrUndefined,
+  )
+}
+
 function span(id: string, value: { value: string; start: number; end: number }) {
   return {
     ...value,
@@ -30,8 +38,8 @@ function span(id: string, value: { value: string; start: number; end: number }) 
 function diff(kind: string, diffs: { file?: string; patch?: string }[] | undefined) {
   return diffs?.map((item, i) => ({
     ...item,
-    file: item.file === undefined ? undefined : redact(`${kind}-file`, String(i), item.file),
-    patch: item.patch === undefined ? undefined : redact(`${kind}-patch`, String(i), item.patch),
+    file: redactOptional(`${kind}-file`, String(i), item.file),
+    patch: redactOptional(`${kind}-patch`, String(i), item.patch),
   }))
 }
 
@@ -64,7 +72,7 @@ function filepart(part: SessionV1.FilePart): SessionV1.FilePart {
   return {
     ...part,
     url: redact("file-url", part.id, part.url),
-    filename: part.filename === undefined ? undefined : redact("file-name", part.id, part.filename),
+    filename: redactOptional("file-name", part.id, part.filename),
     source: source(part),
   }
 }
@@ -90,7 +98,7 @@ function part(part: SessionV1.Part): SessionV1.Part {
         ...part,
         prompt: redact("subtask-prompt", part.id, part.prompt),
         description: redact("subtask-description", part.id, part.description),
-        command: part.command === undefined ? undefined : redact("subtask-command", part.id, part.command),
+        command: redactOptional("subtask-command", part.id, part.command),
       }
     case "tool":
       return {
@@ -107,7 +115,7 @@ function part(part: SessionV1.Part): SessionV1.Part {
               ? {
                   ...part.state,
                   input: data("tool-input", part.id, part.state.input) ?? part.state.input,
-                  title: part.state.title === undefined ? undefined : redact("tool-title", part.id, part.state.title),
+                  title: redactOptional("tool-title", part.id, part.state.title),
                   metadata: data("tool-state-metadata", part.id, part.state.metadata),
                 }
               : part.state.status === "completed"
@@ -139,12 +147,12 @@ function part(part: SessionV1.Part): SessionV1.Part {
     case "step-start":
       return {
         ...part,
-        snapshot: part.snapshot === undefined ? undefined : redact("snapshot", part.id, part.snapshot),
+        snapshot: redactOptional("snapshot", part.id, part.snapshot),
       }
     case "step-finish":
       return {
         ...part,
-        snapshot: part.snapshot === undefined ? undefined : redact("snapshot", part.id, part.snapshot),
+        snapshot: redactOptional("snapshot", part.id, part.snapshot),
       }
     case "agent":
       return {
@@ -179,14 +187,8 @@ function sanitize(data: { info: Session.Info; messages: SessionV1.WithParts[] })
         ? data.info.revert
         : {
             ...data.info.revert,
-            snapshot:
-              data.info.revert.snapshot === undefined
-                ? undefined
-                : redact("revert-snapshot", data.info.id, data.info.revert.snapshot),
-            diff:
-              data.info.revert.diff === undefined
-                ? undefined
-                : redact("revert-diff", data.info.id, data.info.revert.diff),
+            snapshot: redactOptional("revert-snapshot", data.info.id, data.info.revert.snapshot),
+            diff: redactOptional("revert-diff", data.info.id, data.info.revert.diff),
           },
     },
     messages: data.messages.map((msg) => ({
@@ -194,19 +196,13 @@ function sanitize(data: { info: Session.Info; messages: SessionV1.WithParts[] })
         msg.info.role === "user"
           ? {
               ...msg.info,
-              system: msg.info.system === undefined ? undefined : redact("system", msg.info.id, msg.info.system),
+              system: redactOptional("system", msg.info.id, msg.info.system),
               summary: !msg.info.summary
                 ? msg.info.summary
                 : {
                     ...msg.info.summary,
-                    title:
-                      msg.info.summary.title === undefined
-                        ? undefined
-                        : redact("summary-title", msg.info.id, msg.info.summary.title),
-                    body:
-                      msg.info.summary.body === undefined
-                        ? undefined
-                        : redact("summary-body", msg.info.id, msg.info.summary.body),
+                    title: redactOptional("summary-title", msg.info.id, msg.info.summary.title),
+                    body: redactOptional("summary-body", msg.info.id, msg.info.summary.body),
                     diffs: diff("message-diff", msg.info.summary.diffs),
                   },
             }
