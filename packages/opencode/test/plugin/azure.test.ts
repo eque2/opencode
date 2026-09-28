@@ -8,7 +8,9 @@ import type { Hooks } from "@opencode-ai/plugin"
 import type { Auth, Provider } from "@opencode-ai/sdk/v2"
 import { OAUTH_DUMMY_KEY } from "../../src/auth"
 import { AzureAuthPlugin, createAzureAuthHooks } from "../../src/plugin/azure"
-import { Process } from "../../src/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { which } from "@opencode-ai/core/util/which"
 
 const resourceName = process.env.AZURE_RESOURCE_NAME
@@ -126,12 +128,7 @@ describe("plugin.azure", () => {
     await Bun.write(entry, bundle.outputs[0])
     const cli = await azureCli(tmp.path)
     for (const installed of [false, true]) {
-      const result = await Process.run(
-        [
-          node,
-          "--input-type=module",
-          "-e",
-          `
+      const script = `
         import assert from "node:assert/strict"
         import { AzureAuthPlugin } from ${JSON.stringify(pathToFileURL(entry).href)}
         assert.equal(typeof Bun, "undefined")
@@ -147,15 +144,20 @@ describe("plugin.azure", () => {
           assert.equal(auth.type, "success")
           assert.equal(auth.accountId, "test-resource")
         }
-      `,
-        ],
-        {
-          env: { PATH: installed ? cli.bin : tmp.path, XDG_DATA_HOME: tmp.path },
-          nothrow: true,
-        },
+      `
+      const result = await Effect.runPromise(
+        AppProcess.Service.use((appProcess) =>
+          appProcess.run(
+            ChildProcess.make(node, ["--input-type=module", "-e", script], {
+              env: { PATH: installed ? cli.bin : tmp.path, XDG_DATA_HOME: tmp.path },
+              extendEnv: true,
+              stdin: "ignore",
+            }),
+          ),
+        ).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
       )
       expect(result.stderr.toString()).toBe("")
-      expect(result.code).toBe(0)
+      expect(result.exitCode).toBe(0)
     }
     expect(await cli.calls()).toEqual([
       ["account", "get-access-token", "--scope", "https://cognitiveservices.azure.com/.default", "--output", "json"],

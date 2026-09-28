@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 
-import { Process } from "@/util/process"
+import { Effect } from "effect"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { Filesystem } from "@/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
 
@@ -17,10 +20,16 @@ type Msg = {
 }
 
 function run(msg: Msg) {
-  return Process.run([process.execPath, worker, JSON.stringify(msg)], {
-    cwd: root,
-    nothrow: true,
-  })
+  return Effect.runPromise(
+    AppProcess.Service.use((appProcess) =>
+      appProcess.run(
+        ChildProcess.make(process.execPath, [worker, JSON.stringify(msg)], { cwd: root, stdin: "ignore" }),
+      ),
+    ).pipe(
+      Effect.map((result) => ({ code: result.exitCode, stderr: result.stderr })),
+      Effect.provide(LayerNode.compile(AppProcess.node)),
+    ),
+  )
 }
 
 async function plugin(dir: string, kinds: Array<"server" | "tui">) {

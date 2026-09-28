@@ -6,7 +6,9 @@ import path from "path"
 import { pathToFileURL } from "url"
 
 import { tmpdir } from "../fixture/fixture"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { Filesystem } from "@/util/filesystem"
 
 const { PluginMeta } = await import("../../src/plugin/meta")
@@ -14,10 +16,16 @@ const root = path.join(import.meta.dir, "../..")
 const worker = path.join(import.meta.dir, "../fixture/plugin-meta-worker.ts")
 
 function run(input: { file: string; spec: string; target: string; id: string }) {
-  return Process.run([process.execPath, worker, JSON.stringify(input)], {
-    cwd: root,
-    nothrow: true,
-  })
+  return Effect.runPromise(
+    AppProcess.Service.use((appProcess) =>
+      appProcess.run(
+        ChildProcess.make(process.execPath, [worker, JSON.stringify(input)], { cwd: root, stdin: "ignore" }),
+      ),
+    ).pipe(
+      Effect.map((result) => ({ code: result.exitCode, stderr: result.stderr })),
+      Effect.provide(LayerNode.compile(AppProcess.node)),
+    ),
+  )
 }
 
 async function map<Value>(file: string): Promise<Record<string, Value>> {

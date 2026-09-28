@@ -7,7 +7,8 @@ import { Effect, FileSystem } from "effect"
 import { Truncate } from "@/tool/truncate"
 import { Config } from "@/config/config"
 import { Identifier } from "../../src/id/id"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
 import type { Agent } from "@/agent/agent"
 import path from "path"
 import { testEffect } from "../lib/effect"
@@ -242,11 +243,18 @@ describe("Truncate", () => {
     )
 
     test("loads truncate effect in a fresh process", async () => {
-      const out = await Process.run([process.execPath, "run", path.join(ROOT, "src", "tool", "truncate.ts")], {
-        cwd: ROOT,
-      })
+      const out = await Effect.runPromise(
+        AppProcess.Service.use((appProcess) =>
+          appProcess.run(
+            ChildProcess.make(process.execPath, ["run", path.join(ROOT, "src", "tool", "truncate.ts")], {
+              cwd: ROOT,
+              stdin: "ignore",
+            }),
+          ),
+        ).pipe(Effect.provide(LayerNode.compile(AppProcess.node))),
+      )
 
-      expect(out.code).toBe(0)
+      expect(out.exitCode).toBe(0)
     }, 20000)
   })
 
