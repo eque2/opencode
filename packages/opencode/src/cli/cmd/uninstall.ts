@@ -8,7 +8,8 @@ import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { Array as Arr, Config, Effect, Option } from "effect"
 import path from "path"
 import os from "os"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { ChildProcess } from "effect/unstable/process"
 import { makeRuntime } from "@/effect/run-service"
 import * as Prompt from "../effect/prompt"
 
@@ -220,16 +221,22 @@ const executeUninstall = Effect.fnUntraced(function* (method: Installation.Metho
     const cmd = cmds[method]
     if (cmd) {
       yield* spinner.start(`Running ${cmd.join(" ")}...`)
-      // nothrow makes Process.run resolve with the exit code, so a failed command is not a rejection.
-      const result = yield* Effect.promise(() =>
-        Process.run(method === "choco" ? ["choco", "uninstall", "opencode", "-y", "-r"] : cmd, {
-          nothrow: true,
-        }),
+      const argv = method === "choco" ? ["choco", "uninstall", "opencode", "-y", "-r"] : cmd
+      // A package manager that cannot start counts as a failed command, with exit code 1 and the
+      // failure text as its output.
+      const result = yield* AppProcess.Service.use((appProcess) =>
+        appProcess.run(ChildProcess.make(argv[0], argv.slice(1), { stdin: "ignore" })),
+      ).pipe(
+        Effect.map((out) => ({
+          code: out.exitCode,
+          text: `${out.stdout.toString("utf8")}\n${out.stderr.toString("utf8")}`,
+        })),
+        Effect.catch((error) => Effect.succeed({ code: 1, text: `\n${error.message}` })),
+        Effect.provide(AppNodeBuilder.build(AppProcess.node)),
       )
       if (result.code !== 0) {
         yield* spinner.stop(`Package manager uninstall failed: exit code ${result.code}`, 1)
-        const text = `${result.stdout.toString("utf8")}\n${result.stderr.toString("utf8")}`
-        if (method === "choco" && text.includes("not running from an elevated command shell")) {
+        if (method === "choco" && result.text.includes("not running from an elevated command shell")) {
           yield* Prompt.log.warn(`You may need to run '${cmd.join(" ")}' from an elevated command shell`)
         } else {
           yield* Prompt.log.warn(`You may need to run manually: ${cmd.join(" ")}`)
