@@ -39,12 +39,15 @@ test("stops sampling when the session switch fails", async () => {
   const failure = new Error("switch failed")
   const context = testPage()
 
-  await expect(
-    measureSessionSwitch(
-      context.page,
-      input(async () => Promise.reject(failure)),
-    ),
-  ).rejects.toBe(failure)
+  const error = await measureSessionSwitch(
+    context.page,
+    input(async () => Promise.reject(failure)),
+  ).then(
+    () => "resolved",
+    (reason: unknown) => reason,
+  )
+
+  expect(error).toBe(failure)
 
   expect(context.stops).toHaveLength(1)
 })
@@ -53,12 +56,15 @@ test("stops sampling when the stable wait fails", async () => {
   const failure = new Error("stable wait failed")
   const context = testPage(failure)
 
-  await expect(
-    measureSessionSwitch(
-      context.page,
-      input(async () => {}),
-    ),
-  ).rejects.toBe(failure)
+  const error = await measureSessionSwitch(
+    context.page,
+    input(async () => {}),
+  ).then(
+    () => "resolved",
+    (reason: unknown) => reason,
+  )
+
+  expect(error).toBe(failure)
 
   expect(context.stops).toHaveLength(1)
 })
