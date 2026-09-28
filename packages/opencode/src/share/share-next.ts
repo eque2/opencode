@@ -43,7 +43,7 @@ const ShareSchema = Schema.Struct({
 export type Share = typeof ShareSchema.Type
 
 type State = {
-  queue: Map<SessionID, Map<string, Data>>
+  queue: MutableHashMap.MutableHashMap<SessionID, MutableHashMap.MutableHashMap<string, Data>>
   scope: Scope.Closeable
   // A cached None records a session that has no share row.
   shared: MutableHashMap.MutableHashMap<SessionID, Option.Option<Share>>
@@ -121,16 +121,19 @@ const layer = Layer.effect(
         if (Option.isNone(share)) return
 
         const s = yield* InstanceState.get(state)
-        const existing = s.queue.get(sessionID)
-        if (existing) {
+        const existing = MutableHashMap.get(s.queue, sessionID)
+        if (Option.isSome(existing)) {
           for (const item of data) {
-            existing.set(key(item), item)
+            MutableHashMap.set(existing.value, key(item), item)
           }
           return
         }
 
-        const next = new Map(data.map((item) => [key(item), item]))
-        s.queue.set(sessionID, next)
+        MutableHashMap.set(
+          s.queue,
+          sessionID,
+          MutableHashMap.fromIterable(data.map((item) => [key(item), item] as const)),
+        )
         yield* flush(sessionID).pipe(
           Effect.delay(1000),
           Effect.catchCause((cause) => Effect.logError("share flush failed", { sessionID: sessionID, cause: cause })),
@@ -141,13 +144,17 @@ const layer = Layer.effect(
 
     const state: InstanceState.InstanceState<State> = yield* InstanceState.make<State>(
       Effect.fn("ShareNext.state")(function* (_ctx) {
-        const cache: State = { queue: new Map(), scope: yield* Scope.make(), shared: MutableHashMap.empty() }
+        const cache: State = {
+          queue: MutableHashMap.empty(),
+          scope: yield* Scope.make(),
+          shared: MutableHashMap.empty(),
+        }
 
         yield* Effect.addFinalizer(() =>
           Scope.close(cache.scope, Exit.void).pipe(
             Effect.andThen(
               Effect.sync(() => {
-                cache.queue.clear()
+                MutableHashMap.clear(cache.queue)
                 MutableHashMap.clear(cache.shared)
               }),
             ),
@@ -240,10 +247,10 @@ const layer = Layer.effect(
     const flush = Effect.fn("ShareNext.flush")(function* (sessionID: SessionID) {
       if (disabled) return
       const s = yield* InstanceState.get(state)
-      const queued = s.queue.get(sessionID)
-      if (!queued) return
+      const queued = MutableHashMap.get(s.queue, sessionID)
+      if (Option.isNone(queued)) return
 
-      s.queue.delete(sessionID)
+      MutableHashMap.remove(s.queue, sessionID)
 
       const found = yield* getCached(sessionID)
       if (Option.isNone(found)) return
@@ -252,7 +259,7 @@ const layer = Layer.effect(
       const req = yield* request()
       const res = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.sync(share.id)}`).pipe(
         HttpClientRequest.setHeaders(req.headers),
-        HttpClientRequest.bodyJson({ secret: share.secret, data: Array.from(queued.values()) }),
+        HttpClientRequest.bodyJson({ secret: share.secret, data: Array.from(MutableHashMap.values(queued.value)) }),
         Effect.flatMap((r) => http.execute(r)),
       )
 
@@ -272,12 +279,12 @@ const layer = Layer.effect(
       const messages = yield* session.messages({ sessionID })
       const models = yield* Effect.forEach(
         Array.from(
-          new Map(
+          MutableHashMap.fromIterable(
             messages
               .filter((msg) => msg.info.role === "user")
               .map((msg) => (msg.info as SDK.UserMessage).model)
               .map((item) => [`${item.providerID}/${item.modelID}`, item] as const),
-          ).values(),
+          ).pipe(MutableHashMap.values),
         ),
         (item) => provider.getModel(ProviderV2.ID.make(item.providerID), ModelV2.ID.make(item.modelID)),
         { concurrency: 8 },
@@ -336,7 +343,7 @@ const layer = Layer.effect(
       const found = yield* getCached(sessionID)
       if (Option.isNone(found)) {
         MutableHashMap.remove(s.shared, sessionID)
-        s.queue.delete(sessionID)
+        MutableHashMap.remove(s.queue, sessionID)
         return
       }
       const share = found.value
@@ -350,7 +357,7 @@ const layer = Layer.effect(
 
       yield* db.delete(SessionShareTable).where(eq(SessionShareTable.session_id, sessionID)).run().pipe(Effect.orDie)
       MutableHashMap.remove(s.shared, sessionID)
-      s.queue.delete(sessionID)
+      MutableHashMap.remove(s.queue, sessionID)
     })
 
     return Service.of({ init, url, request, create, remove })
