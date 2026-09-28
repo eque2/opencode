@@ -27,7 +27,7 @@ import { ContentBash } from "./content-bash"
 import { ContentError } from "./content-error"
 import { formatCount, formatDuration, formatNumber, normalizeLocale, useShareMessages } from "../share/common"
 import { ContentMarkdown } from "./content-markdown"
-import type { MessageV2 } from "opencode/session/message-v2"
+import type { AssistantMessage, MessageInfo, MessagePart, ToolPart, ToolStateCompleted } from "./message"
 import type { Diagnostic } from "vscode-languageserver-types"
 
 import styles from "./part.module.css"
@@ -58,8 +58,8 @@ export function formatTimestamp(millis: number, locale: string, style: keyof typ
 
 export interface PartProps {
   index: number
-  message: MessageV2.Info
-  part: MessageV2.Part
+  message: MessageInfo
+  part: MessagePart
   last: boolean
 }
 
@@ -326,10 +326,10 @@ export function Part(props: PartProps) {
 }
 
 type ToolProps = {
-  id: MessageV2.ToolPart["id"]
-  tool: MessageV2.ToolPart["tool"]
-  state: MessageV2.ToolStateCompleted
-  message: MessageV2.Assistant
+  id: ToolPart["id"]
+  tool: ToolPart["tool"]
+  state: ToolStateCompleted
+  message: AssistantMessage
   isLastPart?: boolean
 }
 

@@ -5,12 +5,12 @@ import { IconArrowDown } from "./icons"
 import { IconOpencode } from "./icons/custom"
 import { ShareI18nProvider, formatCurrency, formatNumber } from "./share/common"
 import styles from "./share.module.css"
-import type { MessageV2 } from "opencode/session/message-v2"
+import type { MessageInfo, MessagePart, ToolPart } from "./share/message"
 import type { Message } from "opencode/session/message"
-import type { Session } from "opencode/session/index"
+import type { Session } from "opencode/session/session"
 import { Part, ProviderIcon, formatTimestamp } from "./share/part"
 
-type MessageWithParts = MessageV2.Info & { parts: MessageV2.Part[] }
+type MessageWithParts = MessageInfo & { parts: MessagePart[] }
 
 // A share_poll frame. The content is a Session, Message or Part record. Its
 // schemas live in @opencode-ai/core, which this package does not depend on yet,
@@ -511,7 +511,7 @@ export class ShareV1MessageError extends Schema.TaggedError<ShareV1MessageError>
 export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
   if (v1.role === "assistant") {
     const parts = yield* Effect.forEach(v1.parts, (part, index) =>
-      Effect.gen(function* (): Effect.gen.Return<MessageV2.Part[], ShareV1MessageError> {
+      Effect.gen(function* (): Effect.gen.Return<MessagePart[], ShareV1MessageError> {
         const base = {
           id: index.toString(),
           messageID: v1.id,
@@ -542,7 +542,7 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
               callID: part.toolInvocation.toolCallId,
               tool: part.toolInvocation.toolName,
               state: yield* Effect.gen(function* (): Effect.gen.Return<
-                MessageV2.ToolPart["state"],
+                ToolPart["state"],
                 ShareV1MessageError
               > {
                 if (part.toolInvocation.state === "partial-call") {
@@ -626,7 +626,7 @@ export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
       time: {
         created: v1.metadata.time.created,
       },
-      parts: v1.parts.flatMap((part, index): MessageV2.Part[] => {
+      parts: v1.parts.flatMap((part, index): MessagePart[] => {
         const base = {
           id: index.toString(),
           messageID: v1.id,
