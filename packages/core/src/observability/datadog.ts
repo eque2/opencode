@@ -43,8 +43,19 @@ export type Settings = Config.Success<typeof config>
 type Entry = Record<string, unknown>
 
 // Secrets are always redacted. Content keys follow the `content` switch because prompts and file bodies may hold personal data.
-const SECRET = /api[-_]?key|authorization|password|secret|token|cookie|credential/i
-const BEARER = /(bearer\s+)[\w.~+/=-]+/gi
+// A key is a secret when its lowercase form without `-` and `_` ends with one of these, so `inputTokens` is not.
+const SECRET_KEYS = ["apikey", "authorization", "password", "secret", "token", "cookie", "credential"]
+// Secret shapes inside any string. The left boundary keeps words such as `task-…` and `risk-…` intact.
+const SECRET_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/(bearer\s+)[\w.~+/=-]+/gi, "$1[REDACTED]"],
+  [/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}/g, "[REDACTED]"],
+  [/(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}/g, "[REDACTED]"],
+  [/(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}/g, "[REDACTED]"],
+  [/(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]+/g, "[REDACTED]"],
+  // Query parameters such as `?key=`, `&exaApiKey=` and `&access_token=`.
+  [/([?&][^=&#\s]*(?:key|token)=)[^&#\s]*/gi, "$1[REDACTED]"],
+  [/((?<![A-Za-z0-9_])(?:api_key|access_token)=)[^&#\s]*/gi, "$1[REDACTED]"],
+]
 const CONTENT = HashSet.make(
   "prompt",
   "system",
@@ -129,11 +140,12 @@ export function entry(
     ...Object.fromEntries(
       Object.entries(attributes).map(([key, value]) => [key, redact(value, settings.content, key)]),
     ),
-    message:
+    message: scrub(
       messages
         .filter((value) => !plain(value))
         .map(text)
         .join(" ") || category,
+    ),
     status: structured.level.toLowerCase(),
     date: structured.timestamp,
     service: settings.service,
@@ -170,15 +182,24 @@ export function categoryFilter(value: string) {
 }
 
 function redact(input: unknown, content: Settings["content"], key = ""): unknown {
-  if (key && SECRET.test(key)) return "[REDACTED]"
+  if (key && secretKey(key)) return "[REDACTED]"
   if (key && HashSet.has(CONTENT, key) && content !== "full") return content === "omit" ? omitted(input) : hash(input)
-  if (typeof input === "string") return input.replace(BEARER, "$1[REDACTED]")
+  if (typeof input === "string") return scrub(input)
   if (Array.isArray(input)) return input.map((value) => redact(value, content))
   if (input instanceof Date) return input.toISOString()
   // Provider errors carry the request body in enumerable fields, so an error keeps only its name and message.
   if (input instanceof Error) return { name: input.name, message: redact(input.message, content) }
   if (!Predicate.isObject(input)) return input
   return Object.fromEntries(Object.entries(input).map(([name, value]) => [name, redact(value, content, name)]))
+}
+
+function secretKey(key: string) {
+  const name = key.toLowerCase().replaceAll(/[-_]/g, "")
+  return SECRET_KEYS.some((secret) => name.endsWith(secret))
+}
+
+function scrub(value: string) {
+  return SECRET_SHAPES.reduce((result, [pattern, replacement]) => result.replace(pattern, replacement), value)
 }
 
 function omitted(input: unknown) {

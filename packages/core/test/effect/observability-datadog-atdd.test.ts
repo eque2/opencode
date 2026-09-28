@@ -2,7 +2,7 @@
 // Each leaf maps to exactly one AC. Remove `test.skip` (and any `@ts-expect-error`) when its AC lands.
 import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
-import { ConfigProvider, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
+import { Cause, ConfigProvider, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
@@ -235,7 +235,7 @@ test.skip("AC-8 disposing the runtime flushes buffered records", async () => {
   expect(target.requests.map((request) => request.body[0].message)).toEqual(["last words"])
 })
 
-test.skip("AC-9 secret shapes anywhere in a record never reach the intake and the surrounding text survives", async () => {
+test("AC-9 secret shapes anywhere in a record never reach the intake and the surrounding text survives", async () => {
   const target = intake()
   using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
@@ -294,4 +294,24 @@ test("AC-10b a Pty.create-shaped record sends no cmd or args text by default", a
   expect(payload).not.toContain("private-shell")
   expect(payload).not.toContain("--secret-flag")
   expect(target.requests[0].body[0].id).toBe("pty_1")
+})
+
+test("AC-9b secret shapes in the pretty cause are scrubbed in every content mode", async () => {
+  const secret = "ghp_" + "f6".repeat(12)
+  for (const content of ["omit", "hash", "full"]) {
+    const target = intake()
+    using _ = target.server
+    const config = required(
+      await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_CONTENT: content }),
+    )
+    await ship(
+      config,
+      Effect.logError("failed", Cause.fail(new Error(`upstream rejected ${secret} at step 2`))).pipe(
+        Effect.annotateLogs({ category: "tool.error" }),
+      ),
+    )
+    const [entry] = target.requests[0].body
+    expect(entry.error.stack).toContain("upstream rejected [REDACTED] at step 2")
+    expect(JSON.stringify(target.requests[0].body)).not.toContain(secret)
+  }
 })
