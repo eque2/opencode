@@ -1,8 +1,10 @@
 import { describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
-import { Deferred, Effect } from "effect"
+import { Deferred, Effect, Schema } from "effect"
 import { BackgroundJob } from "@/background/job"
 import { testEffect } from "../lib/effect"
+
+class TestJobError extends Schema.TaggedError<TestJobError>()("TestJobError", { message: Schema.String }) {}
 
 const it = testEffect(LayerNode.compile(BackgroundJob.node))
 
@@ -61,7 +63,7 @@ describe("background.job", () => {
           jobs.start({
             id,
             type: "test",
-            run: Effect.fail(new Error("duplicate started")),
+            run: Effect.fail(new TestJobError({ message: "duplicate started" })),
           }),
         ],
         { concurrency: "unbounded" },
@@ -141,7 +143,7 @@ describe("background.job", () => {
       const jobs = yield* BackgroundJob.Service
       const job = yield* jobs.start({
         type: "test",
-        run: Effect.fail(new Error("boom")),
+        run: Effect.fail(new TestJobError({ message: "boom" })),
       })
 
       const result = yield* jobs.wait({ id: job.id })
@@ -161,7 +163,7 @@ describe("background.job", () => {
       yield* jobs.start({
         id,
         type: "test",
-        run: Deferred.await(fail).pipe(Effect.andThen(Effect.fail(new Error("boom")))),
+        run: Deferred.await(fail).pipe(Effect.andThen(Effect.fail(new TestJobError({ message: "boom" })))),
       })
       yield* jobs.extend({
         id,

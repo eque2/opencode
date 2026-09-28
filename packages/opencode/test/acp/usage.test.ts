@@ -5,7 +5,7 @@ import { ProviderV2 } from "@opencode-ai/core/provider"
 import { ModelV2 } from "@opencode-ai/core/model"
 import { UsageService } from "@/acp/usage"
 import { Provider } from "@/provider/provider"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { it } from "../lib/effect"
 
 const assistant = (
@@ -93,6 +93,10 @@ const providers = (context = 128_000): Record<ProviderV2.ID, Provider.Info> => {
     },
   }
 }
+
+class MessagesUnavailable extends Schema.TaggedError<MessagesUnavailable>()("TestMessagesUnavailable", {
+  message: Schema.String,
+}) {}
 
 const fakeLayer = (input: {
   readonly messages?: Effect.Effect<readonly UsageService.SessionMessage[], unknown>
@@ -259,7 +263,7 @@ describe("acp usage", () => {
       })
 
       expect(updates).toEqual([])
-    }).pipe(Effect.provide(fakeLayer({ messages: Effect.fail(new Error("boom")) })))
+    }).pipe(Effect.provide(fakeLayer({ messages: Effect.fail(new MessagesUnavailable({ message: "boom" })) })))
   })
 
   it.effect("skips usage update when no assistant message exists", () => {
