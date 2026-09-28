@@ -84,3 +84,29 @@ test("ships filtered, redacted, trace-correlated batches to the intake", async (
   expect(JSON.stringify(requests[0].body)).not.toContain("my secret plan")
   expect(entry.dd.trace_id).toBe(BigInt(`0x${entry.trace_id.slice(-16)}`).toString())
 })
+
+test("flushAll sends the buffer of an open sink before process.exit would drop it", async () => {
+  const bodies: Array<Array<Record<string, any>>> = []
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      bodies.push(JSON.parse(new TextDecoder().decode(Bun.gunzipSync(await request.arrayBuffer()))))
+      return new Response(null, { status: 202 })
+    },
+  })
+  const config = Option.getOrThrow(
+    await settings({
+      DD_API_KEY: "key",
+      OPENCODE_DATADOG_LOGS_URL: server.url.href,
+      OPENCODE_DATADOG_FLUSH_INTERVAL: "1 hour",
+    }),
+  )
+  await Effect.gen(function* () {
+    const logger = yield* Datadog.logger(config)
+    yield* Effect.logInfo("before exit").pipe(Effect.provide(Logger.layer([logger])))
+    yield* Datadog.flushAll
+    expect(bodies.map((body) => body.map((entry) => entry.message))).toEqual([["before exit"]])
+  }).pipe(Effect.scoped, Effect.provide(FetchHttpClient.layer), Effect.runPromise)
+  // The scope close finds an empty buffer and sends nothing more.
+  expect(bodies).toHaveLength(1)
+})

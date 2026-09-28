@@ -270,6 +270,17 @@ export interface LoggerOptions {
   readonly cooldown?: Duration.Input
 }
 
+// The final flush of every sink that is still open.
+let live: ReadonlyArray<Effect.Effect<void>> = []
+
+/**
+ * Sends the buffered records of every open sink, each within 5 seconds, and leaves the sinks running. Call it
+ * before `process.exit()`, which skips the scope finalizers and would drop the last batch.
+ */
+export const flushAll = Effect.suspend(() =>
+  Effect.forEach(live, (final) => final, { concurrency: "unbounded", discard: true }),
+)
+
 export function logger(settings: Settings, options: LoggerOptions = {}) {
   const cooldown = Duration.fromInputUnsafe(options.cooldown ?? COOLDOWN)
   const url = Option.getOrElse(settings.url, () => `https://http-intake.logs.${settings.site}/api/v2/logs`)
@@ -361,7 +372,15 @@ export function logger(settings: Settings, options: LoggerOptions = {}) {
     })
 
     // Added before the loop starts, so the loop is interrupted first and the final flush runs last.
-    yield* Effect.addFinalizer(() => final)
+    yield* Effect.addFinalizer(() =>
+      Effect.andThen(
+        Effect.sync(() => {
+          live = live.filter((each) => each !== final)
+        }),
+        final,
+      ),
+    )
+    live = [...live, final]
     // The loop keeps the Clock of this fiber, so a test provides TestClock before the logger builds.
     yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(settings.flushInterval), flush)))
     return sink
