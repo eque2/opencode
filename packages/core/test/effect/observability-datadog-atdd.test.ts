@@ -2,7 +2,7 @@
 // Each leaf maps to exactly one AC. Remove `test.skip` (and any `@ts-expect-error`) when its AC lands.
 import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
-import { ConfigProvider, Effect, Layer, Logger, ManagedRuntime, References, Schema } from "effect"
+import { ConfigProvider, Effect, Layer, Logger, ManagedRuntime, Option, References, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import fs from "fs/promises"
 import os from "os"
@@ -33,10 +33,7 @@ function intake(statuses: Array<{ status: number; headers?: Record<string, strin
 const settings = (env: Record<string, string>) =>
   Datadog.settings.pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))), Effect.runPromise)
 
-const required = (value: Datadog.Settings | undefined) => {
-  if (!value) throw new Error("expected Datadog settings")
-  return value
-}
+const required = (value: Option.Option<Datadog.Settings>) => Option.getOrThrow(value)
 
 const ship = (config: Datadog.Settings, program: Effect.Effect<void>) =>
   Effect.gen(function* () {
@@ -60,7 +57,7 @@ test.skip("AC-1 a global config file configures the sink and env overrides it", 
     path.join(temp.dir, "opencode.jsonc"),
     `{ // JSONC comments are allowed\n "observability": { "datadog": { "categories": "llm", "content": "hash" } } }`,
   )
-  const resolve = async (env: Record<string, string>): Promise<Datadog.Settings | undefined> =>
+  const resolve = async (env: Record<string, string>): Promise<Option.Option<Datadog.Settings>> =>
     Effect.runPromise(
       // @ts-expect-error AC-1 red phase: Datadog.provider lands in stage 3.
       Datadog.provider({ env, configDir: temp.dir }).pipe(
@@ -79,14 +76,14 @@ test.skip("AC-1 a global config file configures the sink and env overrides it", 
 test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async () => {
   await using temp = await tempDir()
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   await Bun.write(
     path.join(temp.dir, "opencode.json"),
     JSON.stringify({
       observability: { datadog: { apiKey: "from-file", api_key: "from-file", DD_API_KEY: "from-file" } },
     }),
   )
-  const resolve = async (env: Record<string, string>): Promise<Datadog.Settings | undefined> =>
+  const resolve = async (env: Record<string, string>): Promise<Option.Option<Datadog.Settings>> =>
     Effect.runPromise(
       // @ts-expect-error AC-2 red phase: Datadog.provider lands in stage 3.
       Datadog.provider({ env, configDir: temp.dir }).pipe(
@@ -98,7 +95,7 @@ test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async 
   const config = required(await resolve({ DD_API_KEY: "env-key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   await ship(config, Effect.logInfo("keyed").pipe(Effect.annotateLogs({ category: "llm.request" })))
   expect(target.requests[0].key).toBe("env-key")
-  expect(await resolve({})).toBeUndefined()
+  expect(Option.isNone(await resolve({}))).toBe(true)
   // The production loader ignores excess keys, so the rest of the config still loads.
   const decoded = Schema.decodeUnknownExit(ConfigV1.Info)({
     model: "anthropic/claude",
@@ -109,7 +106,7 @@ test.skip("AC-2 a config-file apiKey is ignored and the env key is sent", async 
 
 test.skip("AC-3 withPolicy content full ships content only inside its scope and keeps secrets redacted", async () => {
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   const secret = "sk-" + "e5".repeat(12)
   const withPolicy: (patch: {
@@ -143,7 +140,7 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
   await using temp = await tempDir()
   const file = path.join(temp.dir, "opencode.log")
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(
     await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url, OPENCODE_DATADOG_LOG_LEVEL: "Debug" }),
   )
@@ -175,7 +172,7 @@ test.skip("AC-4 a Debug record reaches Datadog but not an Info file log", async 
 
 test.skip("AC-5 a 429 with Retry-After 2 delays the next attempt by at least two seconds", async () => {
   const target = intake([{ status: 429, headers: { "Retry-After": "2" } }])
-  await using _ = target.server
+  using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   await ship(config, Effect.logInfo("rate limited").pipe(Effect.annotateLogs({ category: "llm.request" })))
   expect(target.requests[1].at - target.requests[0].at).toBeGreaterThanOrEqual(1900)
@@ -185,7 +182,7 @@ test.skip("AC-6 after retries fail the sink sends nothing until the cooldown end
   // One attempt plus 3 retries fail, then the intake recovers.
   const failures = 4
   const target = intake(Array.from({ length: failures }, () => ({ status: 503 })))
-  await using _ = target.server
+  using _ = target.server
   const config = required(
     await settings({
       DD_API_KEY: "key",
@@ -215,7 +212,7 @@ test.skip("AC-6 after retries fail the sink sends nothing until the cooldown end
 
 test.skip("AC-7 every request is gzip-compressed", async () => {
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   await ship(config, Effect.logInfo("compressed").pipe(Effect.annotateLogs({ category: "llm.request" })))
   expect(target.requests[0].encoding).toBe("gzip")
@@ -224,7 +221,7 @@ test.skip("AC-7 every request is gzip-compressed", async () => {
 
 test.skip("AC-8 disposing the runtime flushes buffered records", async () => {
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(
     await settings({
       DD_API_KEY: "key",
@@ -240,14 +237,14 @@ test.skip("AC-8 disposing the runtime flushes buffered records", async () => {
 
 test.skip("AC-9 secret shapes anywhere in a record never reach the intake and the surrounding text survives", async () => {
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   // Built at runtime so secret scanners do not flag the fixture.
   const secrets = [
     "sk-" + "a1".repeat(12),
     "AKIA" + "B2".repeat(8),
     "ghp_" + "c3".repeat(12),
-    "xoxb-" + "123-456-" + "d4".repeat(6),
+    "xoxb-123-456-" + "d4".repeat(6),
     "zz" + "9".repeat(14),
     "yy" + "8".repeat(14),
   ]
@@ -274,7 +271,7 @@ test.skip("AC-9 secret shapes anywhere in a record never reach the intake and th
 
 test.skip("AC-10 a Question.reply-shaped record sends no answer text by default", async () => {
   const target = intake()
-  await using _ = target.server
+  using _ = target.server
   const config = required(await settings({ DD_API_KEY: "key", OPENCODE_DATADOG_LOGS_URL: target.url }))
   // Same shape as packages/opencode/src/question/index.ts:125, which sets no category.
   await ship(config, Effect.logInfo("replied", { requestID: "que_1", answers: [["my private answer"]] }))
