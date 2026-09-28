@@ -7,7 +7,7 @@ import { installPlugin, patchPluginConfig, readPluginManifest } from "../../plug
 import { resolvePluginTarget } from "../../plugin/shared"
 import { errorMessage } from "../../util/error"
 import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
 import { UI } from "../ui"
 import { effectCmd } from "../effect-cmd"
 import { InstanceRef } from "@/effect/instance-ref"
@@ -83,9 +83,8 @@ export function plugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps) {
       install.stop("Install failed", 1)
       dep.log.error(`Could not install "${mod}"`)
       const hit = Option.getOrElse(cause(target.error), () => target.error)
-      if (hit instanceof Process.RunFailedError) {
-        const lines = hit.stderr
-          .toString()
+      if (hit instanceof AppProcess.AppProcessError) {
+        const lines = (hit.stderr ?? "")
           .split(/\r?\n/)
           .map((line) => line.trim())
           .filter(Boolean)
@@ -97,7 +96,7 @@ export function plugTask(input: PlugInput, dep: PlugDeps = defaultPlugDeps) {
           dep.log.info("Check npm registry/auth settings and try again.")
         }
       }
-      if (!(hit instanceof Process.RunFailedError)) {
+      if (!(hit instanceof AppProcess.AppProcessError)) {
         dep.log.error(errorMessage(hit))
       }
       return false

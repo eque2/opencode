@@ -32,7 +32,7 @@ import { installPlugin as installModulePlugin, patchPluginConfig, readPluginMani
 import { hasTheme, upsertTheme } from "@opencode-ai/tui/context/theme"
 import { Global } from "@opencode-ai/core/global"
 import { Filesystem } from "@/util/filesystem"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { FlagConfig } from "@opencode-ai/core/flag/flag"
 import { internalTuiPlugins, type InternalTuiPlugin } from "./internal"
@@ -886,15 +886,14 @@ function installCause(err: unknown) {
 
 function installDetail(err: unknown) {
   const hit = Option.getOrElse(installCause(err), () => err)
-  if (!(hit instanceof Process.RunFailedError)) {
+  if (!(hit instanceof AppProcess.AppProcessError)) {
     return {
       message: errorMessage(hit),
       missing: false,
     }
   }
 
-  const lines = hit.stderr
-    .toString()
+  const lines = (hit.stderr ?? "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
