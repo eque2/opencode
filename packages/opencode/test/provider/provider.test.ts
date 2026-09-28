@@ -1460,7 +1460,7 @@ test("mode options and cost are derived from the base model", () => {
 })
 
 test("models.dev normalization fills required response fields", () => {
-  const provider = {
+  const provider: Provider.ModelsDevProviderInput = {
     id: "gateway",
     name: "Gateway",
     env: [],
@@ -1474,7 +1474,7 @@ test("models.dev normalization fills required response fields", () => {
         limit: { context: 1_050_000, input: 922_000, output: 128_000 },
       },
     },
-  } as unknown as ModelsDev.Provider
+  }
 
   const model = Provider.fromModelsDevProvider(provider).models["gpt-5.4"]
   expect(model.api.url).toBe("")

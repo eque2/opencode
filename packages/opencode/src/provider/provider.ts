@@ -1444,7 +1444,36 @@ function cloudflareGatewayNpm(providerID: string, modelID: string) {
   return undefined
 }
 
-function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model): Model {
+/**
+ * A models.dev model as fromModelsDevProvider accepts it. Custom catalogs may leave out the fields that
+ * the conversion defaults (release date, attachment, reasoning, tool calls), and may use plain string ids.
+ */
+export type ModelsDevModelInput = Omit<
+  ModelsDev.Model,
+  "id" | "release_date" | "attachment" | "reasoning" | "tool_call"
+> & {
+  readonly id: string
+  readonly release_date?: string
+  readonly attachment?: boolean
+  readonly reasoning?: boolean
+  readonly tool_call?: boolean
+}
+
+/** A models.dev provider as fromModelsDevProvider accepts it; see {@link ModelsDevModelInput}. */
+export type ModelsDevProviderInput = Omit<ModelsDev.Provider, "id" | "models"> & {
+  readonly id: string
+  readonly models: Readonly<Record<string, ModelsDevModelInput>>
+}
+
+function fromModelsDevModel(provider: ModelsDevProviderInput, input: ModelsDevModelInput): Model {
+  const model: ModelsDev.Model = {
+    ...input,
+    id: ModelsDev.ModelID.make(input.id),
+    release_date: input.release_date ?? "",
+    attachment: input.attachment ?? false,
+    reasoning: input.reasoning ?? false,
+    tool_call: input.tool_call ?? true,
+  }
   const base: Model = {
     id: ModelV2.ID.make(model.id),
     providerID: ProviderV2.ID.make(provider.id),
@@ -1470,9 +1499,9 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
     },
     capabilities: {
       temperature: model.temperature ?? false,
-      reasoning: model.reasoning ?? false,
-      attachment: model.attachment ?? false,
-      toolcall: model.tool_call ?? true,
+      reasoning: model.reasoning,
+      attachment: model.attachment,
+      toolcall: model.tool_call,
       input: {
         text: model.modalities?.input?.includes("text") ?? false,
         audio: model.modalities?.input?.includes("audio") ?? false,
@@ -1489,7 +1518,7 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
       },
       interleaved: typeof model.interleaved === "string" ? { field: model.interleaved } : (model.interleaved ?? false),
     },
-    release_date: model.release_date ?? "",
+    release_date: model.release_date,
     variants: {},
   }
 
@@ -1501,7 +1530,7 @@ function fromModelsDevModel(provider: ModelsDev.Provider, model: ModelsDev.Model
   }
 }
 
-export function fromModelsDevProvider(provider: ModelsDev.Provider): Info {
+export function fromModelsDevProvider(provider: ModelsDevProviderInput): Info {
   const models: Record<string, Model> = {}
   for (const [key, model] of Object.entries(provider.models)) {
     models[key] = fromModelsDevModel(provider, model)
