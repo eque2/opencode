@@ -784,7 +784,11 @@ const buildDirectorySnapshot = Effect.fn("ACP.buildDirectorySnapshot")(function*
         () => sdk.command.list({ directory }, { throwOnError: true }),
         "directory",
       ),
-      profiledRequest("acp.directory.skill.list", () => sdk.app.skills({ directory }, { throwOnError: true }), "directory"),
+      profiledRequest(
+        "acp.directory.skill.list",
+        () => sdk.app.skills({ directory }, { throwOnError: true }),
+        "directory",
+      ),
       // A missing config only means there is no configured default model.
       profiledRequest(
         "acp.directory.defaultModel.config",
@@ -1118,7 +1122,9 @@ function registerMcpServers(
             ),
           "mcp",
         ).pipe(
-          Effect.tap(() => Effect.sync(() => MutableHashSet.add(current, mcpRegistrationKey(entry.server.name, entry.config)))),
+          Effect.tap(() =>
+            Effect.sync(() => MutableHashSet.add(current, mcpRegistrationKey(entry.server.name, entry.config))),
+          ),
           Effect.ignore,
         ),
       ),
