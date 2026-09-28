@@ -2,7 +2,7 @@ import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import type * as SDK from "@opencode-ai/sdk/v2"
 import { serviceUse } from "@opencode-ai/core/effect/service-use"
-import { Effect, Exit, Layer, Option, Schema, Scope, Context } from "effect"
+import { Effect, Exit, Layer, MutableHashMap, Option, Schema, Scope, Context } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { Account } from "@/account/account"
 import { EventV2Bridge } from "@/event-v2-bridge"
@@ -45,7 +45,8 @@ export type Share = typeof ShareSchema.Type
 type State = {
   queue: Map<SessionID, Map<string, Data>>
   scope: Scope.Closeable
-  shared: Map<SessionID, Share | null>
+  // A cached None records a session that has no share row.
+  shared: MutableHashMap.MutableHashMap<SessionID, Option.Option<Share>>
 }
 
 type Data =
@@ -117,7 +118,7 @@ const layer = Layer.effect(
       return Effect.gen(function* () {
         if (disabled) return
         const share = yield* getCached(sessionID)
-        if (!share) return
+        if (Option.isNone(share)) return
 
         const s = yield* InstanceState.get(state)
         const existing = s.queue.get(sessionID)
@@ -140,14 +141,14 @@ const layer = Layer.effect(
 
     const state: InstanceState.InstanceState<State> = yield* InstanceState.make<State>(
       Effect.fn("ShareNext.state")(function* (_ctx) {
-        const cache: State = { queue: new Map(), scope: yield* Scope.make(), shared: new Map() }
+        const cache: State = { queue: new Map(), scope: yield* Scope.make(), shared: MutableHashMap.empty() }
 
         yield* Effect.addFinalizer(() =>
           Scope.close(cache.scope, Exit.void).pipe(
             Effect.andThen(
               Effect.sync(() => {
                 cache.queue.clear()
-                cache.shared.clear()
+                MutableHashMap.clear(cache.shared)
               }),
             ),
           ),
@@ -220,19 +221,19 @@ const layer = Layer.effect(
         .where(eq(SessionShareTable.session_id, sessionID))
         .get()
         .pipe(Effect.orDie)
-      if (!row) return
-      return { id: row.id, secret: row.secret, url: row.url } satisfies Share
+      return Option.map(
+        Option.fromNullishOr(row),
+        (found): Share => ({ id: found.id, secret: found.secret, url: found.url }),
+      )
     })
 
     const getCached = Effect.fnUntraced(function* (sessionID: SessionID) {
       const s = yield* InstanceState.get(state)
-      if (s.shared.has(sessionID)) {
-        const cached = s.shared.get(sessionID)
-        return cached === null ? undefined : cached
-      }
+      const cached = MutableHashMap.get(s.shared, sessionID)
+      if (Option.isSome(cached)) return cached.value
 
       const share = yield* get(sessionID)
-      s.shared.set(sessionID, share ?? null)
+      MutableHashMap.set(s.shared, sessionID, share)
       return share
     })
 
@@ -244,8 +245,9 @@ const layer = Layer.effect(
 
       s.queue.delete(sessionID)
 
-      const share = yield* getCached(sessionID)
-      if (!share) return
+      const found = yield* getCached(sessionID)
+      if (Option.isNone(found)) return
+      const share = found.value
 
       const req = yield* request()
       const res = yield* HttpClientRequest.post(`${req.baseUrl}${req.api.sync(share.id)}`).pipe(
@@ -319,7 +321,7 @@ const layer = Layer.effect(
         .run()
         .pipe(Effect.orDie)
       const s = yield* InstanceState.get(state)
-      s.shared.set(sessionID, result)
+      MutableHashMap.set(s.shared, sessionID, Option.some(result))
       yield* full(sessionID).pipe(
         Effect.catchCause((cause) => Effect.logError("share full sync failed", { sessionID: sessionID, cause: cause })),
         Effect.forkIn(s.scope),
@@ -331,12 +333,13 @@ const layer = Layer.effect(
       if (disabled) return
       yield* Effect.logInfo("removing share", { sessionID: sessionID })
       const s = yield* InstanceState.get(state)
-      const share = yield* getCached(sessionID)
-      if (!share) {
-        s.shared.delete(sessionID)
+      const found = yield* getCached(sessionID)
+      if (Option.isNone(found)) {
+        MutableHashMap.remove(s.shared, sessionID)
         s.queue.delete(sessionID)
         return
       }
+      const share = found.value
 
       const req = yield* request()
       yield* HttpClientRequest.delete(`${req.baseUrl}${req.api.remove(share.id)}`).pipe(
@@ -346,7 +349,7 @@ const layer = Layer.effect(
       )
 
       yield* db.delete(SessionShareTable).where(eq(SessionShareTable.session_id, sessionID)).run().pipe(Effect.orDie)
-      s.shared.delete(sessionID)
+      MutableHashMap.remove(s.shared, sessionID)
       s.queue.delete(sessionID)
     })
 
