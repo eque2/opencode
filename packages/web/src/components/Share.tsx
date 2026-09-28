@@ -1,6 +1,6 @@
 import { For, Show, onMount, Suspense, onCleanup, createMemo, createSignal, SuspenseList } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { Duration, Effect, Fiber, Option } from "effect"
+import { Array as Arr, Duration, Effect, Fiber, Option, Schema } from "effect"
 import { IconArrowDown } from "./icons"
 import { IconOpencode } from "./icons/custom"
 import { ShareI18nProvider, formatCurrency, formatNumber } from "./share/common"
@@ -11,6 +11,15 @@ import type { Session } from "opencode/session/index"
 import { Part, ProviderIcon, formatTimestamp } from "./share/part"
 
 type MessageWithParts = MessageV2.Info & { parts: MessageV2.Part[] }
+
+// A share_poll frame. The content is a Session, Message or Part record. Its
+// schemas live in @opencode-ai/core, which this package does not depend on yet,
+// so the content stays unvalidated here as it was with JSON.parse.
+const ShareFrame = Schema.Struct({
+  key: Schema.String,
+  content: Schema.Any,
+}).annotate({ identifier: "ShareFrame" })
+const decodeShareFrame = Schema.decodeUnknownEffect(Schema.fromJsonString(ShareFrame))
 
 type Status = "disconnected" | "connecting" | "connected" | "error" | "reconnecting"
 
@@ -101,6 +110,30 @@ export default function Share(props: {
     let reconnectFiber: Option.Option<Fiber.Fiber<void>> = Option.none()
     let socket: WebSocket | null = null
 
+    const applyFrame = Effect.fnUntraced(function* (data: unknown) {
+      const frame = yield* decodeShareFrame(data)
+      const [root, type, ...splits] = frame.key.split("/")
+      if (root !== "session") return
+      if (type === "info") {
+        setStore("info", reconcile(frame.content))
+        return
+      }
+      if (type === "message") {
+        const [, messageID] = splits
+        const content = "metadata" in frame.content ? yield* fromV1(frame.content) : frame.content
+        content.parts = content.parts ?? store.messages[messageID]?.parts ?? []
+        setStore("messages", messageID, reconcile(content))
+      }
+      if (type === "part") {
+        setStore("messages", frame.content.messageID, "parts", (arr) => {
+          const index = arr.findIndex((x) => x.id === frame.content.id)
+          if (index === -1) arr.push(frame.content)
+          if (index > -1) arr[index] = frame.content
+          return [...arr]
+        })
+      }
+    })
+
     // Function to create and set up WebSocket with auto-reconnect
     const setupWebSocket = () => {
       // Close any existing connection
@@ -123,33 +156,11 @@ export default function Share(props: {
 
       // Handle incoming messages
       socket.onmessage = (event) => {
-        try {
-          const d = JSON.parse(event.data)
-          const [root, type, ...splits] = d.key.split("/")
-          if (root !== "session") return
-          if (type === "info") {
-            setStore("info", reconcile(d.content))
-            return
-          }
-          if (type === "message") {
-            const [, messageID] = splits
-            if ("metadata" in d.content) {
-              d.content = fromV1(d.content)
-            }
-            d.content.parts = d.content.parts ?? store.messages[messageID]?.parts ?? []
-            setStore("messages", messageID, reconcile(d.content))
-          }
-          if (type === "part") {
-            setStore("messages", d.content.messageID, "parts", (arr) => {
-              const index = arr.findIndex((x) => x.id === d.content.id)
-              if (index === -1) arr.push(d.content)
-              if (index > -1) arr[index] = d.content
-              return [...arr]
-            })
-          }
-        } catch (error) {
-          console.error("Error parsing WebSocket message:", error)
-        }
+        Effect.runFork(
+          applyFrame(event.data).pipe(
+            Effect.catchCause((cause) => Effect.logError("Error parsing WebSocket message:", cause)),
+          ),
+        )
       }
 
       // Handle errors
@@ -503,35 +514,14 @@ export default function Share(props: {
   )
 }
 
-export function fromV1(v1: Message.Info): MessageWithParts {
+export class ShareV1MessageError extends Schema.TaggedError<ShareV1MessageError>()("ShareV1MessageError", {
+  message: Schema.String,
+}) {}
+
+export const fromV1 = Effect.fnUntraced(function* (v1: Message.Info) {
   if (v1.role === "assistant") {
-    return {
-      id: v1.id,
-      sessionID: v1.metadata.sessionID,
-      role: "assistant",
-      parentID: "",
-      agent: "build",
-      time: {
-        created: v1.metadata.time.created,
-        completed: v1.metadata.time.completed,
-      },
-      cost: v1.metadata.assistant!.cost,
-      path: v1.metadata.assistant!.path,
-      summary: v1.metadata.assistant!.summary,
-      tokens: v1.metadata.assistant!.tokens ?? {
-        input: 0,
-        output: 0,
-        cache: {
-          read: 0,
-          write: 0,
-        },
-        reasoning: 0,
-      },
-      modelID: v1.metadata.assistant!.modelID,
-      providerID: v1.metadata.assistant!.providerID,
-      mode: "build",
-      error: v1.metadata.error,
-      parts: v1.parts.flatMap((part, index): MessageV2.Part[] => {
+    const parts = yield* Effect.forEach(v1.parts, (part, index) =>
+      Effect.gen(function* (): Effect.gen.Return<MessageV2.Part[], ShareV1MessageError> {
         const base = {
           id: index.toString(),
           messageID: v1.id,
@@ -561,7 +551,10 @@ export function fromV1(v1: Message.Info): MessageWithParts {
               type: "tool",
               callID: part.toolInvocation.toolCallId,
               tool: part.toolInvocation.toolName,
-              state: (() => {
+              state: yield* Effect.gen(function* (): Effect.gen.Return<
+                MessageV2.ToolPart["state"],
+                ShareV1MessageError
+              > {
                 if (part.toolInvocation.state === "partial-call") {
                   return {
                     status: "pending",
@@ -591,18 +584,47 @@ export function fromV1(v1: Message.Info): MessageWithParts {
                     metadata,
                   }
                 }
-                throw new Error("unknown tool invocation state")
-              })(),
+                return yield* new ShareV1MessageError({ message: "unknown tool invocation state" })
+              }),
             },
           ]
         }
         return []
       }),
+    )
+    const message: MessageWithParts = {
+      id: v1.id,
+      sessionID: v1.metadata.sessionID,
+      role: "assistant",
+      parentID: "",
+      agent: "build",
+      time: {
+        created: v1.metadata.time.created,
+        completed: v1.metadata.time.completed,
+      },
+      cost: v1.metadata.assistant!.cost,
+      path: v1.metadata.assistant!.path,
+      summary: v1.metadata.assistant!.summary,
+      tokens: v1.metadata.assistant!.tokens ?? {
+        input: 0,
+        output: 0,
+        cache: {
+          read: 0,
+          write: 0,
+        },
+        reasoning: 0,
+      },
+      modelID: v1.metadata.assistant!.modelID,
+      providerID: v1.metadata.assistant!.providerID,
+      mode: "build",
+      error: v1.metadata.error,
+      parts: Arr.flatten(parts),
     }
+    return message
   }
 
   if (v1.role === "user") {
-    return {
+    const message: MessageWithParts = {
       id: v1.id,
       sessionID: v1.metadata.sessionID,
       role: "user",
@@ -643,7 +665,8 @@ export function fromV1(v1: Message.Info): MessageWithParts {
         return []
       }),
     }
+    return message
   }
 
-  throw new Error("unknown message type")
-}
+  return yield* new ShareV1MessageError({ message: "unknown message type" })
+})
