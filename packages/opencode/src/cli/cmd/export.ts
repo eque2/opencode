@@ -238,54 +238,59 @@ export const ExportCommand = effectCmd({
 
 const run = Effect.fn("Cli.export.body")(function* (args: { sessionID?: string; sanitize?: boolean }) {
   const svc = yield* Session.Service
-  let sessionID = args.sessionID ? SessionID.make(args.sessionID) : undefined
-  process.stderr.write(`Exporting session: ${sessionID ?? "latest"}\n`)
+  const given = args.sessionID ? Option.some(SessionID.make(args.sessionID)) : Option.none<SessionID>()
+  process.stderr.write(`Exporting session: ${Option.getOrElse(given, () => "latest")}\n`)
 
-  if (!sessionID) {
-    UI.empty()
-    prompts.intro("Export session", { output: process.stderr })
-
-    const sessions = yield* svc.list()
-
-    if (sessions.length === 0) {
-      prompts.log.error("No sessions found", { output: process.stderr })
-      prompts.outro("Done", { output: process.stderr })
-      return
-    }
-
-    sessions.sort((a, b) => b.time.updated - a.time.updated)
-
-    const selectedSession = yield* Effect.promise(() =>
-      prompts.autocomplete({
-        message: "Select session to export",
-        maxItems: 10,
-        options: sessions.map((session) => ({
-          label: session.title,
-          value: session.id,
-          hint: `${new Date(session.time.updated).toLocaleString()} • ${session.id.slice(-8)}`,
-        })),
-        output: process.stderr,
-      }),
-    )
-
-    if (prompts.isCancel(selectedSession)) {
-      return yield* Effect.die(new UI.CancelledError())
-    }
-
-    sessionID = selectedSession
-
-    prompts.outro("Exporting session...", { output: process.stderr })
-  }
+  const selected = Option.isSome(given) ? given : yield* selectSession()
+  if (Option.isNone(selected)) return
+  const sessionID = selected.value
 
   // Match legacy try/catch — catches both typed failures and defects
   // (Session.Service.get throws NotFoundError as a defect, not a typed E).
-  return yield* Effect.gen(function* () {
-    const sessionInfo = yield* svc.get(sessionID!)
+  yield* Effect.gen(function* () {
+    const sessionInfo = yield* svc.get(sessionID)
     const messages = yield* svc.messages({ sessionID: sessionInfo.id })
 
     const exportData = { info: sessionInfo, messages }
 
     process.stdout.write(yield* encodeJson(args.sanitize ? sanitize(exportData) : exportData).pipe(Effect.orDie))
     process.stdout.write(EOL)
-  }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID!}`)))
+  }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID}`)))
+})
+
+// Prompts for a session when none was given. None means there is nothing to export.
+const selectSession = Effect.fn("Cli.export.selectSession")(function* () {
+  const svc = yield* Session.Service
+  UI.empty()
+  prompts.intro("Export session", { output: process.stderr })
+
+  const sessions = yield* svc.list()
+
+  if (sessions.length === 0) {
+    prompts.log.error("No sessions found", { output: process.stderr })
+    prompts.outro("Done", { output: process.stderr })
+    return Option.none<SessionID>()
+  }
+
+  sessions.sort((a, b) => b.time.updated - a.time.updated)
+
+  const selectedSession = yield* Effect.promise(() =>
+    prompts.autocomplete({
+      message: "Select session to export",
+      maxItems: 10,
+      options: sessions.map((session) => ({
+        label: session.title,
+        value: session.id,
+        hint: `${new Date(session.time.updated).toLocaleString()} • ${session.id.slice(-8)}`,
+      })),
+      output: process.stderr,
+    }),
+  )
+
+  if (prompts.isCancel(selectedSession)) {
+    return yield* Effect.die(new UI.CancelledError())
+  }
+
+  prompts.outro("Exporting session...", { output: process.stderr })
+  return Option.some(selectedSession)
 })
