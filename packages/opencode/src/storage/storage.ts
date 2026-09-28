@@ -26,12 +26,17 @@ const RootFile = Schema.Struct({
   ),
 }).annotate({ identifier: "Storage.RootFile", description: "The worktree root in a legacy message file" })
 
+// Legacy files do not guarantee the "ses"/"msg" prefixes that SessionID and
+// MessageID check, so these brands mark the ids without a prefix check.
+const LegacySessionID = Schema.String.pipe(Schema.brand("Storage.LegacySessionID"))
+const LegacyMessageID = Schema.String.pipe(Schema.brand("Storage.LegacyMessageID"))
+
 const SessionFile = Schema.Struct({
-  id: Schema.String,
+  id: LegacySessionID,
 }).annotate({ identifier: "Storage.SessionFile", description: "The id of a legacy session info file" })
 
 const MessageFile = Schema.Struct({
-  id: Schema.String,
+  id: LegacyMessageID,
 }).annotate({ identifier: "Storage.MessageFile", description: "The id of a legacy message file" })
 
 const DiffFile = Schema.Struct({
@@ -40,7 +45,7 @@ const DiffFile = Schema.Struct({
 }).annotate({ identifier: "Storage.DiffFile", description: "The line counts of one legacy session diff" })
 
 const SummaryFile = Schema.Struct({
-  id: Schema.String,
+  id: LegacySessionID,
   projectID: Schema.String,
   summary: Schema.Struct({ diffs: Schema.Array(DiffFile) }),
 }).annotate({ identifier: "Storage.SummaryFile", description: "A legacy session file that holds inline diffs" })
