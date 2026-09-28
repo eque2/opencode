@@ -55,7 +55,9 @@ export const TuiApi = HttpApi.make("tui")
       .add(
         HttpApiEndpoint.post("appendPrompt", TuiPaths.appendPrompt, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.PromptAppend.data,
+          // An unnamed struct keeps the payload inline in OpenAPI; the event data schema is identified,
+          // and a $ref body would stop the legacy SDK generator from flattening it into call parameters.
+          payload: Schema.Struct(TuiEvent.PromptAppend.data.fields),
           success: described(Schema.Boolean, "Prompt processed successfully"),
           error: HttpApiError.BadRequest,
         }).annotateMerge(
@@ -139,7 +141,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("showToast", TuiPaths.showToast, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.ToastShow.data,
+          payload: Schema.Struct(TuiEvent.ToastShow.data.fields),
           success: described(Schema.Boolean, "Toast notification shown successfully"),
         }).annotateMerge(
           OpenApi.annotations({
@@ -162,7 +164,7 @@ export const TuiApi = HttpApi.make("tui")
         ),
         HttpApiEndpoint.post("selectSession", TuiPaths.selectSession, {
           query: WorkspaceRoutingQuery,
-          payload: TuiEvent.SessionSelect.data,
+          payload: Schema.Struct(TuiEvent.SessionSelect.data.fields),
           success: described(Schema.Boolean, "Session selected successfully"),
           error: [HttpApiError.BadRequest, ApiNotFoundError],
         }).annotateMerge(
