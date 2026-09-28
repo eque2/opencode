@@ -423,25 +423,23 @@ export const ProvidersLoginCommand = effectCmd({
       })),
     ]
 
-    let provider: string
-    if (args.provider) {
+    let provider = yield* Effect.gen(function* () {
+      if (!args.provider) {
+        return yield* promptValue(
+          yield* Prompt.autocomplete({
+            message: "Select provider",
+            maxItems: 8,
+            options: [...options, { value: "other", label: "Other" }],
+          }),
+        )
+      }
       const input = args.provider
       const byID = options.find((x) => x.value === input)
       const byName = options.find((x) => x.label.toLowerCase() === input.toLowerCase())
       const match = byID ?? byName
-      if (!match) {
-        return yield* fail(`Unknown provider "${input}"`)
-      }
-      provider = match.value
-    } else {
-      provider = yield* promptValue(
-        yield* Prompt.autocomplete({
-          message: "Select provider",
-          maxItems: 8,
-          options: [...options, { value: "other", label: "Other" }],
-        }),
-      )
-    }
+      if (!match) return yield* fail(`Unknown provider "${input}"`)
+      return match.value
+    })
 
     const plugin = hooks.findLast((x) => x.auth?.provider === provider)
     if (plugin && plugin.auth) {
@@ -520,10 +518,7 @@ export const ProvidersLogoutCommand = effectCmd({
     UI.empty()
     const credentials: Array<[string, Auth.Info]> = Object.entries(yield* Effect.orDie(authSvc.all()))
     yield* Prompt.intro("Remove credential")
-    if (credentials.length === 0) {
-      yield* Prompt.log.error("No credentials found")
-      return
-    }
+    if (credentials.length === 0) return yield* Prompt.log.error("No credentials found")
     const database = yield* modelsDev.get()
     const options = credentials.map(([key, value]) => ({
       label: (database[key]?.name || key) + UI.Style.TEXT_DIM + " (" + value.type + ")",
@@ -544,6 +539,6 @@ export const ProvidersLogoutCommand = effectCmd({
         )
     if (!provider) return yield* fail(`Unknown configured provider "${args.provider}"`)
     yield* Effect.orDie(authSvc.remove(provider))
-    yield* Prompt.outro("Logout successful")
+    return yield* Prompt.outro("Logout successful")
   }),
 })
