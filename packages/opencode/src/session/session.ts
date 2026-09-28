@@ -461,7 +461,7 @@ export interface Interface {
   }) => Effect.Effect<void>
   readonly clearRevert: (sessionID: SessionID) => Effect.Effect<void>
   readonly setSummary: (input: { sessionID: SessionID; summary: Info["summary"] }) => Effect.Effect<void>
-  readonly setShare: (input: { sessionID: SessionID; share: Info["share"] }) => Effect.Effect<void>
+  readonly setShare: (input: { sessionID: SessionID; share: Option.Option<typeof Share.Type> }) => Effect.Effect<void>
   readonly setWorkspace: (input: { sessionID: SessionID; workspaceID: Info["workspaceID"] }) => Effect.Effect<void>
   readonly diff: (sessionID: SessionID) => Effect.Effect<Snapshot.FileDiff[]>
   readonly messages: (input: { sessionID: SessionID; limit?: number }) => Effect.Effect<SessionV1.WithParts[], NotFound>
@@ -847,9 +847,9 @@ const layer: Layer.Layer<
       }).pipe(Effect.orDie)
     })
 
-    const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Info["share"] }) {
+    const setShare = Effect.fn("Session.setShare")(function* (input: { sessionID: SessionID; share: Option.Option<typeof Share.Type> }) {
       yield* patch(input.sessionID, {
-        share: Option.fromUndefinedOr(input.share),
+        share: input.share,
         time: { updated: yield* Clock.currentTimeMillis },
       }).pipe(Effect.orDie)
     })
