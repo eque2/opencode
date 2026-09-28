@@ -61,14 +61,29 @@ export class UpgradeFailedError extends Schema.TaggedError<UpgradeFailedError>()
 }
 
 // Response schemas for external version APIs
-const GitHubRelease = Schema.Struct({ tag_name: Schema.String })
-const NpmPackage = Schema.Struct({ version: Schema.String })
-const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })
+const GitHubRelease = Schema.Struct({ tag_name: Schema.String }).annotate({
+  identifier: "InstallationGitHubRelease",
+  description: "The latest opencode release from the GitHub releases API",
+})
+const NpmPackage = Schema.Struct({ version: Schema.String }).annotate({
+  identifier: "InstallationNpmPackage",
+  description: "The opencode-ai package document for one dist-tag from the npm registry",
+})
+const BrewFormula = Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) }).annotate({
+  identifier: "InstallationBrewFormula",
+  description: "The opencode formula from the Homebrew formulae API",
+})
 const BrewInfoV2 = Schema.Struct({
   formulae: Schema.Array(Schema.Struct({ versions: Schema.Struct({ stable: Schema.String }) })),
+}).annotate({
+  identifier: "InstallationBrewInfoV2",
+  description: "The `brew info --json=v2` output for the opencode tap formula",
 })
 const ChocoPackage = Schema.Struct({
   d: Schema.Struct({ results: Schema.Array(Schema.Struct({ Version: Schema.String })) }),
+}).annotate({
+  identifier: "InstallationChocoPackage",
+  description: "The latest opencode package from the Chocolatey OData API",
 })
 const ScoopManifest = NpmPackage
 
