@@ -9,6 +9,7 @@ import { InstanceBootstrap } from "../../src/project/bootstrap"
 import { InstanceStore } from "../../src/project/instance-store"
 import { Worktree } from "../../src/worktree"
 import { disposeAllInstances, provideInstance, TestInstance } from "../fixture/fixture"
+import { TestFailure } from "../fixture/test-failure"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(
@@ -35,7 +36,7 @@ const waitReady = Effect.fn("WorktreeTest.waitReady")(function* () {
   return yield* Deferred.await(ready).pipe(
     Effect.timeoutOrElse({
       duration: "10 seconds",
-      orElse: () => Effect.fail(new Error("timed out waiting for worktree.ready")),
+      orElse: () => Effect.fail(new TestFailure({ message: "timed out waiting for worktree.ready" })),
     }),
   )
 })
@@ -47,7 +48,7 @@ const removeCreatedWorktree = (directory: string) =>
   }).pipe(
     Effect.filterOrFail(
       (ok) => ok,
-      () => new Error(`failed to remove worktree ${directory}`),
+      () => new TestFailure({ message: `failed to remove worktree ${directory}` }),
     ),
     Effect.asVoid,
   )
