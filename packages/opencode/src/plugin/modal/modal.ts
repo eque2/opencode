@@ -13,7 +13,9 @@ const models = Effect.fn("ModalPlugin.models")(function* (
   ctx: Parameters<ModelsHook>[1],
 ) {
   const apiKey =
-    ctx.auth?.type === "api" ? Option.some(ctx.auth.key) : Option.map(yield* readEnvSnapshot(ProxyToken), Redacted.value)
+    ctx.auth?.type === "api"
+      ? Option.some(ctx.auth.key)
+      : Option.map(yield* readEnvSnapshot(ProxyToken), Redacted.value)
   const baseURL = Option.fromNullishOr(Object.values(provider.models)[0]?.api.url)
   if (Option.isNone(apiKey) || !apiKey.value || Option.isNone(baseURL) || !baseURL.value) return {}
 
