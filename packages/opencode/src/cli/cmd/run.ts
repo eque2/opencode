@@ -74,6 +74,11 @@ type SessionInfo = {
   directory?: string
 }
 
+// The share request rejected. A rejection that says sharing is disabled is shown to the user.
+class RunShareError extends Schema.TaggedError<RunShareError>()("RunShareError", {
+  cause: Schema.Defect(),
+}) {}
+
 // The JSON event lines of `--format json`, as JSON.stringify wrote them.
 const encodeEvent = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))
 
@@ -549,13 +554,13 @@ export const RunCommand = effectCmd({
       if (cfg.data.share !== "auto" && !flags.autoShare && !args.share) return
       const url = yield* Effect.tryPromise({
         try: () => sdk.session.share({ sessionID }),
-        catch: (error) => error,
+        catch: (cause) => new RunShareError({ cause }),
       }).pipe(
         Effect.map((res) => (res.error ? Option.none<string>() : Option.fromNullishOr(res.data?.share?.url))),
         Effect.catch((error) =>
           Effect.sync(() => {
-            if (error instanceof Error && error.message.includes("disabled")) {
-              UI.println(UI.Style.TEXT_DANGER_BOLD + "!  " + error.message)
+            if (error.cause instanceof Error && error.cause.message.includes("disabled")) {
+              UI.println(UI.Style.TEXT_DANGER_BOLD + "!  " + error.cause.message)
             }
             return Option.none<string>()
           }),
@@ -855,49 +860,41 @@ export const RunCommand = effectCmd({
           if (error) process.exitCode = 1
         })
 
-        const command = args.command
-        if (command) {
-          const result = yield* Effect.promise(() =>
-            client.session.command({
-              sessionID,
-              agent,
-              model: args.model,
-              command,
-              arguments: message,
-              variant: args.variant,
-            }),
-          )
-          if (result.error) {
-            if (!(yield* emit("error", { error: result.error }))) UI.error(formatRunError(result.error))
-            process.exitCode = 1
-            return
-          }
-          yield* finish
-          return
-        }
+        // A failed request reports its error. A sent one waits for the session to go idle.
+        const settle = (error: unknown) =>
+          error
+            ? Effect.gen(function* () {
+                if (!(yield* emit("error", { error }))) UI.error(formatRunError(error))
+                process.exitCode = 1
+              })
+            : finish
 
+        const command = args.command
         const model = pick(args.model)
         const result = yield* Effect.promise(() =>
-          client.session.prompt({
-            sessionID,
-            agent,
-            model,
-            variant: args.variant,
-            parts: [...files, { type: "text", text: message }],
-          }),
+          command
+            ? client.session.command({
+                sessionID,
+                agent,
+                model: args.model,
+                command,
+                arguments: message,
+                variant: args.variant,
+              })
+            : client.session.prompt({
+                sessionID,
+                agent,
+                model,
+                variant: args.variant,
+                parts: [...files, { type: "text", text: message }],
+              }),
         )
-        if (result.error) {
-          if (!(yield* emit("error", { error: result.error }))) UI.error(formatRunError(result.error))
-          process.exitCode = 1
-          return
-        }
-        yield* finish
-        return
+        return yield* settle(result.error)
       }
 
       const model = pick(args.model)
       const { runInteractiveMode } = yield* Effect.promise(() => import("./run/runtime"))
-      yield* runInteractiveMode({
+      return yield* runInteractiveMode({
         sdk: client,
         directory: cwd,
         sessionID,
@@ -968,7 +965,7 @@ export const RunCommand = effectCmd({
       fetch: localFetch,
       ...(Option.isSome(directory) ? { directory: directory.value } : {}),
     })
-    yield* execute(sdk)
+    return yield* execute(sdk)
   }),
 })
 
