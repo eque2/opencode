@@ -332,10 +332,9 @@ const layer = Layer.effect(
 
           case "tool-input-start":
             if (ctx.assistantMessage.summary) {
-              yield* new StreamEventError({
+              return yield* new StreamEventError({
                 message: `Tool call not allowed while generating summary: ${value.name}`,
               })
-              return
             }
             yield* ensureToolCall(value)
             return
@@ -351,10 +350,9 @@ const layer = Layer.effect(
 
           case "tool-call": {
             if (ctx.assistantMessage.summary) {
-              yield* new StreamEventError({
+              return yield* new StreamEventError({
                 message: `Tool call not allowed while generating summary: ${value.name}`,
               })
-              return
             }
             yield* ensureToolCall(value)
             const input = isRecord(value.input) ? value.input : { value: value.input }
@@ -423,7 +421,7 @@ const layer = Layer.effect(
                     ),
                     Effect.exit,
                   )
-                : Effect.succeed(Exit.succeed<SessionV1.FilePart>(attachment)),
+                : Effect.succeed(Exit.succeed(attachment)),
             )
             const omitted = normalized.filter(Exit.isFailure).length
             const attachments = normalized.filter(Exit.isSuccess).map((item) => item.value)
@@ -446,8 +444,7 @@ const layer = Layer.effect(
           }
 
           case "provider-error":
-            yield* new StreamEventError({ message: value.message })
-            return
+            return yield* new StreamEventError({ message: value.message })
 
           case "step-start":
             if (Option.isNone(ctx.snapshot)) ctx.snapshot = snapshotHash(yield* snapshot.track())
