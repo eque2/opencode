@@ -332,7 +332,7 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
           stdout: upgradeResult.stdout,
           stderr: upgradeResult.stderr,
         })
-        yield* text([process.execPath, "--version"])
+        return yield* text([process.execPath, "--version"]).pipe(Effect.asVoid)
       }),
     }
 
