@@ -2,7 +2,7 @@ import { type ChildProcess } from "child_process"
 import type { Stream } from "node:stream"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
-import { Schema } from "effect"
+import { Function, Option, Schema } from "effect"
 import { errorMessage } from "./error"
 
 export type Stdio = "inherit" | "pipe" | "ignore" | number | Stream
@@ -10,7 +10,8 @@ export type Shell = boolean | string
 
 export interface Options {
   cwd?: string
-  env?: NodeJS.ProcessEnv | null
+  /** Variables to add to the parent environment. */
+  env?: NodeJS.ProcessEnv
   stdin?: Stdio
   stdout?: Stdio
   stderr?: Stdio
@@ -59,6 +60,11 @@ export class OutputUnavailableError extends Schema.TaggedError<OutputUnavailable
 
 export type Child = ChildProcess & { exited: Promise<number> }
 
+// ChildProcess reports a running process with exitCode and signalCode null.
+function hasExited(proc: ChildProcess) {
+  return Option.isSome(Option.fromNullishOr(proc.exitCode)) || Option.isSome(Option.fromNullishOr(proc.signalCode))
+}
+
 export function spawn(cmd: string[], opts: Options = {}): Child {
   if (cmd.length === 0) throw new EmptyCommandError({ message: "Command is required" })
   opts.abort?.throwIfAborted()
@@ -66,7 +72,7 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
   const proc = launch(cmd[0], cmd.slice(1), {
     cwd: opts.cwd,
     shell: opts.shell,
-    env: opts.env === null ? {} : opts.env ? { ...process.env, ...opts.env } : undefined,
+    ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
     stdio: [opts.stdin ?? "ignore", opts.stdout ?? "ignore", opts.stderr ?? "ignore"],
     windowsHide: process.platform === "win32",
   })
@@ -76,7 +82,7 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
 
   const abort = () => {
     if (closed) return
-    if (proc.exitCode !== null || proc.signalCode !== null) return
+    if (hasExited(proc)) return
     closed = true
 
     proc.kill(opts.kill ?? "SIGTERM")
@@ -102,16 +108,15 @@ export function spawn(cmd: string[], opts: Options = {}): Child {
       reject(error)
     })
   })
-  void exited.catch(() => undefined)
+  // A spawn error also rejects `exited`; callers that never await it must not see an unhandled rejection.
+  void exited.catch(Function.constVoid)
 
   if (opts.abort) {
     opts.abort.addEventListener("abort", abort, { once: true })
     if (opts.abort.aborted) abort()
   }
 
-  const child = proc as Child
-  child.exited = exited
-  return child
+  return Object.assign(proc, { exited })
 }
 
 export async function run(cmd: string[], opts: RunOptions = {}): Promise<Result> {
@@ -150,7 +155,7 @@ export async function run(cmd: string[], opts: RunOptions = {}): Promise<Result>
 // Duplicated in `packages/sdk/js/src/process.ts` because the SDK cannot import
 // `opencode` without creating a cycle. Keep both copies in sync.
 export async function stop(proc: ChildProcess) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return
+  if (hasExited(proc)) return
 
   if (process.platform !== "win32" || !proc.pid) {
     proc.kill()
