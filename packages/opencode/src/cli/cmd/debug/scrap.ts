@@ -1,6 +1,8 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { effectCmd } from "../../effect-cmd"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const ScrapCommand = effectCmd({
   command: "scrap",
@@ -12,6 +14,6 @@ export const ScrapCommand = effectCmd({
     const { Project } = yield* Effect.promise(() => import("@/project/project"))
     const project = yield* Project.Service
     const list = yield* project.list()
-    process.stdout.write(JSON.stringify(list, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(list).pipe(Effect.orDie)) + EOL)
   }),
 })

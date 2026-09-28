@@ -2,7 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { EOL } from "os"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { basename } from "path"
-import { Cause, Effect } from "effect"
+import { Cause, Effect, Schema } from "effect"
 import { Agent } from "../../../agent/agent"
 import { Provider } from "@/provider/provider"
 import { Session } from "@/session/session"
@@ -14,6 +14,8 @@ import { iife } from "../../../util/iife"
 import { fail } from "../../effect-cmd"
 import { InstanceRef } from "@/effect/instance-ref"
 import type { InstanceContext } from "@/project/instance-context"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const debugAgent = Effect.fn("Cli.debug.agent")(function* (args: {
   name: string
@@ -53,7 +55,7 @@ const run = Effect.fn("Cli.debug.agent.body")(function* (
     const params = parseToolParams(args.params)
     const toolCtx = yield* createToolContext(agent, ctx)
     const result = yield* tool.execute(params, toolCtx)
-    process.stdout.write(JSON.stringify({ tool: toolID, input: params, result }, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson({ tool: toolID, input: params, result }).pipe(Effect.orDie)) + EOL)
     return
   }
 
@@ -61,7 +63,7 @@ const run = Effect.fn("Cli.debug.agent.body")(function* (
     ...agent,
     tools: resolvedTools,
   }
-  process.stdout.write(JSON.stringify(output, null, 2) + EOL)
+  process.stdout.write((yield* encodeJson(output).pipe(Effect.orDie)) + EOL)
 })
 
 const getAvailableTools = Effect.fn("Cli.debug.agent.getAvailableTools")(function* (agent: Agent.Info) {

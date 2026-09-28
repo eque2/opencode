@@ -1,9 +1,11 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 import { InstanceRef } from "@/effect/instance-ref"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const RipgrepCommand = cmd({
   command: "rg",
@@ -74,6 +76,6 @@ const SearchCommand = effectCmd({
         limit: args.limit ?? 10_000,
       })
       .pipe(Effect.orDie)
-    process.stdout.write(JSON.stringify(results, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(results).pipe(Effect.orDie)) + EOL)
   }),
 })

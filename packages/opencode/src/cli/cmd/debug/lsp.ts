@@ -1,8 +1,10 @@
 import { LSP } from "@/lsp/lsp"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { effectCmd } from "../../effect-cmd"
 import { cmd } from "../cmd"
 import { EOL } from "os"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const LSPCommand = cmd({
   command: "lsp",
@@ -23,7 +25,7 @@ const DiagnosticsCommand = effectCmd({
         return yield* lsp.diagnostics()
       }),
     )
-    process.stdout.write(JSON.stringify(out, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(out).pipe(Effect.orDie)) + EOL)
   }),
 })
 
@@ -34,7 +36,7 @@ export const SymbolsCommand = effectCmd({
   handler: Effect.fn("Cli.debug.lsp.symbols")(function* (args) {
     yield* Effect.logInfo("symbols")
     const results = yield* LSP.Service.use((lsp) => lsp.workspaceSymbol(args.query))
-    process.stdout.write(JSON.stringify(results, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(results).pipe(Effect.orDie)) + EOL)
   }),
 })
 
@@ -45,6 +47,6 @@ export const DocumentSymbolsCommand = effectCmd({
   handler: Effect.fn("Cli.debug.lsp.documentSymbols")(function* (args) {
     yield* Effect.logInfo("document-symbols")
     const results = yield* LSP.Service.use((lsp) => lsp.documentSymbol(args.uri))
-    process.stdout.write(JSON.stringify(results, null, 2) + EOL)
+    process.stdout.write((yield* encodeJson(results).pipe(Effect.orDie)) + EOL)
   }),
 })

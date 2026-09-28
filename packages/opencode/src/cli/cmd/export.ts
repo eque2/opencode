@@ -6,7 +6,9 @@ import { effectCmd, fail } from "../effect-cmd"
 import { UI } from "../ui"
 import * as prompts from "@clack/prompts"
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 function redact(kind: string, id: string, value: string) {
   return value.trim() ? `[redacted:${kind}:${id}]` : value
@@ -287,7 +289,7 @@ const run = Effect.fn("Cli.export.body")(function* (args: { sessionID?: string; 
 
     const exportData = { info: sessionInfo, messages }
 
-    process.stdout.write(JSON.stringify(args.sanitize ? sanitize(exportData) : exportData, null, 2))
+    process.stdout.write(yield* encodeJson(args.sanitize ? sanitize(exportData) : exportData).pipe(Effect.orDie))
     process.stdout.write(EOL)
   }).pipe(Effect.catchCause(() => fail(`Session not found: ${sessionID!}`)))
 })

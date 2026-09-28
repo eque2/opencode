@@ -1,5 +1,5 @@
 import type { Argv } from "yargs"
-import { Effect, Option } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { cmd } from "./cmd"
 import { effectCmd, fail } from "../effect-cmd"
 import { Session } from "@/session/session"
@@ -13,6 +13,8 @@ import { NotFoundError } from "@/storage/storage"
 import { EOL } from "os"
 import path from "path"
 import { which } from "@opencode-ai/core/util/which"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 const pagerCmd = Effect.fnUntraced(function* () {
   const lessOptions = ["-R", "-S"]
@@ -89,7 +91,7 @@ export const SessionListCommand = effectCmd({
 
     if (sessions.length === 0) return
 
-    const output = args.format === "json" ? formatSessionJSON(sessions) : formatSessionTable(sessions)
+    const output = args.format === "json" ? yield* formatSessionJSON(sessions) : formatSessionTable(sessions)
 
     const shouldPaginate = process.stdout.isTTY && !args.maxCount && args.format === "table"
 
@@ -134,7 +136,7 @@ function formatSessionTable(sessions: Session.Info[]): string {
   return lines.join(EOL)
 }
 
-function formatSessionJSON(sessions: Session.Info[]): string {
+function formatSessionJSON(sessions: Session.Info[]) {
   const jsonData = sessions.map((session) => ({
     id: session.id,
     title: session.title,
@@ -143,5 +145,5 @@ function formatSessionJSON(sessions: Session.Info[]): string {
     projectId: session.projectID,
     directory: session.directory,
   }))
-  return JSON.stringify(jsonData, null, 2)
+  return encodeJson(jsonData).pipe(Effect.orDie)
 }

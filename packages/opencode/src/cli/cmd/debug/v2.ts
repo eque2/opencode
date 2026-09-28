@@ -1,10 +1,12 @@
 import { EOL } from "os"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { Catalog } from "@opencode-ai/core/catalog"
 import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/location-services"
 import { Location } from "@opencode-ai/core/location"
 import { AbsolutePath } from "@opencode-ai/core/schema"
 import { effectCmd } from "../../effect-cmd"
+
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))
 
 export const V2Command = effectCmd({
   command: "v2",
@@ -27,7 +29,7 @@ export const V2Command = effectCmd({
           ),
         ),
       }
-      process.stdout.write(JSON.stringify(result, null, 2) + EOL)
+      process.stdout.write((yield* encodeJson(result).pipe(Effect.orDie)) + EOL)
     }).pipe(
       Effect.withSpan("Cli.debug.v2"),
       Effect.provide(
