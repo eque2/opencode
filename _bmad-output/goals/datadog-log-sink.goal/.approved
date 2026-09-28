@@ -1,4 +1,4 @@
 approved-by: user
-plan-hash:   15884b34fd89274bb2e6e406e931de9616baaacd
-at:          2026-09-28T09:25:56Z
-note:        re-approved after Phase R revision (AskUserQuestion answer "Revise and approve"); supersedes 681261f144e9f1cd34fad203a278dd7c4eb11d9a
+plan-hash:   8f1b938eaa9b9d107c9842eb51566e7a6832b151
+at:          2026-09-28T12:43:03Z
+note:        re-approved after the dev merge reference update (user: "approved"); supersedes 15884b34fd89274bb2e6e406e931de9616baaacd
