@@ -12,9 +12,10 @@ import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import { Plugin } from "../../plugin"
 import type { Hooks } from "@opencode-ai/plugin"
-import { Process } from "@/util/process"
+import { AppProcess } from "@opencode-ai/core/process"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { ChildProcess } from "effect/unstable/process"
 import { errorMessage } from "@/util/error"
-import { text } from "node:stream/consumers"
 import { Array as Arr, Config as EffectConfig, ConfigProvider, Effect, Option, Order, Schema } from "effect"
 
 type PluginAuth = NonNullable<Hooks["auth"]>
@@ -342,24 +343,21 @@ export const ProvidersLoginCommand = effectCmd({
         Effect.mapError((error) => new CliError({ message: metadataError + errorMessage(error) })),
       )
       yield* Prompt.log.info(`Running \`${wellknown.auth.command.join(" ")}\``)
-      const abort = new AbortController()
-      const proc = Process.spawn([...wellknown.auth.command], {
-        stdout: "pipe",
-        stderr: "inherit",
-        abort: abort.signal,
-      })
-      const stdout = proc.stdout
-      if (!stdout) {
-        yield* Prompt.log.error("Failed")
-        yield* Prompt.outro("Done")
-        return
-      }
+      const command = wellknown.auth.command
       const commandError = "Failed to run auth provider command: "
-      const [exit, token] = yield* Effect.all(
-        [cliTry(commandError, () => proc.exited), cliTry(commandError, () => text(stdout))],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.ensuring(Effect.sync(() => abort.abort())))
-      if (exit !== 0) {
+      // The command shares the terminal through stderr, so it stays in this process group. The login
+      // handler runs under AppRuntime, which does not provide AppProcess, so the call provides its own.
+      // An interrupted login ends the command with the run's scope.
+      const result = yield* AppProcess.Service.use((appProcess) =>
+        appProcess.run(
+          ChildProcess.make(command[0], command.slice(1), { stdin: "ignore", stderr: "inherit", detached: false }),
+        ),
+      ).pipe(
+        Effect.mapError((error) => new CliError({ message: commandError + errorMessage(error) })),
+        Effect.provide(LayerNode.compile(AppProcess.node)),
+      )
+      const token = result.stdout.toString()
+      if (result.exitCode !== 0) {
         yield* Prompt.log.error("Failed")
         yield* Prompt.outro("Done")
         return
