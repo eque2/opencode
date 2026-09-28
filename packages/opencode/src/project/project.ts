@@ -10,7 +10,7 @@ import { GlobalBus } from "@/bus/global"
 import { which } from "@opencode-ai/core/util/which"
 import { Command } from "@/command"
 import { InstanceState } from "@/effect/instance-state"
-import { Clock, Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
+import { Array as Arr, Clock, Effect, Layer, Scope, Context, Stream, Types, Schema, Option, Predicate } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { AppProcess } from "@opencode-ai/core/process"
@@ -424,8 +424,7 @@ const layer = Layer.effect(
       // addSandbox and removeSandbox have no error channel, so a missing project stays a defect.
       if (!row) return yield* Effect.die(new NotFoundError({ projectID: id }))
       const sandbox = AbsolutePath.make(directory)
-      const sboxes = [...row.sandboxes]
-      if (!sboxes.includes(sandbox)) sboxes.push(sandbox)
+      const sboxes = row.sandboxes.includes(sandbox) ? row.sandboxes : Arr.append(row.sandboxes, sandbox)
       const result = yield* db
         .update(ProjectTable)
         .set({ sandboxes: sboxes, time_updated: yield* Clock.currentTimeMillis })
