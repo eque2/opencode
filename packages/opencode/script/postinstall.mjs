@@ -125,7 +125,7 @@ function resolveBinary(name) {
 
 function installPackage(name) {
   const version = packageJson.optionalDependencies?.[name]
-  if (!version) return
+  if (!version) return false
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-install-"))
   try {
@@ -134,7 +134,7 @@ function installPackage(name) {
       ["install", "--ignore-scripts", "--no-save", "--loglevel=error", "--prefix", temp, `${name}@${version}`],
       { stdio: "inherit", windowsHide: true },
     )
-    if (result.status !== 0) return
+    if (result.status !== 0) return false
     const packageDir = path.join(temp, "node_modules", name)
     copyBinary(path.join(packageDir, "bin", sourceBinary), targetBinary)
     return true
